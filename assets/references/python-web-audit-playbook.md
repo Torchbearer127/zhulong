@@ -6,6 +6,10 @@ deployment artifacts.
 
 This is source-to-sink audit guidance only. Playbook reasoning, route matches,
 and framework patterns cannot confirm a vulnerability by themselves.
+This playbook is not exhaustive and must not narrow exploration. If the
+repository uses a framework, data flow, sink class, or deployment pattern not
+listed here, add it to `attack-surface.md`, candidate findings, and Docker
+verification plans instead of ignoring it.
 
 ## Fast Model
 
@@ -34,6 +38,7 @@ Prioritize:
 - Django `urls.py`, `path`, `re_path`, class-based views, middleware, DRF viewsets, admin/custom management endpoints
 - FastAPI `@app.get/post/...`, `APIRouter`, dependencies, security dependencies, background tasks, WebSockets
 - Starlette routes, mounts, middleware, request handlers, background tasks, and lifespan hooks
+- Other Python web frameworks such as Sanic, Falcon, Pyramid, or Tornado; model them with the same route, middleware/dependency, auth, input, and sink fields
 - GraphQL handlers, webhook receivers, file upload endpoints, health/debug/metrics routes
 
 ## Trust Boundaries
@@ -126,8 +131,10 @@ with `verification_status=confirmed_in_docker`.
 - Django middleware: https://docs.djangoproject.com/en/stable/topics/http/middleware/
 - Django file uploads: https://docs.djangoproject.com/en/stable/topics/http/file-uploads/
 - Django raw SQL queries: https://docs.djangoproject.com/en/stable/topics/db/sql/
+- Django REST framework viewsets: https://www.django-rest-framework.org/api-guide/viewsets/
 - FastAPI path operations, dependencies, files, and security: https://fastapi.tiangolo.com/tutorial/path-params/, https://fastapi.tiangolo.com/tutorial/dependencies/, https://fastapi.tiangolo.com/tutorial/request-files/, https://fastapi.tiangolo.com/tutorial/security/
 - Starlette routing, middleware, and requests: https://www.starlette.io/routing/, https://www.starlette.io/middleware/, https://www.starlette.io/requests/
 - Python `pickle`, `subprocess`, `pathlib`, and `urllib.request`: https://docs.python.org/3/library/pickle.html, https://docs.python.org/3/library/subprocess.html, https://docs.python.org/3/library/pathlib.html, https://docs.python.org/3/library/urllib.request.html
 - OWASP SSRF Prevention Cheat Sheet: https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html
 - OWASP XSS and CSRF Cheat Sheets: https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html, https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html
+- OWASP Web Security Testing Guide: https://owasp.org/www-project-web-security-testing-guide/

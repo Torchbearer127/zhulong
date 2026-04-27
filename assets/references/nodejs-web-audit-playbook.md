@@ -6,6 +6,10 @@ Docker/Kubernetes deployment artifacts.
 
 This is source-to-sink audit guidance only. Playbook reasoning, route matches,
 and framework patterns cannot confirm a vulnerability by themselves.
+This playbook is not exhaustive and must not narrow exploration. If the
+repository uses a framework, data flow, sink class, or deployment pattern not
+listed here, add it to `attack-surface.md`, candidate findings, and Docker
+verification plans instead of ignoring it.
 
 ## Fast Model
 
@@ -34,6 +38,7 @@ Prioritize:
 - Koa `app.use`, `koa-router` routes, composed middleware, and context mutation
 - Fastify `route`, `get/post/...`, hooks, plugins, schemas, and per-route config
 - Next.js Pages API routes under `pages/api`, App Router route handlers, middleware, and server actions when present
+- Other Node.js web frameworks such as NestJS, Hapi, Sails.js, or AdonisJS; model them with the same route, middleware, auth, input, and sink fields
 - GraphQL handlers, webhook receivers, file upload endpoints, preview/debug routes, health/metrics routes
 
 ## Trust Boundaries
@@ -131,3 +136,4 @@ with `verification_status=confirmed_in_docker`.
 - OWASP Node.js Security Cheat Sheet: https://cheatsheetseries.owasp.org/cheatsheets/Nodejs_Security_Cheat_Sheet.html
 - OWASP SSRF Prevention Cheat Sheet: https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html
 - OWASP XSS and CSRF Cheat Sheets: https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html, https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html
+- OWASP Web Security Testing Guide: https://owasp.org/www-project-web-security-testing-guide/

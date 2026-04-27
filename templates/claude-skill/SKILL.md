@@ -106,6 +106,9 @@ default contract even when the user does not restate them:
   relevant candidates. Checklist matches, source-to-sink hypotheses, and pattern
   matches cannot confirm a vulnerability by themselves and must stay out of
   `confirmed/` until Docker evidence exists.
+- Language playbooks are starting maps, not fences. They are not exhaustive and
+  must not be used to stop exploring repository-specific frameworks, data flows,
+  sinks, or deployment patterns that are not listed in the playbook.
 - Write final confirmed bundles only to
   `<audit-workspace>/confirmed/<one-folder-per-vulnerability>/`, with exactly one
   confirmed vulnerability per bundle.

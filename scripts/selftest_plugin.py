@@ -278,6 +278,11 @@ def main() -> None:
         "Claude skill template local checklist confirmed-only guardrail",
     )
     require_text(
+        plugin_root / "templates/claude-skill/SKILL.md",
+        "Language playbooks are starting maps, not fences",
+        "Claude skill template playbook exploration freedom guardrail",
+    )
+    require_text(
         plugin_root / "assets/references/false-positive-template.md",
         "must never be written under `confirmed/`",
         "false-positive template confirmed-output guardrail",
@@ -381,14 +386,21 @@ def main() -> None:
             "Docker-Only Verification Reminders",
             "Reference Sources",
             "cannot confirm a vulnerability by themselves",
+            "not exhaustive and must not narrow exploration",
             "Do not generate DOCX reports from playbook hypotheses alone",
             "verification_status=confirmed_in_docker",
+            "OWASP Web Security Testing Guide",
         ):
             require_text(
                 path,
                 expected,
                 f"{playbook} required text {expected}",
             )
+    require_text(
+        plugin_root / "assets/references/python-web-audit-playbook.md",
+        "Django REST framework viewsets",
+        "Python Web playbook DRF authoritative source",
+    )
     require_text(
         plugin_root / "assets/references/recommended-security-tooling.md",
         "Do not paste raw scanner logs into `attack-surface.md`",
