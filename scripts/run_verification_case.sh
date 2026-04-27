@@ -31,6 +31,8 @@ Purpose:
   Run one Docker-only verification case with a mandatory timeout, explicit
   network setting, conservative docker-run resource limits, and structured
   evidence under <audit-workspace>/evidence/<case-id>/.
+  In docker-compose mode, resource limits are managed by the Compose files;
+  docker-run defaults are not reported as effective limits.
 
 Stable outcome labels:
   blocked_docker_unavailable
@@ -315,14 +317,6 @@ data = {
     "case_id": case_id,
     "mode": mode,
     "status": status,
-    "stable_status_labels": [
-        "blocked_docker_unavailable",
-        "blocked_missing_image",
-        "failed_timeout",
-        "failed_resource_limit",
-        "rejected_not_reproducible",
-        "confirmed_in_docker",
-    ],
     "classification_reason": reason,
     "exit_code": None if exit_code == "" else int(exit_code),
     "oracle_matched": oracle_matched == "true",
@@ -338,14 +332,21 @@ data = {
     "image": image,
     "image_policy": "prefer_local_or_cached_image; pull_only_when_explicitly_requested_with_pull_if_missing",
     "network": network,
-    "resource_limits": {
+    "finished_at": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
+}
+if mode == "docker-compose":
+    data["resource_limits"] = {
+        "managed_by_compose_file": True,
+        "docker_run_defaults_applied": False,
+        "note": "Docker Compose mode uses limits from the compose files; docker-run defaults are not applied.",
+    }
+else:
+    data["resource_limits"] = {
         "memory": memory_limit,
         "cpus": cpu_limit,
         "pids_limit": pids_limit,
         "read_only_rootfs": read_only == "1",
-    },
-    "finished_at": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
-}
+    }
 Path(evidence_dir, "verification-result.json").write_text(
     json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
     encoding="utf-8",

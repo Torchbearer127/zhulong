@@ -315,6 +315,11 @@ def main() -> None:
         "attacker container runner timeout label",
     )
     require_text(
+        plugin_root / "assets/references/attacker-container-pattern.md",
+        "resource limits are managed by the Compose files",
+        "attacker container compose resource limit note",
+    )
+    require_text(
         plugin_root / "scripts/run_verification_case.sh",
         "STABLE_LABELS=\"blocked_docker_unavailable blocked_missing_image failed_timeout failed_resource_limit rejected_not_reproducible confirmed_in_docker\"",
         "verification runner stable labels",
@@ -343,6 +348,16 @@ def main() -> None:
         plugin_root / "scripts/run_verification_case.sh",
         "--network \"$NETWORK\"",
         "verification runner explicit network",
+    )
+    require_text(
+        plugin_root / "scripts/run_verification_case.sh",
+        "managed_by_compose_file",
+        "verification runner compose resource limit reporting",
+    )
+    forbid_text(
+        plugin_root / "scripts/run_verification_case.sh",
+        "stable_status_labels",
+        "verification runner static labels in result json",
     )
     require_text(
         plugin_root / "scripts/run_verification_case.sh",

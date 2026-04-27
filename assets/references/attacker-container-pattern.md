@@ -95,6 +95,9 @@ For `docker-run`, the runner defaults to memory, CPU, and pids limits,
 read-only root filesystem, dropped capabilities, no-new-privileges, and an
 explicit network setting. The default network is `none`; set `--network` to the
 target Docker network only when the verification needs service traffic.
+For `docker-compose`, resource limits are managed by the Compose files rather
+than by docker-run command-line defaults. Add service-level limits to the
+Compose recipe when a verification case needs strict bounds.
 
 Image policy remains local-first: use a suitable local or cached image when
 available. Use `--pull-if-missing` only when a network pull is acceptable and no
