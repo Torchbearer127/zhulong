@@ -88,3 +88,22 @@ Preferences:
 Avoid long "Requirements" lists that restate the plugin's default behavior. Long
 prompts drift over time; plugin-owned constraints are easier to test, sync, and
 repair.
+
+## Dogfood Pilot Prompt
+
+Use this form when testing Zhulong on a real repository before broad rollout:
+
+```text
+Please use the zhulong skill to perform an end-to-end dogfood vulnerability research pilot on this repository:
+https://github.com/owner/repo
+
+Output language: zh-CN.
+Preferences:
+- Treat this as a product validation run, not a quota-driven bug hunt.
+- Do not force a confirmed finding; "no confirmed vulnerabilities" is acceptable if Docker evidence does not support any candidate.
+- Keep playbooks and checklists as starting maps, not fences. Expand attack-surface.md for repository-specific frameworks, data flows, sinks, or deployment shapes not covered by the references.
+- At the end, summarize confirmed findings, false positives, unverified leads, Docker blockers, and any friction in the Zhulong workflow itself.
+```
+
+For the first few real-world pilots, prefer a small Docker-ready repository or a
+known-vulnerable benchmark before moving to a medium-sized production project.

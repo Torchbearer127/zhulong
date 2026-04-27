@@ -172,6 +172,23 @@ If you want the recommended first-tier optional tools:
 bash plugins/zhulong-plugin/scripts/install_recommended_tooling.sh --tier first-tier
 ```
 
+For the first real-world dogfood runs, do not start with broad unsupervised
+scanning across many repositories. Use a staged pilot:
+
+1. Small Docker-ready repository: validate workspace setup, attack-surface
+   inventory, candidate routing, Docker gate behavior, and handoff quality.
+2. Known-vulnerable benchmark or historical vulnerable revision: validate that a
+   real issue can move from hypothesis to Docker evidence and then to one valid
+   confirmed bundle.
+3. Medium-sized OSS repository: stress-test context slimming, raw-log avoidance,
+   playbook usefulness, false-positive handling, and multi-session handoff.
+
+Dogfood success is not measured by forcing a vulnerability report. A clean "no
+confirmed vulnerabilities" run is acceptable when Docker evidence does not
+support any candidate. Playbooks and checklists are starting maps, not fences;
+expand `attack-surface.md` whenever repository-specific code reveals frameworks,
+data flows, sinks, or deployment assumptions not covered by the references.
+
 ## Minimal Commands
 
 ```bash
