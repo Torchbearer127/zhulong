@@ -29,6 +29,8 @@ Use this Claude Code skill when you want a repository audit workflow that is:
 - language-specific source-to-sink playbooks:
   - [java-web-audit-playbook.md](./assets/references/java-web-audit-playbook.md)
   - [go-web-audit-playbook.md](./assets/references/go-web-audit-playbook.md)
+  - [nodejs-web-audit-playbook.md](./assets/references/nodejs-web-audit-playbook.md)
+  - [python-web-audit-playbook.md](./assets/references/python-web-audit-playbook.md)
 - optional vulnerability-type checklists:
   - [ssrf-checklist.md](./assets/references/ssrf-checklist.md)
   - [path-traversal-checklist.md](./assets/references/path-traversal-checklist.md)
@@ -179,14 +181,14 @@ python3 <audit-workspace>/bin/plan-security-toolchain.py --target-dir <repo-root
 ```
 
 If the plan prints `specialized_playbooks`, use those playbooks as focused
-source-to-sink guidance for this audit. For Java Web and Go Web repositories,
-create or update `<audit-workspace>/attack-surface.md` with the route/handler
-map, trust boundaries, authentication requirements, and high-risk sinks before
-turning candidates into confirmed findings.
+source-to-sink guidance for this audit. For Java Web, Go Web, Node.js Web, and
+Python Web repositories, create or update `<audit-workspace>/attack-surface.md`
+with the route/handler map, trust boundaries, authentication requirements, and
+high-risk sinks before turning candidates into confirmed findings.
 
 If the plan prints `attack_surface_guidance`, use it to keep the handoff packet
-small and stack-specific. For Java Web and Go Web, each entry inventory should
-include route or endpoint, method, handler/controller, authentication
+small and stack-specific. For supported web playbooks, each entry inventory
+should include route or endpoint, method, handler/controller, authentication
 requirement, input source, downstream sink or service, and current verification
 status. Do not use `attack-surface.md` as a DOCX source or as a shortcut into
 `confirmed/`.
@@ -340,6 +342,8 @@ Final summaries must explicitly distinguish confirmed vulnerabilities, false pos
 - [recommended-security-tooling.md](./assets/references/recommended-security-tooling.md)
 - [java-web-audit-playbook.md](./assets/references/java-web-audit-playbook.md)
 - [go-web-audit-playbook.md](./assets/references/go-web-audit-playbook.md)
+- [nodejs-web-audit-playbook.md](./assets/references/nodejs-web-audit-playbook.md)
+- [python-web-audit-playbook.md](./assets/references/python-web-audit-playbook.md)
 - [ssrf-checklist.md](./assets/references/ssrf-checklist.md)
 - [path-traversal-checklist.md](./assets/references/path-traversal-checklist.md)
 - [prototype-pollution-checklist.md](./assets/references/prototype-pollution-checklist.md)

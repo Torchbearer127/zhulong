@@ -20,6 +20,8 @@ REQUIRED_FILES = [
     "assets/references/final-summary-template.md",
     "assets/references/java-web-audit-playbook.md",
     "assets/references/go-web-audit-playbook.md",
+    "assets/references/nodejs-web-audit-playbook.md",
+    "assets/references/python-web-audit-playbook.md",
     "assets/references/ssrf-checklist.md",
     "assets/references/path-traversal-checklist.md",
     "assets/references/prototype-pollution-checklist.md",
@@ -257,6 +259,16 @@ def main() -> None:
     )
     require_text(
         plugin_root / "templates/claude-skill/SKILL.md",
+        "nodejs-web-audit-playbook.md",
+        "Claude skill template Node.js Web playbook reference",
+    )
+    require_text(
+        plugin_root / "templates/claude-skill/SKILL.md",
+        "python-web-audit-playbook.md",
+        "Claude skill template Python Web playbook reference",
+    )
+    require_text(
+        plugin_root / "templates/claude-skill/SKILL.md",
         "local_knowledge_checklists",
         "Claude skill template local checklist planner contract",
     )
@@ -350,6 +362,33 @@ def main() -> None:
         "Current Verification Status",
         "Go Web playbook verification status field",
     )
+    for playbook in (
+        "nodejs-web-audit-playbook.md",
+        "python-web-audit-playbook.md",
+    ):
+        path = plugin_root / "assets/references" / playbook
+        for expected in (
+            "Fast Model",
+            "Minimum entry inventory fields",
+            "Route / Endpoint",
+            "Method",
+            "Handler / Controller",
+            "Authentication Requirement",
+            "Input Source",
+            "Downstream Sink / Service",
+            "Current Verification Status",
+            "Source-To-Sink Tracing Guidance",
+            "Docker-Only Verification Reminders",
+            "Reference Sources",
+            "cannot confirm a vulnerability by themselves",
+            "Do not generate DOCX reports from playbook hypotheses alone",
+            "verification_status=confirmed_in_docker",
+        ):
+            require_text(
+                path,
+                expected,
+                f"{playbook} required text {expected}",
+            )
     require_text(
         plugin_root / "assets/references/recommended-security-tooling.md",
         "Do not paste raw scanner logs into `attack-surface.md`",
@@ -854,7 +893,7 @@ def main() -> None:
         if mixed_planner_output.count("Minimum entry inventory fields: route or endpoint, method, handler/controller") != 1:
             raise SystemExit("FAILED: planner output duplicated minimum entry inventory fields for mixed Java/Go workspace")
         (repo_dir / "package.json").write_text(
-            '{"name":"selftest","version":"1.0.0","dependencies":{"lodash":"^4.17.21"}}\n',
+            '{"name":"selftest","version":"1.0.0","dependencies":{"express":"^4.18.0","fastify":"^4.0.0","next":"^14.0.0","lodash":"^4.17.21"}}\n',
             encoding="utf-8",
         )
         node_route = repo_dir / "routes/proxy.js"
@@ -862,7 +901,13 @@ def main() -> None:
         node_route.write_text(
             "const fs = require('fs');\n"
             "const path = require('path');\n"
+            "const express = require('express');\n"
+            "const fastify = require('fastify')();\n"
             "const _ = require('lodash');\n"
+            "const app = express();\n"
+            "app.get('/proxy', proxy);\n"
+            "fastify.post('/upload', async function route(request, reply) { return reply.send({ok: true}); });\n"
+            "export default function handler(req, res) { return res.json({ok: true}); }\n"
             "async function proxy(req) {\n"
             "  await fetch(req.query.url);\n"
             "  fs.readFileSync(path.join('/srv/files', req.query.filename));\n"
@@ -886,6 +931,47 @@ def main() -> None:
         ):
             if expected not in checklist_output:
                 raise SystemExit(f"FAILED: planner output missing checklist recommendation: {expected}")
+        for expected in (
+            "assets/references/nodejs-web-audit-playbook.md",
+            "Node.js Web: inventory Express/Koa/Fastify/Next.js routes",
+        ):
+            if expected not in checklist_output:
+                raise SystemExit(f"FAILED: planner output missing Node.js Web playbook recommendation: {expected}")
+        (repo_dir / "requirements.txt").write_text(
+            "flask\nfastapi\ndjango\n",
+            encoding="utf-8",
+        )
+        python_app = repo_dir / "api/app.py"
+        python_app.parent.mkdir(parents=True, exist_ok=True)
+        python_app.write_text(
+            "from flask import Flask, request\n"
+            "from fastapi import FastAPI, UploadFile\n"
+            "from django.urls import path\n\n"
+            "app = Flask(__name__)\n"
+            "api = FastAPI()\n\n"
+            "@app.route('/download')\n"
+            "def download():\n"
+            "    return request.args.get('file', '')\n\n"
+            "@api.post('/upload')\n"
+            "async def upload(file: UploadFile):\n"
+            "    return {'name': file.filename}\n\n"
+            "urlpatterns = [path('demo/', lambda request: None)]\n",
+            encoding="utf-8",
+        )
+        python_planner_output = run_capture([
+            sys.executable,
+            str(workspace / "bin/plan-security-toolchain.py"),
+            "--target-dir",
+            str(repo_dir),
+            "--workspace-dir",
+            str(workspace),
+        ], plugin_root)
+        for expected in (
+            "assets/references/python-web-audit-playbook.md",
+            "Python Web: inventory Flask/Django/FastAPI/Starlette routes",
+        ):
+            if expected not in python_planner_output:
+                raise SystemExit(f"FAILED: planner output missing Python Web playbook recommendation: {expected}")
         run([
             "bash",
             str(plugin_root / "scripts/refresh_workspace_helpers.sh"),
@@ -1323,6 +1409,16 @@ def main() -> None:
             installed_skill / "SKILL.md",
             "local_knowledge_checklists",
             "installed Claude skill local checklist planner contract",
+        )
+        require_text(
+            installed_skill / "SKILL.md",
+            "nodejs-web-audit-playbook.md",
+            "installed Claude skill Node.js Web playbook reference",
+        )
+        require_text(
+            installed_skill / "SKILL.md",
+            "python-web-audit-playbook.md",
+            "installed Claude skill Python Web playbook reference",
         )
         require_text(
             installed_skill / "SKILL.md",

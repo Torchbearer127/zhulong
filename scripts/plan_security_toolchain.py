@@ -74,6 +74,44 @@ def detect_attack_surface(root: Path) -> list[str]:
         "echo.New(",
         "fiber.New(",
     ]
+    node_markers = [
+        "require('express')",
+        'require("express")',
+        "from 'express'",
+        'from "express"',
+        "express()",
+        "new koa(",
+        "require('koa')",
+        'require("koa")',
+        "fastify(",
+        "require('fastify')",
+        'require("fastify")',
+        "app.get(",
+        "app.post(",
+        "router.get(",
+        "router.post(",
+        "export default function handler",
+        "export async function get",
+        "export async function post",
+        "nextrequest",
+        "nextresponse",
+    ]
+    python_markers = [
+        "from flask import",
+        "flask(",
+        "@app.route(",
+        "blueprint(",
+        "django.urls",
+        "urlpatterns",
+        "path(",
+        "re_path(",
+        "fastapi(",
+        "apirouter(",
+        "@app.get(",
+        "@app.post(",
+        "starlette(",
+        "route(",
+    ]
     for path in root.rglob("*"):
         if not path.is_file() or path.stat().st_size > 2_000_000:
             continue
@@ -95,6 +133,30 @@ def detect_attack_surface(root: Path) -> list[str]:
             continue
         if any(marker in text for marker in go_markers):
             indicators.append("go-web")
+            indicators.append("http-api")
+            break
+    for path in root.rglob("*"):
+        if not path.is_file() or path.stat().st_size > 2_000_000:
+            continue
+        if path.suffix.lower() not in {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"}:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore").lower()
+        except OSError:
+            continue
+        if any(marker in text for marker in node_markers):
+            indicators.append("node-web")
+            indicators.append("http-api")
+            break
+    for path in root.rglob("*.py"):
+        if path.stat().st_size > 2_000_000:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore").lower()
+        except OSError:
+            continue
+        if any(marker in text for marker in python_markers):
+            indicators.append("python-web")
             indicators.append("http-api")
             break
     return sorted(set(indicators))
@@ -311,6 +373,10 @@ def specialized_playbooks(stacks: list[str], attack_surface: list[str]) -> list[
         playbooks.append("assets/references/java-web-audit-playbook.md")
     if "go" in stacks or "go-web" in attack_surface:
         playbooks.append("assets/references/go-web-audit-playbook.md")
+    if "node-web" in attack_surface or ("node" in stacks and "http-api" in attack_surface):
+        playbooks.append("assets/references/nodejs-web-audit-playbook.md")
+    if "python-web" in attack_surface or ("python" in stacks and "http-api" in attack_surface):
+        playbooks.append("assets/references/python-web-audit-playbook.md")
     return playbooks
 
 
@@ -327,6 +393,18 @@ def audit_focus(stacks: list[str], attack_surface: list[str]) -> list[str]:
             "Build a Go entry map: main.go, router registration, middleware, handlers, and debug/pprof endpoints.",
             "Prioritize missing auth middleware, SSRF and redirect behavior, exec.Command shell use, path traversal, SQL string construction, template trusted types, CORS/CSRF, and missing timeouts/body limits.",
             "For each candidate, trace request input -> handler -> sink and record middleware, validation, timeout, and whitelist assumptions.",
+        ])
+    if "node-web" in attack_surface or ("node" in stacks and "http-api" in attack_surface):
+        focus.extend([
+            "Build a Node.js entry map: Express/Koa/Fastify/Next.js routes, middleware, body parsers, upload handlers, and auth/session/CORS/CSRF coverage.",
+            "Prioritize authz gaps, SSRF, command execution, path traversal/upload issues, prototype pollution, template/XSS, config injection, and missing body/upload/timeouts limits.",
+            "For each candidate, trace request input -> middleware -> handler -> sink and record validation, parser limits, redirects, and dependency-version assumptions.",
+        ])
+    if "python-web" in attack_surface or ("python" in stacks and "http-api" in attack_surface):
+        focus.extend([
+            "Build a Python Web entry map: Flask/Django/FastAPI/Starlette routes, middleware, dependencies/decorators, upload handlers, and auth/session/CORS/CSRF coverage.",
+            "Prioritize authz gaps, raw SQL/ORM injection, SSRF, command execution, path traversal/upload issues, template injection/XSS, deserialization, and missing body/upload/timeouts limits.",
+            "For each candidate, trace request input -> middleware/dependency/decorator -> handler/view -> sink and record validation, permissions, settings, and parameterization assumptions.",
         ])
     if focus:
         focus.append("Write or update <audit-workspace>/attack-surface.md before final confirmation so the review path is recoverable.")
@@ -362,6 +440,22 @@ def attack_surface_guidance(stacks: list[str], attack_surface: list[str]) -> lis
         append_once(minimum_fields)
         guidance.append(
             "For each Go entry, note handler function, request readers such as query/path/body/header/cookie, middleware/auth coverage, downstream service, and sink function when known."
+        )
+    if "node-web" in attack_surface or ("node" in stacks and "http-api" in attack_surface):
+        guidance.append(
+            "Node.js Web: inventory Express/Koa/Fastify/Next.js routes, middleware chain, body parsers, upload handlers, and auth/session/CORS/CSRF coverage in attack-surface.md."
+        )
+        append_once(minimum_fields)
+        guidance.append(
+            "For each Node.js entry, note handler/API route, request readers such as query/path/body/header/cookie/files, middleware/auth coverage, downstream service, and sink function when known."
+        )
+    if "python-web" in attack_surface or ("python" in stacks and "http-api" in attack_surface):
+        guidance.append(
+            "Python Web: inventory Flask/Django/FastAPI/Starlette routes, middleware, dependencies/decorators, upload handlers, and auth/session/CORS/CSRF coverage in attack-surface.md."
+        )
+        append_once(minimum_fields)
+        guidance.append(
+            "For each Python entry, note handler/view/path operation, request readers such as query/path/body/header/cookie/files, middleware/dependency/auth coverage, downstream service, and sink function when known."
         )
     if "http-api" in attack_surface:
         guidance.append("HTTP/API: summarize route or API inventory in attack-surface.md before deep verification.")
