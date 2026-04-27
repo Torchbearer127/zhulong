@@ -40,3 +40,4 @@ security-research-*/
 # Claude runtime sync backups are installation artifacts, not source
 *.backup.*
 .zhulong-backups/
+.omc/

@@ -12,6 +12,8 @@ Purpose:
 What it creates:
   <target>/<workspace-name>/
     asr-config.json
+    stage-status.json
+    audit-events.jsonl
     fingerprint.md
     candidate-findings.md
     false-positives.md
@@ -26,6 +28,8 @@ What it creates:
       scaffold-bilingual-findings.py
       validate-report-bundle.py
       validate-all-report-bundles.py
+      write-audit-event.py
+      validate-workspace-state.py
     scripts/
       asr-start.sh
       asr-exec.sh
@@ -37,6 +41,8 @@ What it creates:
       scaffold-bilingual-findings.py
       validate-report-bundle.py
       validate-all-report-bundles.py
+      write-audit-event.py
+      validate-workspace-state.py
     poc/
     evidence/
     docker/
@@ -145,6 +151,18 @@ SUMMARY_LANGUAGE="$(normalize_language "$SUMMARY_LANGUAGE")"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 TARGET_DIR="$(cd "$TARGET_DIR" && pwd)"
+PLUGIN_VERSION="$(python3 - <<'PY' "$SKILL_DIR/.codex-plugin/plugin.json"
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+try:
+    print(json.loads(path.read_text(encoding="utf-8")).get("version", "unknown"))
+except Exception:
+    print("unknown")
+PY
+)"
 if [[ -z "$WORKSPACE_NAME" ]]; then
   WORKSPACE_NAME="$(generate_workspace_name "$TARGET_DIR")"
 fi
@@ -176,6 +194,13 @@ write_text_file() {
   echo "write    $dst"
 }
 
+write_state_event() {
+  local writer="$SKILL_DIR/scripts/write_audit_event.py"
+  [[ -f "$writer" ]] || return 0
+  python3 "$writer" "$@" || \
+    echo "[zhulong] WARNING: state write failed during workspace bootstrap (non-fatal)." >&2
+}
+
 mkdir -p \
   "$WORKSPACE_DIR/bin" \
   "$WORKSPACE_DIR/scripts" \
@@ -191,6 +216,7 @@ workspace_created_at="$(date '+%Y-%m-%d %H:%M:%S %z')"
 write_text_file "$WORKSPACE_DIR/asr-config.json" "{
   \"output_language\": \"$OUTPUT_LANGUAGE\",
   \"summary_language\": \"$SUMMARY_LANGUAGE\",
+  \"plugin_version\": \"$PLUGIN_VERSION\",
   \"workspace_root\": \"$WORKSPACE_NAME\",
   \"workspace_label\": \"security-research\",
   \"workspace_created_at\": \"$workspace_created_at\",
@@ -205,6 +231,17 @@ write_text_file "$WORKSPACE_DIR/asr-config.json" "{
 "
 printf '%s\n' "$WORKSPACE_NAME" > "$TARGET_DIR/.asr-latest-workspace"
 echo "write    $TARGET_DIR/.asr-latest-workspace"
+
+write_state_event \
+  --workspace-dir "$WORKSPACE_DIR" \
+  --target-repo "$TARGET_DIR" \
+  --plugin-version "$PLUGIN_VERSION" \
+  --event workspace_created \
+  --stage workspace_preparing \
+  --status running \
+  --event-status ok \
+  --message "Audit workspace created." \
+  --detail "workspace_name=$WORKSPACE_NAME"
 
 copy_file \
   "$SKILL_DIR/scripts/asr_start.sh" \
@@ -306,6 +343,26 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 exec python3 "$SCRIPT_DIR/../bin/validate-all-report-bundles.py" "$@"
 '
 chmod +x "$WORKSPACE_DIR/scripts/validate-all-report-bundles.py"
+copy_file \
+  "$SKILL_DIR/scripts/write_audit_event.py" \
+  "$WORKSPACE_DIR/bin/write-audit-event.py"
+chmod +x "$WORKSPACE_DIR/bin/write-audit-event.py"
+write_text_file "$WORKSPACE_DIR/scripts/write-audit-event.py" '#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec python3 "$SCRIPT_DIR/../bin/write-audit-event.py" "$@"
+'
+chmod +x "$WORKSPACE_DIR/scripts/write-audit-event.py"
+copy_file \
+  "$SKILL_DIR/scripts/validate_workspace_state.py" \
+  "$WORKSPACE_DIR/bin/validate-workspace-state.py"
+chmod +x "$WORKSPACE_DIR/bin/validate-workspace-state.py"
+write_text_file "$WORKSPACE_DIR/scripts/validate-workspace-state.py" '#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec python3 "$SCRIPT_DIR/../bin/validate-workspace-state.py" "$@"
+'
+chmod +x "$WORKSPACE_DIR/scripts/validate-workspace-state.py"
 copy_file \
   "$SKILL_DIR/assets/attacker-container/Dockerfile" \
   "$WORKSPACE_DIR/docker/attacker-container/Dockerfile"

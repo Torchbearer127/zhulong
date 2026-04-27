@@ -15,6 +15,47 @@ EOF
 REPO_ROOT=""
 WORKSPACE_DIR=""
 OUTPUT_DIR=""
+PROBES_RUN=0
+PROBES_SKIPPED=0
+
+find_state_writer() {
+  local script_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  if [[ -f "$script_dir/write_audit_event.py" ]]; then
+    printf '%s\n' "$script_dir/write_audit_event.py"
+    return
+  fi
+  if [[ -f "$script_dir/write-audit-event.py" ]]; then
+    printf '%s\n' "$script_dir/write-audit-event.py"
+    return
+  fi
+  if [[ -f "$script_dir/../bin/write-audit-event.py" ]]; then
+    printf '%s\n' "$script_dir/../bin/write-audit-event.py"
+    return
+  fi
+}
+
+write_state_event() {
+  local writer
+  [[ -n "${WORKSPACE_DIR:-}" ]] || return 0
+  writer="$(find_state_writer)"
+  [[ -n "$writer" ]] || return 0
+  python3 "$writer" "$@" --workspace-dir "$WORKSPACE_DIR" --target-repo "$REPO_ROOT" || \
+    echo "[zhulong] WARNING: state write failed (non-fatal)." >&2
+}
+
+launcher_hint() {
+  local script_dir="$1"
+  if [[ -f "$script_dir/asr_start.sh" ]]; then
+    printf '%s\n' "$script_dir/asr_start.sh"
+  elif [[ -f "$script_dir/asr-start.sh" ]]; then
+    printf '%s\n' "$script_dir/asr-start.sh"
+  elif [[ -f "$script_dir/../bin/asr-start.sh" ]]; then
+    printf '%s\n' "$script_dir/../bin/asr-start.sh"
+  else
+    printf '%s\n' "path/to/zhulong/scripts/asr_start.sh"
+  fi
+}
 
 is_valid_workspace_dir() {
   local candidate="${1:-}"
@@ -121,18 +162,29 @@ infer_workspace_dir() {
   fi
 
   echo "No valid per-audit workspace was found under $repo_root." >&2
-  echo "Run: bash /Users/torchbearer/Documents/oss-vulnerability-research/plugins/zhulong-plugin/scripts/asr_start.sh --repo-root $repo_root" >&2
+  echo "Run: bash $(launcher_hint "$script_dir") --repo-root $repo_root" >&2
   exit 1
 }
 
 if [[ -z "$OUTPUT_DIR" ]]; then
   WORKSPACE_DIR="$(infer_workspace_dir "$REPO_ROOT")"
   OUTPUT_DIR="$WORKSPACE_DIR/evidence/initial-probes"
+elif [[ -n "$WORKSPACE_DIR" ]]; then
+  WORKSPACE_DIR="${WORKSPACE_DIR/#\~/$HOME}"
+  WORKSPACE_DIR="$(cd "$WORKSPACE_DIR" && pwd)"
 fi
 mkdir -p "$OUTPUT_DIR"
 
 SUMMARY_FILE="$OUTPUT_DIR/summary.txt"
 : > "$SUMMARY_FILE"
+
+write_state_event \
+  --event initial_probe_started \
+  --stage initial_probing \
+  --status running \
+  --event-status ok \
+  --message "Initial probes started." \
+  --detail "output_dir=$OUTPUT_DIR"
 
 run_probe() {
   local name="$1"
@@ -140,6 +192,7 @@ run_probe() {
   local logfile="$OUTPUT_DIR/${name}.log"
   local statusfile="$OUTPUT_DIR/${name}.status"
 
+  PROBES_RUN=$((PROBES_RUN + 1))
   printf '[%s] running\n' "$name" >>"$SUMMARY_FILE"
   if "$@" >"$logfile" 2>&1; then
     printf 'ok\n' >"$statusfile"
@@ -159,6 +212,7 @@ run_osv_probe() {
   local statusfile="$OUTPUT_DIR/${name}.status"
   local code
 
+  PROBES_RUN=$((PROBES_RUN + 1))
   printf '[%s] running\n' "$name" >>"$SUMMARY_FILE"
   if osv-scanner scan source -r "$REPO_ROOT" >"$logfile" 2>&1; then
     printf 'ok\n' >"$statusfile"
@@ -186,6 +240,7 @@ run_osv_probe() {
 note_skip() {
   local name="$1"
   local reason="$2"
+  PROBES_SKIPPED=$((PROBES_SKIPPED + 1))
   printf '%s\n' "$reason" >"$OUTPUT_DIR/${name}.status"
   printf '[%s] skipped: %s\n' "$name" "$reason" >>"$SUMMARY_FILE"
 }
@@ -293,6 +348,27 @@ if has_cmd trivy; then
   run_probe trivy trivy fs "$REPO_ROOT"
 else
   note_skip trivy "missing trivy"
+fi
+
+if [[ "$PROBES_RUN" -gt 0 ]]; then
+  write_state_event \
+    --event initial_probe_completed \
+    --stage initial_probing \
+    --status running \
+    --event-status ok \
+    --message "Initial probes completed." \
+    --detail "output_dir=$OUTPUT_DIR" \
+    --detail "probes_run=$PROBES_RUN" \
+    --detail "probes_skipped=$PROBES_SKIPPED"
+else
+  write_state_event \
+    --event initial_probe_skipped \
+    --stage initial_probing \
+    --status running \
+    --event-status skipped \
+    --message "All initial probes were skipped." \
+    --detail "output_dir=$OUTPUT_DIR" \
+    --detail "probes_skipped=$PROBES_SKIPPED"
 fi
 
 cat <<EOF

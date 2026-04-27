@@ -26,6 +26,8 @@ REQUIRED_FILES = [
     "scripts/run_initial_probes.sh",
     "scripts/refresh_workspace_helpers.sh",
     "scripts/sync_to_claude_skill.sh",
+    "scripts/write_audit_event.py",
+    "scripts/validate_workspace_state.py",
     "scripts/plan_security_toolchain.py",
     "scripts/render_confirmed_vuln_docx.py",
     "scripts/scaffold_bilingual_findings.py",
@@ -168,6 +170,8 @@ def main() -> None:
 
     run([sys.executable, "-m", "py_compile",
          str(plugin_root / "scripts/plan_security_toolchain.py"),
+         str(plugin_root / "scripts/write_audit_event.py"),
+         str(plugin_root / "scripts/validate_workspace_state.py"),
          str(plugin_root / "scripts/render_confirmed_vuln_docx.py"),
          str(plugin_root / "scripts/scaffold_bilingual_findings.py"),
          str(plugin_root / "scripts/validate_report_bundle.py"),
@@ -204,8 +208,24 @@ def main() -> None:
             raise SystemExit("FAILED: bootstrapped workspace is missing run-initial-probes.sh")
         if not (workspace / "bin/asr-start.sh").exists():
             raise SystemExit("FAILED: bootstrapped workspace is missing asr-start.sh")
+        if not (workspace / "stage-status.json").exists():
+            raise SystemExit("FAILED: bootstrapped workspace is missing stage-status.json")
+        if not (workspace / "audit-events.jsonl").exists():
+            raise SystemExit("FAILED: bootstrapped workspace is missing audit-events.jsonl")
+        if not (workspace / "bin/write-audit-event.py").exists():
+            raise SystemExit("FAILED: bootstrapped workspace is missing write-audit-event.py")
+        if not (workspace / "bin/validate-workspace-state.py").exists():
+            raise SystemExit("FAILED: bootstrapped workspace is missing validate-workspace-state.py")
         if not (workspace / "bin/plan-security-toolchain.py").exists():
             raise SystemExit("FAILED: bootstrapped workspace is missing plan-security-toolchain.py")
+        run([
+            sys.executable,
+            str(plugin_root / "scripts/validate_workspace_state.py"),
+            "--workspace-dir",
+            str(workspace),
+            "--repo-root",
+            str(repo_dir),
+        ], plugin_root)
         run([
             sys.executable,
             str(workspace / "bin/plan-security-toolchain.py"),
@@ -342,6 +362,10 @@ def main() -> None:
             raise SystemExit("FAILED: Claude skill sync did not copy run_initial_probes.sh")
         if not (installed_skill / "scripts/asr_start.sh").exists():
             raise SystemExit("FAILED: Claude skill sync did not copy asr_start.sh")
+        if not (installed_skill / "scripts/write_audit_event.py").exists():
+            raise SystemExit("FAILED: Claude skill sync did not copy write_audit_event.py")
+        if not (installed_skill / "scripts/validate_workspace_state.py").exists():
+            raise SystemExit("FAILED: Claude skill sync did not copy validate_workspace_state.py")
         if not (installed_skill / "assets/tool-registry.json").exists():
             raise SystemExit("FAILED: Claude skill sync did not copy assets")
         require_text(

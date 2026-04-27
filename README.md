@@ -22,7 +22,7 @@ For Claude Code, the actual usable form is a skill installed under `~/.claude/sk
 - use the sync script below to install or refresh the Claude-native skill
 
 ```bash
-bash /Users/torchbearer/Documents/oss-vulnerability-research/plugins/zhulong-plugin/scripts/sync_to_claude_skill.sh
+bash scripts/sync_to_claude_skill.sh
 ```
 
 After that, restart Claude Code or open a new Claude Code session.
@@ -43,7 +43,7 @@ Operational defaults to keep:
 
 Prompt template:
 
-- [claude-code-zhulong-prompt-template.md](/Users/torchbearer/Documents/oss-vulnerability-research/claude-code-zhulong-prompt-template.md)
+- `claude-code-zhulong-prompt-template.md` in the parent OSS research workspace
 
 The prompt template is intentionally short. Durable audit rules belong in the
 skill, reference contracts, renderer, and validators. A normal launch prompt only

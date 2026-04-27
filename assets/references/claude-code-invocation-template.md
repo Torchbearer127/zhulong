@@ -9,7 +9,7 @@ prompt. Do not copy the full plugin contract into every audit request.
 - Sync this package into Claude Code before use:
 
 ```bash
-bash /Users/torchbearer/Documents/oss-vulnerability-research/plugins/zhulong-plugin/scripts/sync_to_claude_skill.sh
+bash plugins/zhulong-plugin/scripts/sync_to_claude_skill.sh
 ```
 
 - Restart Claude Code or open a new session after syncing.
@@ -17,7 +17,7 @@ bash /Users/torchbearer/Documents/oss-vulnerability-research/plugins/zhulong-plu
 - If manual fallback is genuinely needed, use the single launcher:
 
 ```bash
-bash /Users/torchbearer/Documents/oss-vulnerability-research/plugins/zhulong-plugin/scripts/asr_start.sh --source <repo-or-url>
+bash plugins/zhulong-plugin/scripts/asr_start.sh --source <repo-or-url>
 ```
 
 ## Prompt Contract

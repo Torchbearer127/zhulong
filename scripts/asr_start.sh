@@ -247,7 +247,7 @@ if [[ -z "$docker_gate_status" ]]; then
   docker_gate_status="unknown"
 fi
 
-runtime_json="$(bash "$WORKSPACE_DIR/bin/check_omc_runtime.sh" --json)"
+runtime_json="$(bash "$WORKSPACE_DIR/bin/check_omc_runtime.sh" --workspace-dir "$WORKSPACE_DIR" --json)"
 parse_runtime_json "$runtime_json"
 
 cleanup_performed="0"

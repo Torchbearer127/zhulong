@@ -4,7 +4,7 @@ set -euo pipefail
 usage() {
   cat <<'EOF'
 Usage:
-  check_omc_runtime.sh [--cleanup-stale] [--force-kill-suspect-teammates] [--json]
+  check_omc_runtime.sh [--cleanup-stale] [--force-kill-suspect-teammates] [--workspace-dir <dir>] [--json]
 
 Purpose:
   Detect whether OMC multi-agent execution is safe to use in the current Claude Code session.
@@ -28,6 +28,59 @@ EOF
 CLEANUP_STALE=0
 FORCE_KILL_SUSPECT_TEAMMATES=0
 JSON_OUTPUT=0
+WORKSPACE_DIR=""
+
+is_valid_workspace_dir() {
+  local candidate="${1:-}"
+  [[ -n "$candidate" ]] || return 1
+  [[ -f "$candidate/asr-config.json" ]] || return 1
+}
+
+infer_workspace_dir() {
+  local script_dir inferred
+  if [[ -n "${WORKSPACE_DIR:-}" ]]; then
+    local explicit="${WORKSPACE_DIR/#\~/$HOME}"
+    if is_valid_workspace_dir "$explicit"; then
+      cd "$explicit" && pwd
+      return
+    fi
+    return 1
+  fi
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  inferred="$(cd "$script_dir/.." && pwd)"
+  if is_valid_workspace_dir "$inferred"; then
+    printf '%s\n' "$inferred"
+    return
+  fi
+  return 1
+}
+
+find_state_writer() {
+  local script_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  if [[ -f "$script_dir/write_audit_event.py" ]]; then
+    printf '%s\n' "$script_dir/write_audit_event.py"
+    return
+  fi
+  if [[ -f "$script_dir/write-audit-event.py" ]]; then
+    printf '%s\n' "$script_dir/write-audit-event.py"
+    return
+  fi
+  if [[ -f "$script_dir/../bin/write-audit-event.py" ]]; then
+    printf '%s\n' "$script_dir/../bin/write-audit-event.py"
+    return
+  fi
+}
+
+write_state_event() {
+  local workspace writer
+  workspace="$(infer_workspace_dir 2>/dev/null || true)"
+  [[ -n "$workspace" ]] || return 0
+  writer="$(find_state_writer)"
+  [[ -n "$writer" ]] || return 0
+  python3 "$writer" "$@" --workspace-dir "$workspace" --target-repo "$(cd "$workspace/.." && pwd)" || \
+    echo "[zhulong] WARNING: state write failed (non-fatal)." >&2
+}
 
 collect_current_session_teammate_ancestors() {
   local current="$1"
@@ -89,6 +142,10 @@ while [[ $# -gt 0 ]]; do
     --force-kill-suspect-teammates)
       FORCE_KILL_SUSPECT_TEAMMATES=1
       shift
+      ;;
+    --workspace-dir)
+      WORKSPACE_DIR="${2:-}"
+      shift 2
       ;;
     --json)
       JSON_OUTPUT=1
@@ -228,6 +285,13 @@ elif [[ "$teams_enabled" != "1" ]]; then
   recommended_mode="single_agent_only"
   reason="CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS is not enabled"
 fi
+
+write_state_event \
+  --event omc_runtime_checked \
+  --stage environment_checking \
+  --status running \
+  --event-status "$recommended_mode" \
+  --message "$reason"
 
 if [[ "$JSON_OUTPUT" == "1" ]]; then
   teammate_blob=""

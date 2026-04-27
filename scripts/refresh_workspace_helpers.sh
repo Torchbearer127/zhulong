@@ -113,6 +113,14 @@ copy_helper() {
   chmod +x "$dst"
 }
 
+copy_helper_if_present() {
+  local src="$1"
+  local dst="$2"
+  if [[ -f "$src" ]]; then
+    copy_helper "$src" "$dst"
+  fi
+}
+
 copy_helper "$SKILL_DIR/scripts/asr_start.sh" "$WORKSPACE_DIR/bin/asr-start.sh"
 copy_helper "$SKILL_DIR/scripts/asr_exec.sh" "$WORKSPACE_DIR/bin/asr-exec.sh"
 copy_helper "$SKILL_DIR/scripts/check_docker_gate.sh" "$WORKSPACE_DIR/bin/check-docker-gate.sh"
@@ -123,6 +131,19 @@ copy_helper "$SKILL_DIR/scripts/plan_security_toolchain.py" "$WORKSPACE_DIR/bin/
 copy_helper "$SKILL_DIR/scripts/scaffold_bilingual_findings.py" "$WORKSPACE_DIR/bin/scaffold-bilingual-findings.py"
 copy_helper "$SKILL_DIR/scripts/validate_report_bundle.py" "$WORKSPACE_DIR/bin/validate-report-bundle.py"
 copy_helper "$SKILL_DIR/scripts/validate_all_report_bundles.py" "$WORKSPACE_DIR/bin/validate-all-report-bundles.py"
+copy_helper_if_present "$SKILL_DIR/scripts/write_audit_event.py" "$WORKSPACE_DIR/bin/write-audit-event.py"
+copy_helper_if_present "$SKILL_DIR/scripts/validate_workspace_state.py" "$WORKSPACE_DIR/bin/validate-workspace-state.py"
+
+if [[ -f "$WORKSPACE_DIR/bin/write-audit-event.py" ]]; then
+  python3 "$WORKSPACE_DIR/bin/write-audit-event.py" \
+    --workspace-dir "$WORKSPACE_DIR" \
+    --target-repo "$(cd "$WORKSPACE_DIR/.." && pwd)" \
+    --event workspace_helpers_refreshed \
+    --stage workspace_preparing \
+    --status running \
+    --event-status ok \
+    --message "Workspace helper scripts refreshed." || true
+fi
 
 cat <<EOF
 Workspace helpers refreshed successfully:

@@ -19,6 +19,44 @@ REPO_ROOT=""
 WORKSPACE_DIR=""
 NOTE=""
 
+find_state_writer() {
+  local script_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  if [[ -f "$script_dir/write_audit_event.py" ]]; then
+    printf '%s\n' "$script_dir/write_audit_event.py"
+    return
+  fi
+  if [[ -f "$script_dir/write-audit-event.py" ]]; then
+    printf '%s\n' "$script_dir/write-audit-event.py"
+    return
+  fi
+  if [[ -f "$script_dir/../bin/write-audit-event.py" ]]; then
+    printf '%s\n' "$script_dir/../bin/write-audit-event.py"
+    return
+  fi
+}
+
+write_state_event() {
+  local writer
+  writer="$(find_state_writer)"
+  [[ -n "$writer" ]] || return 0
+  python3 "$writer" "$@" || \
+    echo "[zhulong] WARNING: state write failed (non-fatal)." >&2
+}
+
+launcher_hint() {
+  local script_dir="$1"
+  if [[ -f "$script_dir/asr_start.sh" ]]; then
+    printf '%s\n' "$script_dir/asr_start.sh"
+  elif [[ -f "$script_dir/asr-start.sh" ]]; then
+    printf '%s\n' "$script_dir/asr-start.sh"
+  elif [[ -f "$script_dir/../bin/asr-start.sh" ]]; then
+    printf '%s\n' "$script_dir/../bin/asr-start.sh"
+  else
+    printf '%s\n' "path/to/zhulong/scripts/asr_start.sh"
+  fi
+}
+
 is_valid_workspace_dir() {
   local candidate="${1:-}"
   [[ -n "$candidate" ]] || return 1
@@ -124,7 +162,7 @@ infer_workspace_dir() {
   fi
 
   echo "No valid per-audit workspace was found under $repo_root." >&2
-  echo "Run: bash /Users/torchbearer/Documents/oss-vulnerability-research/plugins/zhulong-plugin/scripts/asr_start.sh --repo-root $repo_root" >&2
+  echo "Run: bash $(launcher_hint "$script_dir") --repo-root $repo_root" >&2
   exit 1
 }
 
@@ -144,12 +182,25 @@ PY
 
 TMP_OUT="$(mktemp -t asr-docker-gate.XXXXXX)"
 if docker info >"$TMP_OUT" 2>&1; then
+  write_state_event \
+    --workspace-dir "$WORKSPACE_DIR" \
+    --target-repo "$REPO_ROOT" \
+    --event docker_gate_ready \
+    --stage environment_checking \
+    --status running \
+    --event-status ok \
+    --message "Docker gate is ready."
   echo "docker_gate=ready"
   rm -f "$TMP_OUT"
   exit 0
 fi
 
 timestamp="$(date '+%Y-%m-%d %H:%M:%S %z')"
+docker_reason="$(head -n 1 "$TMP_OUT" | tr -d '\r' | sed 's/[[:space:]]*$//')"
+if [[ -z "$docker_reason" ]]; then
+  docker_reason="docker info failed; Docker daemon or socket is unavailable."
+fi
+resume_step="Fix Docker/OrbStack, then run: bash $WORKSPACE_DIR/bin/check-docker-gate.sh --repo-root $REPO_ROOT"
 {
   echo ""
   echo "## $timestamp"
@@ -187,16 +238,28 @@ timestamp="$(date '+%Y-%m-%d %H:%M:%S %z')"
   echo '```'
 } >>"$LOG_FILE"
 
+write_state_event \
+  --workspace-dir "$WORKSPACE_DIR" \
+  --target-repo "$REPO_ROOT" \
+  --event docker_gate_blocked \
+  --stage environment_checking \
+  --status blocked \
+  --event-status blocked \
+  --message "Docker gate blocked verification." \
+  --blocker "$docker_reason" \
+  --resume-step "$resume_step" \
+  --detail "audit_log=$LOG_FILE"
+
 cat <<EOF
 ============================================================
 Zhulong Docker Gate Blocked
 ============================================================
 Repository: $REPO_ROOT
 Workspace:  $WORKSPACE_DIR
-Reason:     Docker is unavailable, so verification has been paused.
+Reason:     $docker_reason
 Rule:       Do not verify PoCs or exploit traffic on the host.
 Audit log:  $LOG_FILE
-Next:       Fix Docker/OrbStack, then resume from the same repository workspace.
+Next:       $resume_step
 ============================================================
 docker_gate=blocked
 audit_log=$LOG_FILE
