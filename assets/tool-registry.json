@@ -1,0 +1,161 @@
+{
+  "plugin": "zhulong-plugin",
+  "tiers": {
+    "runtime": [
+      {
+        "name": "docker",
+        "required": true,
+        "role": "containerized verification runtime"
+      },
+      {
+        "name": "gh",
+        "required": false,
+        "role": "GitHub clone and intelligence lookup"
+      }
+    ],
+    "broad_probe": [
+      {
+        "name": "ship-safe",
+        "required": false,
+        "role": "broad first-pass security probe"
+      },
+      {
+        "name": "semgrep",
+        "required": false,
+        "role": "SAST and custom rule scanning"
+      },
+      {
+        "name": "codeql",
+        "required": false,
+        "role": "deeper static analysis on selected targets"
+      }
+    ],
+    "dependency_and_sbom": [
+      {
+        "name": "trivy",
+        "required": false,
+        "role": "filesystem, image, dependency, secret, and misconfiguration scanning"
+      },
+      {
+        "name": "osv-scanner",
+        "required": false,
+        "role": "dependency vulnerability confirmation"
+      },
+      {
+        "name": "syft",
+        "required": false,
+        "role": "SBOM generation"
+      },
+      {
+        "name": "grype",
+        "required": false,
+        "role": "SBOM and image vulnerability matching"
+      },
+      {
+        "name": "mvn",
+        "required": false,
+        "role": "Java Maven dependency tree extraction"
+      },
+      {
+        "name": "gradle",
+        "required": false,
+        "role": "Java Gradle dependency tree extraction"
+      },
+      {
+        "name": "dependency-check",
+        "required": false,
+        "role": "OWASP dependency vulnerability analysis for Java projects"
+      },
+      {
+        "name": "govulncheck",
+        "required": false,
+        "role": "Go vulnerability analysis"
+      },
+      {
+        "name": "go",
+        "required": false,
+        "role": "Go module inventory with go list"
+      }
+    ],
+    "language_sast": [
+      {
+        "name": "spotbugs",
+        "required": false,
+        "role": "Java static bug and security pattern analysis"
+      },
+      {
+        "name": "findsecbugs",
+        "required": false,
+        "role": "Java security bug patterns for SpotBugs"
+      },
+      {
+        "name": "gosec",
+        "required": false,
+        "role": "Go security pattern scanning"
+      },
+      {
+        "name": "golangci-lint",
+        "required": false,
+        "role": "Go lint aggregation and bug-pattern checks"
+      }
+    ],
+    "secrets": [
+      {
+        "name": "gitleaks",
+        "required": false,
+        "role": "secret scanning in repository tree and history"
+      },
+      {
+        "name": "trufflehog",
+        "required": false,
+        "role": "secret scanning in repository tree and history"
+      }
+    ],
+    "dast": [
+      {
+        "name": "nuclei",
+        "required": false,
+        "role": "template-based DAST and exposure checks"
+      },
+      {
+        "name": "ffuf",
+        "required": false,
+        "role": "endpoint and parameter fuzzing"
+      },
+      {
+        "name": "sqlmap",
+        "required": false,
+        "role": "focused SQL injection verification after a live Docker target exists"
+      },
+      {
+        "name": "owasp-zap",
+        "required": false,
+        "role": "deeper web and API dynamic scanning"
+      }
+    ],
+    "mcp_hardening": [
+      {
+        "name": "mcpserver-audit",
+        "required": false,
+        "role": "audit third-party MCP servers before trusting them"
+      },
+      {
+        "name": "mcp-scanner",
+        "required": false,
+        "role": "scan MCP servers for malicious or risky behavior"
+      }
+    ],
+    "document_qa": [
+      {
+        "name": "markitdown",
+        "required": false,
+        "role": "extract generated docx as markdown for readability smoke tests"
+      },
+      {
+        "name": "libreoffice",
+        "required": false,
+        "role": "headless docx conversion validation"
+      }
+    ]
+  }
+}

@@ -1,0 +1,18 @@
+services:
+  attacker:
+    build:
+      context: ./attacker-container
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+    volumes:
+      - ../poc:/workspace/poc
+      - ../evidence:/workspace/evidence
+    networks:
+      - targetnet
+    command: ["bash"]
+
+networks:
+  targetnet:
+    external: true
+    name: ${TARGET_NETWORK:-target_default}

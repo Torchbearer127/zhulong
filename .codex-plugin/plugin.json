@@ -1,0 +1,48 @@
+{
+  "name": "zhulong-plugin",
+  "version": "0.1.0",
+  "description": "Zhulong (烛龙): Docker-first autonomous security audit plugin with dynamic toolchain planning and deterministic vulnerability report generation.",
+  "author": {
+    "name": "Torchbearer127",
+    "email": "[TODO: maintainer@example.com]",
+    "url": "[TODO: https://github.com/maintainer]"
+  },
+  "homepage": "[TODO: https://github.com/maintainer/zhulong-plugin]",
+  "repository": "[TODO: https://github.com/maintainer/zhulong-plugin]",
+  "license": "MIT",
+  "keywords": [
+    "security",
+    "vulnerability-research",
+    "docker",
+    "docx",
+    "audit"
+  ],
+  "skills": "./skills/",
+  "hooks": "",
+  "mcpServers": "",
+  "apps": "",
+  "interface": {
+    "displayName": "Zhulong (烛龙)",
+    "shortDescription": "Docker-first security auditing with deterministic reporting.",
+    "longDescription": "Packages the Zhulong (烛龙) workflow into a plugin-friendly structure with runtime checks, dynamic toolchain planning, Docker-only verification, and stable DOCX bundle generation.",
+    "developerName": "Torchbearer127",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Analyze",
+      "Write",
+      "Automation"
+    ],
+    "websiteURL": "[TODO: https://github.com/maintainer/zhulong-plugin]",
+    "privacyPolicyURL": "[TODO: https://github.com/maintainer/zhulong-plugin#privacy]",
+    "termsOfServiceURL": "[TODO: https://github.com/maintainer/zhulong-plugin#terms]",
+    "defaultPrompt": [
+      "Use the zhulong workflow to audit this repository and verify real vulnerabilities only inside Docker.",
+      "Plan the best toolchain for this repo, run the Docker-only verification workflow, and generate stable confirmed vulnerability bundles.",
+      "Check the local security tooling stack, choose the best available scanners, and validate the final report bundles."
+    ],
+    "brandColor": "#A31F34",
+    "composerIcon": "",
+    "logo": "",
+    "screenshots": []
+  }
+}

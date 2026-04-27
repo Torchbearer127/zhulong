@@ -1,0 +1,390 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import shutil
+from pathlib import Path
+from typing import Any
+
+
+STACK_MARKERS = {
+    "node": ["package.json", "pnpm-lock.yaml", "yarn.lock", "package-lock.json"],
+    "python": ["pyproject.toml", "requirements.txt", "Pipfile", "poetry.lock"],
+    "rust": ["Cargo.toml", "Cargo.lock"],
+    "go": ["go.mod", "go.sum"],
+    "java": ["pom.xml", "build.gradle", "build.gradle.kts"],
+    "docker": ["Dockerfile", "docker-compose.yml", "compose.yml", "compose.yaml"],
+}
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Plan a repository-specific security toolchain based on stack markers and installed tools."
+    )
+    parser.add_argument("--target-dir", required=True)
+    parser.add_argument("--workspace-dir")
+    parser.add_argument("--format", choices=["json", "text"], default="text")
+    return parser.parse_args()
+
+
+def has_any(root: Path, names: list[str]) -> bool:
+    return any((root / name).exists() for name in names)
+
+
+def detect_stack(root: Path) -> list[str]:
+    stacks: list[str] = []
+    for stack, markers in STACK_MARKERS.items():
+        if has_any(root, markers):
+            stacks.append(stack)
+    return stacks or ["generic"]
+
+
+def detect_attack_surface(root: Path) -> list[str]:
+    indicators: list[str] = []
+    interesting_dirs = ["routes", "route", "router", "controllers", "controller", "api", "graphql", "auth", "cmd"]
+    names = {path.name.lower() for path in root.rglob("*") if path.is_dir() and len(path.parts) - len(root.parts) <= 3}
+    for name in interesting_dirs:
+        if name in names:
+            indicators.append(name)
+    if any(name in names for name in ("api", "routes", "graphql", "controller", "controllers")):
+        indicators.append("http-api")
+    if any(name in names for name in ("auth",)):
+        indicators.append("auth")
+    java_markers = [
+        "@RestController",
+        "@Controller",
+        "@RequestMapping",
+        "@GetMapping",
+        "@PostMapping",
+        "SecurityFilterChain",
+        "OncePerRequestFilter",
+        "extends HttpServlet",
+    ]
+    go_markers = [
+        "http.HandleFunc",
+        "http.Handle(",
+        ".ServeHTTP",
+        "gin.Default(",
+        "gin.New(",
+        "router.GET(",
+        "router.POST(",
+        "chi.NewRouter(",
+        "echo.New(",
+        "fiber.New(",
+    ]
+    for path in root.rglob("*"):
+        if not path.is_file() or path.stat().st_size > 2_000_000:
+            continue
+        if path.suffix in {".java", ".kt"}:
+            try:
+                text = path.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            if any(marker in text for marker in java_markers):
+                indicators.append("java-web")
+                indicators.append("http-api")
+                break
+    for path in root.rglob("*.go"):
+        if path.stat().st_size > 2_000_000:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        if any(marker in text for marker in go_markers):
+            indicators.append("go-web")
+            indicators.append("http-api")
+            break
+    return sorted(set(indicators))
+
+
+def tool_available(*names: str) -> bool:
+    return any(shutil.which(name) for name in names)
+
+
+def choose_tools(root: Path, stacks: list[str], attack_surface: list[str]) -> dict[str, list[str]]:
+    plan: dict[str, list[str]] = {
+        "broad_probe": [],
+        "sast": [],
+        "dependency": [],
+        "secrets": [],
+        "dast": [],
+        "verification": [],
+        "hardening": [],
+        "document_qa": [],
+    }
+
+    if tool_available("ship-safe"):
+        plan["broad_probe"].append("ship-safe")
+    if tool_available("semgrep"):
+        plan["sast"].append("semgrep")
+    if tool_available("codeql"):
+        plan["sast"].append("codeql")
+
+    if "node" in stacks and tool_available("npm") and ((root / "package-lock.json").exists() or (root / "npm-shrinkwrap.json").exists()):
+        plan["dependency"].append("npm audit")
+    if "python" in stacks and tool_available("pip-audit"):
+        plan["dependency"].append("pip-audit")
+    if "rust" in stacks and tool_available("cargo-audit"):
+        plan["dependency"].append("cargo audit")
+    if "java" in stacks:
+        if (root / "pom.xml").exists() and tool_available("mvn"):
+            plan["dependency"].append("maven dependency:tree")
+        if ((root / "build.gradle").exists() or (root / "build.gradle.kts").exists()) and (tool_available("gradle") or (root / "gradlew").exists()):
+            plan["dependency"].append("gradle dependencies")
+        if tool_available("dependency-check", "dependency-check.sh"):
+            plan["dependency"].append("OWASP Dependency-Check")
+        if tool_available("spotbugs"):
+            plan["sast"].append("spotbugs")
+        if tool_available("findsecbugs"):
+            plan["sast"].append("findsecbugs")
+    if "go" in stacks:
+        if tool_available("go"):
+            plan["dependency"].append("go list -m all")
+        if tool_available("govulncheck"):
+            plan["dependency"].append("govulncheck")
+        if tool_available("gosec"):
+            plan["sast"].append("gosec")
+        if tool_available("golangci-lint"):
+            plan["sast"].append("golangci-lint")
+
+    if tool_available("osv-scanner"):
+        plan["dependency"].append("osv-scanner")
+    if tool_available("trivy"):
+        plan["dependency"].append("trivy")
+    if tool_available("syft"):
+        plan["dependency"].append("syft")
+    if tool_available("grype"):
+        plan["dependency"].append("grype")
+
+    if tool_available("gitleaks"):
+        plan["secrets"].append("gitleaks")
+    if tool_available("trufflehog"):
+        plan["secrets"].append("trufflehog")
+
+    if "http-api" in attack_surface:
+        if tool_available("nuclei"):
+            plan["dast"].append("nuclei")
+        if tool_available("ffuf"):
+            plan["dast"].append("ffuf")
+        if tool_available("zap.sh", "zaproxy", "zap-baseline.py"):
+            plan["dast"].append("owasp zap")
+    if tool_available("sqlmap"):
+        plan["dast"].append("sqlmap (only after a live injectable endpoint exists in Docker)")
+
+    if "docker" in stacks:
+        if tool_available("trivy"):
+            plan["verification"].append("trivy image")
+        if tool_available("syft"):
+            plan["verification"].append("syft sbom")
+        if tool_available("grype"):
+            plan["verification"].append("grype image")
+
+    if tool_available("mcpserver-audit"):
+        plan["hardening"].append("mcpserver-audit")
+    if tool_available("mcp-scanner"):
+        plan["hardening"].append("mcp-scanner")
+
+    if tool_available("markitdown"):
+        plan["document_qa"].append("markitdown")
+    if tool_available("soffice"):
+        plan["document_qa"].append("libreoffice")
+
+    return {key: value for key, value in plan.items() if value}
+
+
+def discover_workspace_dir(root: Path, cli_workspace_dir: str | None) -> Path:
+    def is_valid_workspace(path: Path) -> bool:
+        config_path = path / "asr-config.json"
+        if not config_path.exists():
+            return False
+        try:
+            data = json.loads(config_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return False
+        if not isinstance(data, dict):
+            return False
+        workspace_root = str(data.get("workspace_root", "")).strip()
+        workspace_created_at = str(data.get("workspace_created_at", "")).strip()
+        confirmed_output_dir = str(data.get("confirmed_output_dir", "")).strip()
+        if workspace_root != path.name:
+            return False
+        if not workspace_created_at:
+            return False
+        if confirmed_output_dir != f"{path.name}/confirmed":
+            return False
+        if path.name == "security-research":
+            return False
+        return True
+
+    if cli_workspace_dir:
+        candidate = Path(cli_workspace_dir).expanduser().resolve()
+        if not is_valid_workspace(candidate):
+            raise SystemExit(
+                f"workspace directory is not a valid per-audit workspace: {candidate}. "
+                "Run asr_start.sh first and resume from the generated security-research-YYYYMMDD-HHMMSS workspace."
+            )
+        return candidate
+
+    script_path = Path(__file__).resolve()
+    script_workspace = script_path.parent.parent
+    if is_valid_workspace(script_workspace):
+        return script_workspace
+
+    latest = root / ".asr-latest-workspace"
+    if latest.exists():
+        name = latest.read_text(encoding="utf-8").strip()
+        if name:
+            candidate = (root / name).resolve()
+            if is_valid_workspace(candidate):
+                return candidate
+
+    candidates = sorted(
+        (
+            path for path in root.iterdir()
+            if path.is_dir() and re.fullmatch(r"security-research-\d{8}-\d{6}(?:-\d+)?", path.name) and is_valid_workspace(path)
+        ),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    if candidates:
+        return candidates[0].resolve()
+
+    raise SystemExit(
+        f"No valid per-audit workspace was found under {root}. "
+        "Run asr_start.sh first instead of writing to a bare repo/security-research directory."
+    )
+
+
+def command_hints(root: Path, workspace_dir: Path, plan: dict[str, list[str]]) -> list[str]:
+    hints: list[str] = [f"bash {workspace_dir}/bin/run-initial-probes.sh --repo-root {root} --workspace-dir {workspace_dir}"]
+    if "ship-safe" in plan.get("broad_probe", []):
+        hints.append(f"ship-safe {root}")
+    if "semgrep" in plan.get("sast", []):
+        hints.append(f"semgrep scan --config auto {root}")
+    if "osv-scanner" in plan.get("dependency", []):
+        hints.append(
+            f"bash {workspace_dir}/bin/run-initial-probes.sh --repo-root {root} --workspace-dir {workspace_dir} "
+            "# preferred: classifies osv-scanner 'No package sources found' as skipped"
+        )
+    if "trivy" in plan.get("dependency", []):
+        hints.append(f"trivy fs {root}")
+    if "syft" in plan.get("dependency", []):
+        hints.append(f"syft dir:{root}")
+    if "grype" in plan.get("dependency", []):
+        hints.append(f"grype dir:{root}")
+    if "gitleaks" in plan.get("secrets", []):
+        hints.append(f"gitleaks detect -s {root}")
+    if "trufflehog" in plan.get("secrets", []):
+        hints.append(f"trufflehog filesystem {root}")
+    if "nuclei" in plan.get("dast", []):
+        hints.append("nuclei -u http://<docker-service-host>:<port>")
+    if any("ffuf" == item for item in plan.get("dast", [])):
+        hints.append("ffuf -u http://<docker-service-host>:<port>/FUZZ -w <wordlist>")
+    return hints
+
+
+def specialized_playbooks(stacks: list[str], attack_surface: list[str]) -> list[str]:
+    playbooks: list[str] = []
+    if "java" in stacks or "java-web" in attack_surface:
+        playbooks.append("assets/references/java-web-audit-playbook.md")
+    if "go" in stacks or "go-web" in attack_surface:
+        playbooks.append("assets/references/go-web-audit-playbook.md")
+    return playbooks
+
+
+def audit_focus(stacks: list[str], attack_surface: list[str]) -> list[str]:
+    focus: list[str] = []
+    if "java" in stacks or "java-web" in attack_surface:
+        focus.extend([
+            "Build a Java entry map: Spring/JAX-RS/Servlet routes, filters, interceptors, and security configuration.",
+            "Prioritize authz gaps, MyBatis ${...}, JDBC/JPA string-built queries, SpEL/OGNL/template injection, SSRF, XXE, deserialization, upload/path traversal, and Actuator exposure.",
+            "For each candidate, trace source -> service layer -> sink and record why framework validation or security filters do not block it.",
+        ])
+    if "go" in stacks or "go-web" in attack_surface:
+        focus.extend([
+            "Build a Go entry map: main.go, router registration, middleware, handlers, and debug/pprof endpoints.",
+            "Prioritize missing auth middleware, SSRF and redirect behavior, exec.Command shell use, path traversal, SQL string construction, template trusted types, CORS/CSRF, and missing timeouts/body limits.",
+            "For each candidate, trace request input -> handler -> sink and record middleware, validation, timeout, and whitelist assumptions.",
+        ])
+    if focus:
+        focus.append("Write or update <audit-workspace>/attack-surface.md before final confirmation so the review path is recoverable.")
+    return focus
+
+
+def build_result(root: Path, workspace_dir: Path) -> dict[str, Any]:
+    stacks = detect_stack(root)
+    attack_surface = detect_attack_surface(root)
+    plan = choose_tools(root, stacks, attack_surface)
+    return {
+        "target_dir": str(root),
+        "workspace_dir": str(workspace_dir),
+        "detected_stack": stacks,
+        "attack_surface_hints": attack_surface,
+        "specialized_playbooks": specialized_playbooks(stacks, attack_surface),
+        "audit_focus": audit_focus(stacks, attack_surface),
+        "recommended_tools": plan,
+        "command_hints": command_hints(root, workspace_dir, plan),
+        "execution_notes": [
+            "Treat first-pass scanner non-zero exits as findings or environmental notes unless they clearly indicate a broken command.",
+            "Skip npm audit when the repository has no package-lock.json or npm-shrinkwrap.json.",
+            "Prefer run-initial-probes.sh for osv-scanner so 'No package sources found' is recorded as skipped, not as a blocker.",
+            "If osv-scanner is run manually and exits 128 with 'No package sources found', record it as no supported package source / skipped and continue.",
+            "Run trivy against the absolute repository path, not against '.' unless the cwd is already anchored correctly.",
+            "The first trivy run may spend time downloading its vulnerability database; that is normal and not by itself a hang.",
+        ],
+    }
+
+
+def render_text(result: dict[str, Any]) -> str:
+    lines = [
+        f"target_dir={result['target_dir']}",
+        f"workspace_dir={result['workspace_dir']}",
+        f"detected_stack={','.join(result['detected_stack'])}",
+        f"attack_surface_hints={','.join(result['attack_surface_hints']) or 'none'}",
+        "",
+        "recommended_tools:",
+    ]
+    tools = result["recommended_tools"]
+    for category in ("broad_probe", "sast", "dependency", "secrets", "dast", "verification", "hardening", "document_qa"):
+        if category in tools:
+            lines.append(f"- {category}: {', '.join(tools[category])}")
+    if result["command_hints"]:
+        lines.extend(["", "command_hints:"])
+        for hint in result["command_hints"]:
+            lines.append(f"- {hint}")
+    playbooks = result.get("specialized_playbooks") or []
+    if playbooks:
+        lines.extend(["", "specialized_playbooks:"])
+        for playbook in playbooks:
+            lines.append(f"- {playbook}")
+    focus = result.get("audit_focus") or []
+    if focus:
+        lines.extend(["", "audit_focus:"])
+        for item in focus:
+            lines.append(f"- {item}")
+    notes = result.get("execution_notes") or []
+    if notes:
+        lines.extend(["", "execution_notes:"])
+        for note in notes:
+            lines.append(f"- {note}")
+    return "\n".join(lines)
+
+
+def main() -> None:
+    args = parse_args()
+    root = Path(args.target_dir).expanduser().resolve()
+    if not root.exists() or not root.is_dir():
+        raise SystemExit(f"target directory does not exist: {root}")
+    workspace_dir = discover_workspace_dir(root, args.workspace_dir)
+    result = build_result(root, workspace_dir)
+    if args.format == "json":
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        print(render_text(result))
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,262 @@
+[
+  {
+    "report_language": "zh-CN",
+    "project_name": "demo-app",
+    "vuln_type": "Path Traversal",
+    "vuln_type_en": "Path Traversal",
+    "vuln_type_zh": "目录遍历",
+    "severity_cn": "高危",
+    "filename": "demo-app_Path_Traversal_高危漏洞报告.docx",
+    "filename_en": "demo-app_Path_Traversal_High_report.docx",
+    "title": "demo-app 库存在目录遍历漏洞报告",
+    "title_en": "demo-app Path Traversal Vulnerability Report",
+    "description": [
+      "demo-app 的下载接口将用户输入直接拼接到文件系统路径中，缺少规范化与目录边界校验。",
+      "攻击者可通过构造 ../ 序列读取容器内的任意可访问文件。Docker 环境中已成功读取 /etc/passwd，因此该问题可确认为真实漏洞。"
+    ],
+    "description_en": [
+      "The download endpoint in demo-app concatenates user input directly into a filesystem path without normalization or directory-boundary validation.",
+      "An attacker can use ../ traversal sequences to read arbitrary files accessible inside the container. The Docker verification environment successfully returned /etc/passwd, so this issue is confirmed as a real vulnerability."
+    ],
+    "impact": {
+      "package": "demo-app",
+      "component": "src/routes/download.js:42-55",
+      "affected_versions": "截至 2026-04-09，当前测试版本仍存在该问题",
+      "affected_versions_en": "As of 2026-04-09, the currently tested version is still vulnerable.",
+      "repo_url": "https://example.com/demo-app",
+      "extra": [
+        "验证环境：Docker Compose 隔离环境",
+        "PoC 执行位置：attacker 容器",
+        "PoC 文件路径：attachments/poc/path_traversal.py",
+        "影响：攻击者可读取容器内敏感文件"
+      ],
+      "extra_en": [
+        "Verification environment: isolated Docker Compose stack",
+        "PoC execution location: attacker container",
+        "PoC file path: attachments/poc/path_traversal.py",
+        "Impact: the attacker can read sensitive files inside the container"
+      ]
+    },
+    "cvss": {
+      "vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N",
+      "score": "8.7",
+      "severity": "高危 (HIGH)",
+      "rationale": "评估依据：该问题可被远程利用且无需认证。攻击者能够读取敏感文件内容，对机密性造成显著影响，因此优先按 CVSS 4.0 评为高危；如目标提交流程只接受旧一代主流格式，可等价换写为 CVSS 3.1。",
+      "rationale_en": "Assessment rationale: this issue is remotely exploitable without authentication. The attacker can read sensitive file contents, causing significant confidentiality impact, so CVSS 4.0 rates it as High. If the target disclosure workflow requires the previous mainstream format, it can be restated as CVSS 3.1."
+    },
+    "analysis": [
+      "位置：src/routes/download.js:42-55",
+      "入口/可控输入：HTTP 查询参数 file 由用户完全控制。",
+      "危险函数/危险操作：res.sendFile(resolvedPath) 直接返回攻击者可控路径对应的文件。",
+      "触发路径：/download 路由接收 file 参数 -> path.join(BASE_DIR, file) -> 结果路径未校验 -> sendFile 读取目标文件。",
+      "根因：开发者仅做了路径拼接，没有在规范化后验证结果路径是否仍位于 BASE_DIR 目录下。",
+      "现有校验为何失效：代码没有使用 path.resolve 后的前缀校验，也没有基于白名单文件标识进行访问控制。"
+    ],
+    "analysis_en": [
+      "Location: src/routes/download.js:42-55",
+      "Entry / controllable input: the HTTP query parameter file is fully attacker-controlled.",
+      "Dangerous operation: res.sendFile(resolvedPath) returns the file addressed by an attacker-controlled path.",
+      "Trigger path: /download receives file -> path.join(BASE_DIR, file) -> the resulting path is not validated -> sendFile reads the target file.",
+      "Root cause: the implementation only concatenates paths and never checks whether the normalized result still stays under BASE_DIR.",
+      "Why existing checks fail: the code does not perform a path.resolve-based prefix check and does not restrict access through a fixed file identifier allowlist."
+    ],
+    "code_context": [
+      {
+        "location": "src/routes/download.js:42-46",
+        "summary": "这里从请求中读取 file 参数，并直接参与后续路径拼接。",
+        "summary_en": "This block reads the file parameter from the request and feeds it directly into later path construction.",
+        "snippet": "const file = req.query.file;\nconst resolvedPath = path.join(BASE_DIR, file);"
+      },
+      {
+        "location": "src/routes/download.js:47-55",
+        "summary": "这里没有验证 resolvedPath 是否仍位于 BASE_DIR 目录内，而是直接调用 sendFile 返回文件。",
+        "summary_en": "This block does not verify that resolvedPath still stays within BASE_DIR and instead returns the file directly with sendFile.",
+        "snippet": "return res.sendFile(resolvedPath);"
+      }
+    ],
+    "reproduction": [
+      {
+        "title": "1. 环境准备",
+        "title_en": "1. Environment Preparation",
+        "details": [
+          "在项目根目录执行以下命令，构建目标服务镜像。",
+          "确认本机 Docker 服务处于启动状态。",
+          "若提交包已完整提供附件，则 PoC 与验证编排文件可直接从当前漏洞目录下的 attachments/ 读取。"
+        ],
+        "details_en": [
+          "Run the following command from the project root to build the target service image.",
+          "Confirm that the local Docker runtime is up before continuing.",
+          "If the submission bundle already contains all attachments, the PoC and verification compose files can be read directly from attachments/ in the current vulnerability folder."
+        ],
+        "commands": [
+          "docker compose build app"
+        ],
+        "artifacts": [
+          "attachments/poc/path_traversal.py",
+          "attachments/docker/docker-compose.attacker.yml"
+        ],
+        "expected": [
+          "预期结果：成功生成用于验证的 app 镜像。"
+        ],
+        "expected_en": [
+          "Expected result: the app image required for verification is built successfully."
+        ],
+        "observed": [
+          "实际结果：构建完成且未出现依赖安装错误。"
+        ],
+        "observed_en": [
+          "Observed result: the build completed successfully without dependency installation errors."
+        ],
+        "results": [
+          "结果证据：构建日志显示 app 镜像已成功生成，后续验证环境可继续启动。"
+        ],
+        "results_en": [
+          "Evidence: the build logs show that the app image was created successfully and the verification environment can proceed."
+        ]
+      },
+      {
+        "title": "2. 启动目标服务",
+        "title_en": "2. Start the Target Service",
+        "details": [
+          "启动 compose 中的 app 服务，并等待应用完成监听。"
+        ],
+        "details_en": [
+          "Start the app service in the compose stack and wait until the application is listening."
+        ],
+        "commands": [
+          "docker compose up -d app"
+        ],
+        "expected": [
+          "预期结果：app 容器处于 Up 状态，并监听 8080 端口。"
+        ],
+        "expected_en": [
+          "Expected result: the app container is in Up state and listens on port 8080."
+        ],
+        "observed": [
+          "实际结果：docker compose ps 显示 app 服务状态为 Up。"
+        ],
+        "observed_en": [
+          "Observed result: docker compose ps shows the app service in Up state."
+        ],
+        "results": [
+          "结果证据：目标服务容器处于 Up 状态，说明 PoC 可在 Docker 隔离网络内继续执行。"
+        ],
+        "results_en": [
+          "Evidence: the target service container is Up, confirming that the PoC can continue inside the isolated Docker network."
+        ]
+      },
+      {
+        "title": "3. 执行 PoC / 发送攻击载荷",
+        "title_en": "3. Execute the PoC / Send the Payload",
+        "details": [
+          "在 attacker 容器中发送包含目录穿越序列的下载请求。",
+          "该步骤在 Docker 网络内完成，未在宿主机本地直接发送攻击流量。"
+        ],
+        "details_en": [
+          "Send a download request containing traversal sequences from inside the attacker container.",
+          "This step is executed entirely inside the Docker network and does not send attack traffic directly from the host."
+        ],
+        "commands": [
+          "docker compose -f docker-compose.yml -f attachments/docker/docker-compose.attacker.yml exec attacker python3 /workspace/attachments/poc/path_traversal.py"
+        ],
+        "expected": [
+          "预期结果：服务返回 /etc/passwd 内容片段，证明目录边界已被绕过。"
+        ],
+        "expected_en": [
+          "Expected result: the service returns a fragment of /etc/passwd, proving that the directory boundary was bypassed."
+        ],
+        "observed": [
+          "实际结果：PoC 输出中出现 root:x:0:0: 字样，说明敏感文件读取成功。"
+        ],
+        "observed_en": [
+          "Observed result: the PoC output contains root:x:0:0:, confirming successful sensitive file disclosure."
+        ],
+        "results": [
+          "结果证据：PoC 输出包含 root:x:0:0:，证明目录边界绕过成功且敏感文件读取成功。"
+        ],
+        "results_en": [
+          "Evidence: the PoC output contains root:x:0:0:, proving both directory-boundary bypass and successful sensitive-file read."
+        ]
+      },
+      {
+        "title": "4. 验证结果",
+        "title_en": "4. Verify the Result",
+        "details": [
+          "复核响应内容与 PoC 输出，确认命中的是容器内真实文件而非伪造响应。"
+        ],
+        "details_en": [
+          "Review the response body and PoC output to confirm that the returned data comes from a real file inside the container rather than a mocked response."
+        ],
+        "commands": [
+          "docker compose logs app --tail 50"
+        ],
+        "expected": [
+          "预期结果：应用日志中可见对应下载请求，且未触发路径校验拦截。"
+        ],
+        "expected_en": [
+          "Expected result: the application logs contain the matching download request and no path-validation block is triggered."
+        ],
+        "observed": [
+          "实际结果：日志显示应用按用户给定路径处理请求，未进行目录边界阻断。"
+        ],
+        "observed_en": [
+          "Observed result: the logs show that the application handled the request using the attacker-supplied path without enforcing a directory-boundary restriction."
+        ],
+        "results": [
+          "结果证据：应用日志未显示路径拦截，且与 PoC 输出中的敏感文件读取结果相互印证。"
+        ],
+        "results_en": [
+          "Evidence: the application logs show no path-validation block, corroborating the sensitive-file read shown in the PoC output."
+        ]
+      }
+    ],
+    "final_verdict": [
+      "经 Docker 隔离环境实测验证，该问题为可稳定触发的目录遍历漏洞。",
+      "建议对用户输入执行规范化后边界校验，并使用固定文件标识而非原始路径作为下载参数。"
+    ],
+    "final_verdict_en": [
+      "Docker-based verification confirms that this is a stable, reproducible path traversal vulnerability.",
+      "The recommended fix is to normalize the user input, enforce a post-normalization directory-boundary check, and replace raw path input with fixed file identifiers."
+    ],
+    "environment_files": [
+      {
+        "path": "docker/docker-compose.attacker.yml",
+        "purpose": "将 attacker 容器接入目标服务网络并在容器内执行 PoC。",
+        "purpose_en": "Connect the attacker container to the target service network and execute the PoC inside the container.",
+        "note": "报告中如未完整嵌入该文件，应在提交包中附上原文件。",
+        "note_en": "If the full file content is not embedded in the report, include the original file in the submission bundle.",
+        "snippet": "services:\n  attacker:\n    build:\n      context: .\n      dockerfile: assets/attacker-container/Dockerfile"
+      },
+      {
+        "path": "poc/path_traversal.py",
+        "purpose": "发送目录遍历攻击请求并打印命中的敏感文件片段。",
+        "purpose_en": "Send the path traversal request and print the leaked sensitive-file fragment.",
+        "note": "报告中通常只嵌入关键 payload，完整脚本建议作为附件提供。",
+        "note_en": "Reports usually embed only the key payload; the full script should be attached as a bundled artifact.",
+        "snippet": "resp = session.get(f\"{base}/download\", params={\"file\": \"../../../../etc/passwd\"})\nprint(resp.text[:200])"
+      }
+    ],
+    "attachments": [
+      {
+        "path": "docker/docker-compose.attacker.yml",
+        "purpose": "在 Docker 内发送 PoC，请勿在宿主机直接执行攻击流量。",
+        "purpose_en": "Deliver the PoC from inside Docker. Do not send attack traffic directly from the host.",
+        "note": "提交包内将呈现为 attachments/docker/docker-compose.attacker.yml。"
+      },
+      {
+        "path": "poc/path_traversal.py",
+        "purpose": "执行目录遍历 PoC。",
+        "purpose_en": "Execute the path traversal PoC.",
+        "note": "提交包内将呈现为 attachments/poc/path_traversal.py。"
+      }
+    ],
+    "bundle_root_artifacts": [
+      {
+        "output_name": "run-demo-path-traversal-recording.sh",
+        "generator": "reviewer-recording-shell",
+        "purpose": "面向 macOS 与 Linux 的最小复现辅助脚本，一键执行最短路径验证，便于录制复现视频。",
+        "purpose_en": "Minimal macOS/Linux reproduction helper script for one-command shortest-path verification and screen recording."
+      }
+    ]
+  }
+]

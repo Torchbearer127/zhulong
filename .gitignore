@@ -1,0 +1,42 @@
+# macOS / editor noise
+.DS_Store
+._*
+*.swp
+*.swo
+*~
+
+# Python caches and local environments
+*.py[cod]
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Node / package-manager caches, if docs or tooling use them later
+node_modules/
+.npm/
+.pnpm-store/
+
+# Build and temporary output
+tmp/
+temp/
+dist/
+build/
+coverage/
+*.log
+
+# Local secrets and machine-specific config
+.env
+.env.*
+!.env.example
+
+# Generated audit workspaces should never live inside the plugin repo
+security-research/
+security-research-*/
+.asr-latest-workspace
+
+# Claude runtime sync backups are installation artifacts, not source
+*.backup.*
+.zhulong-backups/
