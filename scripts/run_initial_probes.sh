@@ -325,6 +325,10 @@ run_probe() {
   local logfile="$OUTPUT_DIR/${name}.log"
   local statusfile="$OUTPUT_DIR/${name}.status"
   local command_display="$*"
+  local code
+  local status
+  local reason
+  local next_action
 
   PROBES_RUN=$((PROBES_RUN + 1))
   printf '[%s] running\n' "$name" >>"$SUMMARY_FILE"
@@ -333,12 +337,13 @@ run_probe() {
     printf '[%s] ran_ok\n' "$name" >>"$SUMMARY_FILE"
     append_probe_record "$name" "ran_ok" "$command_display" "0" "$logfile" "Probe completed with exit code 0." "Review the log only if this probe is relevant to a candidate."
     return 0
+  else
+    code=$?
   fi
 
-  local code=$?
-  local status="failed_nonfatal"
-  local reason="Probe exited non-zero; preserve the log for manual review. Scanner findings are candidates only, not confirmed vulnerabilities."
-  local next_action="Read the log, record useful leads in candidate-findings.md or unverified-leads.md, and continue Docker-only verification for any candidate."
+  status="failed_nonfatal"
+  reason="Probe exited non-zero; preserve the log for manual review. Scanner findings are candidates only, not confirmed vulnerabilities."
+  next_action="Read the log, record useful leads in candidate-findings.md or unverified-leads.md, and continue Docker-only verification for any candidate."
   if [[ "$code" -eq 127 ]]; then
     status="failed_fatal"
     reason="Probe command could not be executed after the tool check passed; this indicates broken script state or an invalid runtime assumption."
@@ -399,7 +404,7 @@ note_skip() {
   PROBES_SKIPPED=$((PROBES_SKIPPED + 1))
   printf '%s\nreason=%s\n' "$status" "$reason" >"$OUTPUT_DIR/${name}.status"
   printf '[%s] %s: %s\n' "$name" "$status" "$reason" >>"$SUMMARY_FILE"
-  append_probe_record "$name" "$status" "" "" "" "$reason" "$next_action"
+  append_probe_record "$name" "$status" "(not executed)" "" "" "$reason" "$next_action"
 }
 
 has_cmd() {

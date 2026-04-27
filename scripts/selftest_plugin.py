@@ -494,6 +494,22 @@ def main() -> None:
             encoding="utf-8",
         )
         fake_osv.chmod(0o755)
+        fake_trivy = fake_bin / "trivy"
+        fake_trivy.write_text(
+            "#!/usr/bin/env bash\n"
+            "echo 'simulated scanner failure for nonfatal classification' >&2\n"
+            "exit 2\n",
+            encoding="utf-8",
+        )
+        fake_trivy.chmod(0o755)
+        fake_grype = fake_bin / "grype"
+        fake_grype.write_text(
+            "#!/usr/bin/env bash\n"
+            "echo 'simulated command execution failure for fatal classification' >&2\n"
+            "exit 127\n",
+            encoding="utf-8",
+        )
+        fake_grype.chmod(0o755)
         probe_env = {
             **dict(),
             "PATH": f"{fake_bin}:/usr/bin:/bin:/usr/sbin:/sbin",
@@ -530,8 +546,16 @@ def main() -> None:
             raise SystemExit("FAILED: missing gitleaks was not classified as skipped_tool_missing")
         if by_name.get("syft", {}).get("status") != "skipped_tool_missing":
             raise SystemExit("FAILED: missing syft was not classified as skipped_tool_missing")
-        if by_name.get("grype", {}).get("status") != "skipped_tool_missing":
-            raise SystemExit("FAILED: missing grype was not classified as skipped_tool_missing")
+        if by_name.get("trivy", {}).get("status") != "failed_nonfatal":
+            raise SystemExit("FAILED: non-zero trivy was not classified as failed_nonfatal")
+        if by_name.get("trivy", {}).get("exit_code") != 2:
+            raise SystemExit("FAILED: failed_nonfatal trivy exit code was not preserved")
+        if by_name.get("grype", {}).get("status") != "failed_fatal":
+            raise SystemExit("FAILED: exit-127 grype was not classified as failed_fatal")
+        if by_name.get("grype", {}).get("exit_code") != 127:
+            raise SystemExit("FAILED: failed_fatal grype exit code was not preserved")
+        if by_name.get("semgrep", {}).get("command") != "(not executed)":
+            raise SystemExit("FAILED: skipped semgrep should use a descriptive command placeholder")
         for probe in probes:
             for field in ("name", "status", "command", "exit_code", "log_path", "reason", "next_action"):
                 if field not in probe:
