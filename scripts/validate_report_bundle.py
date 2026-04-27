@@ -128,11 +128,75 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="If MarkItDown is installed, also perform a DOCX->Markdown extraction smoke test.",
     )
+    parser.add_argument(
+        "--write-audit-event",
+        action="store_true",
+        help=(
+            "After successful validation, append a bundle_validated event to the workspace audit log. "
+            "This is opt-in so standalone/offline bundle validation keeps its historical behavior."
+        ),
+    )
     return parser.parse_args()
 
 
 def fail(message: str) -> None:
     raise SystemExit(f"VALIDATION FAILED: {message}")
+
+
+def find_audit_event_writer() -> Path | None:
+    script_dir = Path(__file__).resolve().parent
+    candidates = [
+        script_dir / "write_audit_event.py",
+        script_dir / "write-audit-event.py",
+        script_dir.parent / "bin" / "write-audit-event.py",
+    ]
+    return next((path for path in candidates if path.exists()), None)
+
+
+def write_bundle_validated_event(
+    workspace_dir: Path,
+    bundle_dir: Path,
+    language: str,
+    docx_path: Path,
+    note_path: Path,
+    supplement_path: Path,
+    verification_evidence: dict[str, object],
+) -> None:
+    writer = find_audit_event_writer()
+    if writer is None:
+        fail("cannot write audit event because write_audit_event.py was not found next to the validator")
+
+    details = {
+        "bundle": f"confirmed/{bundle_dir.name}",
+        "language": language,
+        "verification_status": str(verification_evidence.get("verification_status") or ""),
+        "finding_slug": str(verification_evidence.get("finding_slug") or ""),
+        "docx": docx_path.name,
+        "attachment_note": note_path.name,
+        "reproduction_supplement": supplement_path.name,
+    }
+    command = [
+        sys.executable,
+        str(writer),
+        "--workspace-dir",
+        str(workspace_dir),
+        "--event",
+        "bundle_validated",
+        "--stage",
+        "reporting",
+        "--status",
+        "running",
+        "--event-status",
+        "ok",
+        "--message",
+        f"Confirmed bundle validated: {bundle_dir.name}",
+        "--details-json",
+        json.dumps(details, ensure_ascii=False, sort_keys=True),
+    ]
+    proc = subprocess.run(command, capture_output=True, text=True)
+    if proc.returncode != 0:
+        output = ((proc.stdout or "") + (proc.stderr or "")).strip()
+        fail(f"failed to write bundle_validated audit event: {output}")
 
 
 def docx_text(docx_path: Path) -> list[str]:
@@ -825,7 +889,7 @@ def main() -> None:
     if findings_path is not None and findings_path.exists():
         project_name, title_tokens, selected_finding = load_bundle_identity(findings_path, bundle_dir.name, workspace_dir)
         validate_severity_consistency(bundle_dir, docx_path, selected_finding, language)
-    validate_verification_evidence(bundle_dir, selected_finding)
+    verification_evidence = validate_verification_evidence(bundle_dir, selected_finding)
 
     combined_text = "\n".join(lines)
     if "CVSS 2.0" in combined_text:
@@ -863,6 +927,17 @@ def main() -> None:
         optional_libreoffice_check(docx_path)
     if args.with_markitdown:
         optional_markitdown_check(docx_path)
+
+    if args.write_audit_event:
+        write_bundle_validated_event(
+            workspace_dir,
+            bundle_dir,
+            language,
+            docx_path,
+            note_path,
+            supplement_path,
+            verification_evidence,
+        )
 
     print(f"VALIDATION PASSED: {bundle_dir}")
     print(f"language={language}")

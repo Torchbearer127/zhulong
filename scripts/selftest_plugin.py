@@ -1047,6 +1047,15 @@ def main() -> None:
             "--language",
             "zh-CN",
         ], plugin_root)
+        events_before_bundle_validation = [
+            json.loads(line)
+            for line in (workspace / "audit-events.jsonl").read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        bundle_validated_before = sum(
+            1 for event in events_before_bundle_validation
+            if event.get("event") == "bundle_validated"
+        )
         run([
             sys.executable,
             str(plugin_root / "scripts/validate_report_bundle.py"),
@@ -1054,7 +1063,30 @@ def main() -> None:
             str(en_bundle),
             "--language",
             "en-US",
+            "--write-audit-event",
         ], plugin_root)
+        events_after_bundle_validation = [
+            json.loads(line)
+            for line in (workspace / "audit-events.jsonl").read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        bundle_validated_events = [
+            event for event in events_after_bundle_validation
+            if event.get("event") == "bundle_validated"
+        ]
+        if len(bundle_validated_events) != bundle_validated_before + 1:
+            raise SystemExit("FAILED: validate_report_bundle.py did not append exactly one bundle_validated event")
+        bundle_event = bundle_validated_events[-1]
+        if bundle_event.get("stage") != "reporting" or bundle_event.get("status") != "ok":
+            raise SystemExit("FAILED: bundle_validated event must use reporting/ok without completing the audit")
+        details = bundle_event.get("details") or {}
+        if details.get("bundle") != f"confirmed/{en_bundle.name}":
+            raise SystemExit("FAILED: bundle_validated event must store a workspace-relative bundle path")
+        if details.get("verification_status") != "confirmed_in_docker":
+            raise SystemExit("FAILED: bundle_validated event must preserve confirmed_in_docker evidence status")
+        stage_status = json.loads((workspace / "stage-status.json").read_text(encoding="utf-8"))
+        if stage_status.get("last_event") != "bundle_validated" or stage_status.get("status") != "running":
+            raise SystemExit("FAILED: bundle validation must update state without marking the audit completed")
 
         bad_missing_verification = zh_bundle.parent / f"{zh_bundle.name}_missing_verification_evidence"
         shutil.copytree(zh_bundle, bad_missing_verification)
