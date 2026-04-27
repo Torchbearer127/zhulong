@@ -64,6 +64,12 @@ default contract even when the user does not restate them:
 - Static scanning, source-to-sink reasoning, pattern matching, dependency alerts,
   and LLM analysis can only create candidates. They must not be written as
   confirmed findings unless Docker reproduction succeeds.
+- False positives, non-security defects, unverified leads, and
+  high-confidence-but-not-Docker-confirmed leads are workspace records only.
+  Keep them in `candidate-findings.md`, `false-positives.md`,
+  `unverified-leads.md`, or equivalent workspace notes. Never write them under
+  `confirmed/`, never generate confirmed DOCX reports for them, and never list
+  them as confirmed vulnerabilities.
 - Write final confirmed bundles only to
   `<audit-workspace>/confirmed/<one-folder-per-vulnerability>/`, with exactly one
   confirmed vulnerability per bundle.
@@ -186,6 +192,7 @@ Keep bundle identity strict:
 - use `attachments/` as the final delivery directory for PoC, evidence, Docker, and support files
 - do not use `evidence/` as a final delivery directory; move final evidence files under `attachments/`
 - do not leave runtime or source-control directories such as `.omc/`, `.git/`, `node_modules/`, `.venv/`, or `__pycache__/` inside final bundles
+- keep false positives, non-security defects, unverified leads, and high-confidence-unverified leads out of `confirmed/`
 
 For `.docx` handling inside Claude Code, use a two-stage rule:
 
@@ -218,6 +225,8 @@ Reviewer-facing supplements should not stop at "technical trigger" when the clai
 
 The final CVSS and severity label should reflect the strongest verified oracle from the severity-escalation pass, not merely the first technical trigger that proved the bug exists.
 
+Final summaries must explicitly distinguish confirmed vulnerabilities, false positives / non-security defects, and unverified leads. If Docker confirmation did not complete, say that no vulnerability was confirmed for that lead, identify the missing evidence, and give the safe Docker-only resume step.
+
 ## Output Language
 
 - Keep the prompt template in English.
@@ -230,3 +239,5 @@ The final CVSS and severity label should reflect the strongest verified oracle f
 - [document-output-stability.md](./assets/references/document-output-stability.md)
 - [recommended-security-tooling.md](./assets/references/recommended-security-tooling.md)
 - [confirmed-vuln-docx-format.md](./assets/references/confirmed-vuln-docx-format.md)
+- [false-positive-template.md](./assets/references/false-positive-template.md)
+- [unverified-lead-template.md](./assets/references/unverified-lead-template.md)

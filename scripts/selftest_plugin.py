@@ -15,6 +15,9 @@ REQUIRED_FILES = [
     "assets/tool-registry.json",
     "assets/confirmed-vuln-report-template.docx",
     "assets/examples/confirmed-findings.example.json",
+    "assets/references/false-positive-template.md",
+    "assets/references/unverified-lead-template.md",
+    "assets/references/final-summary-template.md",
     "assets/references/java-web-audit-playbook.md",
     "assets/references/go-web-audit-playbook.md",
     "scripts/bootstrap_verification_workspace.sh",
@@ -131,6 +134,46 @@ def main() -> None:
         "Claude skill template candidate-only analysis contract",
     )
     require_text(
+        plugin_root / "templates/claude-skill/SKILL.md",
+        "False positives, non-security defects, unverified leads",
+        "Claude skill template triage workspace-only contract",
+    )
+    require_text(
+        plugin_root / "templates/claude-skill/SKILL.md",
+        "Final summaries must explicitly distinguish confirmed vulnerabilities",
+        "Claude skill template final summary triage contract",
+    )
+    require_text(
+        plugin_root / "assets/references/false-positive-template.md",
+        "must never be written under `confirmed/`",
+        "false-positive template confirmed-output guardrail",
+    )
+    require_text(
+        plugin_root / "assets/references/false-positive-template.md",
+        "Docker verification status",
+        "false-positive template Docker status field",
+    )
+    require_text(
+        plugin_root / "assets/references/unverified-lead-template.md",
+        "Safe resume step",
+        "unverified lead template resume field",
+    )
+    require_text(
+        plugin_root / "assets/references/unverified-lead-template.md",
+        "high-confidence-unverified/",
+        "unverified lead template high-confidence guardrail",
+    )
+    require_text(
+        plugin_root / "assets/references/final-summary-template.md",
+        "false positives / non-security defects",
+        "final summary false-positive section",
+    )
+    require_text(
+        plugin_root / "assets/references/final-summary-template.md",
+        "high-confidence-but-not-Docker-confirmed leads",
+        "final summary high-confidence unverified section",
+    )
+    require_text(
         plugin_root / "assets/references/confirmed-vuln-docx-format.md",
         "Claude Code DOCX Editing Rule",
         "confirmed-vuln-docx-format docx workflow section",
@@ -223,6 +266,23 @@ def main() -> None:
             raise SystemExit("FAILED: bootstrapped workspace is missing run-initial-probes.sh")
         if not (workspace / "bin/asr-start.sh").exists():
             raise SystemExit("FAILED: bootstrapped workspace is missing asr-start.sh")
+        if not (workspace / "unverified-leads.md").exists():
+            raise SystemExit("FAILED: bootstrapped workspace is missing unverified-leads.md")
+        require_text(
+            workspace / "candidate-findings.md",
+            "Source-to-Sink Hypothesis",
+            "bootstrapped candidate findings stable columns",
+        )
+        require_text(
+            workspace / "false-positives.md",
+            "False Positives and Non-Security Defects",
+            "bootstrapped false positives stable heading",
+        )
+        require_text(
+            workspace / "unverified-leads.md",
+            "High-Confidence-Unverified?",
+            "bootstrapped unverified leads stable columns",
+        )
         if not (workspace / "stage-status.json").exists():
             raise SystemExit("FAILED: bootstrapped workspace is missing stage-status.json")
         if not (workspace / "audit-events.jsonl").exists():
@@ -652,6 +712,16 @@ def main() -> None:
             installed_skill / "SKILL.md",
             "Static scanning, source-to-sink reasoning",
             "installed Claude skill candidate-only analysis contract",
+        )
+        require_text(
+            installed_skill / "SKILL.md",
+            "False positives, non-security defects, unverified leads",
+            "installed Claude skill triage workspace-only contract",
+        )
+        require_text(
+            installed_skill / "SKILL.md",
+            "Final summaries must explicitly distinguish confirmed vulnerabilities",
+            "installed Claude skill final summary triage contract",
         )
         backups = sorted((claude_home / "skills" / ".zhulong-backups").glob("zhulong.backup.*"))
         if len(backups) > 2:

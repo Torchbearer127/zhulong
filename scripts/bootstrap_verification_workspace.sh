@@ -17,6 +17,7 @@ What it creates:
     fingerprint.md
     candidate-findings.md
     false-positives.md
+    unverified-leads.md
     bin/
       asr-start.sh
       asr-exec.sh
@@ -210,8 +211,9 @@ mkdir -p \
   "$WORKSPACE_DIR/confirmed"
 
 write_text_file "$WORKSPACE_DIR/fingerprint.md" "# Fingerprint\n\n- Stack:\n- Frameworks:\n- Entrypoints:\n- Sources:\n- Sinks:\n- Verification constraints:\n"
-write_text_file "$WORKSPACE_DIR/candidate-findings.md" "# Candidate Findings\n\n| Finding | Evidence | Exploit Path | Verification Plan | Status |\n| --- | --- | --- | --- | --- |\n"
-write_text_file "$WORKSPACE_DIR/false-positives.md" "# False Positives\n\n"
+write_text_file "$WORKSPACE_DIR/candidate-findings.md" "# Candidate Findings\n\nCandidates are not confirmed vulnerabilities. Static scanning, source-to-sink reasoning, pattern matching, and LLM analysis can only add rows here until Docker confirmation succeeds.\n\n| Candidate ID | Suspected Weakness | Evidence So Far | Source-to-Sink Hypothesis | Docker Verification Plan | Status |\n| --- | --- | --- | --- | --- | --- |\n"
+write_text_file "$WORKSPACE_DIR/false-positives.md" "# False Positives and Non-Security Defects\n\nRejected candidates stay here as workspace records. They must not be moved into confirmed/ and must not generate DOCX reports.\n\n| Candidate ID | Original Suspicion | Evidence Reviewed | Rejection Reason | Docker Verification Status | Next Action |\n| --- | --- | --- | --- | --- | --- |\n"
+write_text_file "$WORKSPACE_DIR/unverified-leads.md" "# Unverified Leads\n\nPlausible but not Docker-confirmed leads stay here or in candidate-findings.md. They must not be moved into confirmed/, must not generate DOCX reports, and must not appear as confirmed vulnerabilities in the final summary.\n\n| Lead ID | Suspected Weakness | Evidence So Far | Missing Evidence | Docker Confirmation Status | Safe Resume Step | High-Confidence-Unverified? |\n| --- | --- | --- | --- | --- | --- | --- |\n"
 workspace_created_at="$(date '+%Y-%m-%d %H:%M:%S %z')"
 write_text_file "$WORKSPACE_DIR/asr-config.json" "{
   \"output_language\": \"$OUTPUT_LANGUAGE\",
