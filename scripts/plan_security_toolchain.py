@@ -314,6 +314,39 @@ def audit_focus(stacks: list[str], attack_surface: list[str]) -> list[str]:
     return focus
 
 
+def attack_surface_guidance(stacks: list[str], attack_surface: list[str]) -> list[str]:
+    guidance: list[str] = [
+        "Maintain <audit-workspace>/attack-surface.md as a concise handoff packet, not as raw scanner output or a final vulnerability report.",
+        "Route unverified hypotheses to candidate-findings.md or unverified-leads.md until Docker reproduction succeeds.",
+    ]
+    minimum_fields = (
+        "Minimum entry inventory fields: route or endpoint, method, handler/controller, "
+        "authentication requirement, input source, downstream sink or service, current verification status."
+    )
+    if "java" in stacks or "java-web" in attack_surface:
+        guidance.extend([
+            "Java Web: inventory Spring/JAX-RS/Servlet routes, filters, interceptors, and security annotations in attack-surface.md.",
+            minimum_fields,
+            "For each Java entry, note controller method, DTO/body binding, security filter or @PreAuthorize coverage, service-layer hop, and sink class/function when known.",
+        ])
+    if "go" in stacks or "go-web" in attack_surface:
+        guidance.extend([
+            "Go Web: inventory router registrations, middleware chain, handlers, and debug/pprof endpoints in attack-surface.md.",
+            minimum_fields,
+            "For each Go entry, note handler function, request readers such as query/path/body/header/cookie, middleware/auth coverage, downstream service, and sink function when known.",
+        ])
+    if "http-api" in attack_surface and not any(item in guidance for item in (minimum_fields,)):
+        guidance.extend([
+            "HTTP/API: summarize route or API inventory in attack-surface.md before deep verification.",
+            minimum_fields,
+        ])
+    if any(item in attack_surface for item in ("routes", "route", "router", "controllers", "controller", "api", "graphql", "auth", "cmd")):
+        guidance.append(
+            "Detected route/controller/API/auth/cmd directories: inspect them for entry points, trust boundaries, and source-to-sink hypotheses."
+        )
+    return guidance
+
+
 def build_result(root: Path, workspace_dir: Path) -> dict[str, Any]:
     stacks = detect_stack(root)
     attack_surface = detect_attack_surface(root)
@@ -325,6 +358,7 @@ def build_result(root: Path, workspace_dir: Path) -> dict[str, Any]:
         "attack_surface_hints": attack_surface,
         "specialized_playbooks": specialized_playbooks(stacks, attack_surface),
         "audit_focus": audit_focus(stacks, attack_surface),
+        "attack_surface_guidance": attack_surface_guidance(stacks, attack_surface),
         "recommended_tools": plan,
         "command_hints": command_hints(root, workspace_dir, plan),
         "execution_notes": [
@@ -364,6 +398,11 @@ def render_text(result: dict[str, Any]) -> str:
     if focus:
         lines.extend(["", "audit_focus:"])
         for item in focus:
+            lines.append(f"- {item}")
+    handoff = result.get("attack_surface_guidance") or []
+    if handoff:
+        lines.extend(["", "attack_surface_guidance:"])
+        for item in handoff:
             lines.append(f"- {item}")
     notes = result.get("execution_notes") or []
     if notes:

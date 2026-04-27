@@ -13,12 +13,18 @@ Build an `attack-surface.md` note before deep verification.
 
 Record:
 
-- route registration location
-- HTTP method and path
+- route or endpoint
+- HTTP method
+- handler function or controller-equivalent
 - middleware and authentication requirement
 - request parameters read from query, path, header, cookie, body, multipart, or webhook payload
-- downstream services reached
-- high-risk sink reached, if any
+- downstream sink or service reached
+- current verification status
+
+Minimum entry inventory fields:
+
+| Route / Endpoint | Method | Handler / Controller | Authentication Requirement | Input Source | Downstream Sink / Service | Current Verification Status |
+| --- | --- | --- | --- | --- | --- | --- |
 
 ## Entry Points
 

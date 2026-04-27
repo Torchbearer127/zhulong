@@ -70,6 +70,12 @@ default contract even when the user does not restate them:
   `unverified-leads.md`, or equivalent workspace notes. Never write them under
   `confirmed/`, never generate confirmed DOCX reports for them, and never list
   them as confirmed vulnerabilities.
+- Fill `<audit-workspace>/attack-surface.md` as a concise handoff artifact for
+  entry points, trust boundaries, high-risk sinks, and source-to-sink
+  hypotheses. It is not a vulnerability report, not raw scanner output, and not
+  a replacement for `candidate-findings.md`, `false-positives.md`,
+  `unverified-leads.md`, or confirmed bundles. Hypotheses in it remain
+  unverified until Docker confirmation succeeds.
 - Write final confirmed bundles only to
   `<audit-workspace>/confirmed/<one-folder-per-vulnerability>/`, with exactly one
   confirmed vulnerability per bundle.
@@ -134,6 +140,13 @@ source-to-sink guidance for this audit. For Java Web and Go Web repositories,
 create or update `<audit-workspace>/attack-surface.md` with the route/handler
 map, trust boundaries, authentication requirements, and high-risk sinks before
 turning candidates into confirmed findings.
+
+If the plan prints `attack_surface_guidance`, use it to keep the handoff packet
+small and stack-specific. For Java Web and Go Web, each entry inventory should
+include route or endpoint, method, handler/controller, authentication
+requirement, input source, downstream sink or service, and current verification
+status. Do not use `attack-surface.md` as a DOCX source or as a shortcut into
+`confirmed/`.
 
 For first-pass scanner execution, prefer the bundled runner:
 

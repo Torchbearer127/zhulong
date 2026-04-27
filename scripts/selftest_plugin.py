@@ -48,6 +48,14 @@ def run(command: list[str], cwd: Path) -> None:
         raise SystemExit(f"FAILED: {' '.join(command)}\n{output}")
 
 
+def run_capture(command: list[str], cwd: Path) -> str:
+    proc = subprocess.run(command, cwd=cwd, capture_output=True, text=True)
+    output = ((proc.stdout or "") + (proc.stderr or "")).strip()
+    if proc.returncode != 0:
+        raise SystemExit(f"FAILED: {' '.join(command)}\n{output}")
+    return output
+
+
 def run_expect_fail(command: list[str], cwd: Path, expected: str) -> None:
     proc = subprocess.run(command, cwd=cwd, capture_output=True, text=True)
     output = ((proc.stdout or "") + (proc.stderr or "")).strip()
@@ -144,6 +152,21 @@ def main() -> None:
         "Claude skill template final summary triage contract",
     )
     require_text(
+        plugin_root / "templates/claude-skill/SKILL.md",
+        "Fill `<audit-workspace>/attack-surface.md` as a concise handoff artifact",
+        "Claude skill template attack-surface handoff contract",
+    )
+    require_text(
+        plugin_root / "templates/claude-skill/SKILL.md",
+        "not a vulnerability report, not raw scanner output",
+        "Claude skill template attack-surface non-report guardrail",
+    )
+    require_text(
+        plugin_root / "templates/claude-skill/SKILL.md",
+        "unverified until Docker confirmation succeeds",
+        "Claude skill template attack-surface Docker confirmation guardrail",
+    )
+    require_text(
         plugin_root / "assets/references/false-positive-template.md",
         "must never be written under `confirmed/`",
         "false-positive template confirmed-output guardrail",
@@ -204,9 +227,34 @@ def main() -> None:
         "Java Web playbook source-to-sink contract",
     )
     require_text(
+        plugin_root / "assets/references/java-web-audit-playbook.md",
+        "Minimum entry inventory fields",
+        "Java Web playbook entry inventory contract",
+    )
+    require_text(
+        plugin_root / "assets/references/java-web-audit-playbook.md",
+        "Current Verification Status",
+        "Java Web playbook verification status field",
+    )
+    require_text(
         plugin_root / "assets/references/go-web-audit-playbook.md",
         "source-to-sink",
         "Go Web playbook source-to-sink contract",
+    )
+    require_text(
+        plugin_root / "assets/references/go-web-audit-playbook.md",
+        "Minimum entry inventory fields",
+        "Go Web playbook entry inventory contract",
+    )
+    require_text(
+        plugin_root / "assets/references/go-web-audit-playbook.md",
+        "Current Verification Status",
+        "Go Web playbook verification status field",
+    )
+    require_text(
+        plugin_root / "assets/references/recommended-security-tooling.md",
+        "Do not paste raw scanner logs into `attack-surface.md`",
+        "recommended tooling attack-surface log-dump guardrail",
     )
     require_text(
         plugin_root / "assets/references/claude-code-invocation-template.md",
@@ -278,6 +326,29 @@ def main() -> None:
             raise SystemExit("FAILED: bootstrapped workspace is missing asr-start.sh")
         if not (workspace / "unverified-leads.md").exists():
             raise SystemExit("FAILED: bootstrapped workspace is missing unverified-leads.md")
+        if not (workspace / "attack-surface.md").exists():
+            raise SystemExit("FAILED: bootstrapped workspace is missing attack-surface.md")
+        for heading in (
+            "Repository / Stack Summary",
+            "External Entry Points",
+            "Trusted and Untrusted Input Sources / Trust Boundaries",
+            "Auth / Session / Permission Boundaries",
+            "High-Risk Sinks",
+            "Source-to-Sink Hypotheses",
+            "Docker Verification Status",
+            "Confirmed / False-Positive / Unverified Routing Reminder",
+            "Next Safe Audit Steps",
+        ):
+            require_text(
+                workspace / "attack-surface.md",
+                heading,
+                f"bootstrapped attack-surface heading {heading}",
+            )
+        require_text(
+            workspace / "attack-surface.md",
+            "not a vulnerability report, not raw scanner output",
+            "bootstrapped attack-surface non-report guardrail",
+        )
         require_text(
             workspace / "candidate-findings.md",
             "Source-to-Sink Hypothesis",
@@ -319,6 +390,32 @@ def main() -> None:
             "--workspace-dir",
             str(workspace),
         ], plugin_root)
+        (repo_dir / "pom.xml").write_text(
+            "<project><modelVersion>4.0.0</modelVersion><groupId>selftest</groupId><artifactId>demo</artifactId><version>1</version></project>\n",
+            encoding="utf-8",
+        )
+        java_controller = repo_dir / "src/main/java/example/DemoController.java"
+        java_controller.parent.mkdir(parents=True, exist_ok=True)
+        java_controller.write_text(
+            "@RestController\nclass DemoController {\n  @GetMapping(\"/demo\") String demo(@RequestParam String name) { return name; }\n}\n",
+            encoding="utf-8",
+        )
+        planner_output = run_capture([
+            sys.executable,
+            str(workspace / "bin/plan-security-toolchain.py"),
+            "--target-dir",
+            str(repo_dir),
+            "--workspace-dir",
+            str(workspace),
+        ], plugin_root)
+        for expected in (
+            "attack_surface_guidance:",
+            "Java Web: inventory Spring/JAX-RS/Servlet routes",
+            "Minimum entry inventory fields: route or endpoint, method, handler/controller",
+            "current verification status",
+        ):
+            if expected not in planner_output:
+                raise SystemExit(f"FAILED: planner output missing attack-surface guidance text: {expected}")
         run([
             "bash",
             str(plugin_root / "scripts/refresh_workspace_helpers.sh"),
@@ -732,6 +829,16 @@ def main() -> None:
             installed_skill / "SKILL.md",
             "Final summaries must explicitly distinguish confirmed vulnerabilities",
             "installed Claude skill final summary triage contract",
+        )
+        require_text(
+            installed_skill / "SKILL.md",
+            "Fill `<audit-workspace>/attack-surface.md` as a concise handoff artifact",
+            "installed Claude skill attack-surface handoff contract",
+        )
+        require_text(
+            installed_skill / "SKILL.md",
+            "Do not use `attack-surface.md` as a DOCX source or as a shortcut into",
+            "installed Claude skill attack-surface routing guardrail",
         )
         backups = sorted((claude_home / "skills" / ".zhulong-backups").glob("zhulong.backup.*"))
         if len(backups) > 2:

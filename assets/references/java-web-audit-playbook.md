@@ -13,12 +13,18 @@ Build an `attack-surface.md` note before deep verification.
 
 Record:
 
-- entry route or handler
-- HTTP method and path
+- route or endpoint
+- HTTP method
+- handler or controller
 - authentication requirement
 - user-controlled parameters from query, path, header, cookie, body, multipart, or webhook payload
-- service-layer method or downstream system reached
-- high-risk sink reached, if any
+- downstream sink or service reached
+- current verification status
+
+Minimum entry inventory fields:
+
+| Route / Endpoint | Method | Handler / Controller | Authentication Requirement | Input Source | Downstream Sink / Service | Current Verification Status |
+| --- | --- | --- | --- | --- | --- | --- |
 
 ## Entry Points
 

@@ -2,6 +2,12 @@
 
 Use these tools to strengthen the audit and verification workflow around this skill.
 
+Tool output should feed concise workspace notes, especially
+`attack-surface.md`, `candidate-findings.md`, `false-positives.md`, and
+`unverified-leads.md`. Do not paste raw scanner logs into `attack-surface.md`;
+summarize only entry points, trust boundaries, high-risk sinks, hypotheses, and
+Docker verification status.
+
 ## First Tier
 
 These are the highest-value additions for a Docker-first autonomous security workflow.
