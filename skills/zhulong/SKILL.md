@@ -72,6 +72,12 @@ default contract even when the user does not restate them:
 - Static scanning, source-to-sink reasoning, pattern matching, dependency alerts,
   and LLM analysis can only create candidates. They must not be written as
   confirmed findings unless Docker reproduction succeeds.
+- Initial probe results are classification evidence only. Read
+  `<audit-workspace>/evidence/initial-probes/initial-probes-summary.json` before
+  interpreting raw scanner logs. Statuses such as `ran_ok`,
+  `skipped_tool_missing`, `skipped_no_package_sources`, `failed_nonfatal`, and
+  `failed_fatal` must not be reported as confirmed vulnerabilities or copied
+  into `confirmed/`.
 - False positives, non-security defects, unverified leads, and
   high-confidence-but-not-Docker-confirmed leads are workspace records only.
   Keep them in `candidate-findings.md`, `false-positives.md`,
@@ -161,6 +167,15 @@ For first-pass scanner execution, prefer the bundled runner:
 ```bash
 bash <audit-workspace>/bin/run-initial-probes.sh --repo-root <repo-root> --workspace-dir <audit-workspace>
 ```
+
+After it finishes, read
+`<audit-workspace>/evidence/initial-probes/initial-probes-summary.json` before
+opening raw logs. The structured summary uses stable statuses:
+`ran_ok`, `skipped_tool_missing`, `skipped_no_package_sources`,
+`failed_nonfatal`, and `failed_fatal`. Treat missing optional tools as
+`skipped_tool_missing`; treat `osv-scanner` output containing
+`No package sources found` as `skipped_no_package_sources`, not as a fatal audit
+failure and not as a vulnerability.
 
 Do not treat raw dependency-scanner exit codes as workflow blockers without
 reading the output. In particular, `osv-scanner scan source -r <repo>` may exit

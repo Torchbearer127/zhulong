@@ -57,6 +57,13 @@ def run_capture(command: list[str], cwd: Path) -> str:
     return output
 
 
+def run_with_env(command: list[str], cwd: Path, env: dict[str, str]) -> None:
+    proc = subprocess.run(command, cwd=cwd, env=env, capture_output=True, text=True)
+    if proc.returncode != 0:
+        output = ((proc.stdout or "") + (proc.stderr or "")).strip()
+        raise SystemExit(f"FAILED: {' '.join(command)}\n{output}")
+
+
 def run_expect_fail(command: list[str], cwd: Path, expected: str) -> None:
     proc = subprocess.run(command, cwd=cwd, capture_output=True, text=True)
     output = ((proc.stdout or "") + (proc.stderr or "")).strip()
@@ -168,6 +175,21 @@ def main() -> None:
         plugin_root / "templates/claude-skill/SKILL.md",
         "Final summaries must explicitly distinguish confirmed vulnerabilities",
         "Claude skill template final summary triage contract",
+    )
+    require_text(
+        plugin_root / "templates/claude-skill/SKILL.md",
+        "initial-probes-summary.json",
+        "Claude skill template initial probes summary contract",
+    )
+    require_text(
+        plugin_root / "templates/claude-skill/SKILL.md",
+        "skipped_no_package_sources",
+        "Claude skill template initial probes no package sources status",
+    )
+    require_text(
+        plugin_root / "templates/claude-skill/SKILL.md",
+        "must not be reported as confirmed vulnerabilities",
+        "Claude skill template initial probes confirmed-output guardrail",
     )
     require_text(
         plugin_root / "templates/claude-skill/SKILL.md",
@@ -325,6 +347,21 @@ def main() -> None:
         "verification runner stable labels",
     )
     require_text(
+        plugin_root / "scripts/run_initial_probes.sh",
+        "PROBE_STATUS_LABELS=\"ran_ok skipped_tool_missing skipped_no_package_sources failed_nonfatal failed_fatal\"",
+        "initial probes stable status labels",
+    )
+    require_text(
+        plugin_root / "scripts/run_initial_probes.sh",
+        "initial-probes-summary.json",
+        "initial probes structured summary filename",
+    )
+    require_text(
+        plugin_root / "scripts/run_initial_probes.sh",
+        "No package sources found",
+        "initial probes OSV no package sources classifier",
+    )
+    require_text(
         plugin_root / "scripts/run_verification_case.sh",
         "--timeout-seconds is required and must be positive",
         "verification runner mandatory timeout contract",
@@ -447,6 +484,68 @@ def main() -> None:
             raise SystemExit("FAILED: bootstrapped workspace is missing scripts/run-verification-case.sh")
         if not (workspace / "bin/asr-start.sh").exists():
             raise SystemExit("FAILED: bootstrapped workspace is missing asr-start.sh")
+        fake_bin = Path(tempdir) / "fake-bin"
+        fake_bin.mkdir(parents=True, exist_ok=True)
+        fake_osv = fake_bin / "osv-scanner"
+        fake_osv.write_text(
+            "#!/usr/bin/env bash\n"
+            "echo 'No package sources found'\n"
+            "exit 128\n",
+            encoding="utf-8",
+        )
+        fake_osv.chmod(0o755)
+        probe_env = {
+            **dict(),
+            "PATH": f"{fake_bin}:/usr/bin:/bin:/usr/sbin:/sbin",
+            "HOME": str(Path.home()),
+        }
+        run_with_env([
+            "/bin/bash",
+            str(workspace / "bin/run-initial-probes.sh"),
+            "--repo-root",
+            str(repo_dir),
+            "--workspace-dir",
+            str(workspace),
+        ], plugin_root, probe_env)
+        initial_summary = workspace / "evidence/initial-probes/initial-probes-summary.json"
+        if not initial_summary.exists():
+            raise SystemExit("FAILED: run_initial_probes did not write initial-probes-summary.json")
+        summary_data = json.loads(initial_summary.read_text(encoding="utf-8"))
+        for field in ("schema_version", "generated_at", "repo_root", "workspace_dir", "output_dir", "probes"):
+            if field not in summary_data:
+                raise SystemExit(f"FAILED: initial-probes-summary.json is missing {field}")
+        labels = set(summary_data.get("stable_status_labels") or [])
+        expected_labels = {"ran_ok", "skipped_tool_missing", "skipped_no_package_sources", "failed_nonfatal", "failed_fatal"}
+        if labels != expected_labels:
+            raise SystemExit(f"FAILED: initial probe stable labels mismatch: {sorted(labels)}")
+        probes = summary_data.get("probes") or []
+        if not isinstance(probes, list) or not probes:
+            raise SystemExit("FAILED: initial-probes-summary.json probes must be a non-empty list")
+        by_name = {probe.get("name"): probe for probe in probes}
+        if by_name.get("osv-scanner", {}).get("status") != "skipped_no_package_sources":
+            raise SystemExit("FAILED: osv-scanner No package sources found was not classified as skipped_no_package_sources")
+        if by_name.get("semgrep", {}).get("status") != "skipped_tool_missing":
+            raise SystemExit("FAILED: missing semgrep was not classified as skipped_tool_missing")
+        if by_name.get("gitleaks", {}).get("status") != "skipped_tool_missing":
+            raise SystemExit("FAILED: missing gitleaks was not classified as skipped_tool_missing")
+        if by_name.get("syft", {}).get("status") != "skipped_tool_missing":
+            raise SystemExit("FAILED: missing syft was not classified as skipped_tool_missing")
+        if by_name.get("grype", {}).get("status") != "skipped_tool_missing":
+            raise SystemExit("FAILED: missing grype was not classified as skipped_tool_missing")
+        for probe in probes:
+            for field in ("name", "status", "command", "exit_code", "log_path", "reason", "next_action"):
+                if field not in probe:
+                    raise SystemExit(f"FAILED: initial probe record missing {field}: {probe}")
+            for path_field in ("log_path",):
+                value = str(probe.get(path_field) or "")
+                if value.startswith("/"):
+                    raise SystemExit(f"FAILED: initial probe {path_field} should be relative: {value}")
+        if str(summary_data.get("repo_root")).startswith("/"):
+            raise SystemExit("FAILED: initial-probes-summary.json repo_root should not leak an absolute path")
+        if str(summary_data.get("workspace_dir")).startswith("/"):
+            raise SystemExit("FAILED: initial-probes-summary.json workspace_dir should not leak an absolute path")
+        if str(summary_data.get("output_dir")).startswith("/"):
+            raise SystemExit("FAILED: initial-probes-summary.json output_dir should not leak an absolute path")
         require_text(
             workspace / "bin/run-verification-case.sh",
             "failed_resource_limit",
@@ -984,6 +1083,16 @@ def main() -> None:
             installed_skill / "SKILL.md",
             "Final summaries must explicitly distinguish confirmed vulnerabilities",
             "installed Claude skill final summary triage contract",
+        )
+        require_text(
+            installed_skill / "SKILL.md",
+            "initial-probes-summary.json",
+            "installed Claude skill initial probes summary contract",
+        )
+        require_text(
+            installed_skill / "SKILL.md",
+            "skipped_tool_missing",
+            "installed Claude skill initial probes missing-tool status",
         )
         require_text(
             installed_skill / "SKILL.md",

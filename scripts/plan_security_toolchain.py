@@ -370,6 +370,8 @@ def build_result(root: Path, workspace_dir: Path) -> dict[str, Any]:
         "command_hints": command_hints(root, workspace_dir, plan),
         "execution_notes": [
             "Treat first-pass scanner non-zero exits as findings or environmental notes unless they clearly indicate a broken command.",
+            "Read <audit-workspace>/evidence/initial-probes/initial-probes-summary.json before interpreting raw scanner logs.",
+            "Initial probe statuses are ran_ok, skipped_tool_missing, skipped_no_package_sources, failed_nonfatal, and failed_fatal.",
             "Skip npm audit when the repository has no package-lock.json or npm-shrinkwrap.json.",
             "Prefer run-initial-probes.sh for osv-scanner so 'No package sources found' is recorded as skipped, not as a blocker.",
             "If osv-scanner is run manually and exits 128 with 'No package sources found', record it as no supported package source / skipped and continue.",

@@ -8,7 +8,8 @@ Usage:
   bash scripts/run_initial_probes.sh --repo-root <repo-root> [--workspace-dir <dir>] [--output-dir <dir>]
 
 Purpose:
-  Run first-pass local scanners with stable absolute paths and non-fatal handling.
+  Run first-pass local scanners with stable paths, non-fatal handling, and a
+  structured initial-probes-summary.json classification file.
 EOF
 }
 
@@ -17,6 +18,7 @@ WORKSPACE_DIR=""
 OUTPUT_DIR=""
 PROBES_RUN=0
 PROBES_SKIPPED=0
+PROBE_STATUS_LABELS="ran_ok skipped_tool_missing skipped_no_package_sources failed_nonfatal failed_fatal"
 
 find_state_writer() {
   local script_dir
@@ -174,9 +176,140 @@ elif [[ -n "$WORKSPACE_DIR" ]]; then
   WORKSPACE_DIR="$(cd "$WORKSPACE_DIR" && pwd)"
 fi
 mkdir -p "$OUTPUT_DIR"
+OUTPUT_DIR="$(cd "$OUTPUT_DIR" && pwd)"
 
 SUMMARY_FILE="$OUTPUT_DIR/summary.txt"
+RECORDS_FILE="$OUTPUT_DIR/probes.jsonl"
+SUMMARY_JSON="$OUTPUT_DIR/initial-probes-summary.json"
 : > "$SUMMARY_FILE"
+: > "$RECORDS_FILE"
+
+relative_path() {
+  local value="${1:-}"
+  [[ -n "$value" ]] || return 0
+  python3 - <<'PY' "$value" "${WORKSPACE_DIR:-}" "$REPO_ROOT"
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1]).expanduser().resolve()
+workspace = Path(sys.argv[2]).expanduser().resolve() if sys.argv[2] else None
+repo = Path(sys.argv[3]).expanduser().resolve()
+
+for base, prefix in ((workspace, ""), (repo, "")):
+    if base is None:
+        continue
+    try:
+        rel = path.relative_to(base).as_posix()
+    except ValueError:
+        continue
+    print(rel or ".")
+    raise SystemExit(0)
+print(path.name)
+PY
+}
+
+summary_path_value() {
+  local value="${1:-}"
+  [[ -n "$value" ]] || return 0
+  python3 - <<'PY' "$value" "${WORKSPACE_DIR:-}" "$REPO_ROOT"
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1]).expanduser().resolve()
+workspace = Path(sys.argv[2]).expanduser().resolve() if sys.argv[2] else None
+repo = Path(sys.argv[3]).expanduser().resolve()
+
+if path == repo:
+    print(".")
+    raise SystemExit(0)
+if workspace is not None and path == workspace:
+    print(workspace.name)
+    raise SystemExit(0)
+for base in (workspace, repo):
+    if base is None:
+        continue
+    try:
+        print(path.relative_to(base).as_posix())
+        raise SystemExit(0)
+    except ValueError:
+        pass
+print(path.name)
+PY
+}
+
+append_probe_record() {
+  local name="$1"
+  local status="$2"
+  local command_display="$3"
+  local exit_code="$4"
+  local log_path="$5"
+  local reason="$6"
+  local next_action="$7"
+  local log_value=""
+  command_display="${command_display//$REPO_ROOT/<repo-root>}"
+  if [[ -n "${WORKSPACE_DIR:-}" ]]; then
+    command_display="${command_display//$WORKSPACE_DIR/<audit-workspace>}"
+  fi
+  command_display="${command_display//$OUTPUT_DIR/<initial-probes-output>}"
+  [[ -n "$log_path" ]] && log_value="$(relative_path "$log_path")"
+  python3 - <<'PY' "$RECORDS_FILE" "$name" "$status" "$command_display" "$exit_code" "$log_value" "$reason" "$next_action"
+import json
+import sys
+from pathlib import Path
+
+records_path = Path(sys.argv[1])
+exit_code = None if sys.argv[5] == "" else int(sys.argv[5])
+record = {
+    "name": sys.argv[2],
+    "status": sys.argv[3],
+    "command": sys.argv[4],
+    "exit_code": exit_code,
+    "log_path": sys.argv[6],
+    "reason": sys.argv[7],
+    "next_action": sys.argv[8],
+}
+with records_path.open("a", encoding="utf-8") as fh:
+    fh.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+PY
+}
+
+write_summary_json() {
+  local repo_value workspace_value output_value
+  repo_value="$(summary_path_value "$REPO_ROOT")"
+  workspace_value="$(summary_path_value "${WORKSPACE_DIR:-}")"
+  output_value="$(summary_path_value "$OUTPUT_DIR")"
+  python3 - <<'PY' "$RECORDS_FILE" "$SUMMARY_JSON" "$repo_value" "$workspace_value" "$output_value"
+import json
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+records_path = Path(sys.argv[1])
+summary_path = Path(sys.argv[2])
+probes = []
+if records_path.exists():
+    for line in records_path.read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            probes.append(json.loads(line))
+
+data = {
+    "schema_version": 1,
+    "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
+    "repo_root": sys.argv[3],
+    "workspace_dir": sys.argv[4],
+    "output_dir": sys.argv[5],
+    "stable_status_labels": [
+        "ran_ok",
+        "skipped_tool_missing",
+        "skipped_no_package_sources",
+        "failed_nonfatal",
+        "failed_fatal",
+    ],
+    "probes": probes,
+}
+summary_path.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+}
 
 write_state_event \
   --event initial_probe_started \
@@ -191,18 +324,32 @@ run_probe() {
   shift
   local logfile="$OUTPUT_DIR/${name}.log"
   local statusfile="$OUTPUT_DIR/${name}.status"
+  local command_display="$*"
 
   PROBES_RUN=$((PROBES_RUN + 1))
   printf '[%s] running\n' "$name" >>"$SUMMARY_FILE"
   if "$@" >"$logfile" 2>&1; then
-    printf 'ok\n' >"$statusfile"
-    printf '[%s] ok\n' "$name" >>"$SUMMARY_FILE"
+    printf 'ran_ok\n' >"$statusfile"
+    printf '[%s] ran_ok\n' "$name" >>"$SUMMARY_FILE"
+    append_probe_record "$name" "ran_ok" "$command_display" "0" "$logfile" "Probe completed with exit code 0." "Review the log only if this probe is relevant to a candidate."
     return 0
   fi
 
   local code=$?
-  printf 'exit_code=%s\n' "$code" >"$statusfile"
-  printf '[%s] non_fatal_exit=%s\n' "$name" "$code" >>"$SUMMARY_FILE"
+  local status="failed_nonfatal"
+  local reason="Probe exited non-zero; preserve the log for manual review. Scanner findings are candidates only, not confirmed vulnerabilities."
+  local next_action="Read the log, record useful leads in candidate-findings.md or unverified-leads.md, and continue Docker-only verification for any candidate."
+  if [[ "$code" -eq 127 ]]; then
+    status="failed_fatal"
+    reason="Probe command could not be executed after the tool check passed; this indicates broken script state or an invalid runtime assumption."
+    next_action="Fix the probe command or runtime assumption before relying on initial probe coverage."
+  fi
+  {
+    printf '%s\n' "$status"
+    printf 'exit_code=%s\n' "$code"
+  } >"$statusfile"
+  printf '[%s] %s exit=%s\n' "$name" "$status" "$code" >>"$SUMMARY_FILE"
+  append_probe_record "$name" "$status" "$command_display" "$code" "$logfile" "$reason" "$next_action"
   return 0
 }
 
@@ -211,12 +358,14 @@ run_osv_probe() {
   local logfile="$OUTPUT_DIR/${name}.log"
   local statusfile="$OUTPUT_DIR/${name}.status"
   local code
+  local command_display="osv-scanner scan source -r <repo-root>"
 
   PROBES_RUN=$((PROBES_RUN + 1))
   printf '[%s] running\n' "$name" >>"$SUMMARY_FILE"
   if osv-scanner scan source -r "$REPO_ROOT" >"$logfile" 2>&1; then
-    printf 'ok\n' >"$statusfile"
-    printf '[%s] ok\n' "$name" >>"$SUMMARY_FILE"
+    printf 'ran_ok\n' >"$statusfile"
+    printf '[%s] ran_ok\n' "$name" >>"$SUMMARY_FILE"
+    append_probe_record "$name" "ran_ok" "$command_display" "0" "$logfile" "OSV Scanner completed with exit code 0." "Review dependency results as candidate evidence only; do not report as confirmed without Docker verification."
     return 0
   fi
 
@@ -229,20 +378,28 @@ run_osv_probe() {
       printf 'note=This is not a scanner crash and not a vulnerability finding. Continue source review and Docker verification.\n'
     } >"$statusfile"
     printf '[%s] skipped: no package sources found\n' "$name" >>"$SUMMARY_FILE"
+    append_probe_record "$name" "skipped_no_package_sources" "$command_display" "$code" "$logfile" "osv-scanner found no supported package lockfile, manifest, or SBOM source in this repository snapshot. This is not a scanner crash and not a vulnerability." "Continue source review and Docker-only verification; do not treat this as an audit failure."
     return 0
   fi
 
-  printf 'exit_code=%s\n' "$code" >"$statusfile"
-  printf '[%s] non_fatal_exit=%s\n' "$name" "$code" >>"$SUMMARY_FILE"
+  {
+    printf 'failed_nonfatal\n'
+    printf 'exit_code=%s\n' "$code"
+  } >"$statusfile"
+  printf '[%s] failed_nonfatal exit=%s\n' "$name" "$code" >>"$SUMMARY_FILE"
+  append_probe_record "$name" "failed_nonfatal" "$command_display" "$code" "$logfile" "osv-scanner exited non-zero for a reason other than no package sources. Preserve the log for manual review." "Review the log and continue; only Docker reproduction can confirm a vulnerability."
   return 0
 }
 
 note_skip() {
   local name="$1"
   local reason="$2"
+  local status="${3:-skipped_tool_missing}"
+  local next_action="${4:-Install or enable the optional tool only if this probe is important for the target stack; continue with source review and Docker verification.}"
   PROBES_SKIPPED=$((PROBES_SKIPPED + 1))
-  printf '%s\n' "$reason" >"$OUTPUT_DIR/${name}.status"
-  printf '[%s] skipped: %s\n' "$name" "$reason" >>"$SUMMARY_FILE"
+  printf '%s\nreason=%s\n' "$status" "$reason" >"$OUTPUT_DIR/${name}.status"
+  printf '[%s] %s: %s\n' "$name" "$status" "$reason" >>"$SUMMARY_FILE"
+  append_probe_record "$name" "$status" "" "" "" "$reason" "$next_action"
 }
 
 has_cmd() {
@@ -265,9 +422,9 @@ if has_cmd npm; then
   if [[ -f "$REPO_ROOT/package-lock.json" || -f "$REPO_ROOT/npm-shrinkwrap.json" ]]; then
     run_probe npm-audit bash -lc "cd \"$REPO_ROOT\" && npm audit"
   elif [[ -f "$REPO_ROOT/package.json" ]]; then
-    note_skip npm-audit "node repo without package-lock.json or npm-shrinkwrap.json"
+    note_skip npm-audit "node repo without package-lock.json or npm-shrinkwrap.json" "skipped_no_package_sources" "Use npm audit only after a lockfile exists; continue source review and Docker verification."
   else
-    note_skip npm-audit "not a node repo"
+    note_skip npm-audit "not a node repo" "skipped_no_package_sources" "No Node package source was detected for npm audit; continue with relevant probes."
   fi
 else
   note_skip npm-audit "missing npm"
@@ -288,7 +445,7 @@ elif [[ -f "$REPO_ROOT/build.gradle" || -f "$REPO_ROOT/build.gradle.kts" ]]; the
     note_skip gradle-dependencies "java repo with Gradle files but missing gradle or executable ./gradlew"
   fi
 else
-  note_skip java-dependency-tree "not a maven or gradle repo"
+  note_skip java-dependency-tree "not a maven or gradle repo" "skipped_no_package_sources" "No Maven or Gradle source was detected; continue with probes relevant to the detected stack."
 fi
 
 if has_cmd dependency-check; then
@@ -332,10 +489,10 @@ if [[ -f "$REPO_ROOT/go.mod" ]]; then
     note_skip golangci-lint "missing golangci-lint"
   fi
 else
-  note_skip go-list-modules "not a go module"
-  note_skip govulncheck "not a go module"
-  note_skip gosec "not a go module"
-  note_skip golangci-lint "not a go module"
+  note_skip go-list-modules "not a go module" "skipped_no_package_sources" "No go.mod source was detected; continue with probes relevant to the detected stack."
+  note_skip govulncheck "not a go module" "skipped_no_package_sources" "No go.mod source was detected; continue with probes relevant to the detected stack."
+  note_skip gosec "not a go module" "skipped_no_package_sources" "No go.mod source was detected; continue with probes relevant to the detected stack."
+  note_skip golangci-lint "not a go module" "skipped_no_package_sources" "No go.mod source was detected; continue with probes relevant to the detected stack."
 fi
 
 if has_cmd osv-scanner; then
@@ -350,6 +507,20 @@ else
   note_skip trivy "missing trivy"
 fi
 
+if has_cmd syft; then
+  run_probe syft syft "dir:$REPO_ROOT"
+else
+  note_skip syft "missing syft"
+fi
+
+if has_cmd grype; then
+  run_probe grype grype "dir:$REPO_ROOT"
+else
+  note_skip grype "missing grype"
+fi
+
+write_summary_json
+
 if [[ "$PROBES_RUN" -gt 0 ]]; then
   write_state_event \
     --event initial_probe_completed \
@@ -358,6 +529,7 @@ if [[ "$PROBES_RUN" -gt 0 ]]; then
     --event-status ok \
     --message "Initial probes completed." \
     --detail "output_dir=$OUTPUT_DIR" \
+    --detail "summary_json=$SUMMARY_JSON" \
     --detail "probes_run=$PROBES_RUN" \
     --detail "probes_skipped=$PROBES_SKIPPED"
 else
@@ -368,6 +540,7 @@ else
     --event-status skipped \
     --message "All initial probes were skipped." \
     --detail "output_dir=$OUTPUT_DIR" \
+    --detail "summary_json=$SUMMARY_JSON" \
     --detail "probes_skipped=$PROBES_SKIPPED"
 fi
 
@@ -377,6 +550,8 @@ Repository root:
   $REPO_ROOT
 Evidence directory:
   $OUTPUT_DIR
+Structured summary:
+  $SUMMARY_JSON
 Summary:
 $(cat "$SUMMARY_FILE")
 EOF
