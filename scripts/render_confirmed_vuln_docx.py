@@ -1151,6 +1151,12 @@ def write_verification_evidence(
             evidence_files.append(rel)
 
     poc_path = bundled_path_for_value(provided.get("poc_path"), path_map) or infer_poc_path(finding, path_map)
+    if not poc_path:
+        raise SystemExit(
+            "verification_evidence.poc_path is required for confirmed bundles. "
+            "Set findings[].verification_evidence.poc_path to a PoC file that is "
+            "bundled under attachments/, or include a PoC attachment that the renderer can copy."
+        )
     if poc_path and poc_path not in evidence_files:
         evidence_files.insert(0, poc_path)
 
@@ -1162,8 +1168,17 @@ def write_verification_evidence(
     docker_image = first_nonempty(
         provided.get("docker_image"),
         finding.get("docker_image"),
-        "project-specific Docker image or Docker Compose service",
     )
+    if not docker_image:
+        raise SystemExit(
+            "verification_evidence.docker_image is required for confirmed bundles. "
+            "Use the concrete Docker image tag or Docker Compose service used during verification."
+        )
+    if docker_image == "project-specific Docker image or Docker Compose service":
+        raise SystemExit(
+            "verification_evidence.docker_image must name the concrete Docker image or Compose service, "
+            "not the placeholder text."
+        )
     expected = first_nonempty(
         provided.get("expected_observation"),
         finding.get("expected_observation"),

@@ -87,6 +87,9 @@ ALLOWED_VERIFICATION_STATUSES = {
     "confirmed_in_docker",
     "high_confidence_unverified_due_to_sandbox_limitation",
 }
+PLACEHOLDER_VERIFICATION_VALUES = {
+    "project-specific Docker image or Docker Compose service",
+}
 REQUIRED_VERIFICATION_FIELDS = {
     "schema_version",
     "finding_slug",
@@ -519,6 +522,12 @@ def validate_bundle_cleanliness(bundle_dir: Path) -> None:
 def validate_bundle_relative_file(value: object, bundle_dir: Path, label: str) -> str:
     raw = str(value or "").strip()
     if not raw:
+        if label == "poc_path":
+            fail(
+                "verification-evidence.json poc_path must not be empty; set "
+                "findings[].verification_evidence.poc_path to a bundle-relative "
+                "PoC file under attachments/."
+            )
         fail(f"verification-evidence.json {label} must not be empty")
     if raw.startswith("file://"):
         fail(f"verification-evidence.json {label} must be bundle-relative, got file URI: {raw}")
@@ -529,6 +538,8 @@ def validate_bundle_relative_file(value: object, bundle_dir: Path, label: str) -
         fail(f"verification-evidence.json {label} must be bundle-relative, got absolute path: {raw}")
     if ".." in path.parts:
         fail(f"verification-evidence.json {label} must not escape the bundle with '..': {raw}")
+    # Path.resolve() follows symlinks; the relative_to() check below therefore
+    # rejects symlink escapes as well as ordinary path traversal.
     resolved = (bundle_dir / path).resolve()
     try:
         resolved.relative_to(bundle_dir.resolve())
@@ -591,8 +602,11 @@ def validate_verification_evidence(bundle_dir: Path, finding: dict[str, object] 
         "oracle_token",
         "severity_escalation_result",
     ):
-        if not str(evidence.get(field) or "").strip():
+        value = str(evidence.get(field) or "").strip()
+        if not value:
             fail(f"verification-evidence.json {field} must not be empty")
+        if value in PLACEHOLDER_VERIFICATION_VALUES:
+            fail(f"verification-evidence.json {field} must not use placeholder text: {value}")
 
     validate_bundle_relative_file(evidence.get("poc_path"), bundle_dir, "poc_path")
     evidence_files = evidence.get("evidence_files")

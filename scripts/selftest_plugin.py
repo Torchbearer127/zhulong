@@ -401,6 +401,147 @@ def main() -> None:
             "zh-CN",
         ], plugin_root, "must not escape the bundle with '..'")
 
+        bad_empty_poc = zh_bundle.parent / f"{zh_bundle.name}_empty_poc_path"
+        shutil.copytree(zh_bundle, bad_empty_poc)
+        empty_poc_data = json.loads((bad_empty_poc / "verification-evidence.json").read_text(encoding="utf-8"))
+        empty_poc_data["poc_path"] = ""
+        (bad_empty_poc / "verification-evidence.json").write_text(
+            json.dumps(empty_poc_data, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_empty_poc),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "verification-evidence.json poc_path must not be empty")
+
+        bad_absolute_poc = zh_bundle.parent / f"{zh_bundle.name}_absolute_poc_path"
+        shutil.copytree(zh_bundle, bad_absolute_poc)
+        absolute_poc_data = json.loads((bad_absolute_poc / "verification-evidence.json").read_text(encoding="utf-8"))
+        absolute_poc_data["poc_path"] = str((bad_absolute_poc / "attachments/poc/path_traversal.py").resolve())
+        (bad_absolute_poc / "verification-evidence.json").write_text(
+            json.dumps(absolute_poc_data, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_absolute_poc),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "must be bundle-relative")
+
+        bad_escape_poc = zh_bundle.parent / f"{zh_bundle.name}_escape_poc_path"
+        shutil.copytree(zh_bundle, bad_escape_poc)
+        escape_poc_data = json.loads((bad_escape_poc / "verification-evidence.json").read_text(encoding="utf-8"))
+        escape_poc_data["poc_path"] = "../outside-poc.py"
+        (bad_escape_poc / "verification-evidence.json").write_text(
+            json.dumps(escape_poc_data, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_escape_poc),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "must not escape the bundle with '..'")
+
+        bad_symlink_escape = zh_bundle.parent / f"{zh_bundle.name}_symlink_escape"
+        shutil.copytree(zh_bundle, bad_symlink_escape)
+        outside_file = zh_bundle.parent / "outside-symlink-target.log"
+        outside_file.write_text("outside evidence\n", encoding="utf-8")
+        symlink_path = bad_symlink_escape / "attachments/evidence/outside-link.log"
+        symlink_path.parent.mkdir(parents=True, exist_ok=True)
+        symlink_path.symlink_to(outside_file)
+        symlink_data = json.loads((bad_symlink_escape / "verification-evidence.json").read_text(encoding="utf-8"))
+        symlink_data["evidence_files"] = ["attachments/evidence/outside-link.log"]
+        (bad_symlink_escape / "verification-evidence.json").write_text(
+            json.dumps(symlink_data, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_symlink_escape),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "escapes the bundle root")
+
+        bad_docker_required = zh_bundle.parent / f"{zh_bundle.name}_docker_required_false"
+        shutil.copytree(zh_bundle, bad_docker_required)
+        docker_required_data = json.loads((bad_docker_required / "verification-evidence.json").read_text(encoding="utf-8"))
+        docker_required_data["docker_required"] = False
+        (bad_docker_required / "verification-evidence.json").write_text(
+            json.dumps(docker_required_data, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_docker_required),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "docker_required must be true")
+
+        bad_no_escalation = zh_bundle.parent / f"{zh_bundle.name}_no_severity_escalation"
+        shutil.copytree(zh_bundle, bad_no_escalation)
+        no_escalation_data = json.loads((bad_no_escalation / "verification-evidence.json").read_text(encoding="utf-8"))
+        no_escalation_data["severity_escalation_attempted"] = False
+        (bad_no_escalation / "verification-evidence.json").write_text(
+            json.dumps(no_escalation_data, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_no_escalation),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "severity_escalation_attempted must be true")
+
+        bad_empty_docker_command = zh_bundle.parent / f"{zh_bundle.name}_empty_docker_command"
+        shutil.copytree(zh_bundle, bad_empty_docker_command)
+        empty_command_data = json.loads((bad_empty_docker_command / "verification-evidence.json").read_text(encoding="utf-8"))
+        empty_command_data["docker_command"] = ""
+        (bad_empty_docker_command / "verification-evidence.json").write_text(
+            json.dumps(empty_command_data, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_empty_docker_command),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "docker_command must not be empty")
+
+        bad_placeholder_image = zh_bundle.parent / f"{zh_bundle.name}_placeholder_docker_image"
+        shutil.copytree(zh_bundle, bad_placeholder_image)
+        placeholder_image_data = json.loads((bad_placeholder_image / "verification-evidence.json").read_text(encoding="utf-8"))
+        placeholder_image_data["docker_image"] = "project-specific Docker image or Docker Compose service"
+        (bad_placeholder_image / "verification-evidence.json").write_text(
+            json.dumps(placeholder_image_data, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_placeholder_image),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "must not use placeholder text")
+
         bad_missing_attachments = zh_bundle.parent / f"{zh_bundle.name}_missing_attachments"
         shutil.copytree(zh_bundle, bad_missing_attachments)
         shutil.rmtree(bad_missing_attachments / "attachments")
