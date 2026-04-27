@@ -207,9 +207,10 @@ def render(workspace: Path, repo_root: Path, output: Path) -> str:
     last_message = str(status.get("last_message") or "")
 
     lines: list[str] = [
+        "<!-- schema_version: 1 -->",
         "# Handoff Summary",
         "",
-        "This is a lightweight continuation packet. It summarizes state and points to source files; it must not contain raw scanner logs or substitute for confirmed bundles.",
+        "This is a lightweight continuation packet. It is not a vulnerability report, not raw scanner output, not a source for DOCX generation, and not a substitute for confirmed bundles.",
         "",
         "## Target and Workspace",
         "",

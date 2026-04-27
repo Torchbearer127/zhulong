@@ -490,6 +490,7 @@ def main() -> None:
     run(["bash", "-n", str(plugin_root / "scripts/refresh_workspace_helpers.sh")], plugin_root)
     run(["bash", "-n", str(plugin_root / "scripts/sync_to_claude_skill.sh")], plugin_root)
     run(["bash", str(plugin_root / "scripts/run_verification_case.sh"), "--help"], plugin_root)
+    run([sys.executable, str(plugin_root / "scripts/render_handoff_summary.py"), "--help"], plugin_root)
 
     with tempfile.TemporaryDirectory(prefix="asr-plugin-selftest-") as tempdir:
         repo_dir = Path(tempdir) / "repo"
@@ -518,6 +519,16 @@ def main() -> None:
             raise SystemExit("FAILED: bootstrapped workspace is missing scripts/render-handoff-summary.py")
         if not (workspace / "handoff-summary.md").exists():
             raise SystemExit("FAILED: bootstrapped workspace is missing handoff-summary.md")
+        require_text(
+            workspace / "handoff-summary.md",
+            "<!-- schema_version: 1 -->",
+            "bootstrapped handoff schema version marker",
+        )
+        require_text(
+            workspace / "handoff-summary.md",
+            "It is not a vulnerability report",
+            "bootstrapped handoff non-report disclaimer",
+        )
         for heading in (
             "Target and Workspace",
             "Current Stage / Status",
