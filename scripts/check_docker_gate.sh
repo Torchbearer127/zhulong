@@ -180,6 +180,31 @@ except Exception:
 PY
 )"
 
+find_handoff_renderer() {
+  local script_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  if [[ -f "$script_dir/render_handoff_summary.py" ]]; then
+    printf '%s\n' "$script_dir/render_handoff_summary.py"
+    return
+  fi
+  if [[ -f "$script_dir/render-handoff-summary.py" ]]; then
+    printf '%s\n' "$script_dir/render-handoff-summary.py"
+    return
+  fi
+  if [[ -f "$script_dir/../bin/render-handoff-summary.py" ]]; then
+    printf '%s\n' "$script_dir/../bin/render-handoff-summary.py"
+    return
+  fi
+}
+
+render_handoff_summary() {
+  local renderer
+  renderer="$(find_handoff_renderer)"
+  if [[ -n "$renderer" ]]; then
+    python3 "$renderer" --workspace-dir "$WORKSPACE_DIR" --repo-root "$REPO_ROOT" >/dev/null || true
+  fi
+}
+
 TMP_OUT="$(mktemp -t asr-docker-gate.XXXXXX)"
 if docker info >"$TMP_OUT" 2>&1; then
   write_state_event \
@@ -250,6 +275,12 @@ write_state_event \
   --resume-step "$resume_step" \
   --detail "audit_log=$LOG_FILE"
 
+render_handoff_summary
+handoff_hint="$WORKSPACE_DIR/handoff-summary.md"
+if [[ ! -f "$handoff_hint" ]]; then
+  handoff_hint="Run: python3 $WORKSPACE_DIR/bin/render-handoff-summary.py --workspace-dir $WORKSPACE_DIR --repo-root $REPO_ROOT"
+fi
+
 cat <<EOF
 ============================================================
 Zhulong Docker Gate Blocked
@@ -259,10 +290,12 @@ Workspace:  $WORKSPACE_DIR
 Reason:     $docker_reason
 Rule:       Do not verify PoCs or exploit traffic on the host.
 Audit log:  $LOG_FILE
+Handoff:    $handoff_hint
 Next:       $resume_step
 ============================================================
 docker_gate=blocked
 audit_log=$LOG_FILE
+handoff_summary=$handoff_hint
 message=Docker is unavailable. Progress has been logged. Do not verify on the host. Check Docker and resume later.
 EOF
 

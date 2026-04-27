@@ -72,6 +72,23 @@ find_state_writer() {
   fi
 }
 
+find_handoff_renderer() {
+  local script_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  if [[ -f "$script_dir/render_handoff_summary.py" ]]; then
+    printf '%s\n' "$script_dir/render_handoff_summary.py"
+    return
+  fi
+  if [[ -f "$script_dir/render-handoff-summary.py" ]]; then
+    printf '%s\n' "$script_dir/render-handoff-summary.py"
+    return
+  fi
+  if [[ -f "$script_dir/../bin/render-handoff-summary.py" ]]; then
+    printf '%s\n' "$script_dir/../bin/render-handoff-summary.py"
+    return
+  fi
+}
+
 write_state_event() {
   local workspace writer
   workspace="$(infer_workspace_dir 2>/dev/null || true)"
@@ -293,6 +310,18 @@ write_state_event \
   --event-status "$recommended_mode" \
   --message "$reason"
 
+handoff_line=""
+if [[ "$recommended_mode" == "cleanup_needed" ]]; then
+  handoff_workspace="$(infer_workspace_dir 2>/dev/null || true)"
+  handoff_renderer="$(find_handoff_renderer)"
+  if [[ -n "$handoff_workspace" && -n "$handoff_renderer" ]]; then
+    python3 "$handoff_renderer" --workspace-dir "$handoff_workspace" --repo-root "$(cd "$handoff_workspace/.." && pwd)" >/dev/null || true
+    handoff_line="$handoff_workspace/handoff-summary.md"
+  elif [[ -n "$handoff_workspace" ]]; then
+    handoff_line="Run: python3 $handoff_workspace/bin/render-handoff-summary.py --workspace-dir $handoff_workspace"
+  fi
+fi
+
 if [[ "$JSON_OUTPUT" == "1" ]]; then
   teammate_blob=""
   ignored_blob=""
@@ -317,11 +346,12 @@ if [[ "$JSON_OUTPUT" == "1" ]]; then
     "$teammate_blob" \
     "$ignored_blob" \
     "$stale_blob" \
-    "$live_blob"
+    "$live_blob" \
+    "$handoff_line"
 import json
 import sys
 
-mode, reason, teams_enabled, teammate_blob, ignored_blob, stale_blob, live_blob = sys.argv[1:8]
+mode, reason, teams_enabled, teammate_blob, ignored_blob, stale_blob, live_blob, handoff_line = sys.argv[1:9]
 
 def lines(blob: str) -> list[str]:
     return [line for line in blob.splitlines() if line]
@@ -335,6 +365,7 @@ print(json.dumps({
     "ignored_current_session_teammate_pids": lines(ignored_blob),
     "stale_swarm_sockets": lines(stale_blob),
     "live_swarm_sockets": lines(live_blob),
+    "handoff_summary": handoff_line,
 }, ensure_ascii=False, indent=2))
 PY
 else
@@ -361,6 +392,7 @@ else
   cat <<EOF
 recommended_mode=$recommended_mode
 reason=$reason
+handoff_summary=$handoff_line
 teams_enabled=$teams_enabled
 teammate_pids=$teammate_line
 orphan_teammate_pids=

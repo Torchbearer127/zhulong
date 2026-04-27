@@ -21,6 +21,8 @@ Use this Claude Code skill when you want a repository audit workflow that is:
   - [asr_exec.sh](./scripts/asr_exec.sh)
 - Docker verification runner:
   - [run_verification_case.sh](./scripts/run_verification_case.sh)
+- handoff summary:
+  - [render_handoff_summary.py](./scripts/render_handoff_summary.py)
 - dynamic planning:
   - [plan_security_toolchain.py](./scripts/plan_security_toolchain.py)
   - [tool-registry.json](./assets/tool-registry.json)
@@ -78,6 +80,10 @@ default contract even when the user does not restate them:
   `skipped_tool_missing`, `skipped_no_package_sources`, `failed_nonfatal`, and
   `failed_fatal` must not be reported as confirmed vulnerabilities or copied
   into `confirmed/`.
+- Use `<audit-workspace>/handoff-summary.md` as the first-read continuation
+  packet for new agent sessions. It is a context-slimming index over lightweight
+  files, not a report, not raw scanner output, and not a source for DOCX
+  generation or confirmed findings.
 - False positives, non-security defects, unverified leads, and
   high-confidence-but-not-Docker-confirmed leads are workspace records only.
   Keep them in `candidate-findings.md`, `false-positives.md`,
@@ -140,8 +146,23 @@ If Docker gate or OMC runtime gate pauses the workflow, do not fail silently. Pr
 - the relevant log or evidence path
 - confirmation that collected artifacts were preserved
 - the precise resume step
+- a pointer to `<audit-workspace>/handoff-summary.md` or the command to render it:
+  `python3 <audit-workspace>/bin/render-handoff-summary.py --workspace-dir <audit-workspace>`
 
 If `check_omc_runtime.sh` reports `cleanup_needed`, treat it as a manual-review state first. Do not auto-kill teammate-mode processes. If `suspect_teammate_pids` or `stale_swarm_sockets` are reported, show them explicitly and require inspection before cleanup.
+
+At the start of every resumed or handed-off session, refresh and read the
+handoff summary before opening raw logs:
+
+```bash
+python3 <audit-workspace>/bin/render-handoff-summary.py --workspace-dir <audit-workspace> --repo-root <repo-root>
+```
+
+Read lightweight files first (`stage-status.json`, `attack-surface.md`,
+`initial-probes-summary.json`, `candidate-findings.md`, `false-positives.md`,
+and `unverified-leads.md`). Avoid default-reading `evidence/**/*.log`, large
+SBOM/dependency outputs, Docker diagnostic blocks, or raw scanner logs unless a
+specific candidate, blocker, or reproduction question requires them.
 
 3. Plan the repository-specific toolchain:
 

@@ -28,6 +28,7 @@ REQUIRED_FILES = [
     "scripts/check_security_tooling.sh",
     "scripts/run_initial_probes.sh",
     "scripts/run_verification_case.sh",
+    "scripts/render_handoff_summary.py",
     "scripts/refresh_workspace_helpers.sh",
     "scripts/sync_to_claude_skill.sh",
     "scripts/write_audit_event.py",
@@ -190,6 +191,21 @@ def main() -> None:
         plugin_root / "templates/claude-skill/SKILL.md",
         "must not be reported as confirmed vulnerabilities",
         "Claude skill template initial probes confirmed-output guardrail",
+    )
+    require_text(
+        plugin_root / "templates/claude-skill/SKILL.md",
+        "handoff-summary.md",
+        "Claude skill template handoff summary contract",
+    )
+    require_text(
+        plugin_root / "templates/claude-skill/SKILL.md",
+        "context-slimming index",
+        "Claude skill template handoff context-slimming contract",
+    )
+    require_text(
+        plugin_root / "templates/claude-skill/SKILL.md",
+        "Avoid default-reading",
+        "Claude skill template handoff raw-log avoidance contract",
     )
     require_text(
         plugin_root / "templates/claude-skill/SKILL.md",
@@ -362,6 +378,21 @@ def main() -> None:
         "initial probes OSV no package sources classifier",
     )
     require_text(
+        plugin_root / "scripts/render_handoff_summary.py",
+        "Heavy Logs To Avoid Unless Needed",
+        "handoff renderer heavy-log avoidance heading",
+    )
+    require_text(
+        plugin_root / "scripts/render_handoff_summary.py",
+        "Confirmed-Only Routing Guardrails",
+        "handoff renderer confirmed-only heading",
+    )
+    require_text(
+        plugin_root / "scripts/render_handoff_summary.py",
+        "Do not copy raw scanner logs into this handoff",
+        "handoff renderer raw-log dump warning",
+    )
+    require_text(
         plugin_root / "scripts/run_verification_case.sh",
         "--timeout-seconds is required and must be positive",
         "verification runner mandatory timeout contract",
@@ -440,6 +471,7 @@ def main() -> None:
 
     run([sys.executable, "-m", "py_compile",
          str(plugin_root / "scripts/plan_security_toolchain.py"),
+         str(plugin_root / "scripts/render_handoff_summary.py"),
          str(plugin_root / "scripts/write_audit_event.py"),
          str(plugin_root / "scripts/validate_workspace_state.py"),
          str(plugin_root / "scripts/render_confirmed_vuln_docx.py"),
@@ -480,6 +512,57 @@ def main() -> None:
             raise SystemExit("FAILED: bootstrapped workspace is missing run-initial-probes.sh")
         if not (workspace / "bin/run-verification-case.sh").exists():
             raise SystemExit("FAILED: bootstrapped workspace is missing run-verification-case.sh")
+        if not (workspace / "bin/render-handoff-summary.py").exists():
+            raise SystemExit("FAILED: bootstrapped workspace is missing render-handoff-summary.py")
+        if not (workspace / "scripts/render-handoff-summary.py").exists():
+            raise SystemExit("FAILED: bootstrapped workspace is missing scripts/render-handoff-summary.py")
+        if not (workspace / "handoff-summary.md").exists():
+            raise SystemExit("FAILED: bootstrapped workspace is missing handoff-summary.md")
+        for heading in (
+            "Target and Workspace",
+            "Current Stage / Status",
+            "Recommended First Reads",
+            "Context-Slimming Rules",
+            "Attack-Surface Highlights",
+            "Initial Probe Summary",
+            "Candidate Findings",
+            "False Positives / Non-Security Defects",
+            "Unverified Leads",
+            "Confirmed Bundle Pointers",
+            "Heavy Logs To Avoid Unless Needed",
+            "Next Safe Steps",
+            "Confirmed-Only Routing Guardrails",
+        ):
+            require_text(
+                workspace / "handoff-summary.md",
+                heading,
+                f"bootstrapped handoff heading {heading}",
+            )
+        require_text(
+            workspace / "handoff-summary.md",
+            "Read lightweight files first",
+            "bootstrapped handoff context-slimming rule",
+        )
+        require_text(
+            workspace / "handoff-summary.md",
+            "Avoid default-reading full raw logs",
+            "bootstrapped handoff raw-log avoidance rule",
+        )
+        require_text(
+            workspace / "handoff-summary.md",
+            "Confirmed vulnerabilities belong only under `confirmed/<one-folder-per-vulnerability>/`",
+            "bootstrapped handoff confirmed-only guardrail",
+        )
+        require_text(
+            workspace / "handoff-summary.md",
+            "Do not generate DOCX reports from handoff content",
+            "bootstrapped handoff no-DOCX guardrail",
+        )
+        require_text(
+            workspace / "handoff-summary.md",
+            "Do not copy raw scanner logs into this handoff",
+            "bootstrapped handoff raw-log dump warning",
+        )
         if not (workspace / "scripts/run-verification-case.sh").exists():
             raise SystemExit("FAILED: bootstrapped workspace is missing scripts/run-verification-case.sh")
         if not (workspace / "bin/asr-start.sh").exists():
@@ -570,6 +653,24 @@ def main() -> None:
             raise SystemExit("FAILED: initial-probes-summary.json workspace_dir should not leak an absolute path")
         if str(summary_data.get("output_dir")).startswith("/"):
             raise SystemExit("FAILED: initial-probes-summary.json output_dir should not leak an absolute path")
+        run([
+            sys.executable,
+            str(workspace / "bin/render-handoff-summary.py"),
+            "--workspace-dir",
+            str(workspace),
+            "--repo-root",
+            str(repo_dir),
+        ], plugin_root)
+        require_text(
+            workspace / "handoff-summary.md",
+            "osv-scanner: skipped_no_package_sources",
+            "rendered handoff initial probe status",
+        )
+        require_text(
+            workspace / "handoff-summary.md",
+            "semgrep: skipped_tool_missing",
+            "rendered handoff missing tool status",
+        )
         require_text(
             workspace / "bin/run-verification-case.sh",
             "failed_resource_limit",
@@ -1045,6 +1146,8 @@ def main() -> None:
             raise SystemExit("FAILED: Claude skill sync did not copy run_initial_probes.sh")
         if not (installed_skill / "scripts/run_verification_case.sh").exists():
             raise SystemExit("FAILED: Claude skill sync did not copy run_verification_case.sh")
+        if not (installed_skill / "scripts/render_handoff_summary.py").exists():
+            raise SystemExit("FAILED: Claude skill sync did not copy render_handoff_summary.py")
         if not (installed_skill / "scripts/asr_start.sh").exists():
             raise SystemExit("FAILED: Claude skill sync did not copy asr_start.sh")
         if not (installed_skill / "scripts/write_audit_event.py").exists():
@@ -1117,6 +1220,11 @@ def main() -> None:
             installed_skill / "SKILL.md",
             "skipped_tool_missing",
             "installed Claude skill initial probes missing-tool status",
+        )
+        require_text(
+            installed_skill / "SKILL.md",
+            "handoff-summary.md",
+            "installed Claude skill handoff summary contract",
         )
         require_text(
             installed_skill / "SKILL.md",

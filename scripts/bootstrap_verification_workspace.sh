@@ -16,6 +16,7 @@ What it creates:
     audit-events.jsonl
     fingerprint.md
     attack-surface.md
+    handoff-summary.md
     candidate-findings.md
     false-positives.md
     unverified-leads.md
@@ -27,6 +28,7 @@ What it creates:
       check_security_tooling.sh
       run-initial-probes.sh
       run-verification-case.sh
+      render-handoff-summary.py
       plan-security-toolchain.py
       scaffold-bilingual-findings.py
       validate-report-bundle.py
@@ -41,6 +43,7 @@ What it creates:
       check_security_tooling.sh
       run-initial-probes.sh
       run-verification-case.sh
+      render-handoff-summary.py
       plan-security-toolchain.py
       scaffold-bilingual-findings.py
       validate-report-bundle.py
@@ -320,6 +323,16 @@ exec bash "$SCRIPT_DIR/../bin/run-verification-case.sh" "$@"
 '
 chmod +x "$WORKSPACE_DIR/scripts/run-verification-case.sh"
 copy_file \
+  "$SKILL_DIR/scripts/render_handoff_summary.py" \
+  "$WORKSPACE_DIR/bin/render-handoff-summary.py"
+chmod +x "$WORKSPACE_DIR/bin/render-handoff-summary.py"
+write_text_file "$WORKSPACE_DIR/scripts/render-handoff-summary.py" '#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec python3 "$SCRIPT_DIR/../bin/render-handoff-summary.py" "$@"
+'
+chmod +x "$WORKSPACE_DIR/scripts/render-handoff-summary.py"
+copy_file \
   "$SKILL_DIR/scripts/plan_security_toolchain.py" \
   "$WORKSPACE_DIR/bin/plan-security-toolchain.py"
 chmod +x "$WORKSPACE_DIR/bin/plan-security-toolchain.py"
@@ -392,6 +405,11 @@ copy_file \
   "$SKILL_DIR/assets/confirmed-vuln-report-template.docx" \
   "$WORKSPACE_DIR/confirmed/confirmed-vuln-report-template.docx"
 
+python3 "$WORKSPACE_DIR/bin/render-handoff-summary.py" \
+  --workspace-dir "$WORKSPACE_DIR" \
+  --repo-root "$TARGET_DIR" >/dev/null || \
+  echo "[zhulong] WARNING: handoff summary render failed during bootstrap (non-fatal)." >&2
+
 cat <<EOF
 
 Workspace ready: $WORKSPACE_DIR
@@ -405,6 +423,9 @@ Suggested next steps:
        summary_language=$SUMMARY_LANGUAGE
   3. For a stable first-pass scan, prefer:
        bash $WORKSPACE_DIR/bin/run-initial-probes.sh --repo-root $TARGET_DIR
+     Then read the lightweight handoff:
+       python3 $WORKSPACE_DIR/bin/render-handoff-summary.py --workspace-dir $WORKSPACE_DIR --repo-root $TARGET_DIR
+       $WORKSPACE_DIR/handoff-summary.md
   4. Before any PoC or exploit verification, enforce the Docker gate:
        bash $WORKSPACE_DIR/bin/check-docker-gate.sh --repo-root $TARGET_DIR
      If this fails, stop verification, keep the audit inside $WORKSPACE_DIR, and resume only after Docker is fixed.
