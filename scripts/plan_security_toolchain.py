@@ -319,27 +319,34 @@ def attack_surface_guidance(stacks: list[str], attack_surface: list[str]) -> lis
         "Maintain <audit-workspace>/attack-surface.md as a concise handoff packet, not as raw scanner output or a final vulnerability report.",
         "Route unverified hypotheses to candidate-findings.md or unverified-leads.md until Docker reproduction succeeds.",
     ]
+
+    def append_once(value: str) -> None:
+        if value not in guidance:
+            guidance.append(value)
+
     minimum_fields = (
         "Minimum entry inventory fields: route or endpoint, method, handler/controller, "
         "authentication requirement, input source, downstream sink or service, current verification status."
     )
     if "java" in stacks or "java-web" in attack_surface:
-        guidance.extend([
-            "Java Web: inventory Spring/JAX-RS/Servlet routes, filters, interceptors, and security annotations in attack-surface.md.",
-            minimum_fields,
-            "For each Java entry, note controller method, DTO/body binding, security filter or @PreAuthorize coverage, service-layer hop, and sink class/function when known.",
-        ])
+        guidance.append(
+            "Java Web: inventory Spring/JAX-RS/Servlet routes, filters, interceptors, and security annotations in attack-surface.md."
+        )
+        append_once(minimum_fields)
+        guidance.append(
+            "For each Java entry, note controller method, DTO/body binding, security filter or @PreAuthorize coverage, service-layer hop, and sink class/function when known."
+        )
     if "go" in stacks or "go-web" in attack_surface:
-        guidance.extend([
-            "Go Web: inventory router registrations, middleware chain, handlers, and debug/pprof endpoints in attack-surface.md.",
-            minimum_fields,
-            "For each Go entry, note handler function, request readers such as query/path/body/header/cookie, middleware/auth coverage, downstream service, and sink function when known.",
-        ])
-    if "http-api" in attack_surface and not any(item in guidance for item in (minimum_fields,)):
-        guidance.extend([
-            "HTTP/API: summarize route or API inventory in attack-surface.md before deep verification.",
-            minimum_fields,
-        ])
+        guidance.append(
+            "Go Web: inventory router registrations, middleware chain, handlers, and debug/pprof endpoints in attack-surface.md."
+        )
+        append_once(minimum_fields)
+        guidance.append(
+            "For each Go entry, note handler function, request readers such as query/path/body/header/cookie, middleware/auth coverage, downstream service, and sink function when known."
+        )
+    if "http-api" in attack_surface:
+        guidance.append("HTTP/API: summarize route or API inventory in attack-surface.md before deep verification.")
+        append_once(minimum_fields)
     if any(item in attack_surface for item in ("routes", "route", "router", "controllers", "controller", "api", "graphql", "auth", "cmd")):
         guidance.append(
             "Detected route/controller/API/auth/cmd directories: inspect them for entry points, trust boundaries, and source-to-sink hypotheses."

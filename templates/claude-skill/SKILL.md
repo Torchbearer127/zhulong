@@ -251,6 +251,8 @@ Final summaries must explicitly distinguish confirmed vulnerabilities, false pos
 - [claude-code-invocation-template.md](./assets/references/claude-code-invocation-template.md)
 - [document-output-stability.md](./assets/references/document-output-stability.md)
 - [recommended-security-tooling.md](./assets/references/recommended-security-tooling.md)
+- [java-web-audit-playbook.md](./assets/references/java-web-audit-playbook.md)
+- [go-web-audit-playbook.md](./assets/references/go-web-audit-playbook.md)
 - [confirmed-vuln-docx-format.md](./assets/references/confirmed-vuln-docx-format.md)
 - [final-summary-template.md](./assets/references/final-summary-template.md)
 - [false-positive-template.md](./assets/references/false-positive-template.md)

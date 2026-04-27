@@ -167,6 +167,16 @@ def main() -> None:
         "Claude skill template attack-surface Docker confirmation guardrail",
     )
     require_text(
+        plugin_root / "templates/claude-skill/SKILL.md",
+        "java-web-audit-playbook.md",
+        "Claude skill template Java Web playbook reference",
+    )
+    require_text(
+        plugin_root / "templates/claude-skill/SKILL.md",
+        "go-web-audit-playbook.md",
+        "Claude skill template Go Web playbook reference",
+    )
+    require_text(
         plugin_root / "assets/references/false-positive-template.md",
         "must never be written under `confirmed/`",
         "false-positive template confirmed-output guardrail",
@@ -416,6 +426,26 @@ def main() -> None:
         ):
             if expected not in planner_output:
                 raise SystemExit(f"FAILED: planner output missing attack-surface guidance text: {expected}")
+        go_router = repo_dir / "cmd/server/main.go"
+        go_router.parent.mkdir(parents=True, exist_ok=True)
+        (repo_dir / "go.mod").write_text(
+            "module selftest\n\ngo 1.22\n",
+            encoding="utf-8",
+        )
+        go_router.write_text(
+            "package main\n\nimport \"net/http\"\n\nfunc main() {\n  http.HandleFunc(\"/demo\", func(w http.ResponseWriter, r *http.Request) {})\n}\n",
+            encoding="utf-8",
+        )
+        mixed_planner_output = run_capture([
+            sys.executable,
+            str(workspace / "bin/plan-security-toolchain.py"),
+            "--target-dir",
+            str(repo_dir),
+            "--workspace-dir",
+            str(workspace),
+        ], plugin_root)
+        if mixed_planner_output.count("Minimum entry inventory fields: route or endpoint, method, handler/controller") != 1:
+            raise SystemExit("FAILED: planner output duplicated minimum entry inventory fields for mixed Java/Go workspace")
         run([
             "bash",
             str(plugin_root / "scripts/refresh_workspace_helpers.sh"),
