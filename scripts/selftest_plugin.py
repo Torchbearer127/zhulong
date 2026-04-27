@@ -27,6 +27,7 @@ REQUIRED_FILES = [
     "scripts/check_omc_runtime.sh",
     "scripts/check_security_tooling.sh",
     "scripts/run_initial_probes.sh",
+    "scripts/run_verification_case.sh",
     "scripts/refresh_workspace_helpers.sh",
     "scripts/sync_to_claude_skill.sh",
     "scripts/write_audit_event.py",
@@ -72,6 +73,23 @@ def require_text(path: Path, needle: str, label: str) -> None:
     content = path.read_text(encoding="utf-8")
     if needle not in content:
         raise SystemExit(f"FAILED: missing expected text for {label}: {needle}")
+
+
+def forbid_text(path: Path, needle: str, label: str) -> None:
+    content = path.read_text(encoding="utf-8")
+    if needle in content:
+        raise SystemExit(f"FAILED: forbidden text for {label}: {needle}")
+
+
+def require_no_repo_text(plugin_root: Path, needle: str, label: str) -> None:
+    checked_suffixes = {".md", ".py", ".sh", ".json"}
+    for path in plugin_root.rglob("*"):
+        if any(part in {".git", ".omc", "__pycache__"} for part in path.parts):
+            continue
+        if not path.is_file() or path.suffix not in checked_suffixes:
+            continue
+        if needle in path.read_text(encoding="utf-8", errors="ignore"):
+            raise SystemExit(f"FAILED: forbidden repository text for {label}: {path}: {needle}")
 
 
 def main() -> None:
@@ -150,6 +168,26 @@ def main() -> None:
         plugin_root / "templates/claude-skill/SKILL.md",
         "Final summaries must explicitly distinguish confirmed vulnerabilities",
         "Claude skill template final summary triage contract",
+    )
+    require_text(
+        plugin_root / "templates/claude-skill/SKILL.md",
+        "run_verification_case.sh",
+        "Claude skill template verification runner reference",
+    )
+    require_text(
+        plugin_root / "templates/claude-skill/SKILL.md",
+        "mandatory timeout, explicit network setting",
+        "Claude skill template verification runner timeout/network contract",
+    )
+    require_text(
+        plugin_root / "templates/claude-skill/SKILL.md",
+        "blocked_docker_unavailable",
+        "Claude skill template verification runner stable labels",
+    )
+    require_text(
+        plugin_root / "templates/claude-skill/SKILL.md",
+        "timed-out, blocked, resource-limited",
+        "Claude skill template verification runner confirmed-output guardrail",
     )
     require_text(
         plugin_root / "templates/claude-skill/SKILL.md",
@@ -267,6 +305,60 @@ def main() -> None:
         "recommended tooling attack-surface log-dump guardrail",
     )
     require_text(
+        plugin_root / "assets/references/attacker-container-pattern.md",
+        "Verification Runner Contract",
+        "attacker container verification runner contract section",
+    )
+    require_text(
+        plugin_root / "assets/references/attacker-container-pattern.md",
+        "failed_timeout",
+        "attacker container runner timeout label",
+    )
+    require_text(
+        plugin_root / "scripts/run_verification_case.sh",
+        "STABLE_LABELS=\"blocked_docker_unavailable blocked_missing_image failed_timeout failed_resource_limit rejected_not_reproducible confirmed_in_docker\"",
+        "verification runner stable labels",
+    )
+    require_text(
+        plugin_root / "scripts/run_verification_case.sh",
+        "--timeout-seconds is required and must be positive",
+        "verification runner mandatory timeout contract",
+    )
+    require_text(
+        plugin_root / "scripts/run_verification_case.sh",
+        "--memory \"$MEMORY_LIMIT\"",
+        "verification runner memory limit",
+    )
+    require_text(
+        plugin_root / "scripts/run_verification_case.sh",
+        "--cpus \"$CPU_LIMIT\"",
+        "verification runner CPU limit",
+    )
+    require_text(
+        plugin_root / "scripts/run_verification_case.sh",
+        "--pids-limit \"$PIDS_LIMIT\"",
+        "verification runner pids limit",
+    )
+    require_text(
+        plugin_root / "scripts/run_verification_case.sh",
+        "--network \"$NETWORK\"",
+        "verification runner explicit network",
+    )
+    require_text(
+        plugin_root / "scripts/run_verification_case.sh",
+        "no host fallback is provided",
+        "verification runner no-host-fallback contract",
+    )
+    forbid_text(
+        plugin_root / "scripts/run_verification_case.sh",
+        "may execute PoC logic directly on the host",
+        "verification runner positive host execution wording",
+    )
+    operator_local_path = "/" + "Users" + "/" + "torchbearer"
+    require_no_repo_text(plugin_root, operator_local_path, "operator-local absolute path")
+    stale_asr_name = "autonomous-security" + "-researcher"
+    require_no_repo_text(plugin_root, stale_asr_name, "stale ASR naming")
+    require_text(
         plugin_root / "assets/references/claude-code-invocation-template.md",
         "severity-escalation pass",
         "Claude invocation template severity escalation contract",
@@ -310,8 +402,10 @@ def main() -> None:
     run(["bash", "-n", str(plugin_root / "scripts/check_omc_runtime.sh")], plugin_root)
     run(["bash", "-n", str(plugin_root / "scripts/check_security_tooling.sh")], plugin_root)
     run(["bash", "-n", str(plugin_root / "scripts/run_initial_probes.sh")], plugin_root)
+    run(["bash", "-n", str(plugin_root / "scripts/run_verification_case.sh")], plugin_root)
     run(["bash", "-n", str(plugin_root / "scripts/refresh_workspace_helpers.sh")], plugin_root)
     run(["bash", "-n", str(plugin_root / "scripts/sync_to_claude_skill.sh")], plugin_root)
+    run(["bash", str(plugin_root / "scripts/run_verification_case.sh"), "--help"], plugin_root)
 
     with tempfile.TemporaryDirectory(prefix="asr-plugin-selftest-") as tempdir:
         repo_dir = Path(tempdir) / "repo"
@@ -332,8 +426,22 @@ def main() -> None:
             raise SystemExit("FAILED: bootstrapped workspace is missing check-docker-gate.sh")
         if not (workspace / "bin/run-initial-probes.sh").exists():
             raise SystemExit("FAILED: bootstrapped workspace is missing run-initial-probes.sh")
+        if not (workspace / "bin/run-verification-case.sh").exists():
+            raise SystemExit("FAILED: bootstrapped workspace is missing run-verification-case.sh")
+        if not (workspace / "scripts/run-verification-case.sh").exists():
+            raise SystemExit("FAILED: bootstrapped workspace is missing scripts/run-verification-case.sh")
         if not (workspace / "bin/asr-start.sh").exists():
             raise SystemExit("FAILED: bootstrapped workspace is missing asr-start.sh")
+        require_text(
+            workspace / "bin/run-verification-case.sh",
+            "failed_resource_limit",
+            "bootstrapped verification runner stable labels",
+        )
+        require_text(
+            workspace / "bin/run-verification-case.sh",
+            "Verification command timed out. Re-analyze service readiness",
+            "bootstrapped verification runner timeout guidance",
+        )
         if not (workspace / "unverified-leads.md").exists():
             raise SystemExit("FAILED: bootstrapped workspace is missing unverified-leads.md")
         if not (workspace / "attack-surface.md").exists():
@@ -797,6 +905,8 @@ def main() -> None:
             raise SystemExit("FAILED: Claude skill sync did not copy check_docker_gate.sh")
         if not (installed_skill / "scripts/run_initial_probes.sh").exists():
             raise SystemExit("FAILED: Claude skill sync did not copy run_initial_probes.sh")
+        if not (installed_skill / "scripts/run_verification_case.sh").exists():
+            raise SystemExit("FAILED: Claude skill sync did not copy run_verification_case.sh")
         if not (installed_skill / "scripts/asr_start.sh").exists():
             raise SystemExit("FAILED: Claude skill sync did not copy asr_start.sh")
         if not (installed_skill / "scripts/write_audit_event.py").exists():
@@ -859,6 +969,16 @@ def main() -> None:
             installed_skill / "SKILL.md",
             "Final summaries must explicitly distinguish confirmed vulnerabilities",
             "installed Claude skill final summary triage contract",
+        )
+        require_text(
+            installed_skill / "SKILL.md",
+            "run_verification_case.sh",
+            "installed Claude skill verification runner reference",
+        )
+        require_text(
+            installed_skill / "SKILL.md",
+            "failed_timeout",
+            "installed Claude skill verification runner timeout label",
         )
         require_text(
             installed_skill / "SKILL.md",

@@ -57,6 +57,54 @@ From inside the attacker container, run:
 - Node.js PoCs
 - `ffuf`, `sqlmap`, or other tools if you intentionally install them into the attacker image
 
+## Verification Runner Contract
+
+Prefer the reusable runner for individual verification cases when a case can be
+expressed as a Docker or Docker Compose command:
+
+```bash
+bash <audit-workspace>/bin/run-verification-case.sh \
+  --workspace-dir <audit-workspace> \
+  --case-id <case-id> \
+  --mode docker-run \
+  --image <local-or-cached-attacker-image> \
+  --timeout-seconds 300 \
+  --expected-oracle <token-or-regex> \
+  --network <target-docker-network> \
+  -- <container command...>
+```
+
+The runner writes structured evidence to
+`<audit-workspace>/evidence/<case-id>/`, including `stdout.log`, `stderr.log`,
+`command.json`, and `verification-result.json`.
+
+Stable runner labels:
+
+- `blocked_docker_unavailable`
+- `blocked_missing_image`
+- `failed_timeout`
+- `failed_resource_limit`
+- `rejected_not_reproducible`
+- `confirmed_in_docker`
+
+Timeouts are not generic failures. If a case returns `failed_timeout`, inspect
+the PoC for service readiness waits, network blocking, infinite loops, or
+interactive prompts before retrying.
+
+For `docker-run`, the runner defaults to memory, CPU, and pids limits,
+read-only root filesystem, dropped capabilities, no-new-privileges, and an
+explicit network setting. The default network is `none`; set `--network` to the
+target Docker network only when the verification needs service traffic.
+
+Image policy remains local-first: use a suitable local or cached image when
+available. Use `--pull-if-missing` only when a network pull is acceptable and no
+local image is suitable.
+
+Runner evidence does not change the confirmed bundle contract. Copy relevant
+runner evidence into the final bundle's `attachments/` only after Docker
+confirmation succeeds, and keep blocked, timed-out, resource-limited, or
+rejected cases out of `confirmed/`.
+
 ## Rules
 
 - Do not send exploit traffic from the host shell if the traffic can instead be sent from the attacker container.

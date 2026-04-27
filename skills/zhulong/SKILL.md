@@ -19,6 +19,8 @@ Use this Claude Code skill when you want a repository audit workflow that is:
   - [check_omc_runtime.sh](./scripts/check_omc_runtime.sh)
   - [check_security_tooling.sh](./scripts/check_security_tooling.sh)
   - [asr_exec.sh](./scripts/asr_exec.sh)
+- Docker verification runner:
+  - [run_verification_case.sh](./scripts/run_verification_case.sh)
 - dynamic planning:
   - [plan_security_toolchain.py](./scripts/plan_security_toolchain.py)
   - [tool-registry.json](./assets/tool-registry.json)
@@ -51,6 +53,12 @@ default contract even when the user does not restate them:
 - When Docker images are needed, prefer suitable local images or already-cached
   base images first. Pull from the network only when no suitable local image is
   available.
+- For individual PoC checks, prefer `run_verification_case.sh` or an equivalent
+  Docker-only wrapper with a mandatory timeout, explicit network setting,
+  resource limits, and structured evidence. The stable verification case labels
+  are `blocked_docker_unavailable`, `blocked_missing_image`, `failed_timeout`,
+  `failed_resource_limit`, `rejected_not_reproducible`, and
+  `confirmed_in_docker`.
 - Prefer `gh` for GitHub repositories, advisories, issues, pull requests,
   commits, and releases. Do not execute `web_search`, `Search(...)`,
   `Fetch(...)`, or `WebFetch(...)` as Bash commands.
@@ -163,6 +171,36 @@ vulnerability and not a reason to stop the audit.
 
 4. Verify findings only inside Docker or Docker Compose.
 When verification needs Docker images, prefer suitable local images or already-cached base images first. Only pull from the network if no suitable local image is available.
+
+For a single verification case, prefer the bundled runner:
+
+```bash
+bash <audit-workspace>/bin/run-verification-case.sh \
+  --workspace-dir <audit-workspace> \
+  --case-id <case-id> \
+  --mode docker-run \
+  --image <local-or-cached-image> \
+  --timeout-seconds 300 \
+  --expected-oracle <token-or-regex> \
+  --network <none-or-docker-network> \
+  -- <container command...>
+```
+
+The runner enforces a mandatory timeout, records stdout/stderr plus
+`verification-result.json` under `<audit-workspace>/evidence/<case-id>/`, and
+never executes PoC logic on the host. For `docker-run`, defaults include memory,
+CPU, pids, read-only root filesystem, dropped capabilities, no-new-privileges,
+and explicit network selection. Network use must be intentional: default
+`--network none` is safe for offline parser/package PoCs, while service probes
+should name the target Docker network. If the runner returns `failed_timeout`,
+pause and re-analyze service readiness, waiting conditions, network blocking,
+loops, or interactive prompts before retrying.
+
+Runner-produced evidence is a workspace artifact. To confirm a vulnerability,
+copy the relevant runner logs/result JSON into the final bundle's
+`attachments/` and keep `verification-evidence.json` set to
+`verification_status=confirmed_in_docker`; timed-out, blocked, resource-limited,
+or rejected cases must stay out of `confirmed/`.
 
 After a vulnerability is first confirmed, do not stop at the weakest trigger and immediately settle on a low or medium rating.
 Run at least one deliberate severity-escalation pass that tries to verify stronger real-world impact inside Docker before final scoring.

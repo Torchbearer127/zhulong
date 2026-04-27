@@ -26,6 +26,7 @@ What it creates:
       check_omc_runtime.sh
       check_security_tooling.sh
       run-initial-probes.sh
+      run-verification-case.sh
       plan-security-toolchain.py
       scaffold-bilingual-findings.py
       validate-report-bundle.py
@@ -39,6 +40,7 @@ What it creates:
       check_omc_runtime.sh
       check_security_tooling.sh
       run-initial-probes.sh
+      run-verification-case.sh
       plan-security-toolchain.py
       scaffold-bilingual-findings.py
       validate-report-bundle.py
@@ -308,6 +310,16 @@ exec bash "$SCRIPT_DIR/../bin/run-initial-probes.sh" "$@"
 '
 chmod +x "$WORKSPACE_DIR/scripts/run-initial-probes.sh"
 copy_file \
+  "$SKILL_DIR/scripts/run_verification_case.sh" \
+  "$WORKSPACE_DIR/bin/run-verification-case.sh"
+chmod +x "$WORKSPACE_DIR/bin/run-verification-case.sh"
+write_text_file "$WORKSPACE_DIR/scripts/run-verification-case.sh" '#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec bash "$SCRIPT_DIR/../bin/run-verification-case.sh" "$@"
+'
+chmod +x "$WORKSPACE_DIR/scripts/run-verification-case.sh"
+copy_file \
   "$SKILL_DIR/scripts/plan_security_toolchain.py" \
   "$WORKSPACE_DIR/bin/plan-security-toolchain.py"
 chmod +x "$WORKSPACE_DIR/bin/plan-security-toolchain.py"
@@ -396,6 +408,8 @@ Suggested next steps:
   4. Before any PoC or exploit verification, enforce the Docker gate:
        bash $WORKSPACE_DIR/bin/check-docker-gate.sh --repo-root $TARGET_DIR
      If this fails, stop verification, keep the audit inside $WORKSPACE_DIR, and resume only after Docker is fixed.
+     For individual verification cases, prefer the timeout/resource-limited runner:
+       bash $WORKSPACE_DIR/bin/run-verification-case.sh --workspace-dir $WORKSPACE_DIR --case-id <case-id> --mode docker-run --image <local-image> --timeout-seconds 300 --expected-oracle <token-or-regex> -- <container command...>
   5. For any Bash command that uses relative paths, anchor it with:
        bash $WORKSPACE_DIR/bin/asr-exec.sh --repo-root -- <command...>
      or:
