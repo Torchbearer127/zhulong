@@ -164,6 +164,16 @@ def main() -> None:
         "unverified lead template high-confidence guardrail",
     )
     require_text(
+        plugin_root / "assets/references/unverified-lead-template.md",
+        "Confirmed-output guardrail",
+        "unverified lead template confirmed-output guardrail field",
+    )
+    require_text(
+        plugin_root / "templates/claude-skill/SKILL.md",
+        "final-summary-template.md",
+        "Claude skill template final summary reference",
+    )
+    require_text(
         plugin_root / "assets/references/final-summary-template.md",
         "false positives / non-security defects",
         "final summary false-positive section",

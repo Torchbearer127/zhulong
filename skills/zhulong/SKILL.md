@@ -239,5 +239,6 @@ Final summaries must explicitly distinguish confirmed vulnerabilities, false pos
 - [document-output-stability.md](./assets/references/document-output-stability.md)
 - [recommended-security-tooling.md](./assets/references/recommended-security-tooling.md)
 - [confirmed-vuln-docx-format.md](./assets/references/confirmed-vuln-docx-format.md)
+- [final-summary-template.md](./assets/references/final-summary-template.md)
 - [false-positive-template.md](./assets/references/false-positive-template.md)
 - [unverified-lead-template.md](./assets/references/unverified-lead-template.md)
