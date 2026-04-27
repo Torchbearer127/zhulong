@@ -104,6 +104,25 @@ def tool_available(*names: str) -> bool:
     return any(shutil.which(name) for name in names)
 
 
+def repository_contains(root: Path, markers: list[str], suffixes: set[str] | None = None) -> bool:
+    lowered_markers = [marker.lower() for marker in markers]
+    for path in root.rglob("*"):
+        try:
+            if not path.is_file() or path.stat().st_size > 2_000_000:
+                continue
+        except OSError:
+            continue
+        if suffixes is not None and path.suffix.lower() not in suffixes:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore").lower()
+        except OSError:
+            continue
+        if any(marker in text for marker in lowered_markers):
+            return True
+    return False
+
+
 def choose_tools(root: Path, stacks: list[str], attack_surface: list[str]) -> dict[str, list[str]]:
     plan: dict[str, list[str]] = {
         "broad_probe": [],
@@ -354,6 +373,94 @@ def attack_surface_guidance(stacks: list[str], attack_surface: list[str]) -> lis
     return guidance
 
 
+def local_knowledge_checklists(root: Path, stacks: list[str], attack_surface: list[str]) -> list[str]:
+    checklists: list[str] = []
+
+    def add(path: str) -> None:
+        if path not in checklists:
+            checklists.append(path)
+
+    ssrf_markers = [
+        "http.get",
+        "http.post",
+        "http.client.do",
+        "resttemplate",
+        "webclient",
+        "httpurlconnection",
+        "okhttp",
+        "fetch(",
+        "axios",
+        "request(",
+        "got(",
+        "requests.get",
+        "requests.post",
+        "urlopen",
+        "callbackurl",
+        "callback_url",
+        "webhook",
+        "proxy",
+    ]
+    path_traversal_markers = [
+        "path.join",
+        "filepath.join",
+        "paths.get",
+        "files.read",
+        "files.write",
+        "fs.readfile",
+        "fs.createreadstream",
+        "sendfile",
+        "os.open",
+        "os.readfile",
+        "archive",
+        "zip",
+        "tar",
+        "multipart",
+        "filename",
+        "download",
+        "../",
+    ]
+    prototype_pollution_markers = [
+        "__proto__",
+        "constructor.prototype",
+        "lodash.merge",
+        "deepmerge",
+        "object.assign",
+        "set-value",
+        "object-path",
+        "prototype pollution",
+    ]
+
+    code_suffixes = {
+        ".go",
+        ".java",
+        ".js",
+        ".jsx",
+        ".ts",
+        ".tsx",
+        ".py",
+        ".rb",
+        ".php",
+        ".kt",
+        ".scala",
+        ".json",
+        ".yaml",
+        ".yml",
+    }
+
+    if "http-api" in attack_surface and repository_contains(root, ssrf_markers, code_suffixes):
+        add("assets/references/ssrf-checklist.md")
+    elif repository_contains(root, ["webhook", "callback_url", "callbackurl", "metadata"], code_suffixes):
+        add("assets/references/ssrf-checklist.md")
+
+    if repository_contains(root, path_traversal_markers, code_suffixes):
+        add("assets/references/path-traversal-checklist.md")
+
+    if "node" in stacks and repository_contains(root, prototype_pollution_markers, code_suffixes):
+        add("assets/references/prototype-pollution-checklist.md")
+
+    return checklists
+
+
 def build_result(root: Path, workspace_dir: Path) -> dict[str, Any]:
     stacks = detect_stack(root)
     attack_surface = detect_attack_surface(root)
@@ -364,6 +471,7 @@ def build_result(root: Path, workspace_dir: Path) -> dict[str, Any]:
         "detected_stack": stacks,
         "attack_surface_hints": attack_surface,
         "specialized_playbooks": specialized_playbooks(stacks, attack_surface),
+        "local_knowledge_checklists": local_knowledge_checklists(root, stacks, attack_surface),
         "audit_focus": audit_focus(stacks, attack_surface),
         "attack_surface_guidance": attack_surface_guidance(stacks, attack_surface),
         "recommended_tools": plan,
@@ -403,6 +511,11 @@ def render_text(result: dict[str, Any]) -> str:
         lines.extend(["", "specialized_playbooks:"])
         for playbook in playbooks:
             lines.append(f"- {playbook}")
+    checklists = result.get("local_knowledge_checklists") or []
+    if checklists:
+        lines.extend(["", "local_knowledge_checklists:"])
+        for checklist in checklists:
+            lines.append(f"- {checklist}")
     focus = result.get("audit_focus") or []
     if focus:
         lines.extend(["", "audit_focus:"])

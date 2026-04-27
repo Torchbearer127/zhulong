@@ -29,6 +29,10 @@ Use this Claude Code skill when you want a repository audit workflow that is:
 - language-specific source-to-sink playbooks:
   - [java-web-audit-playbook.md](./assets/references/java-web-audit-playbook.md)
   - [go-web-audit-playbook.md](./assets/references/go-web-audit-playbook.md)
+- optional vulnerability-type checklists:
+  - [ssrf-checklist.md](./assets/references/ssrf-checklist.md)
+  - [path-traversal-checklist.md](./assets/references/path-traversal-checklist.md)
+  - [prototype-pollution-checklist.md](./assets/references/prototype-pollution-checklist.md)
 - workspace setup:
   - [prepare_target_repo.sh](./scripts/prepare_target_repo.sh)
   - [bootstrap_verification_workspace.sh](./scripts/bootstrap_verification_workspace.sh)
@@ -96,6 +100,10 @@ default contract even when the user does not restate them:
   a replacement for `candidate-findings.md`, `false-positives.md`,
   `unverified-leads.md`, or confirmed bundles. Hypotheses in it remain
   unverified until Docker confirmation succeeds.
+- Use local vulnerability-type checklists only as optional first-read aids for
+  relevant candidates. Checklist matches, source-to-sink hypotheses, and pattern
+  matches cannot confirm a vulnerability by themselves and must stay out of
+  `confirmed/` until Docker evidence exists.
 - Write final confirmed bundles only to
   `<audit-workspace>/confirmed/<one-folder-per-vulnerability>/`, with exactly one
   confirmed vulnerability per bundle.
@@ -182,6 +190,11 @@ include route or endpoint, method, handler/controller, authentication
 requirement, input source, downstream sink or service, and current verification
 status. Do not use `attack-surface.md` as a DOCX source or as a shortcut into
 `confirmed/`.
+
+If the plan prints `local_knowledge_checklists`, read only the relevant local
+checklists as concise source-to-sink and Docker-verification aids. These files
+are optional references, not evidence; do not create DOCX reports or confirmed
+findings from checklist hypotheses alone.
 
 For first-pass scanner execution, prefer the bundled runner:
 
@@ -327,6 +340,9 @@ Final summaries must explicitly distinguish confirmed vulnerabilities, false pos
 - [recommended-security-tooling.md](./assets/references/recommended-security-tooling.md)
 - [java-web-audit-playbook.md](./assets/references/java-web-audit-playbook.md)
 - [go-web-audit-playbook.md](./assets/references/go-web-audit-playbook.md)
+- [ssrf-checklist.md](./assets/references/ssrf-checklist.md)
+- [path-traversal-checklist.md](./assets/references/path-traversal-checklist.md)
+- [prototype-pollution-checklist.md](./assets/references/prototype-pollution-checklist.md)
 - [confirmed-vuln-docx-format.md](./assets/references/confirmed-vuln-docx-format.md)
 - [final-summary-template.md](./assets/references/final-summary-template.md)
 - [false-positive-template.md](./assets/references/false-positive-template.md)

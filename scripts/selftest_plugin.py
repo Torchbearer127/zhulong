@@ -20,6 +20,9 @@ REQUIRED_FILES = [
     "assets/references/final-summary-template.md",
     "assets/references/java-web-audit-playbook.md",
     "assets/references/go-web-audit-playbook.md",
+    "assets/references/ssrf-checklist.md",
+    "assets/references/path-traversal-checklist.md",
+    "assets/references/prototype-pollution-checklist.md",
     "scripts/bootstrap_verification_workspace.sh",
     "scripts/asr_start.sh",
     "scripts/prepare_target_repo.sh",
@@ -253,6 +256,16 @@ def main() -> None:
         "Claude skill template Go Web playbook reference",
     )
     require_text(
+        plugin_root / "templates/claude-skill/SKILL.md",
+        "local_knowledge_checklists",
+        "Claude skill template local checklist planner contract",
+    )
+    require_text(
+        plugin_root / "templates/claude-skill/SKILL.md",
+        "Checklist matches, source-to-sink hypotheses",
+        "Claude skill template local checklist confirmed-only guardrail",
+    )
+    require_text(
         plugin_root / "assets/references/false-positive-template.md",
         "must never be written under `confirmed/`",
         "false-positive template confirmed-output guardrail",
@@ -342,6 +355,42 @@ def main() -> None:
         "Do not paste raw scanner logs into `attack-surface.md`",
         "recommended tooling attack-surface log-dump guardrail",
     )
+    for checklist in (
+        "ssrf-checklist.md",
+        "path-traversal-checklist.md",
+        "prototype-pollution-checklist.md",
+    ):
+        path = plugin_root / "assets/references" / checklist
+        for section in (
+            "Scope and When To Use It",
+            "Common Sources",
+            "High-Risk Sinks",
+            "Source-To-Sink Tracing Hints",
+            "Docker-Only Verification Ideas",
+            "Severity-Escalation Evidence To Seek",
+            "Common False Positives",
+            "Confirmed-Only Routing Reminder",
+        ):
+            require_text(
+                path,
+                section,
+                f"{checklist} section {section}",
+            )
+        require_text(
+            path,
+            "cannot confirm a vulnerability",
+            f"{checklist} reasoning-only guardrail",
+        )
+        require_text(
+            path,
+            "Do not generate DOCX reports from this checklist alone",
+            f"{checklist} no-DOCX guardrail",
+        )
+        require_text(
+            path,
+            "verification_status=confirmed_in_docker",
+            f"{checklist} Docker-confirmed-only guardrail",
+        )
     require_text(
         plugin_root / "assets/references/attacker-container-pattern.md",
         "Verification Runner Contract",
@@ -804,6 +853,39 @@ def main() -> None:
         ], plugin_root)
         if mixed_planner_output.count("Minimum entry inventory fields: route or endpoint, method, handler/controller") != 1:
             raise SystemExit("FAILED: planner output duplicated minimum entry inventory fields for mixed Java/Go workspace")
+        (repo_dir / "package.json").write_text(
+            '{"name":"selftest","version":"1.0.0","dependencies":{"lodash":"^4.17.21"}}\n',
+            encoding="utf-8",
+        )
+        node_route = repo_dir / "routes/proxy.js"
+        node_route.parent.mkdir(parents=True, exist_ok=True)
+        node_route.write_text(
+            "const fs = require('fs');\n"
+            "const path = require('path');\n"
+            "const _ = require('lodash');\n"
+            "async function proxy(req) {\n"
+            "  await fetch(req.query.url);\n"
+            "  fs.readFileSync(path.join('/srv/files', req.query.filename));\n"
+            "  _.merge({}, JSON.parse('{\"__proto__\":{\"polluted\":true}}'));\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        checklist_output = run_capture([
+            sys.executable,
+            str(workspace / "bin/plan-security-toolchain.py"),
+            "--target-dir",
+            str(repo_dir),
+            "--workspace-dir",
+            str(workspace),
+        ], plugin_root)
+        for expected in (
+            "local_knowledge_checklists:",
+            "assets/references/ssrf-checklist.md",
+            "assets/references/path-traversal-checklist.md",
+            "assets/references/prototype-pollution-checklist.md",
+        ):
+            if expected not in checklist_output:
+                raise SystemExit(f"FAILED: planner output missing checklist recommendation: {expected}")
         run([
             "bash",
             str(plugin_root / "scripts/refresh_workspace_helpers.sh"),
@@ -1236,6 +1318,11 @@ def main() -> None:
             installed_skill / "SKILL.md",
             "handoff-summary.md",
             "installed Claude skill handoff summary contract",
+        )
+        require_text(
+            installed_skill / "SKILL.md",
+            "local_knowledge_checklists",
+            "installed Claude skill local checklist planner contract",
         )
         require_text(
             installed_skill / "SKILL.md",
