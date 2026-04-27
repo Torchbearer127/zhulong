@@ -121,9 +121,24 @@ def main() -> None:
         "Claude skill template final bundle cleanliness contract",
     )
     require_text(
+        plugin_root / "templates/claude-skill/SKILL.md",
+        "verification-evidence.json",
+        "Claude skill template verification evidence contract",
+    )
+    require_text(
+        plugin_root / "templates/claude-skill/SKILL.md",
+        "Static scanning, source-to-sink reasoning",
+        "Claude skill template candidate-only analysis contract",
+    )
+    require_text(
         plugin_root / "assets/references/confirmed-vuln-docx-format.md",
         "Claude Code DOCX Editing Rule",
         "confirmed-vuln-docx-format docx workflow section",
+    )
+    require_text(
+        plugin_root / "assets/references/confirmed-vuln-docx-format.md",
+        "Verification Evidence JSON",
+        "confirmed-vuln-docx-format verification evidence schema",
     )
     require_text(
         plugin_root / "assets/references/document-output-stability.md",
@@ -285,6 +300,10 @@ def main() -> None:
             raise SystemExit("FAILED: zh-CN confirmed bundle was not rendered during selftest")
         if en_bundle is None:
             raise SystemExit("FAILED: en-US confirmed bundle was not rendered during selftest")
+        if not (zh_bundle / "verification-evidence.json").exists():
+            raise SystemExit("FAILED: zh-CN confirmed bundle is missing verification-evidence.json")
+        if not (en_bundle / "verification-evidence.json").exists():
+            raise SystemExit("FAILED: en-US confirmed bundle is missing verification-evidence.json")
         run([
             sys.executable,
             str(plugin_root / "scripts/validate_report_bundle.py"),
@@ -302,6 +321,86 @@ def main() -> None:
             "en-US",
         ], plugin_root)
 
+        bad_missing_verification = zh_bundle.parent / f"{zh_bundle.name}_missing_verification_evidence"
+        shutil.copytree(zh_bundle, bad_missing_verification)
+        (bad_missing_verification / "verification-evidence.json").unlink()
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_missing_verification),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "confirmed bundle must include verification-evidence.json")
+
+        bad_high_confidence = zh_bundle.parent / f"{zh_bundle.name}_high_confidence_status"
+        shutil.copytree(zh_bundle, bad_high_confidence)
+        high_confidence_data = json.loads((bad_high_confidence / "verification-evidence.json").read_text(encoding="utf-8"))
+        high_confidence_data["verification_status"] = "high_confidence_unverified_due_to_sandbox_limitation"
+        (bad_high_confidence / "verification-evidence.json").write_text(
+            json.dumps(high_confidence_data, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_high_confidence),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "verification_status=confirmed_in_docker")
+
+        bad_missing_evidence_file = zh_bundle.parent / f"{zh_bundle.name}_missing_evidence_file"
+        shutil.copytree(zh_bundle, bad_missing_evidence_file)
+        missing_evidence_data = json.loads((bad_missing_evidence_file / "verification-evidence.json").read_text(encoding="utf-8"))
+        missing_evidence_data["evidence_files"] = ["attachments/evidence/missing.log"]
+        (bad_missing_evidence_file / "verification-evidence.json").write_text(
+            json.dumps(missing_evidence_data, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_missing_evidence_file),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "does not exist inside bundle")
+
+        bad_absolute_evidence = zh_bundle.parent / f"{zh_bundle.name}_absolute_evidence_path"
+        shutil.copytree(zh_bundle, bad_absolute_evidence)
+        absolute_evidence_data = json.loads((bad_absolute_evidence / "verification-evidence.json").read_text(encoding="utf-8"))
+        absolute_evidence_data["evidence_files"] = [str((bad_absolute_evidence / "attachments/poc/path_traversal.py").resolve())]
+        (bad_absolute_evidence / "verification-evidence.json").write_text(
+            json.dumps(absolute_evidence_data, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_absolute_evidence),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "must be bundle-relative")
+
+        bad_escape_evidence = zh_bundle.parent / f"{zh_bundle.name}_escape_evidence_path"
+        shutil.copytree(zh_bundle, bad_escape_evidence)
+        escape_evidence_data = json.loads((bad_escape_evidence / "verification-evidence.json").read_text(encoding="utf-8"))
+        escape_evidence_data["evidence_files"] = ["../outside.log"]
+        (bad_escape_evidence / "verification-evidence.json").write_text(
+            json.dumps(escape_evidence_data, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_escape_evidence),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "must not escape the bundle with '..'")
+
         bad_missing_attachments = zh_bundle.parent / f"{zh_bundle.name}_missing_attachments"
         shutil.copytree(zh_bundle, bad_missing_attachments)
         shutil.rmtree(bad_missing_attachments / "attachments")
@@ -312,7 +411,7 @@ def main() -> None:
             str(bad_missing_attachments),
             "--language",
             "zh-CN",
-        ], plugin_root, "attachment reference does not exist inside bundle")
+        ], plugin_root, "does not exist inside bundle")
 
         bad_multi_finding = zh_bundle.parent / f"{zh_bundle.name}_multi_finding"
         shutil.copytree(zh_bundle, bad_multi_finding)
@@ -402,6 +501,16 @@ def main() -> None:
             installed_skill / "SKILL.md",
             "do not leave runtime or source-control directories",
             "installed Claude skill final bundle cleanliness contract",
+        )
+        require_text(
+            installed_skill / "SKILL.md",
+            "verification-evidence.json",
+            "installed Claude skill verification evidence contract",
+        )
+        require_text(
+            installed_skill / "SKILL.md",
+            "Static scanning, source-to-sink reasoning",
+            "installed Claude skill candidate-only analysis contract",
         )
         backups = sorted((claude_home / "skills" / ".zhulong-backups").glob("zhulong.backup.*"))
         if len(backups) > 2:

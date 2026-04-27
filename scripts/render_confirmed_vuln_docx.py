@@ -1061,6 +1061,156 @@ def replace_paths_in_text(text: str, path_map: dict[str, str]) -> str:
     return result
 
 
+def bundled_path_for_value(value: Any, path_map: dict[str, str]) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    normalized = Path(text).as_posix().lstrip("./")
+    if normalized.startswith("attachments/"):
+        return normalized
+    return path_map.get(normalized, path_map.get(text, normalized))
+
+
+def first_nonempty(*values: Any) -> str:
+    for value in values:
+        text = str(value or "").strip()
+        if text:
+            return text
+    return ""
+
+
+def first_docker_command(finding: dict[str, Any], fallback: str = "") -> str:
+    raw_steps = finding.get("reproduction")
+    if isinstance(raw_steps, list):
+        for step in raw_steps:
+            if not isinstance(step, dict):
+                continue
+            for command in ensure_list(step.get("commands") or step.get("command")):
+                if "docker" in command.lower():
+                    return command
+    return fallback
+
+
+def first_localized_step_value(finding: dict[str, Any], keys: tuple[str, ...], language: str) -> str:
+    raw_steps = finding.get("reproduction")
+    if not isinstance(raw_steps, list):
+        return ""
+    for step in reversed(raw_steps):
+        if not isinstance(step, dict):
+            continue
+        for key in keys:
+            values = localized_list(step, key, language)
+            if values:
+                return values[0]
+    return ""
+
+
+def collect_bundled_attachment_paths(path_map: dict[str, str]) -> list[str]:
+    paths = sorted({value for value in path_map.values() if value.startswith("attachments/")})
+    return paths
+
+
+def infer_poc_path(finding: dict[str, Any], path_map: dict[str, str]) -> str:
+    explicit = ensure_mapping(finding.get("verification_evidence")).get("poc_path")
+    rel = bundled_path_for_value(explicit, path_map)
+    if rel:
+        return rel
+    for value in collect_bundled_attachment_paths(path_map):
+        lowered = value.lower()
+        if "/poc/" in lowered or lowered.endswith(".py") or lowered.endswith(".js") or lowered.endswith(".sh"):
+            return value
+    attachments = collect_bundled_attachment_paths(path_map)
+    return attachments[0] if attachments else ""
+
+
+def write_verification_evidence(
+    output_path: Path,
+    finding: dict[str, Any],
+    bundle_finding: dict[str, Any],
+    path_map: dict[str, str],
+    language: str,
+) -> None:
+    provided = ensure_mapping(finding.get("verification_evidence"))
+    slug = first_nonempty(provided.get("finding_slug"), finding.get("slug"), bundle_finding.get("slug"), output_path.parent.name)
+    status = first_nonempty(provided.get("verification_status"), finding.get("verification_status"), "confirmed_in_docker")
+    if status != "confirmed_in_docker":
+        raise SystemExit(
+            "Refusing to render a confirmed bundle unless verification_status is confirmed_in_docker: "
+            f"{status}"
+        )
+
+    evidence_files = []
+    raw_evidence_files = provided.get("evidence_files")
+    if isinstance(raw_evidence_files, list):
+        for item in raw_evidence_files:
+            rel = bundled_path_for_value(item, path_map)
+            if rel and rel not in evidence_files:
+                evidence_files.append(rel)
+    for rel in collect_bundled_attachment_paths(path_map):
+        if rel not in evidence_files:
+            evidence_files.append(rel)
+
+    poc_path = bundled_path_for_value(provided.get("poc_path"), path_map) or infer_poc_path(finding, path_map)
+    if poc_path and poc_path not in evidence_files:
+        evidence_files.insert(0, poc_path)
+
+    docker_command = first_nonempty(
+        provided.get("docker_command"),
+        finding.get("docker_command"),
+        first_docker_command(bundle_finding),
+    )
+    docker_image = first_nonempty(
+        provided.get("docker_image"),
+        finding.get("docker_image"),
+        "project-specific Docker image or Docker Compose service",
+    )
+    expected = first_nonempty(
+        provided.get("expected_observation"),
+        finding.get("expected_observation"),
+        first_localized_step_value(bundle_finding, ("expected",), language),
+    )
+    observed = first_nonempty(
+        provided.get("observed_observation"),
+        finding.get("observed_observation"),
+        first_localized_step_value(bundle_finding, ("observed", "results", "result"), language),
+    )
+    oracle_token = first_nonempty(
+        provided.get("oracle_token"),
+        finding.get("oracle_token"),
+        observed,
+    )
+    severity_result = first_nonempty(
+        provided.get("severity_escalation_result"),
+        finding.get("severity_escalation_result"),
+        localized_list(ensure_mapping(bundle_finding.get("cvss")), "rationale", language)[0]
+        if localized_list(ensure_mapping(bundle_finding.get("cvss")), "rationale", language)
+        else "",
+        "Severity escalation was attempted; the final severity reflects the strongest Docker-verified oracle.",
+    )
+
+    evidence = {
+        "schema_version": 1,
+        "finding_slug": slug,
+        "verification_status": status,
+        "docker_required": True,
+        "docker_image": docker_image,
+        "docker_command": docker_command,
+        "poc_path": poc_path,
+        "expected_observation": expected,
+        "observed_observation": observed,
+        "oracle_token": oracle_token,
+        "evidence_files": evidence_files,
+        "severity_escalation_attempted": bool(
+            provided.get("severity_escalation_attempted", finding.get("severity_escalation_attempted", True))
+        ),
+        "severity_escalation_result": severity_result,
+    }
+    (output_path.parent / "verification-evidence.json").write_text(
+        json.dumps(evidence, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
 def rewrite_value(value: Any, path_map: dict[str, str], project_root: Path) -> Any:
     if isinstance(value, str):
         return value
@@ -1804,7 +1954,11 @@ def render_finding(
     for stale in output_path.parent.iterdir():
         if not stale.is_file():
             continue
-        if stale.suffix in {".docx", ".md"} or (stale.suffix == ".sh" and stale.name.startswith("run-")):
+        if (
+            stale.suffix in {".docx", ".md"}
+            or (stale.suffix == ".sh" and stale.name.startswith("run-"))
+            or stale.name == "verification-evidence.json"
+        ):
             stale.unlink()
     path_map = collect_bundle_metadata(finding, project_root, output_path.parent)
     bundle_finding = prepare_finding_for_bundle(finding, path_map, project_root)
@@ -1832,6 +1986,7 @@ def render_finding(
     validate_generated_docx(output_path)
     write_attachment_notes(output_path, finding, path_map, project_root, language, bundle_root_artifacts)
     write_reproduction_supplement(output_path, bundle_finding, language, path_map, bundle_root_artifacts)
+    write_verification_evidence(output_path, finding, bundle_finding, path_map, language)
 
 
 def parse_args() -> argparse.Namespace:

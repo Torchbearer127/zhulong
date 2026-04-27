@@ -162,6 +162,7 @@ Recommended layout:
 <docx-stem>/
 ├── <docx-stem>.docx
 ├── run-<slug>-recording.sh
+├── verification-evidence.json
 ├── <docx-stem>_补充复现说明.md
 ├── <docx-stem>_附件目录说明.md
 └── attachments/...
@@ -174,6 +175,40 @@ Use `attachments/` for final delivery files. `evidence/`, `poc/`, and `docker/` 
 Final bundles must not contain runtime state or source-control/cache directories such as `.omc/`, `.git/`, `node_modules/`, `.venv/`, or `__pycache__/`.
 
 For confirmed vulnerabilities, include one bundle-root reproduction helper script such as `run-<slug>-recording.sh` or `run-<slug>-repro.sh`.
+
+## Verification Evidence JSON
+
+Each confirmed bundle must include `verification-evidence.json` in the bundle root. This file is an auxiliary machine-checkable index only. It does not replace `findings.json`, the finding-specific `.docx`, the attachment index, the reproduction supplement, `attachments/`, or the bundle-root recording helper script.
+
+Minimum schema:
+
+```json
+{
+  "schema_version": 1,
+  "finding_slug": "example-slug",
+  "verification_status": "confirmed_in_docker",
+  "docker_required": true,
+  "docker_image": "node:20-alpine",
+  "docker_command": "docker run ...",
+  "poc_path": "attachments/poc/repro.py",
+  "expected_observation": "Expected success oracle.",
+  "observed_observation": "Observed success oracle.",
+  "oracle_token": "VULNERABILITY CONFIRMED",
+  "evidence_files": [
+    "attachments/poc/repro.py",
+    "attachments/evidence/output.log"
+  ],
+  "severity_escalation_attempted": true,
+  "severity_escalation_result": "Escalation attempted in Docker; no stronger impact was confirmed."
+}
+```
+
+Allowed `verification_status` values:
+
+- `confirmed_in_docker`: the only value accepted under `confirmed/`
+- `high_confidence_unverified_due_to_sandbox_limitation`: reserved for a future separate `high-confidence-unverified/` pool; never place this status under `confirmed/`
+
+All `poc_path` and `evidence_files` entries must be bundle-relative paths that stay inside the bundle root and point to real files. Do not use absolute paths, `file://` URLs, or `..` escapes.
 
 Script requirements:
 

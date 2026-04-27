@@ -1,6 +1,8 @@
 [
   {
     "report_language": "zh-CN",
+    "slug": "demo-app-path-traversal",
+    "docker_verified": true,
     "project_name": "demo-app",
     "vuln_type": "Path Traversal",
     "vuln_type_en": "Path Traversal",
@@ -43,6 +45,24 @@
       "severity": "高危 (HIGH)",
       "rationale": "评估依据：该问题可被远程利用且无需认证。攻击者能够读取敏感文件内容，对机密性造成显著影响，因此优先按 CVSS 4.0 评为高危；如目标提交流程只接受旧一代主流格式，可等价换写为 CVSS 3.1。",
       "rationale_en": "Assessment rationale: this issue is remotely exploitable without authentication. The attacker can read sensitive file contents, causing significant confidentiality impact, so CVSS 4.0 rates it as High. If the target disclosure workflow requires the previous mainstream format, it can be restated as CVSS 3.1."
+    },
+    "verification_evidence": {
+      "schema_version": 1,
+      "finding_slug": "demo-app-path-traversal",
+      "verification_status": "confirmed_in_docker",
+      "docker_required": true,
+      "docker_image": "demo-app verification Docker Compose stack with attacker container",
+      "docker_command": "docker compose -f docker-compose.yml -f attachments/docker/docker-compose.attacker.yml exec attacker python3 /workspace/attachments/poc/path_traversal.py",
+      "poc_path": "attachments/poc/path_traversal.py",
+      "expected_observation": "The service returns a fragment of /etc/passwd, proving that the directory boundary was bypassed.",
+      "observed_observation": "The PoC output contains root:x:0:0:, confirming successful sensitive file disclosure.",
+      "oracle_token": "root:x:0:0:",
+      "evidence_files": [
+        "attachments/poc/path_traversal.py",
+        "attachments/docker/docker-compose.attacker.yml"
+      ],
+      "severity_escalation_attempted": true,
+      "severity_escalation_result": "Severity escalation was attempted in Docker; arbitrary sensitive-file read was confirmed, while code execution or write impact was not claimed."
     },
     "analysis": [
       "位置：src/routes/download.js:42-55",

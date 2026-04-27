@@ -61,13 +61,16 @@ default contract even when the user does not restate them:
 - Confirm vulnerabilities only with Docker evidence. After the first
   confirmation, run one explicit severity-escalation pass in Docker before final
   scoring, and only upgrade severity when stronger impact is verified.
+- Static scanning, source-to-sink reasoning, pattern matching, dependency alerts,
+  and LLM analysis can only create candidates. They must not be written as
+  confirmed findings unless Docker reproduction succeeds.
 - Write final confirmed bundles only to
   `<audit-workspace>/confirmed/<one-folder-per-vulnerability>/`, with exactly one
   confirmed vulnerability per bundle.
 - Every final bundle must be self-contained and portable: one finding-specific
   `.docx`, one finding-specific attachment index markdown, one finding-specific
-  reproduction supplement markdown, `attachments/`, and one reviewer-friendly
-  bundle-root reproduction helper script.
+  reproduction supplement markdown, `verification-evidence.json`, `attachments/`,
+  and one reviewer-friendly bundle-root reproduction helper script.
 - Validate every final bundle before finishing. A bare `findings.json`, generic
   filenames such as `report.docx` or `attachments.md`, final `evidence/`
   directories, runtime state, source-control directories, dependency trees, or
@@ -177,6 +180,9 @@ Keep bundle identity strict:
 
 - each directory under `<audit-workspace>/confirmed/` must represent exactly one confirmed vulnerability
 - do not put multiple findings into one per-bundle `findings.json`
+- include `verification-evidence.json` in each confirmed bundle with `verification_status=confirmed_in_docker`
+- never place `high_confidence_unverified_due_to_sandbox_limitation` under `confirmed/`; keep it only as a future separate unverified evidence pool
+- keep `poc_path` and all `evidence_files` bundle-relative, inside the bundle root, and pointing to real files under the final bundle
 - use `attachments/` as the final delivery directory for PoC, evidence, Docker, and support files
 - do not use `evidence/` as a final delivery directory; move final evidence files under `attachments/`
 - do not leave runtime or source-control directories such as `.omc/`, `.git/`, `node_modules/`, `.venv/`, or `__pycache__/` inside final bundles

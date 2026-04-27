@@ -83,6 +83,25 @@ EN_ANALYSIS_MARKERS = [
 ]
 ZH_REPRODUCTION_MARKERS = ["环境准备", "执行", "预期", "实际", "结果证据"]
 EN_REPRODUCTION_MARKERS = ["Environment", "Run command", "Expected", "Observed", "Evidence"]
+ALLOWED_VERIFICATION_STATUSES = {
+    "confirmed_in_docker",
+    "high_confidence_unverified_due_to_sandbox_limitation",
+}
+REQUIRED_VERIFICATION_FIELDS = {
+    "schema_version",
+    "finding_slug",
+    "verification_status",
+    "docker_required",
+    "docker_image",
+    "docker_command",
+    "poc_path",
+    "expected_observation",
+    "observed_observation",
+    "oracle_token",
+    "evidence_files",
+    "severity_escalation_attempted",
+    "severity_escalation_result",
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -497,6 +516,97 @@ def validate_bundle_cleanliness(bundle_dir: Path) -> None:
             fail(f"final confirmed bundle must not contain runtime or source-control directory: {child.name}/")
 
 
+def validate_bundle_relative_file(value: object, bundle_dir: Path, label: str) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        fail(f"verification-evidence.json {label} must not be empty")
+    if raw.startswith("file://"):
+        fail(f"verification-evidence.json {label} must be bundle-relative, got file URI: {raw}")
+    if re.match(r"^[A-Za-z]:[\\/]", raw):
+        fail(f"verification-evidence.json {label} must be bundle-relative, got Windows absolute path: {raw}")
+    path = Path(raw)
+    if path.is_absolute():
+        fail(f"verification-evidence.json {label} must be bundle-relative, got absolute path: {raw}")
+    if ".." in path.parts:
+        fail(f"verification-evidence.json {label} must not escape the bundle with '..': {raw}")
+    resolved = (bundle_dir / path).resolve()
+    try:
+        resolved.relative_to(bundle_dir.resolve())
+    except ValueError:
+        fail(f"verification-evidence.json {label} escapes the bundle root: {raw}")
+    if not resolved.exists():
+        fail(f"verification-evidence.json {label} does not exist inside bundle: {raw}")
+    if not resolved.is_file():
+        fail(f"verification-evidence.json {label} must point to a file: {raw}")
+    return path.as_posix()
+
+
+def validate_verification_evidence(bundle_dir: Path, finding: dict[str, object] | None = None) -> dict[str, object]:
+    evidence_path = bundle_dir / "verification-evidence.json"
+    if not evidence_path.exists():
+        fail("confirmed bundle must include verification-evidence.json")
+    try:
+        evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        fail(f"verification-evidence.json is unreadable: {exc}")
+    if not isinstance(evidence, dict):
+        fail("verification-evidence.json must contain a JSON object")
+
+    missing = sorted(field for field in REQUIRED_VERIFICATION_FIELDS if field not in evidence)
+    if missing:
+        fail(f"verification-evidence.json is missing required fields: {missing}")
+    if evidence.get("schema_version") != 1:
+        fail("verification-evidence.json schema_version must be 1")
+
+    finding_slug = str(evidence.get("finding_slug") or "").strip()
+    if not finding_slug:
+        fail("verification-evidence.json finding_slug must not be empty")
+    if finding is not None:
+        expected_slug = str(finding.get("slug") or "").strip()
+        if expected_slug and finding_slug != expected_slug:
+            fail(
+                "verification-evidence.json finding_slug does not match findings.json: "
+                f"expected {expected_slug}, got {finding_slug}"
+            )
+
+    status = str(evidence.get("verification_status") or "").strip()
+    if status not in ALLOWED_VERIFICATION_STATUSES:
+        fail(f"verification-evidence.json verification_status is invalid: {status or '<missing>'}")
+    if status != "confirmed_in_docker":
+        fail(
+            "confirmed bundles under confirmed/ require verification_status=confirmed_in_docker; "
+            f"got {status}"
+        )
+
+    if evidence.get("docker_required") is not True:
+        fail("verification-evidence.json docker_required must be true for confirmed bundles")
+    if evidence.get("severity_escalation_attempted") is not True:
+        fail("verification-evidence.json severity_escalation_attempted must be true for confirmed bundles")
+
+    for field in (
+        "docker_image",
+        "docker_command",
+        "expected_observation",
+        "observed_observation",
+        "oracle_token",
+        "severity_escalation_result",
+    ):
+        if not str(evidence.get(field) or "").strip():
+            fail(f"verification-evidence.json {field} must not be empty")
+
+    validate_bundle_relative_file(evidence.get("poc_path"), bundle_dir, "poc_path")
+    evidence_files = evidence.get("evidence_files")
+    if not isinstance(evidence_files, list) or not evidence_files:
+        fail("verification-evidence.json evidence_files must be a non-empty list")
+    seen: set[str] = set()
+    for index, item in enumerate(evidence_files, start=1):
+        rel = validate_bundle_relative_file(item, bundle_dir, f"evidence_files[{index}]")
+        if rel in seen:
+            fail(f"verification-evidence.json evidence_files contains duplicate path: {rel}")
+        seen.add(rel)
+    return evidence
+
+
 def validate_attachment_note(note_path: Path, language: str) -> None:
     text = note_path.read_text(encoding="utf-8")
     if language == "zh-CN":
@@ -701,6 +811,7 @@ def main() -> None:
     if findings_path is not None and findings_path.exists():
         project_name, title_tokens, selected_finding = load_bundle_identity(findings_path, bundle_dir.name, workspace_dir)
         validate_severity_consistency(bundle_dir, docx_path, selected_finding, language)
+    validate_verification_evidence(bundle_dir, selected_finding)
 
     combined_text = "\n".join(lines)
     if "CVSS 2.0" in combined_text:
