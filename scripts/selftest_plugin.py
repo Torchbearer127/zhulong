@@ -323,6 +323,21 @@ def main() -> None:
         "final summary high-confidence unverified section",
     )
     require_text(
+        plugin_root / "templates/claude-skill/SKILL.md",
+        "Docker-confirmed but bundle incomplete",
+        "Claude skill template partial bundle final-summary guardrail",
+    )
+    require_text(
+        plugin_root / "templates/claude-skill/SKILL.md",
+        "partial confirmed bundle",
+        "Claude skill template partial confirmed bundle guardrail",
+    )
+    require_text(
+        plugin_root / "assets/references/final-summary-template.md",
+        "Docker-confirmed but bundle incomplete",
+        "final summary partial bundle section",
+    )
+    require_text(
         plugin_root / "assets/references/confirmed-vuln-docx-format.md",
         "Claude Code DOCX Editing Rule",
         "confirmed-vuln-docx-format docx workflow section",
@@ -331,6 +346,16 @@ def main() -> None:
         plugin_root / "assets/references/confirmed-vuln-docx-format.md",
         "Verification Evidence JSON",
         "confirmed-vuln-docx-format verification evidence schema",
+    )
+    require_text(
+        plugin_root / "assets/references/confirmed-vuln-docx-format.md",
+        "partial confirmed bundle",
+        "confirmed-vuln-docx-format partial bundle guardrail",
+    )
+    require_text(
+        plugin_root / "scripts/render_handoff_summary.py",
+        "partial_confirmed_bundle",
+        "handoff renderer partial bundle classification hint",
     )
     require_text(
         plugin_root / "assets/references/document-output-stability.md",
@@ -993,12 +1018,16 @@ def main() -> None:
         ):
             if expected not in python_planner_output:
                 raise SystemExit(f"FAILED: planner output missing Python Web playbook recommendation: {expected}")
-        run([
+        run_with_env([
             "bash",
             str(plugin_root / "scripts/refresh_workspace_helpers.sh"),
             "--workspace",
             str(workspace),
-        ], plugin_root)
+        ], plugin_root, {
+            "SKILL_DIR": str(plugin_root),
+            "HOME": str(Path.home()),
+            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        })
         (repo_dir / "docker").mkdir(parents=True, exist_ok=True)
         (repo_dir / "poc").mkdir(parents=True, exist_ok=True)
         (repo_dir / "docker" / "docker-compose.attacker.yml").write_text(
@@ -1074,12 +1103,66 @@ def main() -> None:
             "en-US",
             "--write-audit-event",
         ], plugin_root)
+        shutil.copy2(
+            plugin_root / "assets/examples/confirmed-findings.example.json",
+            workspace / "confirmed/findings.example.json",
+        )
+        shutil.copy2(
+            plugin_root / "assets/confirmed-vuln-report-template.docx",
+            workspace / "confirmed/confirmed-vuln-report-template.docx",
+        )
+        (workspace / "confirmed/.DS_Store").write_text("", encoding="utf-8")
         run([
             sys.executable,
             str(workspace / "bin/validate-all-report-bundles.py"),
             "--confirmed-dir",
             str(workspace / "confirmed"),
         ], plugin_root)
+        partial_confirmed = workspace / "confirmed/C99-partial-confirmed"
+        partial_confirmed.mkdir()
+        shutil.copy2(zh_bundle / "verification-evidence.json", partial_confirmed / "verification-evidence.json")
+        (partial_confirmed / "findings.json").write_text(
+            json.dumps({"findings": [{"slug": "c99-partial-confirmed"}]}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(workspace / "bin/validate-all-report-bundles.py"),
+            "--confirmed-dir",
+            str(workspace / "confirmed"),
+        ], plugin_root, "partial confirmed bundle")
+        partial_json_proc = subprocess.run([
+            sys.executable,
+            str(workspace / "bin/validate-all-report-bundles.py"),
+            "--confirmed-dir",
+            str(workspace / "confirmed"),
+            "--json",
+        ], cwd=plugin_root, capture_output=True, text=True)
+        if partial_json_proc.returncode == 0:
+            raise SystemExit("FAILED: validate-all-report-bundles.py --json unexpectedly passed with a partial bundle")
+        partial_json = json.loads(partial_json_proc.stdout)
+        partial_entries = [
+            item for item in partial_json.get("results", [])
+            if item.get("name") == "C99-partial-confirmed"
+        ]
+        if not partial_entries or partial_entries[0].get("classification") != "partial_confirmed_bundle":
+            raise SystemExit("FAILED: validate-all-report-bundles.py --json did not classify the partial bundle")
+        helper_classes = {
+            item.get("name"): item.get("classification")
+            for item in partial_json.get("results", [])
+            if item.get("name") in {
+                "findings.example.json",
+                "confirmed-vuln-report-template.docx",
+                ".DS_Store",
+            }
+        }
+        expected_helpers = {
+            "findings.example.json",
+            "confirmed-vuln-report-template.docx",
+            ".DS_Store",
+        }
+        if set(helper_classes) != expected_helpers or set(helper_classes.values()) != {"ignored_helper_file"}:
+            raise SystemExit("FAILED: validate-all-report-bundles.py --json did not ignore confirmed/ helper files")
         events_after_bundle_validation = [
             json.loads(line)
             for line in (workspace / "audit-events.jsonl").read_text(encoding="utf-8").splitlines()

@@ -175,11 +175,29 @@ def confirmed_bundle_lines(workspace: Path) -> list[str]:
     if not bundles:
         lines.append("- Bundles: 0")
         return lines
-    lines.append(f"- Bundles: {len(bundles)}")
+    lines.append(f"- Bundle-like directories: {len(bundles)}")
+    lines.append("- Treat a directory as a confirmed deliverable only after `validate-all-report-bundles.py` passes.")
     for bundle in bundles[:MAX_ROWS]:
         evidence = bundle / "verification-evidence.json"
         status = read_json(evidence).get("verification_status", "unknown") if evidence.exists() else "missing verification-evidence.json"
-        lines.append(f"- `{rel_workspace(bundle, workspace)}` ({status})")
+        missing = []
+        if not any(path.is_file() for path in bundle.glob("*.docx")):
+            missing.append("docx")
+        if not any(("附件目录说明" in path.name or "attachment" in path.name) for path in bundle.glob("*.md")):
+            missing.append("attachment-index")
+        if not any(("补充复现说明" in path.name or "reproduction" in path.name) for path in bundle.glob("*.md")):
+            missing.append("reproduction-supplement")
+        attachments = bundle / "attachments"
+        if not attachments.exists() or not attachments.is_dir() or not any(path.is_file() for path in attachments.rglob("*")):
+            missing.append("attachments")
+        if not any(path.is_file() and path.name.startswith("run-") for path in bundle.glob("*.sh")):
+            missing.append("bundle-root-run-script")
+        if missing:
+            lines.append(
+                f"- `{rel_workspace(bundle, workspace)}` ({status}; partial_confirmed_bundle missing: {', '.join(missing)})"
+            )
+        else:
+            lines.append(f"- `{rel_workspace(bundle, workspace)}` ({status}; bundle artifacts present, validation still required)")
     if len(bundles) > MAX_ROWS:
         lines.append(f"- ... {len(bundles) - MAX_ROWS} more bundle(s) omitted.")
     return lines

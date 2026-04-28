@@ -120,6 +120,10 @@ default contract even when the user does not restate them:
   filenames such as `report.docx` or `attachments.md`, final `evidence/`
   directories, runtime state, source-control directories, dependency trees, or
   cache directories inside a final bundle are incomplete output.
+- A finding may be called a confirmed deliverable only after both Docker
+  evidence and successful bundle validation exist. Docker-confirmed evidence in
+  an incomplete bundle must be described as `Docker-confirmed but bundle incomplete`,
+  not as a completed confirmed deliverable.
 - Keep the DOCX, attachment note, reproduction supplement, findings JSON, and
   recording script semantically aligned with the same project, vulnerability
   identity, severity rationale, and verified oracle.
@@ -281,6 +285,13 @@ The renderer output directory must be the top-level `<audit-workspace>/confirmed
 directory, never a per-vulnerability bundle directory. Let the renderer create
 `confirmed/<one-folder-per-vulnerability>/`; do not hand-create final bundle
 directories and then try to retrofit DOCX files into them.
+
+Run the batch validator before writing the final summary. If it reports a
+`partial confirmed bundle` or `validation_failed`, do not call that directory a
+confirmed deliverable. List the failure and remediation step instead, such as
+rerendering through `render-confirmed-vuln-docx.py` with
+`--output-dir <audit-workspace>/confirmed` or moving unsupported leads back to
+candidate/unverified records.
 
 Do not produce thin DOCX reports. The `Vulnerability Analysis` section must explain, in reviewer-readable prose, at least:
 

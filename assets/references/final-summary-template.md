@@ -14,6 +14,9 @@ Use this structure for the final terminal / chat summary after an audit run fini
 - If Docker confirmation did not complete, say that no vulnerability was confirmed for that lead, state the missing evidence, and provide the safe Docker-only resume step.
 - Do not describe exploratory scratch output such as `vulnerability-packages/` or `SECURITY-RESEARCH-SUMMARY.md` as the final deliverable.
 - When confirmed vulnerabilities exist, point to the per-vulnerability bundle under `<audit-workspace>/confirmed/`.
+- A finding may be called a confirmed deliverable only after Docker evidence and successful bundle validation.
+- Docker-confirmed evidence with incomplete bundle artifacts must be reported as `Docker-confirmed but bundle incomplete`, not as a completed confirmed deliverable.
+- If validation fails, list the validation failure and remediation step instead of claiming the bundle is ready.
 - When no confirmed vulnerabilities exist, write `确认漏洞：无` / `Confirmed vulnerabilities: none` instead of creating a fake confirmed bundle.
 
 ## Chinese Template
@@ -22,8 +25,11 @@ Use this structure for the final terminal / chat summary after an audit run fini
 审计已完成。
 
 确认漏洞：
-- <漏洞名称 1>：<影响简述>。交付目录：<audit-workspace>/confirmed/<bundle-1>/
+- <漏洞名称 1>：<影响简述>。交付目录：<audit-workspace>/confirmed/<bundle-1>/。验证状态：bundle validation passed。
 - <漏洞名称 2>：<影响简述>。交付目录：<audit-workspace>/confirmed/<bundle-2>/
+
+Docker-confirmed but bundle incomplete：
+- <候选项>：Docker 证据存在，但最终交付包未通过验证。失败原因：<partial confirmed bundle / validation_failed / 缺失工件>。修复步骤：<用 renderer 重新生成到顶层 confirmed/ 或移回 candidate/unverified>。
 
 误报 / 非安全缺陷：
 - <候选项 1>：<为什么不是漏洞 / 为什么只是非安全缺陷>。记录位置：<audit-workspace>/false-positives.md
@@ -45,8 +51,11 @@ Use this structure for the final terminal / chat summary after an audit run fini
 The audit is complete.
 
 Confirmed vulnerabilities:
-- <Finding 1>: <short impact statement>. Bundle: <audit-workspace>/confirmed/<bundle-1>/
+- <Finding 1>: <short impact statement>. Bundle: <audit-workspace>/confirmed/<bundle-1>/. Validation: bundle validation passed.
 - <Finding 2>: <short impact statement>. Bundle: <audit-workspace>/confirmed/<bundle-2>/
+
+Docker-confirmed but bundle incomplete:
+- <Candidate>: Docker evidence exists, but the final deliverable bundle did not pass validation. Failure: <partial confirmed bundle / validation_failed / missing artifacts>. Remediation: <rerender through the renderer into top-level confirmed/ or move back to candidate/unverified records>.
 
 False positives / non-security defects:
 - <Candidate 1>: <why it is not a real vulnerability / why it is only a non-security defect>. Record: <audit-workspace>/false-positives.md

@@ -170,6 +170,13 @@ Recommended layout:
 
 One directory means one vulnerability. If two confirmed findings exist, create two sibling directories under `confirmed/`; do not put both findings into one bundle-local `findings.json`.
 
+Docker-confirmed evidence is not by itself a completed deliverable. A directory
+under `confirmed/` that contains `verification-evidence.json` or `findings.json`
+but lacks the report DOCX, attachment index, reproduction supplement,
+`attachments/`, or bundle-root reproduction helper is a partial confirmed
+bundle. Report it as `Docker-confirmed but bundle incomplete` until
+`validate-all-report-bundles.py` passes.
+
 Use `attachments/` for final delivery files. `evidence/`, `poc/`, and `docker/` can exist in the audit workspace while researching, but files that support the final report must be copied into the per-vulnerability bundle under `attachments/`.
 
 Final bundles must not contain runtime state or source-control/cache directories such as `.omc/`, `.git/`, `node_modules/`, `.venv/`, or `__pycache__/`.
@@ -282,6 +289,11 @@ python3 <audit-workspace>/bin/render-confirmed-vuln-docx.py \
 bundle shape. After rendering, validate the generated bundle with
 `validate-report-bundle.py` and optionally use `--write-audit-event` to record
 `bundle_validated`.
+
+Before final summary, run `validate-all-report-bundles.py` over the top-level
+`confirmed/` directory. If it reports `partial confirmed bundle` or
+`validation_failed`, list the failure and remediation step instead of calling
+that directory a confirmed deliverable.
 
 In addition to the basic fields, strongly prefer these richer fields:
 
