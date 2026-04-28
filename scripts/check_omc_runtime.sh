@@ -235,7 +235,11 @@ if (( ${#current_session_teammate_pids[@]} > 0 && ${#teammate_pids[@]} > 0 )); t
       filtered_teammates+=("$pid")
     fi
   done
-  teammate_pids=("${filtered_teammates[@]}")
+  if (( ${#filtered_teammates[@]} > 0 )); then
+    teammate_pids=("${filtered_teammates[@]}")
+  else
+    teammate_pids=()
+  fi
 fi
 
 stale_sockets=()

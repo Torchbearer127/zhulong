@@ -131,6 +131,7 @@ copy_helper_if_present "$SKILL_DIR/scripts/run_verification_case.sh" "$WORKSPACE
 copy_helper_if_present "$SKILL_DIR/scripts/render_handoff_summary.py" "$WORKSPACE_DIR/bin/render-handoff-summary.py"
 copy_helper "$SKILL_DIR/scripts/plan_security_toolchain.py" "$WORKSPACE_DIR/bin/plan-security-toolchain.py"
 copy_helper "$SKILL_DIR/scripts/scaffold_bilingual_findings.py" "$WORKSPACE_DIR/bin/scaffold-bilingual-findings.py"
+copy_helper "$SKILL_DIR/scripts/render_confirmed_vuln_docx.py" "$WORKSPACE_DIR/bin/render-confirmed-vuln-docx.py"
 copy_helper "$SKILL_DIR/scripts/validate_report_bundle.py" "$WORKSPACE_DIR/bin/validate-report-bundle.py"
 copy_helper "$SKILL_DIR/scripts/validate_all_report_bundles.py" "$WORKSPACE_DIR/bin/validate-all-report-bundles.py"
 copy_helper_if_present "$SKILL_DIR/scripts/write_audit_event.py" "$WORKSPACE_DIR/bin/write-audit-event.py"

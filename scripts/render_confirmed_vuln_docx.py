@@ -312,8 +312,12 @@ def choose_template(cli_path: str | None) -> Path | None:
         path = Path(cli_path).expanduser()
         if path.exists():
             return path
-    default_path = Path(__file__).resolve().parent.parent / "assets" / "confirmed-vuln-report-template.docx"
-    return default_path if default_path.exists() else None
+    script_root = Path(__file__).resolve().parent.parent
+    default_paths = [
+        script_root / "assets" / "confirmed-vuln-report-template.docx",
+        script_root / "confirmed" / "confirmed-vuln-report-template.docx",
+    ]
+    return next((path for path in default_paths if path.exists()), None)
 
 
 def infer_source_language(finding: dict[str, Any]) -> str:

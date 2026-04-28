@@ -25,9 +25,15 @@ def main() -> None:
     if not confirmed_dir.exists() or not confirmed_dir.is_dir():
         raise SystemExit(f"confirmed directory does not exist: {confirmed_dir}")
 
-    validator = Path(__file__).resolve().parent / "validate_report_bundle.py"
-    if not validator.exists():
-        raise SystemExit(f"validator script not found: {validator}")
+    script_dir = Path(__file__).resolve().parent
+    validator_candidates = [
+        script_dir / "validate_report_bundle.py",
+        script_dir / "validate-report-bundle.py",
+    ]
+    validator = next((path for path in validator_candidates if path.exists()), None)
+    if validator is None:
+        candidates = ", ".join(str(path) for path in validator_candidates)
+        raise SystemExit(f"validator script not found; checked: {candidates}")
 
     bundle_dirs = sorted(
         path for path in confirmed_dir.iterdir()

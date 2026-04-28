@@ -272,9 +272,15 @@ If the escalation pass does not succeed, keep the conservative rating, but say s
 5. Render and validate final bundles:
 
 ```bash
+python3 <audit-workspace>/bin/render-confirmed-vuln-docx.py --input <audit-workspace>/confirmed/findings.json --output-dir <audit-workspace>/confirmed --language <zh-CN|en-US>
 python3 <audit-workspace>/bin/validate-report-bundle.py --bundle-dir <audit-workspace>/confirmed/<bundle>
 python3 <audit-workspace>/bin/validate-all-report-bundles.py --confirmed-dir <audit-workspace>/confirmed
 ```
+
+The renderer output directory must be the top-level `<audit-workspace>/confirmed`
+directory, never a per-vulnerability bundle directory. Let the renderer create
+`confirmed/<one-folder-per-vulnerability>/`; do not hand-create final bundle
+directories and then try to retrofit DOCX files into them.
 
 Do not produce thin DOCX reports. The `Vulnerability Analysis` section must explain, in reviewer-readable prose, at least:
 

@@ -842,6 +842,8 @@ def main() -> None:
             raise SystemExit("FAILED: bootstrapped workspace is missing validate-workspace-state.py")
         if not (workspace / "bin/plan-security-toolchain.py").exists():
             raise SystemExit("FAILED: bootstrapped workspace is missing plan-security-toolchain.py")
+        if not (workspace / "bin/render-confirmed-vuln-docx.py").exists():
+            raise SystemExit("FAILED: bootstrapped workspace is missing render-confirmed-vuln-docx.py")
         run([
             sys.executable,
             str(plugin_root / "scripts/validate_workspace_state.py"),
@@ -849,6 +851,13 @@ def main() -> None:
             str(workspace),
             "--repo-root",
             str(repo_dir),
+        ], plugin_root)
+        run([
+            "bash",
+            str(workspace / "bin/check_omc_runtime.sh"),
+            "--workspace-dir",
+            str(workspace),
+            "--json",
         ], plugin_root)
         run([
             sys.executable,
@@ -1002,7 +1011,7 @@ def main() -> None:
         )
         run([
             sys.executable,
-            str(plugin_root / "scripts/render_confirmed_vuln_docx.py"),
+            str(workspace / "bin/render-confirmed-vuln-docx.py"),
             "--input",
             str(plugin_root / "assets/examples/confirmed-findings.example.json"),
             "--output-dir",
@@ -1012,7 +1021,7 @@ def main() -> None:
         ], plugin_root)
         run([
             sys.executable,
-            str(plugin_root / "scripts/render_confirmed_vuln_docx.py"),
+            str(workspace / "bin/render-confirmed-vuln-docx.py"),
             "--input",
             str(plugin_root / "assets/examples/confirmed-findings.example.json"),
             "--output-dir",
@@ -1064,6 +1073,12 @@ def main() -> None:
             "--language",
             "en-US",
             "--write-audit-event",
+        ], plugin_root)
+        run([
+            sys.executable,
+            str(workspace / "bin/validate-all-report-bundles.py"),
+            "--confirmed-dir",
+            str(workspace / "confirmed"),
         ], plugin_root)
         events_after_bundle_validation = [
             json.loads(line)

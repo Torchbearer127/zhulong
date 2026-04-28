@@ -267,6 +267,22 @@ If the review claim is stronger than "technical trigger", the supplement should 
 
 The generator at `scripts/render_confirmed_vuln_docx.py` accepts a JSON object or a JSON array.
 
+In a generated audit workspace, use the workspace helper copy instead of the
+installed-skill source path:
+
+```bash
+python3 <audit-workspace>/bin/render-confirmed-vuln-docx.py \
+  --input <audit-workspace>/confirmed/findings.json \
+  --output-dir <audit-workspace>/confirmed \
+  --language zh-CN
+```
+
+`--output-dir` must be the top-level `confirmed/` directory. Do not point it at
+`confirmed/<bundle>/`; the renderer owns creating the one-folder-per-vulnerability
+bundle shape. After rendering, validate the generated bundle with
+`validate-report-bundle.py` and optionally use `--write-audit-event` to record
+`bundle_validated`.
+
 In addition to the basic fields, strongly prefer these richer fields:
 
 ```json
