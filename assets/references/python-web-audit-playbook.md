@@ -80,6 +80,14 @@ Track source-to-sink flows into:
 - Record command, container/network settings, input payload, observed output, and why the result proves impact.
 - Timeouts, blocked networking, scanner matches, source-to-sink hypotheses, and dependency alerts stay unconfirmed.
 
+### Werkzeug Debugger / Gunicorn Verification Hint
+
+- Treat Werkzeug debugger or interactive console exposure as dangerous only when debug mode or the debugger endpoint is actually reachable.
+- In Gunicorn or other multi-process deployments, debugger PIN behavior can be worker-specific; inconsistent PIN attempts may indicate that requests are hitting different workers, not that a candidate is disproven.
+- For Docker verification only, avoid host fallback and consider a controlled single-worker test container or an environment override such as `WEB_CONCURRENCY=1` to prove exploitability deterministically.
+- Never recommend enabling Flask/Werkzeug debugger, interactive console, or debug mode in production. This hint is only for controlled Docker reproduction.
+- This is a verification aid, not a confirmed-vulnerability shortcut; keep the finding unconfirmed until Docker evidence and a direct success oracle exist.
+
 ## Web Vulnerability Priorities
 
 Audit Python Web services in this order:

@@ -503,6 +503,31 @@ def main() -> None:
         "initial probes OSV no package sources classifier",
     )
     require_text(
+        plugin_root / "scripts/run_initial_probes.sh",
+        "--report-format json",
+        "initial probes gitleaks JSON report mode",
+    )
+    require_text(
+        plugin_root / "scripts/run_initial_probes.sh",
+        "Full Secret and Match values are omitted",
+        "initial probes gitleaks secret redaction contract",
+    )
+    require_text(
+        plugin_root / "assets/references/python-web-audit-playbook.md",
+        "Werkzeug Debugger / Gunicorn Verification Hint",
+        "Python Web playbook Werkzeug debugger section",
+    )
+    require_text(
+        plugin_root / "assets/references/python-web-audit-playbook.md",
+        "WEB_CONCURRENCY=1",
+        "Python Web playbook Gunicorn single-worker verification hint",
+    )
+    require_text(
+        plugin_root / "assets/references/python-web-audit-playbook.md",
+        "Never recommend enabling Flask/Werkzeug debugger",
+        "Python Web playbook no production debugger guardrail",
+    )
+    require_text(
         plugin_root / "scripts/render_handoff_summary.py",
         "Heavy Logs To Avoid Unless Needed",
         "handoff renderer heavy-log avoidance heading",
@@ -713,6 +738,48 @@ def main() -> None:
             encoding="utf-8",
         )
         fake_osv.chmod(0o755)
+        fake_gitleaks = fake_bin / "gitleaks"
+        fake_gitleaks.write_text(
+            "#!/usr/bin/env bash\n"
+            "set -euo pipefail\n"
+            "report_path=''\n"
+            "while [[ $# -gt 0 ]]; do\n"
+            "  case \"$1\" in\n"
+            "    --report-path)\n"
+            "      report_path=\"${2:-}\"\n"
+            "      shift 2\n"
+            "      ;;\n"
+            "    *)\n"
+            "      shift\n"
+            "      ;;\n"
+            "  esac\n"
+            "done\n"
+            "[[ -n \"$report_path\" ]] || exit 64\n"
+            "cat >\"$report_path\" <<'JSON'\n"
+            "[\n"
+            "  {\n"
+            "    \"RuleID\": \"generic-api-key\",\n"
+            "    \"Description\": \"Generic API Key\",\n"
+            "    \"File\": \"config/example.env\",\n"
+            "    \"StartLine\": 3,\n"
+            "    \"Commit\": \"abcdef1234567890\",\n"
+            "    \"Secret\": \"sk_live_SUPER_SECRET_VALUE_123456\",\n"
+            "    \"Match\": \"API_KEY=sk_live_SUPER_SECRET_VALUE_123456\"\n"
+            "  },\n"
+            "  {\n"
+            "    \"RuleID\": \"private-key\",\n"
+            "    \"Description\": \"Private Key\",\n"
+            "    \"File\": \"tests/fixtures/key.pem\",\n"
+            "    \"StartLine\": 1,\n"
+            "    \"Secret\": \"-----BEGIN PRIVATE KEY-----FAKESECRET-----END PRIVATE KEY-----\"\n"
+            "  }\n"
+            "]\n"
+            "JSON\n"
+            "echo 'leaks found: 2'\n"
+            "exit 1\n",
+            encoding="utf-8",
+        )
+        fake_gitleaks.chmod(0o755)
         fake_trivy = fake_bin / "trivy"
         fake_trivy.write_text(
             "#!/usr/bin/env bash\n"
@@ -761,8 +828,35 @@ def main() -> None:
             raise SystemExit("FAILED: osv-scanner No package sources found was not classified as skipped_no_package_sources")
         if by_name.get("semgrep", {}).get("status") != "skipped_tool_missing":
             raise SystemExit("FAILED: missing semgrep was not classified as skipped_tool_missing")
-        if by_name.get("gitleaks", {}).get("status") != "skipped_tool_missing":
-            raise SystemExit("FAILED: missing gitleaks was not classified as skipped_tool_missing")
+        gitleaks_probe = by_name.get("gitleaks", {})
+        if gitleaks_probe.get("status") != "failed_nonfatal":
+            raise SystemExit("FAILED: gitleaks leak-found exit was not classified as failed_nonfatal")
+        if gitleaks_probe.get("exit_code") != 1:
+            raise SystemExit("FAILED: gitleaks leak-found exit code was not preserved")
+        gitleaks_summary = gitleaks_probe.get("summary") or {}
+        if gitleaks_summary.get("finding_count") != 2:
+            raise SystemExit("FAILED: gitleaks summary did not preserve finding_count")
+        samples = gitleaks_summary.get("sample_findings") or []
+        if len(samples) != 2:
+            raise SystemExit("FAILED: gitleaks summary samples were not captured")
+        if samples[0].get("rule_id") != "generic-api-key" or samples[0].get("file") != "config/example.env":
+            raise SystemExit("FAILED: gitleaks summary did not include actionable metadata")
+        summary_text = json.dumps(gitleaks_probe, ensure_ascii=False)
+        for forbidden_secret in (
+            "sk_live_SUPER_SECRET_VALUE_123456",
+            "API_KEY=sk_live_SUPER_SECRET_VALUE_123456",
+            "-----BEGIN PRIVATE KEY-----FAKESECRET-----END PRIVATE KEY-----",
+        ):
+            if forbidden_secret in summary_text:
+                raise SystemExit("FAILED: gitleaks summary copied a secret-like value verbatim")
+        if "secret_sha256_12" not in summary_text or "secret_redacted" not in summary_text:
+            raise SystemExit("FAILED: gitleaks summary should include only redacted/hash secret hints")
+        if str(gitleaks_summary.get("raw_log_path", "")).startswith("/"):
+            raise SystemExit("FAILED: gitleaks raw_log_path should be relative")
+        if not (workspace / "evidence/initial-probes/gitleaks.log").exists():
+            raise SystemExit("FAILED: gitleaks raw log was not preserved")
+        if not (workspace / "evidence/initial-probes/gitleaks.json").exists():
+            raise SystemExit("FAILED: gitleaks JSON report was not preserved")
         if by_name.get("syft", {}).get("status") != "skipped_tool_missing":
             raise SystemExit("FAILED: missing syft was not classified as skipped_tool_missing")
         if by_name.get("trivy", {}).get("status") != "failed_nonfatal":

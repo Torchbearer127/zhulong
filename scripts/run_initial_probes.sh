@@ -245,6 +245,7 @@ append_probe_record() {
   local log_path="$5"
   local reason="$6"
   local next_action="$7"
+  local metadata_path="${8:-}"
   local log_value=""
   command_display="${command_display//$REPO_ROOT/<repo-root>}"
   if [[ -n "${WORKSPACE_DIR:-}" ]]; then
@@ -252,7 +253,7 @@ append_probe_record() {
   fi
   command_display="${command_display//$OUTPUT_DIR/<initial-probes-output>}"
   [[ -n "$log_path" ]] && log_value="$(relative_path "$log_path")"
-  python3 - <<'PY' "$RECORDS_FILE" "$name" "$status" "$command_display" "$exit_code" "$log_value" "$reason" "$next_action"
+  python3 - <<'PY' "$RECORDS_FILE" "$name" "$status" "$command_display" "$exit_code" "$log_value" "$reason" "$next_action" "$metadata_path"
 import json
 import sys
 from pathlib import Path
@@ -268,6 +269,11 @@ record = {
     "reason": sys.argv[7],
     "next_action": sys.argv[8],
 }
+metadata_path = Path(sys.argv[9]) if len(sys.argv) > 9 and sys.argv[9] else None
+if metadata_path and metadata_path.exists():
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    if isinstance(metadata, dict):
+        record["summary"] = metadata
 with records_path.open("a", encoding="utf-8") as fh:
     fh.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
 PY
@@ -396,6 +402,140 @@ run_osv_probe() {
   return 0
 }
 
+write_gitleaks_metadata() {
+  local report_json="$1"
+  local metadata_json="$2"
+  local logfile="$3"
+  local report_rel
+  local log_rel
+  report_rel="$(relative_path "$report_json")"
+  log_rel="$(relative_path "$logfile")"
+  python3 - <<'PY' "$report_json" "$metadata_json" "$log_rel" "$report_rel" "$REPO_ROOT"
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+report_path = Path(sys.argv[1])
+metadata_path = Path(sys.argv[2])
+log_rel = sys.argv[3]
+report_rel = sys.argv[4]
+repo_root = Path(sys.argv[5]).expanduser().resolve()
+
+def as_list(value):
+    if isinstance(value, list):
+        return value
+    if isinstance(value, dict):
+        for key in ("findings", "Findings", "leaks", "Leaks", "results", "Results"):
+            nested = value.get(key)
+            if isinstance(nested, list):
+                return nested
+    return []
+
+def short_text(value, limit=160):
+    if value is None:
+        return ""
+    text = str(value).replace("\n", " ").replace("\r", " ").strip()
+    if len(text) > limit:
+        return text[: limit - 3] + "..."
+    return text
+
+def safe_path(value):
+    if value is None:
+        return ""
+    text = str(value).strip()
+    if not text:
+        return ""
+    path = Path(text).expanduser()
+    try:
+        resolved = path.resolve()
+        return resolved.relative_to(repo_root).as_posix()
+    except Exception:
+        return text.replace("\\", "/")
+
+def first_present(item, keys):
+    for key in keys:
+        if key in item and item.get(key) not in (None, ""):
+            return item.get(key)
+    return None
+
+try:
+    report_data = json.loads(report_path.read_text(encoding="utf-8")) if report_path.exists() else []
+except Exception:
+    report_data = []
+
+findings = [item for item in as_list(report_data) if isinstance(item, dict)]
+samples = []
+for item in findings[:5]:
+    sample = {
+        "rule_id": short_text(first_present(item, ("RuleID", "RuleId", "rule_id", "ruleID", "rule"))),
+        "description": short_text(first_present(item, ("Description", "description"))),
+        "file": safe_path(first_present(item, ("File", "file", "Path", "path"))),
+        "line": first_present(item, ("StartLine", "Line", "line", "LineNumber", "line_number")),
+        "commit": short_text(first_present(item, ("Commit", "commit")), 40),
+    }
+    secret_material = first_present(item, ("Secret", "secret", "Match", "match"))
+    if secret_material not in (None, ""):
+        secret_text = str(secret_material)
+        sample["secret_redacted"] = f"<redacted length={len(secret_text)}>"
+        sample["secret_sha256_12"] = hashlib.sha256(secret_text.encode("utf-8", errors="ignore")).hexdigest()[:12]
+    samples.append({key: value for key, value in sample.items() if value not in (None, "")})
+
+metadata = {
+    "finding_count": len(findings),
+    "sample_limit": 5,
+    "sample_findings": samples,
+    "raw_log_path": log_rel,
+    "json_report_path": report_rel if report_path.exists() else "",
+    "redaction": "Full Secret and Match values are omitted; summaries include only metadata and optional short hashes.",
+    "candidate_only": True,
+}
+metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+}
+
+run_gitleaks_probe() {
+  local name="gitleaks"
+  local logfile="$OUTPUT_DIR/${name}.log"
+  local statusfile="$OUTPUT_DIR/${name}.status"
+  local report_json="$OUTPUT_DIR/${name}.json"
+  local metadata_json="$OUTPUT_DIR/${name}-summary.json"
+  local command_display="gitleaks detect -s <repo-root> --report-format json --report-path <initial-probes-output>/gitleaks.json"
+  local code
+  local status
+  local reason
+  local next_action
+
+  PROBES_RUN=$((PROBES_RUN + 1))
+  printf '[%s] running\n' "$name" >>"$SUMMARY_FILE"
+  if gitleaks detect -s "$REPO_ROOT" --report-format json --report-path "$report_json" >"$logfile" 2>&1; then
+    code=0
+    status="ran_ok"
+    reason="gitleaks completed with exit code 0."
+    next_action="Review the sanitized gitleaks summary first; scanner findings remain candidates only until Docker verification confirms impact."
+  else
+    code=$?
+    if [[ "$code" -eq 127 ]]; then
+      status="failed_fatal"
+      reason="gitleaks command could not be executed after the tool check passed; this indicates broken script state or an invalid runtime assumption."
+      next_action="Fix the probe command or runtime assumption before relying on initial probe coverage."
+    else
+      status="failed_nonfatal"
+      reason="gitleaks exited non-zero, commonly because leaks were found. Findings are candidates only and full secret values are not copied into the structured summary."
+      next_action="Read the sanitized gitleaks summary before opening raw logs; triage examples/tests/false positives and verify any security impact separately."
+    fi
+  fi
+
+  write_gitleaks_metadata "$report_json" "$metadata_json" "$logfile"
+  {
+    printf '%s\n' "$status"
+    printf 'exit_code=%s\n' "$code"
+  } >"$statusfile"
+  printf '[%s] %s exit=%s\n' "$name" "$status" "$code" >>"$SUMMARY_FILE"
+  append_probe_record "$name" "$status" "$command_display" "$code" "$logfile" "$reason" "$next_action" "$metadata_json"
+  return 0
+}
+
 note_skip() {
   local name="$1"
   local reason="$2"
@@ -418,7 +558,7 @@ else
 fi
 
 if has_cmd gitleaks; then
-  run_probe gitleaks gitleaks detect -s "$REPO_ROOT"
+  run_gitleaks_probe
 else
   note_skip gitleaks "missing gitleaks"
 fi
