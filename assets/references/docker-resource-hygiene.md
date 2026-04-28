@@ -52,6 +52,24 @@ python3 <audit-workspace>/bin/manage-docker-resources.py \
 
 ## End-of-Audit Cleanup
 
+If you started the target with Docker Compose, prefer a unique project name for
+this audit so cleanup has an exact handle:
+
+```bash
+ZHULONG_COMPOSE_PROJECT="zhulong-<audit-workspace-name>-<target-name>"
+docker compose -p "$ZHULONG_COMPOSE_PROJECT" -f <compose.yml> up -d
+```
+
+At the end of the audit, stop that exact stack before running the generic
+resource cleanup:
+
+```bash
+docker compose -p "$ZHULONG_COMPOSE_PROJECT" -f <compose.yml> down -v --rmi local --remove-orphans
+```
+
+Only use the compose files and project name that this audit actually started.
+Do not run `docker compose down` against unrelated projects.
+
 At the end of a dogfood or audit run, first inspect the cleanup plan:
 
 ```bash
@@ -81,7 +99,8 @@ Then verify that no current-workspace owned Docker resources remain:
 ```bash
 python3 <audit-workspace>/bin/manage-docker-resources.py \
   --workspace-dir <audit-workspace> \
-  --verify-clean
+  --verify-clean \
+  --strict
 ```
 
 This writes:
@@ -90,9 +109,11 @@ This writes:
 <audit-workspace>/docker/docker-cleanliness-status.json
 ```
 
-`clean=true` means there are no Docker resources carrying this workspace's
-Zhulong ownership labels. If `clean=false`, the final summary should report the
-cleanup blocker and safe resume command.
+`clean=true` with `--strict` means the Docker state has no current-workspace
+owned resources and no post-baseline unattributed resources. If `clean=false`,
+the final summary should report the cleanup blocker and safe resume command.
+Unattributed resources are never auto-deleted because they may belong to a
+parallel Zhulong audit or another application.
 
 ## Safety Rules
 
@@ -106,11 +127,16 @@ cleanup blocker and safe resume command.
   confirming they belong to this audit.
 - Target project Docker Compose resources often do not carry Zhulong labels. The
   cleanup helper may list them for review, but it must not delete them
-  automatically.
+  automatically. Use a unique Compose project name plus exact
+  `docker compose ... down -v --rmi local --remove-orphans` for stacks this
+  audit started.
 - When using the bundled attacker Compose file, set
   `ZHULONG_WORKSPACE_LABEL=<audit-workspace-name>` if you want its generated
   container/image labels to be eligible for precise cleanup.
 - If cleanup fails because a resource is still in use, record the blocker and
   leave the resource in place rather than forcing global cleanup.
+- If strict verification fails only because post-baseline unattributed resources
+  remain, inspect them. Delete only resources proven to belong to this audit;
+  otherwise report the ambiguity instead of guessing.
 - Cleanup is an environment hygiene step. It does not change vulnerability
   confirmation status and must not alter confirmed bundle evidence.

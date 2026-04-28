@@ -312,15 +312,22 @@ def print_plan(plan: dict[str, Any]) -> None:
         print("- note: new resources without this workspace's Zhulong ownership labels are listed for review but will not be removed.")
 
 
-def write_cleanliness_status(workspace: Path, plan: dict[str, Any]) -> dict[str, Any]:
+def write_cleanliness_status(workspace: Path, plan: dict[str, Any], *, strict: bool) -> dict[str, Any]:
     counts = plan_counts(plan)
+    owned_remaining = owned_residue_count(plan)
+    unattributed_remaining = counts["unattributed_new_skipped"]
     status = {
         "schema_version": 1,
         "checked_at": utc_now(),
         "workspace": workspace.name,
-        "clean": owned_residue_count(plan) == 0,
+        "clean": owned_remaining == 0 and (not strict or unattributed_remaining == 0),
+        "strict": strict,
         "counts": counts,
-        "note": "clean=true means no current-workspace owned Docker resources remain. Unattributed resources are review-only and may belong to parallel work.",
+        "note": (
+            "clean=true means no current-workspace owned Docker resources remain. "
+            "When strict=true, clean also requires zero post-baseline unattributed resources. "
+            "Unattributed resources are review-only and may belong to parallel work; they are not auto-deleted."
+        ),
     }
     path = workspace / CLEAN_STATUS_RELATIVE_PATH
     path.write_text(json.dumps(status, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -380,6 +387,11 @@ def main() -> int:
     parser.add_argument("--show-created", action="store_true", help="Show resources created after the baseline.")
     parser.add_argument("--cleanup-created", action="store_true", help="Clean resources created after the baseline.")
     parser.add_argument("--verify-clean", action="store_true", help="Fail if current-workspace owned Docker resources still exist.")
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="With --verify-clean, also fail when post-baseline unattributed resources remain; never auto-deletes them.",
+    )
     parser.add_argument("--apply", action="store_true", help="Actually remove resources. Without this, cleanup is dry-run only.")
     parser.add_argument("--baseline-file", help="Use a custom baseline snapshot JSON file.")
     parser.add_argument("--current-file", help="Use a custom current snapshot JSON file, mainly for tests.")
@@ -416,11 +428,17 @@ def main() -> int:
     print(f"cleanup_plan={plan_path}")
 
     if args.verify_clean:
-        status = write_cleanliness_status(workspace, plan)
+        status = write_cleanliness_status(workspace, plan, strict=args.strict)
         print(f"clean={str(status['clean']).lower()}")
         print(f"cleanliness_status={workspace / CLEAN_STATUS_RELATIVE_PATH}")
         if not status["clean"]:
-            print("owned Docker resources remain; run --cleanup-created --apply, then verify again.", file=sys.stderr)
+            if owned_residue_count(plan) != 0:
+                print("owned Docker resources remain; run --cleanup-created --apply, then verify again.", file=sys.stderr)
+            elif args.strict:
+                print(
+                    "unattributed Docker resources remain; inspect the cleanup plan and remove only resources proven to belong to this audit.",
+                    file=sys.stderr,
+                )
             return 1
         return 0
 

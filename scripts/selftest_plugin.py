@@ -983,6 +983,52 @@ def main() -> None:
         cleanliness_status = json.loads((workspace / "docker" / "docker-cleanliness-status.json").read_text(encoding="utf-8"))
         if cleanliness_status.get("clean") is not True:
             raise SystemExit("FAILED: Docker verify-clean must pass when no current-workspace owned resources remain")
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/manage_docker_resources.py"),
+            "--workspace-dir",
+            str(workspace),
+            "--baseline-file",
+            str(docker_baseline),
+            "--current-file",
+            str(docker_clean_current),
+            "--verify-clean",
+            "--strict",
+        ], plugin_root, "unattributed Docker resources remain")
+        cleanliness_status = json.loads((workspace / "docker" / "docker-cleanliness-status.json").read_text(encoding="utf-8"))
+        if cleanliness_status.get("clean") is not False or cleanliness_status.get("strict") is not True:
+            raise SystemExit("FAILED: Docker strict verify-clean must fail on post-baseline unattributed resources")
+        docker_strict_clean_current = workspace / "docker" / "current-strict-clean-fixture.json"
+        docker_strict_clean_current.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "captured_at": "2026-04-28T00:30:00Z",
+                    "docker_available": True,
+                    "images": [{"id": "sha256:base", "repository": "node", "tag": "20-alpine"}],
+                    "volumes": [{"name": "existing-volume", "driver": "local"}],
+                    "networks": [{"id": "net0", "name": "bridge", "driver": "bridge"}],
+                    "containers": [{"id": "container0", "name": "existing", "state": "exited"}],
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        run([
+            sys.executable,
+            str(plugin_root / "scripts/manage_docker_resources.py"),
+            "--workspace-dir",
+            str(workspace),
+            "--baseline-file",
+            str(docker_baseline),
+            "--current-file",
+            str(docker_strict_clean_current),
+            "--verify-clean",
+            "--strict",
+        ], plugin_root)
+        cleanliness_status = json.loads((workspace / "docker" / "docker-cleanliness-status.json").read_text(encoding="utf-8"))
+        if cleanliness_status.get("clean") is not True or cleanliness_status.get("strict") is not True:
+            raise SystemExit("FAILED: Docker strict verify-clean must pass when the Docker state matches the baseline")
         require_text(
             workspace / "handoff-summary.md",
             "Do not generate DOCX reports from handoff content",

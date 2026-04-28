@@ -70,8 +70,10 @@ default contract even when the user does not restate them:
   volumes, networks, or stopped containers carry this workspace's Zhulong
   ownership labels and were created by this audit. New unlabeled resources may
   belong to another parallel audit, target Compose stack, or unrelated Docker
-  application and must be reviewed manually, not auto-deleted. Never use broad
-  Docker prune commands as the cleanup path.
+  application and must be reviewed manually, not auto-deleted. Finish with
+  `--verify-clean --strict`; if it fails, report or resolve the exact residual
+  resources instead of calling the environment clean. Never use broad Docker
+  prune commands as the cleanup path.
 - For individual PoC checks, prefer `run_verification_case.sh` or an equivalent
   Docker-only wrapper with a mandatory timeout, explicit network setting,
   resource limits, and structured evidence. The stable verification case labels
@@ -286,7 +288,7 @@ resources belong to this audit:
 ```bash
 python3 <audit-workspace>/bin/manage-docker-resources.py --workspace-dir <audit-workspace> --cleanup-created
 python3 <audit-workspace>/bin/manage-docker-resources.py --workspace-dir <audit-workspace> --cleanup-created --apply
-python3 <audit-workspace>/bin/manage-docker-resources.py --workspace-dir <audit-workspace> --verify-clean
+python3 <audit-workspace>/bin/manage-docker-resources.py --workspace-dir <audit-workspace> --verify-clean --strict
 ```
 
 If cleanup is blocked because a container or volume is still in use, record the
@@ -294,6 +296,11 @@ blocker and do not fall back to broad `docker system prune` commands.
 If the cleanup plan lists unlabeled resources created after the baseline, treat
 them as review-only because they may belong to another parallel Zhulong audit,
 the target project's own Compose stack, or an unrelated Docker application.
+For a target Docker Compose stack that this audit explicitly started, prefer a
+unique project name such as `zhulong-<audit-workspace-name>-<target-name>` and
+clean it with the exact command `docker compose -p <project> -f <compose.yml>
+down -v --rmi local --remove-orphans` before the strict cleanliness check. Never
+use broad prune as the Zhulong cleanup path.
 
 After a vulnerability is first confirmed, do not stop at the weakest trigger and immediately settle on a low or medium rating.
 Run at least one deliberate severity-escalation pass that tries to verify stronger real-world impact inside Docker before final scoring.
