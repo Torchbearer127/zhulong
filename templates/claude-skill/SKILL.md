@@ -21,6 +21,9 @@ Use this Claude Code skill when you want a repository audit workflow that is:
   - [asr_exec.sh](./scripts/asr_exec.sh)
 - Docker verification runner:
   - [run_verification_case.sh](./scripts/run_verification_case.sh)
+- Docker resource hygiene:
+  - [manage_docker_resources.py](./scripts/manage_docker_resources.py)
+  - [docker-resource-hygiene.md](./assets/references/docker-resource-hygiene.md)
 - handoff summary:
   - [render_handoff_summary.py](./scripts/render_handoff_summary.py)
 - dynamic planning:
@@ -61,6 +64,14 @@ default contract even when the user does not restate them:
 - When Docker images are needed, prefer suitable local images or already-cached
   base images first. Pull from the network only when no suitable local image is
   available.
+- Track Docker resource ownership per audit workspace. Prefer
+  `<audit-workspace>/bin/manage-docker-resources.py --cleanup-created` dry-run
+  before finishing, and only use `--apply` after confirming the listed images,
+  volumes, networks, or stopped containers carry this workspace's Zhulong
+  ownership labels and were created by this audit. New unlabeled resources may
+  belong to another parallel audit, target Compose stack, or unrelated Docker
+  application and must be reviewed manually, not auto-deleted. Never use broad
+  Docker prune commands as the cleanup path.
 - For individual PoC checks, prefer `run_verification_case.sh` or an equivalent
   Docker-only wrapper with a mandatory timeout, explicit network setting,
   resource limits, and structured evidence. The stable verification case labels
@@ -168,6 +179,14 @@ If Docker gate or OMC runtime gate pauses the workflow, do not fail silently. Pr
 
 If `check_omc_runtime.sh` reports `cleanup_needed`, treat it as a manual-review state first. Do not auto-kill teammate-mode processes. If `suspect_teammate_pids` or `stale_swarm_sockets` are reported, show them explicitly and require inspection before cleanup.
 
+Workspace bootstrap captures a Docker resource baseline when Docker is
+available. If Docker was unavailable during bootstrap, capture a baseline before
+starting verification:
+
+```bash
+python3 <audit-workspace>/bin/manage-docker-resources.py --workspace-dir <audit-workspace> --capture-baseline
+```
+
 At the start of every resumed or handed-off session, refresh and read the
 handoff summary before opening raw logs:
 
@@ -259,6 +278,21 @@ copy the relevant runner logs/result JSON into the final bundle's
 `attachments/` and keep `verification-evidence.json` set to
 `verification_status=confirmed_in_docker`; timed-out, blocked, resource-limited,
 or rejected cases must stay out of `confirmed/`.
+
+Before final summary, inspect Docker resources created after the workspace
+baseline. Start with a dry-run cleanup plan and apply only after confirming the
+resources belong to this audit:
+
+```bash
+python3 <audit-workspace>/bin/manage-docker-resources.py --workspace-dir <audit-workspace> --cleanup-created
+python3 <audit-workspace>/bin/manage-docker-resources.py --workspace-dir <audit-workspace> --cleanup-created --apply
+```
+
+If cleanup is blocked because a container or volume is still in use, record the
+blocker and do not fall back to broad `docker system prune` commands.
+If the cleanup plan lists unlabeled resources created after the baseline, treat
+them as review-only because they may belong to another parallel Zhulong audit,
+the target project's own Compose stack, or an unrelated Docker application.
 
 After a vulnerability is first confirmed, do not stop at the weakest trigger and immediately settle on a low or medium rating.
 Run at least one deliberate severity-escalation pass that tries to verify stronger real-world impact inside Docker before final scoring.
@@ -359,6 +393,7 @@ Final summaries must explicitly distinguish confirmed vulnerabilities, false pos
 
 - [claude-code-invocation-template.md](./assets/references/claude-code-invocation-template.md)
 - [document-output-stability.md](./assets/references/document-output-stability.md)
+- [docker-resource-hygiene.md](./assets/references/docker-resource-hygiene.md)
 - [recommended-security-tooling.md](./assets/references/recommended-security-tooling.md)
 - [java-web-audit-playbook.md](./assets/references/java-web-audit-playbook.md)
 - [go-web-audit-playbook.md](./assets/references/go-web-audit-playbook.md)

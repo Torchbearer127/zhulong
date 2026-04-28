@@ -227,6 +227,7 @@ mkdir -p "$EVIDENCE_DIR"
 EVIDENCE_DIR="$(cd "$EVIDENCE_DIR" && pwd)"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WORKSPACE_LABEL="$(basename "$WORKSPACE_DIR")"
 
 find_state_writer() {
   if [[ -f "$SCRIPT_DIR/write_audit_event.py" ]]; then
@@ -445,6 +446,8 @@ case "$MODE" in
     RUN_COMMAND=(
       docker run --rm
       --name "zhulong-${SAFE_CASE_ID}-$$"
+      --label "org.zhulong.managed=true"
+      --label "org.zhulong.workspace=$WORKSPACE_LABEL"
       --memory "$MEMORY_LIMIT"
       --cpus "$CPU_LIMIT"
       --pids-limit "$PIDS_LIMIT"

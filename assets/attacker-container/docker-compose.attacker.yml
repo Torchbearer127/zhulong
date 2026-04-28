@@ -2,6 +2,12 @@ services:
   attacker:
     build:
       context: ./attacker-container
+      labels:
+        org.zhulong.managed: "true"
+        org.zhulong.workspace: ${ZHULONG_WORKSPACE_LABEL:-unlabeled}
+    labels:
+      org.zhulong.managed: "true"
+      org.zhulong.workspace: ${ZHULONG_WORKSPACE_LABEL:-unlabeled}
     working_dir: /workspace
     stdin_open: true
     tty: true

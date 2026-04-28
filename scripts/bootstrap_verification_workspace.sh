@@ -28,6 +28,7 @@ What it creates:
       check_security_tooling.sh
       run-initial-probes.sh
       run-verification-case.sh
+      manage-docker-resources.py
       render-handoff-summary.py
       plan-security-toolchain.py
       scaffold-bilingual-findings.py
@@ -43,6 +44,7 @@ What it creates:
       check_security_tooling.sh
       run-initial-probes.sh
       run-verification-case.sh
+      manage-docker-resources.py
       render-handoff-summary.py
       plan-security-toolchain.py
       scaffold-bilingual-findings.py
@@ -323,6 +325,16 @@ exec bash "$SCRIPT_DIR/../bin/run-verification-case.sh" "$@"
 '
 chmod +x "$WORKSPACE_DIR/scripts/run-verification-case.sh"
 copy_file \
+  "$SKILL_DIR/scripts/manage_docker_resources.py" \
+  "$WORKSPACE_DIR/bin/manage-docker-resources.py"
+chmod +x "$WORKSPACE_DIR/bin/manage-docker-resources.py"
+write_text_file "$WORKSPACE_DIR/scripts/manage-docker-resources.py" '#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec python3 "$SCRIPT_DIR/../bin/manage-docker-resources.py" "$@"
+'
+chmod +x "$WORKSPACE_DIR/scripts/manage-docker-resources.py"
+copy_file \
   "$SKILL_DIR/scripts/render_handoff_summary.py" \
   "$WORKSPACE_DIR/bin/render-handoff-summary.py"
 chmod +x "$WORKSPACE_DIR/bin/render-handoff-summary.py"
@@ -414,6 +426,11 @@ copy_file \
 copy_file \
   "$SKILL_DIR/assets/confirmed-vuln-report-template.docx" \
   "$WORKSPACE_DIR/confirmed/confirmed-vuln-report-template.docx"
+
+python3 "$WORKSPACE_DIR/bin/manage-docker-resources.py" \
+  --workspace-dir "$WORKSPACE_DIR" \
+  --capture-baseline >/dev/null || \
+  echo "[zhulong] WARNING: Docker resource baseline capture failed during bootstrap (non-fatal)." >&2
 
 python3 "$WORKSPACE_DIR/bin/render-handoff-summary.py" \
   --workspace-dir "$WORKSPACE_DIR" \

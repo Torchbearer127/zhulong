@@ -18,6 +18,7 @@ REQUIRED_FILES = [
     "assets/references/false-positive-template.md",
     "assets/references/unverified-lead-template.md",
     "assets/references/final-summary-template.md",
+    "assets/references/docker-resource-hygiene.md",
     "assets/references/java-web-audit-playbook.md",
     "assets/references/go-web-audit-playbook.md",
     "assets/references/nodejs-web-audit-playbook.md",
@@ -33,6 +34,7 @@ REQUIRED_FILES = [
     "scripts/check_security_tooling.sh",
     "scripts/run_initial_probes.sh",
     "scripts/run_verification_case.sh",
+    "scripts/manage_docker_resources.py",
     "scripts/render_handoff_summary.py",
     "scripts/refresh_workspace_helpers.sh",
     "scripts/sync_to_claude_skill.sh",
@@ -670,6 +672,7 @@ def main() -> None:
          str(plugin_root / "scripts/render_handoff_summary.py"),
          str(plugin_root / "scripts/write_audit_event.py"),
          str(plugin_root / "scripts/validate_workspace_state.py"),
+         str(plugin_root / "scripts/manage_docker_resources.py"),
          str(plugin_root / "scripts/render_confirmed_vuln_docx.py"),
          str(plugin_root / "scripts/scaffold_bilingual_findings.py"),
          str(plugin_root / "scripts/validate_report_bundle.py"),
@@ -686,6 +689,7 @@ def main() -> None:
     run(["bash", "-n", str(plugin_root / "scripts/refresh_workspace_helpers.sh")], plugin_root)
     run(["bash", "-n", str(plugin_root / "scripts/sync_to_claude_skill.sh")], plugin_root)
     run(["bash", str(plugin_root / "scripts/run_verification_case.sh"), "--help"], plugin_root)
+    run([sys.executable, str(plugin_root / "scripts/manage_docker_resources.py"), "--help"], plugin_root)
     run([sys.executable, str(plugin_root / "scripts/render_handoff_summary.py"), "--help"], plugin_root)
 
     with tempfile.TemporaryDirectory(prefix="asr-plugin-selftest-") as tempdir:
@@ -709,6 +713,8 @@ def main() -> None:
             raise SystemExit("FAILED: bootstrapped workspace is missing run-initial-probes.sh")
         if not (workspace / "bin/run-verification-case.sh").exists():
             raise SystemExit("FAILED: bootstrapped workspace is missing run-verification-case.sh")
+        if not (workspace / "bin/manage-docker-resources.py").exists():
+            raise SystemExit("FAILED: bootstrapped workspace is missing manage-docker-resources.py")
         if not (workspace / "bin/render-handoff-summary.py").exists():
             raise SystemExit("FAILED: bootstrapped workspace is missing render-handoff-summary.py")
         if not (workspace / "scripts/render-handoff-summary.py").exists():
@@ -760,6 +766,167 @@ def main() -> None:
             "Confirmed vulnerabilities belong only under `confirmed/<one-folder-per-vulnerability>/`",
             "bootstrapped handoff confirmed-only guardrail",
         )
+
+        docker_baseline = workspace / "docker" / "baseline-fixture.json"
+        docker_current = workspace / "docker" / "current-fixture.json"
+        docker_baseline.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "captured_at": "2026-04-28T00:00:00Z",
+                    "docker_available": True,
+                    "images": [{"id": "sha256:base", "repository": "node", "tag": "20-alpine"}],
+                    "volumes": [{"name": "existing-volume", "driver": "local"}],
+                    "networks": [{"id": "net0", "name": "bridge", "driver": "bridge"}],
+                    "containers": [{"id": "container0", "name": "existing", "state": "exited"}],
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        docker_current.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "captured_at": "2026-04-28T00:10:00Z",
+                    "docker_available": True,
+                    "images": [
+                        {"id": "sha256:base", "repository": "node", "tag": "20-alpine"},
+                        {
+                            "id": "sha256:new",
+                            "repository": "target-app",
+                            "tag": "latest",
+                            "labels": {
+                                "org.zhulong.managed": "true",
+                                "org.zhulong.workspace": workspace_name,
+                            },
+                        },
+                        {
+                            "id": "sha256:foreign",
+                            "repository": "other-app",
+                            "tag": "latest",
+                            "labels": {
+                                "org.zhulong.managed": "true",
+                                "org.zhulong.workspace": "security-research-other",
+                            },
+                        },
+                        {"id": "sha256:unlabeled", "repository": "parallel-app", "tag": "latest"},
+                    ],
+                    "volumes": [
+                        {"name": "existing-volume", "driver": "local"},
+                        {
+                            "name": "target-created-volume",
+                            "driver": "local",
+                            "labels": {
+                                "org.zhulong.managed": "true",
+                                "org.zhulong.workspace": workspace_name,
+                            },
+                        },
+                        {"name": "parallel-created-volume", "driver": "local"},
+                    ],
+                    "networks": [
+                        {"id": "net0", "name": "bridge", "driver": "bridge"},
+                        {
+                            "id": "net1",
+                            "name": "target-created-network",
+                            "driver": "bridge",
+                            "labels": {
+                                "org.zhulong.managed": "true",
+                                "org.zhulong.workspace": workspace_name,
+                            },
+                        },
+                        {"id": "net2", "name": "parallel-created-network", "driver": "bridge"},
+                    ],
+                    "containers": [
+                        {"id": "container0", "name": "existing", "state": "exited"},
+                        {
+                            "id": "container1",
+                            "name": "target-stopped",
+                            "state": "exited",
+                            "labels": {
+                                "org.zhulong.managed": "true",
+                                "org.zhulong.workspace": workspace_name,
+                            },
+                        },
+                        {
+                            "id": "container2",
+                            "name": "target-running",
+                            "state": "running",
+                            "labels": {
+                                "org.zhulong.managed": "true",
+                                "org.zhulong.workspace": workspace_name,
+                            },
+                        },
+                        {
+                            "id": "container3",
+                            "name": "other-zhulong-stopped",
+                            "state": "exited",
+                            "labels": {
+                                "org.zhulong.managed": "true",
+                                "org.zhulong.workspace": "security-research-other",
+                            },
+                        },
+                        {"id": "container4", "name": "parallel-unlabeled-stopped", "state": "exited"},
+                    ],
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        run([
+            sys.executable,
+            str(plugin_root / "scripts/manage_docker_resources.py"),
+            "--workspace-dir",
+            str(workspace),
+            "--baseline-file",
+            str(docker_baseline),
+            "--current-file",
+            str(docker_current),
+            "--show-created",
+        ], plugin_root)
+        cleanup_plan = json.loads((workspace / "docker" / "docker-cleanup-plan.json").read_text(encoding="utf-8"))
+        if cleanup_plan.get("safety_policy", {}).get("uses_docker_prune") is not False:
+            raise SystemExit("FAILED: Docker cleanup helper must not use broad prune semantics")
+        if cleanup_plan.get("safety_policy", {}).get("delete_unowned_resources") is not False:
+            raise SystemExit("FAILED: Docker cleanup helper must not delete unowned resources")
+        planned_images = {item.get("id") for item in cleanup_plan.get("images", [])}
+        if planned_images != {"sha256:new"}:
+            raise SystemExit(f"FAILED: Docker cleanup image plan should only include owned new image: {planned_images}")
+        planned_volumes = {item.get("name") for item in cleanup_plan.get("volumes", [])}
+        if planned_volumes != {"target-created-volume"}:
+            raise SystemExit(f"FAILED: Docker cleanup volume plan should only include owned new volume: {planned_volumes}")
+        planned_networks = {item.get("name") for item in cleanup_plan.get("networks", [])}
+        if planned_networks != {"target-created-network"}:
+            raise SystemExit(f"FAILED: Docker cleanup network plan should only include owned new non-default network: {planned_networks}")
+        running_skipped = {item.get("name") for item in cleanup_plan.get("containers", {}).get("running_owned_skipped", [])}
+        if running_skipped != {"target-running"}:
+            raise SystemExit("FAILED: Docker cleanup helper must skip running containers by default")
+        planned_containers = {item.get("name") for item in cleanup_plan.get("containers", {}).get("stopped_owned", [])}
+        if planned_containers != {"target-stopped"}:
+            raise SystemExit(f"FAILED: Docker cleanup should only remove owned stopped containers: {planned_containers}")
+        skipped_containers = {item.get("name") for item in cleanup_plan.get("containers", {}).get("unattributed_new_skipped", [])}
+        if skipped_containers != {"other-zhulong-stopped", "parallel-unlabeled-stopped"}:
+            raise SystemExit(f"FAILED: Docker cleanup must skip foreign/unlabeled containers: {skipped_containers}")
+        skipped_images = {item.get("id") for item in cleanup_plan.get("unattributed_new_skipped", {}).get("images", [])}
+        if skipped_images != {"sha256:foreign", "sha256:unlabeled"}:
+            raise SystemExit(f"FAILED: Docker cleanup must skip foreign/unlabeled images: {skipped_images}")
+        skipped_volumes = {item.get("name") for item in cleanup_plan.get("unattributed_new_skipped", {}).get("volumes", [])}
+        if skipped_volumes != {"parallel-created-volume"}:
+            raise SystemExit(f"FAILED: Docker cleanup must skip unlabeled volumes: {skipped_volumes}")
+        skipped_networks = {item.get("name") for item in cleanup_plan.get("unattributed_new_skipped", {}).get("networks", [])}
+        if skipped_networks != {"parallel-created-network"}:
+            raise SystemExit(f"FAILED: Docker cleanup must skip unlabeled networks: {skipped_networks}")
+        run([
+            sys.executable,
+            str(plugin_root / "scripts/manage_docker_resources.py"),
+            "--workspace-dir",
+            str(workspace),
+            "--baseline-file",
+            str(docker_baseline),
+            "--current-file",
+            str(docker_current),
+            "--cleanup-created",
+        ], plugin_root)
         require_text(
             workspace / "handoff-summary.md",
             "Do not generate DOCX reports from handoff content",

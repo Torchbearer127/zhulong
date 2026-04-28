@@ -128,6 +128,7 @@ copy_helper "$SKILL_DIR/scripts/check_omc_runtime.sh" "$WORKSPACE_DIR/bin/check_
 copy_helper "$SKILL_DIR/scripts/check_security_tooling.sh" "$WORKSPACE_DIR/bin/check_security_tooling.sh"
 copy_helper "$SKILL_DIR/scripts/run_initial_probes.sh" "$WORKSPACE_DIR/bin/run-initial-probes.sh"
 copy_helper_if_present "$SKILL_DIR/scripts/run_verification_case.sh" "$WORKSPACE_DIR/bin/run-verification-case.sh"
+copy_helper_if_present "$SKILL_DIR/scripts/manage_docker_resources.py" "$WORKSPACE_DIR/bin/manage-docker-resources.py"
 copy_helper_if_present "$SKILL_DIR/scripts/render_handoff_summary.py" "$WORKSPACE_DIR/bin/render-handoff-summary.py"
 copy_helper "$SKILL_DIR/scripts/plan_security_toolchain.py" "$WORKSPACE_DIR/bin/plan-security-toolchain.py"
 copy_helper "$SKILL_DIR/scripts/scaffold_bilingual_findings.py" "$WORKSPACE_DIR/bin/scaffold-bilingual-findings.py"
