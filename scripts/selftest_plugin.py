@@ -105,6 +105,52 @@ def require_no_repo_text(plugin_root: Path, needle: str, label: str) -> None:
             raise SystemExit(f"FAILED: forbidden repository text for {label}: {path}: {needle}")
 
 
+def require_probe_record(
+    summary_path: Path,
+    output_dir: Path,
+    probe_name: str,
+    expected_status: str,
+    expected_exit_code: int | None,
+    reason_snippet: str,
+    forbidden_reason_snippet: str = "",
+) -> dict:
+    summary_data = json.loads(summary_path.read_text(encoding="utf-8"))
+    probes = summary_data.get("probes") or []
+    probe = next((item for item in probes if item.get("name") == probe_name), None)
+    if probe is None:
+        raise SystemExit(f"FAILED: missing probe record for {probe_name}")
+    if probe.get("status") != expected_status:
+        raise SystemExit(
+            f"FAILED: {probe_name} status mismatch: "
+            f"expected {expected_status}, got {probe.get('status')}"
+        )
+    if probe.get("exit_code") != expected_exit_code:
+        raise SystemExit(
+            f"FAILED: {probe_name} exit_code mismatch: "
+            f"expected {expected_exit_code}, got {probe.get('exit_code')}"
+        )
+    reason = str(probe.get("reason") or "")
+    if reason_snippet not in reason:
+        raise SystemExit(f"FAILED: {probe_name} reason missing expected text: {reason_snippet}")
+    if forbidden_reason_snippet and forbidden_reason_snippet in reason:
+        raise SystemExit(f"FAILED: {probe_name} reason contains forbidden text: {forbidden_reason_snippet}")
+
+    status_path = output_dir / f"{probe_name}.status"
+    if not status_path.exists():
+        raise SystemExit(f"FAILED: missing probe status file for {probe_name}: {status_path}")
+    status_lines = status_path.read_text(encoding="utf-8").splitlines()
+    if not status_lines or status_lines[0] != expected_status:
+        raise SystemExit(f"FAILED: {probe_name}.status does not match summary status")
+    status_exit = None
+    for line in status_lines[1:]:
+        if line.startswith("exit_code="):
+            status_exit = int(line.split("=", 1)[1])
+            break
+    if expected_exit_code is not None and status_exit != expected_exit_code:
+        raise SystemExit(f"FAILED: {probe_name}.status exit_code does not match summary exit_code")
+    return probe
+
+
 def main() -> None:
     plugin_root = Path(__file__).resolve().parent.parent
 
@@ -824,8 +870,15 @@ def main() -> None:
         if not isinstance(probes, list) or not probes:
             raise SystemExit("FAILED: initial-probes-summary.json probes must be a non-empty list")
         by_name = {probe.get("name"): probe for probe in probes}
-        if by_name.get("osv-scanner", {}).get("status") != "skipped_no_package_sources":
-            raise SystemExit("FAILED: osv-scanner No package sources found was not classified as skipped_no_package_sources")
+        require_probe_record(
+            initial_summary,
+            workspace / "evidence/initial-probes",
+            "osv-scanner",
+            "skipped_no_package_sources",
+            128,
+            "no supported package lockfile",
+            "exited non-zero",
+        )
         if by_name.get("semgrep", {}).get("status") != "skipped_tool_missing":
             raise SystemExit("FAILED: missing semgrep was not classified as skipped_tool_missing")
         gitleaks_probe = by_name.get("gitleaks", {})
@@ -883,6 +936,59 @@ def main() -> None:
             raise SystemExit("FAILED: initial-probes-summary.json workspace_dir should not leak an absolute path")
         if str(summary_data.get("output_dir")).startswith("/"):
             raise SystemExit("FAILED: initial-probes-summary.json output_dir should not leak an absolute path")
+        fake_osv.write_text(
+            "#!/usr/bin/env bash\n"
+            "echo 'OSV scan completed successfully with no vulnerable packages'\n"
+            "exit 0\n",
+            encoding="utf-8",
+        )
+        fake_osv.chmod(0o755)
+        osv_ok_output = workspace / "evidence/initial-probes-osv-ok"
+        run_with_env([
+            "/bin/bash",
+            str(workspace / "bin/run-initial-probes.sh"),
+            "--repo-root",
+            str(repo_dir),
+            "--workspace-dir",
+            str(workspace),
+            "--output-dir",
+            str(osv_ok_output),
+        ], plugin_root, probe_env)
+        require_probe_record(
+            osv_ok_output / "initial-probes-summary.json",
+            osv_ok_output,
+            "osv-scanner",
+            "ran_ok",
+            0,
+            "completed with exit code 0",
+            "exited non-zero",
+        )
+        fake_osv.write_text(
+            "#!/usr/bin/env bash\n"
+            "echo 'simulated unexpected OSV failure' >&2\n"
+            "exit 42\n",
+            encoding="utf-8",
+        )
+        fake_osv.chmod(0o755)
+        osv_failure_output = workspace / "evidence/initial-probes-osv-failure"
+        run_with_env([
+            "/bin/bash",
+            str(workspace / "bin/run-initial-probes.sh"),
+            "--repo-root",
+            str(repo_dir),
+            "--workspace-dir",
+            str(workspace),
+            "--output-dir",
+            str(osv_failure_output),
+        ], plugin_root, probe_env)
+        require_probe_record(
+            osv_failure_output / "initial-probes-summary.json",
+            osv_failure_output,
+            "osv-scanner",
+            "failed_nonfatal",
+            42,
+            "exited non-zero for a reason other than no package sources",
+        )
         run([
             sys.executable,
             str(workspace / "bin/render-handoff-summary.py"),

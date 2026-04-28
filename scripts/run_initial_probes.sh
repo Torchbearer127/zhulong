@@ -374,13 +374,17 @@ run_osv_probe() {
   PROBES_RUN=$((PROBES_RUN + 1))
   printf '[%s] running\n' "$name" >>"$SUMMARY_FILE"
   if osv-scanner scan source -r "$REPO_ROOT" >"$logfile" 2>&1; then
-    printf 'ran_ok\n' >"$statusfile"
+    {
+      printf 'ran_ok\n'
+      printf 'exit_code=0\n'
+    } >"$statusfile"
     printf '[%s] ran_ok\n' "$name" >>"$SUMMARY_FILE"
     append_probe_record "$name" "ran_ok" "$command_display" "0" "$logfile" "OSV Scanner completed with exit code 0." "Review dependency results as candidate evidence only; do not report as confirmed without Docker verification."
     return 0
+  else
+    code=$?
   fi
 
-  code=$?
   if grep -qi 'No package sources found' "$logfile"; then
     {
       printf 'skipped_no_package_sources\n'
