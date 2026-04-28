@@ -76,6 +76,24 @@ python3 <audit-workspace>/bin/manage-docker-resources.py \
   --apply
 ```
 
+Then verify that no current-workspace owned Docker resources remain:
+
+```bash
+python3 <audit-workspace>/bin/manage-docker-resources.py \
+  --workspace-dir <audit-workspace> \
+  --verify-clean
+```
+
+This writes:
+
+```text
+<audit-workspace>/docker/docker-cleanliness-status.json
+```
+
+`clean=true` means there are no Docker resources carrying this workspace's
+Zhulong ownership labels. If `clean=false`, the final summary should report the
+cleanup blocker and safe resume command.
+
 ## Safety Rules
 
 - Do not use broad `docker system prune`, `docker image prune`, `docker volume

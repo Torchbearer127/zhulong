@@ -286,6 +286,7 @@ resources belong to this audit:
 ```bash
 python3 <audit-workspace>/bin/manage-docker-resources.py --workspace-dir <audit-workspace> --cleanup-created
 python3 <audit-workspace>/bin/manage-docker-resources.py --workspace-dir <audit-workspace> --cleanup-created --apply
+python3 <audit-workspace>/bin/manage-docker-resources.py --workspace-dir <audit-workspace> --verify-clean
 ```
 
 If cleanup is blocked because a container or volume is still in use, record the

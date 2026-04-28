@@ -13,6 +13,7 @@ from typing import Any
 DEFAULT_NETWORKS = {"bridge", "host", "none"}
 BASELINE_RELATIVE_PATH = Path("docker") / "docker-resource-baseline.json"
 PLAN_RELATIVE_PATH = Path("docker") / "docker-cleanup-plan.json"
+CLEAN_STATUS_RELATIVE_PATH = Path("docker") / "docker-cleanliness-status.json"
 LABEL_MANAGED = "org.zhulong.managed"
 LABEL_WORKSPACE = "org.zhulong.workspace"
 
@@ -289,6 +290,17 @@ def plan_counts(plan: dict[str, Any]) -> dict[str, int]:
     }
 
 
+def owned_residue_count(plan: dict[str, Any]) -> int:
+    counts = plan_counts(plan)
+    return (
+        counts["stopped_owned_containers"]
+        + counts["running_owned_containers_skipped"]
+        + counts["owned_volumes"]
+        + counts["owned_networks"]
+        + counts["owned_images"]
+    )
+
+
 def print_plan(plan: dict[str, Any]) -> None:
     counts = plan_counts(plan)
     print("Docker cleanup plan:")
@@ -298,6 +310,21 @@ def print_plan(plan: dict[str, Any]) -> None:
         print("- note: running containers are skipped by default; stop them deliberately before cleanup if they belong to this audit.")
     if counts["unattributed_new_skipped"]:
         print("- note: new resources without this workspace's Zhulong ownership labels are listed for review but will not be removed.")
+
+
+def write_cleanliness_status(workspace: Path, plan: dict[str, Any]) -> dict[str, Any]:
+    counts = plan_counts(plan)
+    status = {
+        "schema_version": 1,
+        "checked_at": utc_now(),
+        "workspace": workspace.name,
+        "clean": owned_residue_count(plan) == 0,
+        "counts": counts,
+        "note": "clean=true means no current-workspace owned Docker resources remain. Unattributed resources are review-only and may belong to parallel work.",
+    }
+    path = workspace / CLEAN_STATUS_RELATIVE_PATH
+    path.write_text(json.dumps(status, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return status
 
 
 def remove_resource(kind: str, identifier: str) -> tuple[bool, str]:
@@ -352,13 +379,14 @@ def main() -> int:
     parser.add_argument("--capture-baseline", action="store_true", help="Capture the current Docker resource baseline.")
     parser.add_argument("--show-created", action="store_true", help="Show resources created after the baseline.")
     parser.add_argument("--cleanup-created", action="store_true", help="Clean resources created after the baseline.")
+    parser.add_argument("--verify-clean", action="store_true", help="Fail if current-workspace owned Docker resources still exist.")
     parser.add_argument("--apply", action="store_true", help="Actually remove resources. Without this, cleanup is dry-run only.")
     parser.add_argument("--baseline-file", help="Use a custom baseline snapshot JSON file.")
     parser.add_argument("--current-file", help="Use a custom current snapshot JSON file, mainly for tests.")
     args = parser.parse_args()
 
-    if not (args.capture_baseline or args.show_created or args.cleanup_created):
-        parser.error("choose one of --capture-baseline, --show-created, or --cleanup-created")
+    if not (args.capture_baseline or args.show_created or args.cleanup_created or args.verify_clean):
+        parser.error("choose one of --capture-baseline, --show-created, --cleanup-created, or --verify-clean")
 
     workspace = workspace_path(args.workspace_dir)
     docker_dir = workspace / "docker"
@@ -386,6 +414,15 @@ def main() -> int:
     plan_path.write_text(json.dumps(plan, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print_plan(plan)
     print(f"cleanup_plan={plan_path}")
+
+    if args.verify_clean:
+        status = write_cleanliness_status(workspace, plan)
+        print(f"clean={str(status['clean']).lower()}")
+        print(f"cleanliness_status={workspace / CLEAN_STATUS_RELATIVE_PATH}")
+        if not status["clean"]:
+            print("owned Docker resources remain; run --cleanup-created --apply, then verify again.", file=sys.stderr)
+            return 1
+        return 0
 
     if args.cleanup_created:
         if not args.apply:

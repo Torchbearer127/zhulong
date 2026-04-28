@@ -927,6 +927,62 @@ def main() -> None:
             str(docker_current),
             "--cleanup-created",
         ], plugin_root)
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/manage_docker_resources.py"),
+            "--workspace-dir",
+            str(workspace),
+            "--baseline-file",
+            str(docker_baseline),
+            "--current-file",
+            str(docker_current),
+            "--verify-clean",
+        ], plugin_root, "owned Docker resources remain")
+        cleanliness_status = json.loads((workspace / "docker" / "docker-cleanliness-status.json").read_text(encoding="utf-8"))
+        if cleanliness_status.get("clean") is not False:
+            raise SystemExit("FAILED: Docker verify-clean must fail when owned resources remain")
+        docker_clean_current = workspace / "docker" / "current-clean-fixture.json"
+        docker_clean_current.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "captured_at": "2026-04-28T00:20:00Z",
+                    "docker_available": True,
+                    "images": [
+                        {"id": "sha256:base", "repository": "node", "tag": "20-alpine"},
+                        {"id": "sha256:foreign", "repository": "other-app", "tag": "latest"},
+                    ],
+                    "volumes": [
+                        {"name": "existing-volume", "driver": "local"},
+                        {"name": "parallel-created-volume", "driver": "local"},
+                    ],
+                    "networks": [
+                        {"id": "net0", "name": "bridge", "driver": "bridge"},
+                        {"id": "net2", "name": "parallel-created-network", "driver": "bridge"},
+                    ],
+                    "containers": [
+                        {"id": "container0", "name": "existing", "state": "exited"},
+                        {"id": "container4", "name": "parallel-unlabeled-stopped", "state": "exited"},
+                    ],
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        run([
+            sys.executable,
+            str(plugin_root / "scripts/manage_docker_resources.py"),
+            "--workspace-dir",
+            str(workspace),
+            "--baseline-file",
+            str(docker_baseline),
+            "--current-file",
+            str(docker_clean_current),
+            "--verify-clean",
+        ], plugin_root)
+        cleanliness_status = json.loads((workspace / "docker" / "docker-cleanliness-status.json").read_text(encoding="utf-8"))
+        if cleanliness_status.get("clean") is not True:
+            raise SystemExit("FAILED: Docker verify-clean must pass when no current-workspace owned resources remain")
         require_text(
             workspace / "handoff-summary.md",
             "Do not generate DOCX reports from handoff content",
