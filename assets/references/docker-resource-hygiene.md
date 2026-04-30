@@ -94,6 +94,25 @@ python3 <audit-workspace>/bin/manage-docker-resources.py \
   --apply
 ```
 
+For a target Compose project that this audit explicitly started, pass the exact
+project name to adopt its post-baseline resources. If the Compose file pulled
+service images that do not carry Compose labels, adopt only the exact image refs
+that were absent from the baseline and are known to belong to this audit. If
+Docker BuildKit cache remains, adopt build-cache cleanup only after reviewing
+that the new cache records belong to this isolated audit run:
+
+```bash
+python3 <audit-workspace>/bin/manage-docker-resources.py \
+  --workspace-dir <audit-workspace> \
+  --cleanup-created \
+  --adopt-compose-project "$ZHULONG_COMPOSE_PROJECT" \
+  --adopt-image-ref mysql:5.7 \
+  --adopt-build-cache
+```
+
+Review the plan before adding `--apply`. Adoption never bypasses the baseline:
+resources that existed before the audit are still protected.
+
 Then verify that no current-workspace owned Docker resources remain:
 
 ```bash
@@ -122,7 +141,12 @@ parallel Zhulong audit or another application.
 - Do not delete resources that existed in the baseline.
 - Do not delete resources merely because they are absent from the baseline; in
   parallel Zhulong runs, they may belong to another audit. Automatic cleanup is
-  limited to resources with this workspace's Zhulong ownership labels.
+  limited to resources with this workspace's Zhulong ownership labels, or to an
+  exact Compose project / image ref that this audit explicitly adopts for the
+  current cleanup run.
+- BuildKit cache is also baseline-aware. It is review-only by default and can be
+  cleaned with `--adopt-build-cache`, which uses `docker buildx prune --filter
+  id=<cache-id>` rather than broad cache pruning.
 - Running containers are skipped by default. Stop them deliberately only after
   confirming they belong to this audit.
 - Target project Docker Compose resources often do not carry Zhulong labels. The

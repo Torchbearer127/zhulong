@@ -48,6 +48,41 @@ def docker_json_lines(args: list[str]) -> list[dict[str, Any]]:
     return items
 
 
+def capture_build_cache() -> list[dict[str, Any]]:
+    proc = run_docker(["builder", "du", "--verbose"], allow_fail=True)
+    if proc.returncode != 0:
+        return []
+    records: list[dict[str, Any]] = []
+    current: dict[str, Any] = {}
+    for raw_line in proc.stdout.splitlines():
+        line = raw_line.strip()
+        if not line:
+            if current.get("id"):
+                records.append(current)
+            current = {}
+            continue
+        key, sep, value = line.partition(":")
+        if not sep:
+            continue
+        key = key.strip().lower().replace(" ", "_")
+        value = value.strip()
+        if key == "id":
+            current["id"] = value
+        elif key == "reclaimable":
+            current["reclaimable"] = value.lower() == "true"
+        elif key == "size":
+            current["size"] = value
+        elif key == "description":
+            current["description"] = value
+        elif key == "created_at":
+            current["created_at"] = value
+        elif key == "last_used":
+            current["last_used"] = value
+    if current.get("id"):
+        records.append(current)
+    return records
+
+
 def inspect_labels(kind: str, identifier: str) -> dict[str, str]:
     if not identifier:
         return {}
@@ -89,10 +124,11 @@ def capture_snapshot() -> dict[str, Any]:
         }
 
     context_proc = run_docker(["context", "show"], allow_fail=True)
-    images = docker_json_lines(["image", "ls", "--no-trunc", "--format", "{{json .}}"])
+    images = docker_json_lines(["image", "ls", "-a", "--no-trunc", "--format", "{{json .}}"])
     volumes = docker_json_lines(["volume", "ls", "--format", "{{json .}}"])
     networks = docker_json_lines(["network", "ls", "--no-trunc", "--format", "{{json .}}"])
     containers = docker_json_lines(["ps", "-a", "--no-trunc", "--format", "{{json .}}"])
+    build_cache = capture_build_cache()
 
     return {
         "schema_version": 1,
@@ -136,6 +172,7 @@ def capture_snapshot() -> dict[str, Any]:
             }
             for item in containers
         ],
+        "build_cache": build_cache,
     }
 
 
@@ -155,6 +192,14 @@ def image_ids(snapshot: dict[str, Any]) -> set[str]:
     return {
         str(item.get("id") or "").strip()
         for item in snapshot.get("images", [])
+        if isinstance(item, dict) and str(item.get("id") or "").strip()
+    }
+
+
+def ids(snapshot: dict[str, Any], key: str) -> set[str]:
+    return {
+        str(item.get("id") or "").strip()
+        for item in snapshot.get(key, [])
         if isinstance(item, dict) and str(item.get("id") or "").strip()
     }
 
@@ -196,23 +241,74 @@ def labels(item: dict[str, Any]) -> dict[str, str]:
     return {str(key): str(value) for key, value in raw.items()}
 
 
-def is_owned(item: dict[str, Any], workspace_name: str) -> bool:
+def image_ref(item: dict[str, Any]) -> str:
+    repository = str(item.get("repository") or "").strip()
+    tag = str(item.get("tag") or "").strip()
+    if not repository or not tag or repository == "<none>" or tag == "<none>":
+        return ""
+    return f"{repository}:{tag}"
+
+
+def is_owned(item: dict[str, Any], workspace_name: str, adopted_compose_projects: set[str] | None = None) -> bool:
     item_labels = labels(item)
-    return item_labels.get(LABEL_MANAGED) == "true" and item_labels.get(LABEL_WORKSPACE) == workspace_name
+    if item_labels.get(LABEL_MANAGED) == "true" and item_labels.get(LABEL_WORKSPACE) == workspace_name:
+        return True
+    compose_project = item_labels.get("com.docker.compose.project", "")
+    return bool(compose_project and adopted_compose_projects and compose_project in adopted_compose_projects)
 
 
-def split_owned(items: list[dict[str, Any]], workspace_name: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def is_owned_image(
+    item: dict[str, Any],
+    workspace_name: str,
+    adopted_compose_projects: set[str] | None = None,
+    adopted_image_refs: set[str] | None = None,
+) -> bool:
+    if is_owned(item, workspace_name, adopted_compose_projects):
+        return True
+    ref = image_ref(item)
+    return bool(ref and adopted_image_refs and ref in adopted_image_refs)
+
+
+def split_owned(
+    items: list[dict[str, Any]],
+    workspace_name: str,
+    adopted_compose_projects: set[str] | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     owned: list[dict[str, Any]] = []
     unowned: list[dict[str, Any]] = []
     for item in items:
-        if is_owned(item, workspace_name):
+        if is_owned(item, workspace_name, adopted_compose_projects):
             owned.append(item)
         else:
             unowned.append(item)
     return owned, unowned
 
 
-def build_cleanup_plan(baseline: dict[str, Any], current: dict[str, Any], workspace_name: str) -> dict[str, Any]:
+def split_owned_images(
+    items: list[dict[str, Any]],
+    workspace_name: str,
+    adopted_compose_projects: set[str] | None = None,
+    adopted_image_refs: set[str] | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    owned: list[dict[str, Any]] = []
+    unowned: list[dict[str, Any]] = []
+    for item in items:
+        if is_owned_image(item, workspace_name, adopted_compose_projects, adopted_image_refs):
+            owned.append(item)
+        else:
+            unowned.append(item)
+    return owned, unowned
+
+
+def build_cleanup_plan(
+    baseline: dict[str, Any],
+    current: dict[str, Any],
+    workspace_name: str,
+    *,
+    adopted_compose_projects: set[str] | None = None,
+    adopted_image_refs: set[str] | None = None,
+    adopt_build_cache: bool = False,
+) -> dict[str, Any]:
     baseline_images = image_ids(baseline)
     current_images = by_id(current, "images")
     new_image_ids = sorted(set(current_images) - baseline_images)
@@ -233,16 +329,30 @@ def build_cleanup_plan(baseline: dict[str, Any], current: dict[str, Any], worksp
     current_containers = by_id(current, "containers")
     new_container_ids = sorted(set(current_containers) - baseline_containers)
 
+    baseline_build_cache = ids(baseline, "build_cache")
+    current_build_cache = by_id(current, "build_cache")
+    new_build_cache_ids = sorted(set(current_build_cache) - baseline_build_cache)
+
     new_containers = []
     for container_id in new_container_ids:
         new_containers.append(current_containers[container_id])
-    owned_containers, unowned_containers = split_owned(new_containers, workspace_name)
+    owned_containers, unowned_containers = split_owned(new_containers, workspace_name, adopted_compose_projects)
     running_containers = [item for item in owned_containers if str(item.get("state") or "").lower() == "running"]
     stopped_containers = [item for item in owned_containers if str(item.get("state") or "").lower() != "running"]
 
-    owned_images, unowned_images = split_owned([current_images[item_id] for item_id in new_image_ids], workspace_name)
-    owned_volumes, unowned_volumes = split_owned([current_volumes[name] for name in new_volume_names], workspace_name)
-    owned_networks, unowned_networks = split_owned([current_networks[name] for name in new_network_names], workspace_name)
+    owned_images, unowned_images = split_owned_images(
+        [current_images[item_id] for item_id in new_image_ids],
+        workspace_name,
+        adopted_compose_projects,
+        adopted_image_refs,
+    )
+    owned_volumes, unowned_volumes = split_owned([current_volumes[name] for name in new_volume_names], workspace_name, adopted_compose_projects)
+    owned_networks, unowned_networks = split_owned([current_networks[name] for name in new_network_names], workspace_name, adopted_compose_projects)
+    new_build_cache = [current_build_cache[item_id] for item_id in new_build_cache_ids]
+    reclaimable_build_cache = [item for item in new_build_cache if item.get("reclaimable") is True]
+    non_reclaimable_build_cache = [item for item in new_build_cache if item.get("reclaimable") is not True]
+    owned_build_cache = reclaimable_build_cache if adopt_build_cache else []
+    unowned_build_cache = [] if adopt_build_cache else reclaimable_build_cache
 
     return {
         "schema_version": 1,
@@ -258,7 +368,14 @@ def build_cleanup_plan(baseline: dict[str, Any], current: dict[str, Any], worksp
                 LABEL_MANAGED: "true",
                 LABEL_WORKSPACE: workspace_name,
             },
-            "note": "Only resources absent from the baseline and carrying this workspace's Zhulong ownership labels are eligible; cleanup uses explicit docker rm/rmi/volume rm/network rm commands.",
+            "adopted_compose_projects": sorted(adopted_compose_projects or []),
+            "adopted_image_refs": sorted(adopted_image_refs or []),
+            "adopt_build_cache": adopt_build_cache,
+            "note": (
+                "Only resources absent from the baseline and carrying this workspace's Zhulong ownership labels are eligible by default. "
+                "Explicitly adopted Compose projects, image refs, or build-cache cleanup are also eligible when absent from baseline. "
+                "Cleanup uses explicit docker rm/rmi/volume rm/network rm commands."
+            ),
         },
         "containers": {
             "stopped_owned": stopped_containers,
@@ -268,6 +385,11 @@ def build_cleanup_plan(baseline: dict[str, Any], current: dict[str, Any], worksp
         "volumes": owned_volumes,
         "networks": owned_networks,
         "images": owned_images,
+        "build_cache": {
+            "adopted_reclaimable": owned_build_cache,
+            "unattributed_new_skipped": unowned_build_cache,
+            "non_reclaimable_new_skipped": non_reclaimable_build_cache,
+        },
         "unattributed_new_skipped": {
             "images": unowned_images,
             "volumes": unowned_volumes,
@@ -283,10 +405,14 @@ def plan_counts(plan: dict[str, Any]) -> dict[str, int]:
         "owned_volumes": len(plan.get("volumes", [])),
         "owned_networks": len(plan.get("networks", [])),
         "owned_images": len(plan.get("images", [])),
+        "owned_build_cache": len(plan.get("build_cache", {}).get("adopted_reclaimable", [])),
         "unattributed_new_skipped": sum(
             len(plan.get("unattributed_new_skipped", {}).get(key, []))
             for key in ("images", "volumes", "networks")
-        ) + len(plan.get("containers", {}).get("unattributed_new_skipped", [])),
+        )
+        + len(plan.get("containers", {}).get("unattributed_new_skipped", []))
+        + len(plan.get("build_cache", {}).get("unattributed_new_skipped", []))
+        + len(plan.get("build_cache", {}).get("non_reclaimable_new_skipped", [])),
     }
 
 
@@ -298,6 +424,7 @@ def owned_residue_count(plan: dict[str, Any]) -> int:
         + counts["owned_volumes"]
         + counts["owned_networks"]
         + counts["owned_images"]
+        + counts["owned_build_cache"]
     )
 
 
@@ -346,6 +473,12 @@ def remove_resource(kind: str, identifier: str) -> tuple[bool, str]:
     return proc.returncode == 0, output
 
 
+def remove_build_cache(identifier: str) -> tuple[bool, str]:
+    proc = run_docker(["buildx", "prune", "--force", "--filter", f"id={identifier}"], allow_fail=True)
+    output = ((proc.stdout or "") + (proc.stderr or "")).strip()
+    return proc.returncode == 0, output
+
+
 def apply_cleanup(plan: dict[str, Any]) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
     for item in plan.get("containers", {}).get("stopped_owned", []):
@@ -368,6 +501,11 @@ def apply_cleanup(plan: dict[str, Any]) -> list[dict[str, Any]]:
         if identifier:
             ok, output = remove_resource("image", identifier)
             results.append({"kind": "image", "id": identifier, "ok": ok, "output": output})
+    for item in plan.get("build_cache", {}).get("adopted_reclaimable", []):
+        identifier = str(item.get("id") or "").strip()
+        if identifier:
+            ok, output = remove_build_cache(identifier)
+            results.append({"kind": "build_cache", "id": identifier, "ok": ok, "output": output})
     return results
 
 
@@ -391,6 +529,25 @@ def main() -> int:
         "--strict",
         action="store_true",
         help="With --verify-clean, also fail when post-baseline unattributed resources remain; never auto-deletes them.",
+    )
+    parser.add_argument(
+        "--adopt-compose-project",
+        action="append",
+        default=[],
+        metavar="PROJECT",
+        help="Treat new resources labeled com.docker.compose.project=PROJECT as audit-owned for this cleanup run.",
+    )
+    parser.add_argument(
+        "--adopt-image-ref",
+        action="append",
+        default=[],
+        metavar="IMAGE:TAG",
+        help="Treat a new image ref such as mysql:5.7 as audit-owned for this cleanup run when it was absent from the baseline.",
+    )
+    parser.add_argument(
+        "--adopt-build-cache",
+        action="store_true",
+        help="Treat new reclaimable BuildKit cache records as audit-owned for this cleanup run; uses docker buildx prune filtered by cache id.",
     )
     parser.add_argument("--apply", action="store_true", help="Actually remove resources. Without this, cleanup is dry-run only.")
     parser.add_argument("--baseline-file", help="Use a custom baseline snapshot JSON file.")
@@ -422,7 +579,16 @@ def main() -> int:
     if not current.get("docker_available", True):
         raise SystemExit("Docker is unavailable; cannot compute cleanup plan safely.")
 
-    plan = build_cleanup_plan(baseline, current, workspace.name)
+    adopted_compose_projects = {str(value).strip() for value in args.adopt_compose_project if str(value).strip()}
+    adopted_image_refs = {str(value).strip() for value in args.adopt_image_ref if str(value).strip()}
+    plan = build_cleanup_plan(
+        baseline,
+        current,
+        workspace.name,
+        adopted_compose_projects=adopted_compose_projects,
+        adopted_image_refs=adopted_image_refs,
+        adopt_build_cache=args.adopt_build_cache,
+    )
     plan_path.write_text(json.dumps(plan, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print_plan(plan)
     print(f"cleanup_plan={plan_path}")

@@ -691,6 +691,11 @@ def main() -> None:
     run(["bash", str(plugin_root / "scripts/run_verification_case.sh"), "--help"], plugin_root)
     run([sys.executable, str(plugin_root / "scripts/manage_docker_resources.py"), "--help"], plugin_root)
     run([sys.executable, str(plugin_root / "scripts/render_handoff_summary.py"), "--help"], plugin_root)
+    require_text(
+        plugin_root / "scripts/manage_docker_resources.py",
+        '"image", "ls", "-a", "--no-trunc"',
+        "Docker cleanup helper snapshots dangling images",
+    )
 
     with tempfile.TemporaryDirectory(prefix="asr-plugin-selftest-") as tempdir:
         repo_dir = Path(tempdir) / "repo"
@@ -779,6 +784,7 @@ def main() -> None:
                     "volumes": [{"name": "existing-volume", "driver": "local"}],
                     "networks": [{"id": "net0", "name": "bridge", "driver": "bridge"}],
                     "containers": [{"id": "container0", "name": "existing", "state": "exited"}],
+                    "build_cache": [{"id": "cache0", "reclaimable": True, "size": "1MB"}],
                 },
                 indent=2,
             ),
@@ -810,6 +816,13 @@ def main() -> None:
                                 "org.zhulong.workspace": "security-research-other",
                             },
                         },
+                        {
+                            "id": "sha256:compose",
+                            "repository": "<none>",
+                            "tag": "<none>",
+                            "labels": {"com.docker.compose.project": "zhulong-test-compose"},
+                        },
+                        {"id": "sha256:compose-pulled", "repository": "mysql", "tag": "5.7"},
                         {"id": "sha256:unlabeled", "repository": "parallel-app", "tag": "latest"},
                     ],
                     "volumes": [
@@ -821,6 +834,11 @@ def main() -> None:
                                 "org.zhulong.managed": "true",
                                 "org.zhulong.workspace": workspace_name,
                             },
+                        },
+                        {
+                            "name": "target-compose-volume",
+                            "driver": "local",
+                            "labels": {"com.docker.compose.project": "zhulong-test-compose"},
                         },
                         {"name": "parallel-created-volume", "driver": "local"},
                     ],
@@ -834,6 +852,12 @@ def main() -> None:
                                 "org.zhulong.managed": "true",
                                 "org.zhulong.workspace": workspace_name,
                             },
+                        },
+                        {
+                            "id": "net3",
+                            "name": "target-compose-network",
+                            "driver": "bridge",
+                            "labels": {"com.docker.compose.project": "zhulong-test-compose"},
                         },
                         {"id": "net2", "name": "parallel-created-network", "driver": "bridge"},
                     ],
@@ -858,6 +882,12 @@ def main() -> None:
                             },
                         },
                         {
+                            "id": "container5",
+                            "name": "target-compose-stopped",
+                            "state": "exited",
+                            "labels": {"com.docker.compose.project": "zhulong-test-compose"},
+                        },
+                        {
                             "id": "container3",
                             "name": "other-zhulong-stopped",
                             "state": "exited",
@@ -867,6 +897,11 @@ def main() -> None:
                             },
                         },
                         {"id": "container4", "name": "parallel-unlabeled-stopped", "state": "exited"},
+                    ],
+                    "build_cache": [
+                        {"id": "cache0", "reclaimable": True, "size": "1MB"},
+                        {"id": "cache1", "reclaimable": True, "size": "2MB"},
+                        {"id": "cache2", "reclaimable": False, "size": "3MB"},
                     ],
                 },
                 indent=2,
@@ -905,17 +940,49 @@ def main() -> None:
         if planned_containers != {"target-stopped"}:
             raise SystemExit(f"FAILED: Docker cleanup should only remove owned stopped containers: {planned_containers}")
         skipped_containers = {item.get("name") for item in cleanup_plan.get("containers", {}).get("unattributed_new_skipped", [])}
-        if skipped_containers != {"other-zhulong-stopped", "parallel-unlabeled-stopped"}:
+        if skipped_containers != {"other-zhulong-stopped", "parallel-unlabeled-stopped", "target-compose-stopped"}:
             raise SystemExit(f"FAILED: Docker cleanup must skip foreign/unlabeled containers: {skipped_containers}")
         skipped_images = {item.get("id") for item in cleanup_plan.get("unattributed_new_skipped", {}).get("images", [])}
-        if skipped_images != {"sha256:foreign", "sha256:unlabeled"}:
+        if skipped_images != {"sha256:foreign", "sha256:unlabeled", "sha256:compose", "sha256:compose-pulled"}:
             raise SystemExit(f"FAILED: Docker cleanup must skip foreign/unlabeled images: {skipped_images}")
         skipped_volumes = {item.get("name") for item in cleanup_plan.get("unattributed_new_skipped", {}).get("volumes", [])}
-        if skipped_volumes != {"parallel-created-volume"}:
+        if skipped_volumes != {"parallel-created-volume", "target-compose-volume"}:
             raise SystemExit(f"FAILED: Docker cleanup must skip unlabeled volumes: {skipped_volumes}")
         skipped_networks = {item.get("name") for item in cleanup_plan.get("unattributed_new_skipped", {}).get("networks", [])}
-        if skipped_networks != {"parallel-created-network"}:
+        if skipped_networks != {"parallel-created-network", "target-compose-network"}:
             raise SystemExit(f"FAILED: Docker cleanup must skip unlabeled networks: {skipped_networks}")
+        run([
+            sys.executable,
+            str(plugin_root / "scripts/manage_docker_resources.py"),
+            "--workspace-dir",
+            str(workspace),
+            "--baseline-file",
+            str(docker_baseline),
+            "--current-file",
+            str(docker_current),
+            "--show-created",
+            "--adopt-compose-project",
+            "zhulong-test-compose",
+            "--adopt-image-ref",
+            "mysql:5.7",
+            "--adopt-build-cache",
+        ], plugin_root)
+        cleanup_plan = json.loads((workspace / "docker" / "docker-cleanup-plan.json").read_text(encoding="utf-8"))
+        planned_images = {item.get("id") for item in cleanup_plan.get("images", [])}
+        if planned_images != {"sha256:new", "sha256:compose", "sha256:compose-pulled"}:
+            raise SystemExit(f"FAILED: adopted compose/image resources should enter cleanup image plan: {planned_images}")
+        planned_volumes = {item.get("name") for item in cleanup_plan.get("volumes", [])}
+        if planned_volumes != {"target-created-volume", "target-compose-volume"}:
+            raise SystemExit(f"FAILED: adopted compose resources should enter cleanup volume plan: {planned_volumes}")
+        planned_networks = {item.get("name") for item in cleanup_plan.get("networks", [])}
+        if planned_networks != {"target-created-network", "target-compose-network"}:
+            raise SystemExit(f"FAILED: adopted compose resources should enter cleanup network plan: {planned_networks}")
+        planned_containers = {item.get("name") for item in cleanup_plan.get("containers", {}).get("stopped_owned", [])}
+        if planned_containers != {"target-stopped", "target-compose-stopped"}:
+            raise SystemExit(f"FAILED: adopted compose containers should enter cleanup plan: {planned_containers}")
+        planned_build_cache = {item.get("id") for item in cleanup_plan.get("build_cache", {}).get("adopted_reclaimable", [])}
+        if planned_build_cache != {"cache1"}:
+            raise SystemExit(f"FAILED: adopted build cache should enter cleanup plan: {planned_build_cache}")
         run([
             sys.executable,
             str(plugin_root / "scripts/manage_docker_resources.py"),
@@ -964,6 +1031,10 @@ def main() -> None:
                         {"id": "container0", "name": "existing", "state": "exited"},
                         {"id": "container4", "name": "parallel-unlabeled-stopped", "state": "exited"},
                     ],
+                    "build_cache": [
+                        {"id": "cache0", "reclaimable": True, "size": "1MB"},
+                        {"id": "cache3", "reclaimable": True, "size": "2MB"},
+                    ],
                 },
                 indent=2,
             ),
@@ -1009,6 +1080,7 @@ def main() -> None:
                     "volumes": [{"name": "existing-volume", "driver": "local"}],
                     "networks": [{"id": "net0", "name": "bridge", "driver": "bridge"}],
                     "containers": [{"id": "container0", "name": "existing", "state": "exited"}],
+                    "build_cache": [{"id": "cache0", "reclaimable": True, "size": "1MB"}],
                 },
                 indent=2,
             ),

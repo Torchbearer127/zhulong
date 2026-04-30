@@ -72,8 +72,10 @@ default contract even when the user does not restate them:
   belong to another parallel audit, target Compose stack, or unrelated Docker
   application and must be reviewed manually, not auto-deleted. Finish with
   `--verify-clean --strict`; if it fails, report or resolve the exact residual
-  resources instead of calling the environment clean. Never use broad Docker
-  prune commands as the cleanup path.
+  resources instead of calling the environment clean. For Compose stacks this
+  audit explicitly started, use exact `--adopt-compose-project` and, when
+  needed, exact `--adopt-image-ref` cleanup flags rather than broad matching.
+  Never use broad Docker prune commands as the cleanup path.
 - For individual PoC checks, prefer `run_verification_case.sh` or an equivalent
   Docker-only wrapper with a mandatory timeout, explicit network setting,
   resource limits, and structured evidence. The stable verification case labels
@@ -301,6 +303,12 @@ unique project name such as `zhulong-<audit-workspace-name>-<target-name>` and
 clean it with the exact command `docker compose -p <project> -f <compose.yml>
 down -v --rmi local --remove-orphans` before the strict cleanliness check. Never
 use broad prune as the Zhulong cleanup path.
+If Compose leaves post-baseline build images, networks, or pulled service images
+behind, rerun the cleanup helper with exact adoption flags such as
+`--adopt-compose-project <project>` and, only for images proven absent from the
+baseline and pulled by this audit, `--adopt-image-ref <image:tag>`. If BuildKit
+cache remains after review, use `--adopt-build-cache`; the helper prunes by
+cache id, not broad cache prune. Review the plan before adding `--apply`.
 
 After a vulnerability is first confirmed, do not stop at the weakest trigger and immediately settle on a low or medium rating.
 Run at least one deliberate severity-escalation pass that tries to verify stronger real-world impact inside Docker before final scoring.
