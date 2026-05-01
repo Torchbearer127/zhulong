@@ -1,0 +1,295 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+
+VALID_RESULTS = {
+    "completed_with_confirmed_bundles",
+    "completed_no_confirmed_findings",
+}
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def load_json(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def write_event(workspace: Path, event: str, stage: str, status: str,
+                event_status: str, message: str, **details: Any) -> None:
+    writer = workspace / "bin" / "write-audit-event.py"
+    if not writer.exists():
+        writer = Path(__file__).resolve().parent / "write_audit_event.py"
+    if not writer.exists():
+        print(
+            f"WARNING: audit event writer not found; event not recorded: {event}",
+            file=sys.stderr,
+        )
+        return
+    cmd = [
+        sys.executable, str(writer),
+        "--workspace-dir", str(workspace),
+        "--event", event,
+        "--stage", stage,
+        "--status", status,
+        "--event-status", event_status,
+        "--message", message,
+    ]
+    if details:
+        cmd.extend(["--details-json", json.dumps(details, ensure_ascii=False)])
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        output = ((proc.stdout or "") + (proc.stderr or "")).strip()
+        if len(output) > 500:
+            output = output[:500] + "..."
+        print(
+            f"WARNING: audit event writer failed for event {event}: {output}",
+            file=sys.stderr,
+        )
+
+
+def run_bundle_validator(workspace: Path, confirmed_dir: Path,
+                         language: str) -> dict[str, Any]:
+    validator = workspace / "bin" / "validate-all-report-bundles.py"
+    if not validator.exists():
+        validator = Path(__file__).resolve().parent / "validate_all_report_bundles.py"
+    if not validator.exists():
+        return {"error": "validate_all_report_bundles.py not found"}
+    cmd = [
+        sys.executable, str(validator),
+        "--confirmed-dir", str(confirmed_dir),
+        "--language", language,
+        "--json",
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        return json.loads(proc.stdout)
+    except (json.JSONDecodeError, ValueError):
+        return {
+            "error": "validator did not produce valid JSON",
+            "exit_code": proc.returncode,
+            "output": ((proc.stdout or "") + (proc.stderr or "")).strip()[:500],
+        }
+
+
+def run_docker_verify_clean(workspace: Path, *, strict: bool) -> dict[str, Any]:
+    if os.environ.get("ZHULONG_TEST_SKIP_DOCKER_CLEAN_CHECK") == "1":
+        return {"clean": True, "skipped": True, "reason": "docker clean check skipped by test-only env var"}
+    helper = workspace / "bin" / "manage-docker-resources.py"
+    if not helper.exists():
+        helper = Path(__file__).resolve().parent / "manage_docker_resources.py"
+    if not helper.exists():
+        return {"clean": False, "error": "manage_docker_resources.py not found"}
+    baseline = workspace / "docker" / "docker-resource-baseline.json"
+    if not baseline.exists():
+        return {"clean": False, "error": "docker-resource-baseline.json missing; cannot verify Docker cleanliness"}
+    cmd = [
+        sys.executable, str(helper),
+        "--workspace-dir", str(workspace),
+        "--verify-clean",
+    ]
+    if strict:
+        cmd.append("--strict")
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    status_path = workspace / "docker" / "docker-cleanliness-status.json"
+    if status_path.exists():
+        return load_json(status_path)
+    return {
+        "clean": proc.returncode == 0,
+        "exit_code": proc.returncode,
+        "output": ((proc.stdout or "") + (proc.stderr or "")).strip()[:500],
+    }
+
+
+def refresh_handoff(workspace: Path, repo_root: Path) -> bool:
+    renderer = workspace / "bin" / "render-handoff-summary.py"
+    if not renderer.exists():
+        renderer = Path(__file__).resolve().parent / "render_handoff_summary.py"
+    if not renderer.exists():
+        return False
+    cmd = [
+        sys.executable, str(renderer),
+        "--workspace-dir", str(workspace),
+        "--repo-root", str(repo_root),
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    return proc.returncode == 0
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Zhulong audit workspace completion gate. "
+            "Validates that bundle state, Docker cleanliness, stage-status.json, "
+            "and handoff-summary.md are consistent before declaring an audit finished."
+        ),
+    )
+    parser.add_argument("--workspace-dir", required=True,
+                        help="Path to the Zhulong audit workspace.")
+    parser.add_argument("--language", choices=["zh-CN", "en-US", "auto"], default="auto",
+                        help="Language for bundle validation.")
+    parser.add_argument("--result", required=True,
+                        choices=sorted(VALID_RESULTS),
+                        help="Expected completion result.")
+    parser.add_argument("--confirmed-dir", default="",
+                        help="Path to confirmed/ directory. Defaults to <workspace>/confirmed.")
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+    workspace = Path(args.workspace_dir).expanduser().resolve()
+    if not workspace.is_dir():
+        print(f"FINALIZATION FAILED: workspace does not exist: {workspace}", file=sys.stderr)
+        return 1
+    if not (workspace / "asr-config.json").exists():
+        print(f"FINALIZATION FAILED: not a Zhulong audit workspace: {workspace}", file=sys.stderr)
+        return 1
+
+    repo_root = workspace.parent.resolve()
+    confirmed_dir = Path(args.confirmed_dir).expanduser().resolve() if args.confirmed_dir else workspace / "confirmed"
+    result = args.result
+    language = args.language
+    errors: list[str] = []
+
+    write_event(workspace, "finalization_started", "finalization", "running",
+                "started", f"Completion gate started with result={result}.",
+                expected_result=result)
+
+    # --- Step 1: Bundle validation ---
+    bundle_summary: dict[str, Any] = {}
+    validated_count = 0
+    partial_count = 0
+    failed_count = 0
+
+    if confirmed_dir.exists() and confirmed_dir.is_dir():
+        has_bundle_dirs = any(
+            p.is_dir() and not p.name.startswith(".")
+            and p.name not in {"findings.example.json", "confirmed-vuln-report-template.docx"}
+            for p in confirmed_dir.iterdir()
+        )
+        if has_bundle_dirs:
+            bundle_summary = run_bundle_validator(workspace, confirmed_dir, language)
+        else:
+            bundle_summary = {"summary": {
+                "bundle_validated": 0,
+                "partial_confirmed_bundle": 0,
+                "validation_failed": 0,
+                "ignored_helper_file": 0,
+            }}
+    else:
+        bundle_summary = {"summary": {
+            "bundle_validated": 0,
+            "partial_confirmed_bundle": 0,
+            "validation_failed": 0,
+            "ignored_helper_file": 0,
+        }}
+
+    if "error" in bundle_summary:
+        errors.append(f"Bundle validation error: {bundle_summary['error']}")
+    else:
+        counts = bundle_summary.get("summary", {})
+        validated_count = counts.get("bundle_validated", 0)
+        partial_count = counts.get("partial_confirmed_bundle", 0)
+        failed_count = counts.get("validation_failed", 0)
+
+    write_event(workspace, "bundle_validation_outcome", "finalization", "running",
+                "ok" if not errors else "warning",
+                f"Bundles: validated={validated_count}, partial={partial_count}, failed={failed_count}.",
+                validated=validated_count, partial=partial_count, failed=failed_count)
+
+    # --- Step 2: Check result vs bundle state ---
+    if result == "completed_with_confirmed_bundles":
+        if validated_count == 0:
+            errors.append(
+                "result=completed_with_confirmed_bundles requires at least one validated confirmed bundle, "
+                f"but found {validated_count}."
+            )
+        if partial_count > 0:
+            errors.append(
+                f"Cannot finalize: {partial_count} partial confirmed bundle(s) exist. "
+                "Complete or remove them before finalizing."
+            )
+        if failed_count > 0:
+            errors.append(
+                f"Cannot finalize: {failed_count} bundle(s) failed validation. "
+                "Fix or remove them before finalizing."
+            )
+    elif result == "completed_no_confirmed_findings":
+        if validated_count > 0:
+            errors.append(
+                f"result=completed_no_confirmed_findings but {validated_count} validated bundle(s) exist. "
+                "Use completed_with_confirmed_bundles instead."
+            )
+        if partial_count > 0:
+            errors.append(
+                f"Cannot finalize with no-confirmed-findings: {partial_count} partial confirmed bundle(s) exist. "
+                "Complete or remove them before finalizing."
+            )
+        if failed_count > 0:
+            errors.append(
+                f"Cannot finalize with no-confirmed-findings: {failed_count} bundle(s) failed validation. "
+                "Fix or remove them before finalizing."
+            )
+
+    # --- Step 3: Docker strict cleanliness ---
+    docker_status = run_docker_verify_clean(workspace, strict=True)
+    docker_clean = docker_status.get("clean", False)
+    if not docker_clean:
+        docker_error = docker_status.get("error", "")
+        if docker_error:
+            errors.append(f"Docker cleanliness check failed: {docker_error}")
+        else:
+            errors.append(
+                "Docker strict cleanliness check failed. "
+                "Run manage-docker-resources.py --cleanup-created --apply and --verify-clean --strict."
+            )
+
+    # --- Step 4: Decide pass/fail ---
+    if errors:
+        error_text = "; ".join(errors)
+        write_event(workspace, "finalization_failed", "finalization", "running",
+                    "failed", f"Completion gate failed: {error_text}",
+                    errors=errors, expected_result=result)
+        print(f"FINALIZATION FAILED: {error_text}", file=sys.stderr)
+        for err in errors:
+            print(f"  - {err}", file=sys.stderr)
+        return 1
+
+    # --- Step 5: Update stage-status.json to completed ---
+    write_event(workspace, "finalization_succeeded", "completed", "completed",
+                "ok", f"Audit finalized as {result}.",
+                result=result, validated_bundles=validated_count,
+                docker_clean=docker_clean,
+                docker_skipped=docker_status.get("skipped", False))
+
+    # --- Step 6: Refresh handoff-summary.md ---
+    refresh_handoff(workspace, repo_root)
+
+    # --- Output ---
+    print(f"result={result}")
+    print(f"validated_bundles={validated_count}")
+    print(f"docker_clean={str(docker_clean).lower()}")
+    print(f"stage=completed")
+    print(f"FINALIZATION PASSED: {workspace}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

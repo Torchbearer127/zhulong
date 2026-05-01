@@ -550,6 +550,14 @@ def main() -> int:
         help="Treat new reclaimable BuildKit cache records as audit-owned for this cleanup run; uses docker buildx prune filtered by cache id.",
     )
     parser.add_argument("--apply", action="store_true", help="Actually remove resources. Without this, cleanup is dry-run only.")
+    parser.add_argument(
+        "--force-overwrite-baseline",
+        action="store_true",
+        help=(
+            "Replace an existing Docker baseline. Use only before verification starts or after a deliberate manual reset; "
+            "normal audits should keep the first available baseline."
+        ),
+    )
     parser.add_argument("--baseline-file", help="Use a custom baseline snapshot JSON file.")
     parser.add_argument("--current-file", help="Use a custom current snapshot JSON file, mainly for tests.")
     args = parser.parse_args()
@@ -564,6 +572,18 @@ def main() -> int:
     plan_path = workspace / PLAN_RELATIVE_PATH
 
     if args.capture_baseline:
+        if baseline_path.exists() and not args.force_overwrite_baseline:
+            try:
+                existing = load_json(baseline_path)
+            except SystemExit:
+                existing = {}
+            if existing.get("docker_available") is True:
+                raise SystemExit(
+                    f"Refusing to overwrite existing Docker resource baseline: {baseline_path}\n"
+                    "Existing available baselines protect against late-capture mistakes that would hide resources "
+                    "created by this audit. If Docker was deliberately reset before verification, rerun with "
+                    "--force-overwrite-baseline."
+                )
         snapshot = capture_snapshot()
         baseline_path.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         if snapshot.get("docker_available"):

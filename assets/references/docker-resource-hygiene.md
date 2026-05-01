@@ -50,6 +50,13 @@ python3 <audit-workspace>/bin/manage-docker-resources.py \
   --capture-baseline
 ```
 
+Do not recapture the baseline after starting target containers, pulling service
+images, or building PoC images. The cleanup helper refuses to overwrite an
+existing available baseline by default because a late baseline can hide
+resources created by the current audit. Use `--force-overwrite-baseline` only
+after a deliberate manual Docker reset and before new verification resources are
+created.
+
 ## End-of-Audit Cleanup
 
 If you started the target with Docker Compose, prefer a unique project name for

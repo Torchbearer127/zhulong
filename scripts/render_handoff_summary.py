@@ -170,10 +170,12 @@ def confirmed_bundle_lines(workspace: Path) -> list[str]:
     lines = [f"- Directory: {file_status(confirmed_dir, workspace)}"]
     if not confirmed_dir.exists():
         lines.append("- Bundles: 0")
+        lines.append("- No confirmed vulnerabilities.")
         return lines
     bundles = sorted(path for path in confirmed_dir.iterdir() if path.is_dir() and not path.name.startswith("."))
     if not bundles:
         lines.append("- Bundles: 0")
+        lines.append("- No confirmed vulnerabilities.")
         return lines
     lines.append(f"- Bundle-like directories: {len(bundles)}")
     lines.append("- Treat a directory as a confirmed deliverable only after `validate-all-report-bundles.py` passes.")

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shutil
 from pathlib import Path
@@ -16,6 +17,22 @@ STACK_MARKERS = {
     "go": ["go.mod", "go.sum"],
     "java": ["pom.xml", "build.gradle", "build.gradle.kts"],
     "docker": ["Dockerfile", "docker-compose.yml", "compose.yml", "compose.yaml"],
+}
+
+SKIP_SCAN_DIR_NAMES = {
+    ".git",
+    ".hg",
+    ".svn",
+    ".omc",
+    ".tox",
+    ".venv",
+    "__pycache__",
+    "build",
+    "coverage",
+    "dist",
+    "node_modules",
+    "target",
+    "venv",
 }
 
 
@@ -41,10 +58,58 @@ def detect_stack(root: Path) -> list[str]:
     return stacks or ["generic"]
 
 
+def skip_scan_dir(name: str) -> bool:
+    return name in SKIP_SCAN_DIR_NAMES or name.startswith("security-research-")
+
+
+def iter_repo_dirs(root: Path, max_depth: int | None = None):
+    for dirpath, dirnames, _filenames in os.walk(root):
+        dirnames[:] = [name for name in dirnames if not skip_scan_dir(name)]
+        current = Path(dirpath)
+        if current == root:
+            continue
+        rel = current.relative_to(root)
+        if max_depth is not None and len(rel.parts) > max_depth:
+            dirnames[:] = []
+            continue
+        yield current
+
+
+def iter_repo_files(root: Path, suffixes: set[str] | None = None, max_size: int = 2_000_000):
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [name for name in dirnames if not skip_scan_dir(name)]
+        for filename in filenames:
+            path = Path(dirpath) / filename
+            try:
+                if not path.is_file() or path.stat().st_size > max_size:
+                    continue
+            except OSError:
+                continue
+            if suffixes is not None and path.suffix.lower() not in suffixes:
+                continue
+            yield path
+
+
+def package_json_indicates_library(root: Path) -> bool:
+    package_json = root / "package.json"
+    if not package_json.exists():
+        return False
+    try:
+        package = json.loads(package_json.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(package, dict):
+        return False
+    library_fields = ("main", "module", "types", "typings", "exports", "bin")
+    if any(field in package for field in library_fields):
+        return True
+    return (root / "lib").is_dir() or (root / "src").is_dir()
+
+
 def detect_attack_surface(root: Path) -> list[str]:
     indicators: list[str] = []
     interesting_dirs = ["routes", "route", "router", "controllers", "controller", "api", "graphql", "auth", "cmd"]
-    names = {path.name.lower() for path in root.rglob("*") if path.is_dir() and len(path.parts) - len(root.parts) <= 3}
+    names = {path.name.lower() for path in iter_repo_dirs(root, max_depth=3)}
     for name in interesting_dirs:
         if name in names:
             indicators.append(name)
@@ -112,9 +177,7 @@ def detect_attack_surface(root: Path) -> list[str]:
         "starlette(",
         "route(",
     ]
-    for path in root.rglob("*"):
-        if not path.is_file() or path.stat().st_size > 2_000_000:
-            continue
+    for path in iter_repo_files(root):
         if path.suffix in {".java", ".kt"}:
             try:
                 text = path.read_text(encoding="utf-8", errors="ignore")
@@ -124,9 +187,7 @@ def detect_attack_surface(root: Path) -> list[str]:
                 indicators.append("java-web")
                 indicators.append("http-api")
                 break
-    for path in root.rglob("*.go"):
-        if path.stat().st_size > 2_000_000:
-            continue
+    for path in iter_repo_files(root, {".go"}):
         try:
             text = path.read_text(encoding="utf-8", errors="ignore")
         except OSError:
@@ -135,11 +196,7 @@ def detect_attack_surface(root: Path) -> list[str]:
             indicators.append("go-web")
             indicators.append("http-api")
             break
-    for path in root.rglob("*"):
-        if not path.is_file() or path.stat().st_size > 2_000_000:
-            continue
-        if path.suffix.lower() not in {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"}:
-            continue
+    for path in iter_repo_files(root, {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"}):
         try:
             text = path.read_text(encoding="utf-8", errors="ignore").lower()
         except OSError:
@@ -148,9 +205,7 @@ def detect_attack_surface(root: Path) -> list[str]:
             indicators.append("node-web")
             indicators.append("http-api")
             break
-    for path in root.rglob("*.py"):
-        if path.stat().st_size > 2_000_000:
-            continue
+    for path in iter_repo_files(root, {".py"}):
         try:
             text = path.read_text(encoding="utf-8", errors="ignore").lower()
         except OSError:
@@ -159,6 +214,8 @@ def detect_attack_surface(root: Path) -> list[str]:
             indicators.append("python-web")
             indicators.append("http-api")
             break
+    if package_json_indicates_library(root) and "node-web" not in indicators and "http-api" not in indicators:
+        indicators.append("node-library")
     return sorted(set(indicators))
 
 
@@ -168,14 +225,7 @@ def tool_available(*names: str) -> bool:
 
 def repository_contains(root: Path, markers: list[str], suffixes: set[str] | None = None) -> bool:
     lowered_markers = [marker.lower() for marker in markers]
-    for path in root.rglob("*"):
-        try:
-            if not path.is_file() or path.stat().st_size > 2_000_000:
-                continue
-        except OSError:
-            continue
-        if suffixes is not None and path.suffix.lower() not in suffixes:
-            continue
+    for path in iter_repo_files(root, suffixes):
         try:
             text = path.read_text(encoding="utf-8", errors="ignore").lower()
         except OSError:
@@ -373,6 +423,8 @@ def specialized_playbooks(stacks: list[str], attack_surface: list[str]) -> list[
         playbooks.append("assets/references/java-web-audit-playbook.md")
     if "go" in stacks or "go-web" in attack_surface:
         playbooks.append("assets/references/go-web-audit-playbook.md")
+    if "node-library" in attack_surface:
+        playbooks.append("assets/references/nodejs-library-audit-playbook.md")
     if "node-web" in attack_surface or ("node" in stacks and "http-api" in attack_surface):
         playbooks.append("assets/references/nodejs-web-audit-playbook.md")
     if "python-web" in attack_surface or ("python" in stacks and "http-api" in attack_surface):
@@ -399,6 +451,12 @@ def audit_focus(stacks: list[str], attack_surface: list[str]) -> list[str]:
             "Build a Node.js entry map: Express/Koa/Fastify/Next.js routes, middleware, body parsers, upload handlers, and auth/session/CORS/CSRF coverage.",
             "Prioritize authz gaps, SSRF, command execution, path traversal/upload issues, prototype pollution, template/XSS, config injection, and missing body/upload/timeouts limits.",
             "For each candidate, trace request input -> middleware -> handler -> sink and record validation, parser limits, redirects, and dependency-version assumptions.",
+        ])
+    if "node-library" in attack_surface:
+        focus.extend([
+            "Build a Node.js library API map: exported functions/classes, parser callbacks, option objects, CLI/bin entry points, and files that transform caller-controlled input.",
+            "Prioritize unsafe parsing/normalization, prototype property injection, path or archive handling, template/HTML generation, deserialization/config injection, ReDoS/parser exhaustion, and callback/plugin trust boundaries.",
+            "For each candidate, trace caller-controlled input -> public API/parser/processor -> sink and record required caller options, downstream impact assumptions, and a minimal Docker Node PoC plan.",
         ])
     if "python-web" in attack_surface or ("python" in stacks and "http-api" in attack_surface):
         focus.extend([
@@ -448,6 +506,16 @@ def attack_surface_guidance(stacks: list[str], attack_surface: list[str]) -> lis
         append_once(minimum_fields)
         guidance.append(
             "For each Node.js entry, note handler/API route, request readers such as query/path/body/header/cookie/files, middleware/auth coverage, downstream service, and sink function when known."
+        )
+    if "node-library" in attack_surface:
+        guidance.append(
+            "Node.js Library: inventory exported APIs, parser/processor callbacks, option objects, CLI/bin entry points, and caller-controlled input shapes in attack-surface.md."
+        )
+        guidance.append(
+            "Minimum library inventory fields: public API or CLI, input shape, caller-controlled options, transformation path, high-risk sink, consumer impact assumption, current verification status."
+        )
+        guidance.append(
+            "For each Node.js library lead, distinguish library-local behavior from application-level impact; keep consumer-impact assumptions unverified until a minimal Docker Node PoC proves the oracle."
         )
     if "python-web" in attack_surface or ("python" in stacks and "http-api" in attack_surface):
         guidance.append(

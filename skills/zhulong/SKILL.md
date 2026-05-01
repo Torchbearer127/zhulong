@@ -32,6 +32,7 @@ Use this Claude Code skill when you want a repository audit workflow that is:
 - language-specific source-to-sink playbooks:
   - [java-web-audit-playbook.md](./assets/references/java-web-audit-playbook.md)
   - [go-web-audit-playbook.md](./assets/references/go-web-audit-playbook.md)
+  - [nodejs-library-audit-playbook.md](./assets/references/nodejs-library-audit-playbook.md)
   - [nodejs-web-audit-playbook.md](./assets/references/nodejs-web-audit-playbook.md)
   - [python-web-audit-playbook.md](./assets/references/python-web-audit-playbook.md)
 - optional vulnerability-type checklists:
@@ -46,6 +47,8 @@ Use this Claude Code skill when you want a repository audit workflow that is:
   - [scaffold_bilingual_findings.py](./scripts/scaffold_bilingual_findings.py)
   - [validate_report_bundle.py](./scripts/validate_report_bundle.py)
   - [validate_all_report_bundles.py](./scripts/validate_all_report_bundles.py)
+- completion gate:
+  - [finalize_audit_workspace.py](./scripts/finalize_audit_workspace.py)
 
 ## Plugin-Owned Hard Constraints
 
@@ -70,8 +73,12 @@ default contract even when the user does not restate them:
   volumes, networks, or stopped containers carry this workspace's Zhulong
   ownership labels and were created by this audit. New unlabeled resources may
   belong to another parallel audit, target Compose stack, or unrelated Docker
-  application and must be reviewed manually, not auto-deleted. Never use broad
-  Docker prune commands as the cleanup path.
+  application and must be reviewed manually, not auto-deleted. Finish with
+  `--verify-clean --strict`; if it fails, report or resolve the exact residual
+  resources instead of calling the environment clean. For Compose stacks this
+  audit explicitly started, use exact `--adopt-compose-project` and, when
+  needed, exact `--adopt-image-ref` cleanup flags rather than broad matching.
+  Never use broad Docker prune commands as the cleanup path.
 - For individual PoC checks, prefer `run_verification_case.sh` or an equivalent
   Docker-only wrapper with a mandatory timeout, explicit network setting,
   resource limits, and structured evidence. The stable verification case labels
@@ -210,14 +217,20 @@ If the plan prints `specialized_playbooks`, use those playbooks as focused
 source-to-sink guidance for this audit. For Java Web, Go Web, Node.js Web, and
 Python Web repositories, create or update `<audit-workspace>/attack-surface.md`
 with the route/handler map, trust boundaries, authentication requirements, and
-high-risk sinks before turning candidates into confirmed findings.
+high-risk sinks before turning candidates into confirmed findings. For pure
+Node.js library/package repositories, use the Node.js Library playbook instead
+of forcing web route or middleware inventories; map public APIs, parser inputs,
+option objects, transformations, high-risk sinks, and consumer-impact
+assumptions.
 
 If the plan prints `attack_surface_guidance`, use it to keep the handoff packet
 small and stack-specific. For supported web playbooks, each entry inventory
 should include route or endpoint, method, handler/controller, authentication
 requirement, input source, downstream sink or service, and current verification
-status. Do not use `attack-surface.md` as a DOCX source or as a shortcut into
-`confirmed/`.
+status. For library playbooks, each entry should include public API or CLI,
+input shape, caller-controlled options, transformation path, high-risk sink,
+consumer impact assumption, and current verification status. Do not use
+`attack-surface.md` as a DOCX source or as a shortcut into `confirmed/`.
 
 If the plan prints `local_knowledge_checklists`, read only the relevant local
 checklists as concise source-to-sink and Docker-verification aids. These files
@@ -286,7 +299,7 @@ resources belong to this audit:
 ```bash
 python3 <audit-workspace>/bin/manage-docker-resources.py --workspace-dir <audit-workspace> --cleanup-created
 python3 <audit-workspace>/bin/manage-docker-resources.py --workspace-dir <audit-workspace> --cleanup-created --apply
-python3 <audit-workspace>/bin/manage-docker-resources.py --workspace-dir <audit-workspace> --verify-clean
+python3 <audit-workspace>/bin/manage-docker-resources.py --workspace-dir <audit-workspace> --verify-clean --strict
 ```
 
 If cleanup is blocked because a container or volume is still in use, record the
@@ -294,6 +307,17 @@ blocker and do not fall back to broad `docker system prune` commands.
 If the cleanup plan lists unlabeled resources created after the baseline, treat
 them as review-only because they may belong to another parallel Zhulong audit,
 the target project's own Compose stack, or an unrelated Docker application.
+For a target Docker Compose stack that this audit explicitly started, prefer a
+unique project name such as `zhulong-<audit-workspace-name>-<target-name>` and
+clean it with the exact command `docker compose -p <project> -f <compose.yml>
+down -v --rmi local --remove-orphans` before the strict cleanliness check. Never
+use broad prune as the Zhulong cleanup path.
+If Compose leaves post-baseline build images, networks, or pulled service images
+behind, rerun the cleanup helper with exact adoption flags such as
+`--adopt-compose-project <project>` and, only for images proven absent from the
+baseline and pulled by this audit, `--adopt-image-ref <image:tag>`. If BuildKit
+cache remains after review, use `--adopt-build-cache`; the helper prunes by
+cache id, not broad cache prune. Review the plan before adding `--apply`.
 
 After a vulnerability is first confirmed, do not stop at the weakest trigger and immediately settle on a low or medium rating.
 Run at least one deliberate severity-escalation pass that tries to verify stronger real-world impact inside Docker before final scoring.
@@ -384,6 +408,28 @@ The final CVSS and severity label should reflect the strongest verified oracle f
 
 Final summaries must explicitly distinguish confirmed vulnerabilities, false positives / non-security defects, and unverified leads. If Docker confirmation did not complete, say that no vulnerability was confirmed for that lead, identify the missing evidence, and give the safe Docker-only resume step.
 
+6. Run the completion gate before writing the final summary:
+
+```bash
+python3 <audit-workspace>/bin/finalize-audit-workspace.py --workspace-dir <audit-workspace> --language <zh-CN|en-US|auto> --result <completed_with_confirmed_bundles|completed_no_confirmed_findings>
+```
+
+The completion gate enforces that bundle validation state, Docker strict
+cleanliness, stage-status.json, and handoff-summary.md all agree before the
+audit is declared finished. A dogfood run is not complete until this gate passes.
+
+- Use `completed_with_confirmed_bundles` when at least one confirmed bundle
+  passes validation. This requires zero partial or failed bundles.
+- Use `completed_no_confirmed_findings` when no confirmed vulnerabilities were
+  found. This is an acceptable final result when candidates were correctly
+  rejected or left unconfirmed. It requires zero partial confirmed bundle
+  directories and zero validation failures.
+- Scanner-only findings, unverified leads, dependency alerts, static hypotheses,
+  and failed or timed-out Docker cases must not become confirmed.
+- The gate updates stage-status.json to `stage=completed`, refreshes
+  handoff-summary.md, and writes finalization audit events.
+- If the gate fails, fix the reported issues before declaring the audit complete.
+
 ## Output Language
 
 - Keep the prompt template in English.
@@ -398,6 +444,7 @@ Final summaries must explicitly distinguish confirmed vulnerabilities, false pos
 - [recommended-security-tooling.md](./assets/references/recommended-security-tooling.md)
 - [java-web-audit-playbook.md](./assets/references/java-web-audit-playbook.md)
 - [go-web-audit-playbook.md](./assets/references/go-web-audit-playbook.md)
+- [nodejs-library-audit-playbook.md](./assets/references/nodejs-library-audit-playbook.md)
 - [nodejs-web-audit-playbook.md](./assets/references/nodejs-web-audit-playbook.md)
 - [python-web-audit-playbook.md](./assets/references/python-web-audit-playbook.md)
 - [ssrf-checklist.md](./assets/references/ssrf-checklist.md)

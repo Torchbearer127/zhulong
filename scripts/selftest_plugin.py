@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -21,6 +22,7 @@ REQUIRED_FILES = [
     "assets/references/docker-resource-hygiene.md",
     "assets/references/java-web-audit-playbook.md",
     "assets/references/go-web-audit-playbook.md",
+    "assets/references/nodejs-library-audit-playbook.md",
     "assets/references/nodejs-web-audit-playbook.md",
     "assets/references/python-web-audit-playbook.md",
     "assets/references/ssrf-checklist.md",
@@ -45,6 +47,7 @@ REQUIRED_FILES = [
     "scripts/scaffold_bilingual_findings.py",
     "scripts/validate_report_bundle.py",
     "scripts/validate_all_report_bundles.py",
+    "scripts/finalize_audit_workspace.py",
     "skills/zhulong/SKILL.md",
     "templates/claude-skill/SKILL.md",
 ]
@@ -65,15 +68,20 @@ def run_capture(command: list[str], cwd: Path) -> str:
     return output
 
 
+
+
 def run_with_env(command: list[str], cwd: Path, env: dict[str, str]) -> None:
-    proc = subprocess.run(command, cwd=cwd, env=env, capture_output=True, text=True)
+    merged_env = {**os.environ, **env}
+    proc = subprocess.run(command, cwd=cwd, env=merged_env, capture_output=True, text=True)
     if proc.returncode != 0:
         output = ((proc.stdout or "") + (proc.stderr or "")).strip()
         raise SystemExit(f"FAILED: {' '.join(command)}\n{output}")
 
 
-def run_expect_fail(command: list[str], cwd: Path, expected: str) -> None:
-    proc = subprocess.run(command, cwd=cwd, capture_output=True, text=True)
+def run_expect_fail(command: list[str], cwd: Path, expected: str,
+                   extra_env: dict[str, str] | None = None) -> None:
+    env = {**os.environ, **extra_env} if extra_env else None
+    proc = subprocess.run(command, cwd=cwd, env=env, capture_output=True, text=True)
     output = ((proc.stdout or "") + (proc.stderr or "")).strip()
     if proc.returncode == 0:
         raise SystemExit(f"FAILED: command unexpectedly succeeded: {' '.join(command)}")
@@ -307,6 +315,16 @@ def main() -> None:
     )
     require_text(
         plugin_root / "templates/claude-skill/SKILL.md",
+        "nodejs-library-audit-playbook.md",
+        "Claude skill template Node.js Library playbook reference",
+    )
+    require_text(
+        plugin_root / "templates/claude-skill/SKILL.md",
+        "For pure\nNode.js library/package repositories",
+        "Claude skill template Node.js Library route-inventory guardrail",
+    )
+    require_text(
+        plugin_root / "templates/claude-skill/SKILL.md",
         "nodejs-web-audit-playbook.md",
         "Claude skill template Node.js Web playbook reference",
     )
@@ -329,6 +347,21 @@ def main() -> None:
         plugin_root / "templates/claude-skill/SKILL.md",
         "Language playbooks are starting maps, not fences",
         "Claude skill template playbook exploration freedom guardrail",
+    )
+    require_text(
+        plugin_root / "templates/claude-skill/SKILL.md",
+        "finalize-audit-workspace.py",
+        "Claude skill template completion gate command",
+    )
+    require_text(
+        plugin_root / "templates/claude-skill/SKILL.md",
+        "completed_no_confirmed_findings",
+        "Claude skill template no-confirmed-findings result",
+    )
+    require_text(
+        plugin_root / "templates/claude-skill/SKILL.md",
+        "A dogfood run is not complete until this gate passes",
+        "Claude skill template completion gate enforcement",
     )
     require_text(
         plugin_root / "assets/references/false-positive-template.md",
@@ -440,6 +473,29 @@ def main() -> None:
         "Current Verification Status",
         "Go Web playbook verification status field",
     )
+    node_library_playbook = plugin_root / "assets/references/nodejs-library-audit-playbook.md"
+    for expected in (
+        "Fast Model",
+        "Minimum library inventory fields",
+        "Public API / CLI",
+        "Input Shape",
+        "Caller-Controlled Options",
+        "Transformation Path",
+        "High-Risk Sink",
+        "Consumer Impact Assumption",
+        "Current Verification Status",
+        "Source-To-Sink Tracing Guidance",
+        "Docker-Only Verification Reminders",
+        "Package metadata, API matches",
+        "cannot confirm a vulnerability by",
+        "verification_status=confirmed_in_docker",
+        "OWASP Prototype Pollution Prevention Cheat Sheet",
+    ):
+        require_text(
+            node_library_playbook,
+            expected,
+            f"Node.js Library playbook required text {expected}",
+        )
     for playbook in (
         "nodejs-web-audit-playbook.md",
         "python-web-audit-playbook.md",
@@ -676,7 +732,8 @@ def main() -> None:
          str(plugin_root / "scripts/render_confirmed_vuln_docx.py"),
          str(plugin_root / "scripts/scaffold_bilingual_findings.py"),
          str(plugin_root / "scripts/validate_report_bundle.py"),
-         str(plugin_root / "scripts/validate_all_report_bundles.py")], plugin_root)
+         str(plugin_root / "scripts/validate_all_report_bundles.py"),
+         str(plugin_root / "scripts/finalize_audit_workspace.py")], plugin_root)
 
     run(["bash", "-n", str(plugin_root / "scripts/bootstrap_verification_workspace.sh")], plugin_root)
     run(["bash", "-n", str(plugin_root / "scripts/asr_start.sh")], plugin_root)
@@ -691,6 +748,7 @@ def main() -> None:
     run(["bash", str(plugin_root / "scripts/run_verification_case.sh"), "--help"], plugin_root)
     run([sys.executable, str(plugin_root / "scripts/manage_docker_resources.py"), "--help"], plugin_root)
     run([sys.executable, str(plugin_root / "scripts/render_handoff_summary.py"), "--help"], plugin_root)
+    run([sys.executable, str(plugin_root / "scripts/finalize_audit_workspace.py"), "--help"], plugin_root)
     require_text(
         plugin_root / "scripts/manage_docker_resources.py",
         '"image", "ls", "-a", "--no-trunc"',
@@ -1524,6 +1582,49 @@ def main() -> None:
         ):
             if expected not in checklist_output:
                 raise SystemExit(f"FAILED: planner output missing Node.js Web playbook recommendation: {expected}")
+        library_repo = Path(tempdir) / "node-library-repo"
+        library_repo.mkdir(parents=True, exist_ok=True)
+        (library_repo / "package.json").write_text(
+            '{"name":"selftest-library","version":"1.0.0","main":"lib/index.js","exports":"./lib/index.js"}\n',
+            encoding="utf-8",
+        )
+        (library_repo / "lib").mkdir(parents=True, exist_ok=True)
+        (library_repo / "lib" / "index.js").write_text(
+            "exports.parse = function parse(input, options = {}) { return {input, options}; };\n",
+            encoding="utf-8",
+        )
+        stale_workspace_api = library_repo / "security-research-20250101-000000/api/app.py"
+        stale_workspace_api.parent.mkdir(parents=True, exist_ok=True)
+        stale_workspace_api.write_text(
+            "from flask import Flask\napp = Flask(__name__)\n@app.route('/stale')\ndef stale(): return 'stale'\n",
+            encoding="utf-8",
+        )
+        library_plan = json.loads(run_capture([
+            sys.executable,
+            str(workspace / "bin/plan-security-toolchain.py"),
+            "--target-dir",
+            str(library_repo),
+            "--workspace-dir",
+            str(workspace),
+            "--format",
+            "json",
+        ], plugin_root))
+        library_hints = set(library_plan["attack_surface_hints"])
+        if "node-library" not in library_hints:
+            raise SystemExit("FAILED: planner did not classify pure Node.js package as node-library")
+        for unexpected in ("http-api", "node-web", "python-web"):
+            if unexpected in library_hints:
+                raise SystemExit(f"FAILED: planner treated pure Node.js package as {unexpected}")
+        if "assets/references/nodejs-library-audit-playbook.md" not in library_plan["specialized_playbooks"]:
+            raise SystemExit("FAILED: planner did not recommend Node.js Library playbook")
+        guidance_text = "\n".join(library_plan["attack_surface_guidance"])
+        for expected in (
+            "Node.js Library: inventory exported APIs",
+            "Minimum library inventory fields: public API or CLI",
+            "distinguish library-local behavior from application-level impact",
+        ):
+            if expected not in guidance_text:
+                raise SystemExit(f"FAILED: planner output missing Node.js Library guidance: {expected}")
         (repo_dir / "requirements.txt").write_text(
             "flask\nfastapi\ndjango\n",
             encoding="utf-8",
@@ -1987,6 +2088,239 @@ def main() -> None:
             "zh-CN",
         ], plugin_root, "final confirmed bundle must not contain runtime or source-control directory")
 
+        # --- Finalization gate tests ---
+        if not (workspace / "bin/finalize-audit-workspace.py").exists():
+            raise SystemExit("FAILED: bootstrapped workspace is missing finalize-audit-workspace.py")
+
+        SKIP_DOCKER_ENV = {"ZHULONG_TEST_SKIP_DOCKER_CLEAN_CHECK": "1"}
+
+        # Test 1: Finalization with valid bundles succeeds
+        # Remove partial/bad bundles first so only valid ones remain
+        for bad in (
+            partial_confirmed,
+            bad_missing_verification,
+            bad_high_confidence,
+            bad_missing_evidence_file,
+            bad_absolute_evidence,
+            bad_escape_evidence,
+            bad_empty_poc,
+            bad_absolute_poc,
+            bad_escape_poc,
+            bad_symlink_escape,
+            bad_docker_required,
+            bad_no_escalation,
+            bad_empty_docker_command,
+            bad_placeholder_image,
+            bad_missing_attachments,
+            bad_multi_finding,
+            bad_runtime_state,
+        ):
+            if bad.exists():
+                shutil.rmtree(bad)
+        run_with_env([
+            sys.executable,
+            str(plugin_root / "scripts/finalize_audit_workspace.py"),
+            "--workspace-dir", str(workspace),
+            "--language", "auto",
+            "--result", "completed_with_confirmed_bundles",
+        ], plugin_root, SKIP_DOCKER_ENV)
+        finalized_status = json.loads((workspace / "stage-status.json").read_text(encoding="utf-8"))
+        if finalized_status.get("status") != "completed":
+            raise SystemExit("FAILED: finalization did not set stage-status.json status to completed")
+        if finalized_status.get("stage") != "completed":
+            raise SystemExit("FAILED: finalization did not set stage-status.json stage to completed")
+        if finalized_status.get("blocker") is not None:
+            raise SystemExit("FAILED: finalization did not clear blocker in stage-status.json")
+        if finalized_status.get("resume_step") is not None:
+            raise SystemExit("FAILED: finalization did not clear resume_step in stage-status.json")
+        finalized_handoff = (workspace / "handoff-summary.md").read_text(encoding="utf-8")
+        if "running" in finalized_handoff.split("Status:")[1].split("\n")[0] if "Status:" in finalized_handoff else "":
+            raise SystemExit("FAILED: finalized handoff-summary.md still reports running status")
+        finalized_events = (workspace / "audit-events.jsonl").read_text(encoding="utf-8")
+        if "finalization_succeeded" not in finalized_events:
+            raise SystemExit("FAILED: finalization did not write finalization_succeeded event")
+        if "finalization_started" not in finalized_events:
+            raise SystemExit("FAILED: finalization did not write finalization_started event")
+        if "bundle_validation_outcome" not in finalized_events:
+            raise SystemExit("FAILED: finalization did not write bundle_validation_outcome event")
+        # Test 2: Finalization with no confirmed bundles succeeds under completed_no_confirmed_findings
+        # Reset stage-status back to running for next test
+        write_event_cmd = [
+            sys.executable,
+            str(workspace / "bin/write-audit-event.py"),
+            "--workspace-dir", str(workspace),
+            "--event", "selftest_reset",
+            "--stage", "verification",
+            "--status", "running",
+            "--message", "Reset for finalization selftest.",
+        ]
+        subprocess.run(write_event_cmd, capture_output=True, text=True)
+        # Remove all bundle dirs to simulate no-finding workspace
+        for entry in (workspace / "confirmed").iterdir():
+            if entry.is_dir() and not entry.name.startswith("."):
+                shutil.rmtree(entry)
+        run_with_env([
+            sys.executable,
+            str(plugin_root / "scripts/finalize_audit_workspace.py"),
+            "--workspace-dir", str(workspace),
+            "--result", "completed_no_confirmed_findings",
+        ], plugin_root, SKIP_DOCKER_ENV)
+        no_finding_status = json.loads((workspace / "stage-status.json").read_text(encoding="utf-8"))
+        if no_finding_status.get("status") != "completed":
+            raise SystemExit("FAILED: no-finding finalization did not set status to completed")
+        if no_finding_status.get("stage") != "completed":
+            raise SystemExit("FAILED: no-finding finalization did not set stage to completed")
+        no_finding_handoff = (workspace / "handoff-summary.md").read_text(encoding="utf-8")
+        if "No confirmed vulnerabilities" not in no_finding_handoff:
+            raise SystemExit("FAILED: no-finding handoff does not show 'No confirmed vulnerabilities'")
+        if "initial_probing" in no_finding_handoff:
+            raise SystemExit("FAILED: no-finding handoff still shows stale initial_probing")
+        if "running" in no_finding_handoff.split("Status:")[1].split("\n")[0] if "Status:" in no_finding_handoff else "":
+            raise SystemExit("FAILED: no-finding handoff still reports running status")
+
+        # Test 3: Finalization fails when partial confirmed bundles exist
+        subprocess.run(write_event_cmd, capture_output=True, text=True)
+        partial_for_gate = workspace / "confirmed/C99-partial-gate-test"
+        partial_for_gate.mkdir(parents=True, exist_ok=True)
+        (partial_for_gate / "verification-evidence.json").write_text(
+            json.dumps({"verification_status": "confirmed_in_docker"}, indent=2),
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/finalize_audit_workspace.py"),
+            "--workspace-dir", str(workspace),
+            "--result", "completed_with_confirmed_bundles",
+        ], plugin_root, "partial confirmed bundle",
+           extra_env=SKIP_DOCKER_ENV)
+
+        # Test 4: Finalization fails when result=completed_with_confirmed_bundles but zero bundles validate
+        shutil.rmtree(partial_for_gate)
+        subprocess.run(write_event_cmd, capture_output=True, text=True)
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/finalize_audit_workspace.py"),
+            "--workspace-dir", str(workspace),
+            "--result", "completed_with_confirmed_bundles",
+        ], plugin_root, "requires at least one validated confirmed bundle",
+           extra_env=SKIP_DOCKER_ENV)
+
+        # Test 5: Finalization fails when Docker strict cleanliness fails
+        # Re-render a valid bundle for this test
+        run([
+            sys.executable,
+            str(workspace / "bin/render-confirmed-vuln-docx.py"),
+            "--input",
+            str(plugin_root / "assets/examples/confirmed-findings.example.json"),
+            "--output-dir", str(workspace / "confirmed"),
+            "--language", "zh-CN",
+        ], plugin_root)
+        subprocess.run(write_event_cmd, capture_output=True, text=True)
+        # Use a fake baseline that will make verify-clean fail
+        fake_docker_baseline = workspace / "docker" / "docker-resource-baseline.json"
+        fake_docker_baseline.write_text(
+            json.dumps({
+                "schema_version": 1, "captured_at": "2026-04-30T00:00:00Z",
+                "docker_available": True,
+                "images": [], "volumes": [], "networks": [], "containers": [], "build_cache": [],
+            }, indent=2),
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(workspace / "bin/manage-docker-resources.py"),
+            "--workspace-dir",
+            str(workspace),
+            "--capture-baseline",
+        ], plugin_root, "Refusing to overwrite existing Docker resource baseline")
+        # The real Docker environment likely has resources, so verify-clean --strict should fail
+        # But if Docker is clean, this test would pass incorrectly. Use a fixture instead.
+        fake_current = workspace / "docker" / "current-finalize-fixture.json"
+        fake_current.write_text(
+            json.dumps({
+                "schema_version": 1, "captured_at": "2026-04-30T00:01:00Z",
+                "docker_available": True,
+                "images": [{"id": "sha256:leftover", "repository": "leftover", "tag": "latest",
+                            "labels": {"org.zhulong.managed": "true",
+                                       "org.zhulong.workspace": workspace.name}}],
+                "volumes": [], "networks": [], "containers": [], "build_cache": [],
+            }, indent=2),
+            encoding="utf-8",
+        )
+        # We can't easily inject the current-file into the finalization gate's Docker check,
+        # so test the Docker failure path by removing the baseline entirely
+        real_baseline = workspace / "docker" / "docker-resource-baseline.json"
+        backup_baseline = workspace / "docker" / "docker-resource-baseline.json.bak"
+        real_baseline.rename(backup_baseline)
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/finalize_audit_workspace.py"),
+            "--workspace-dir", str(workspace),
+            "--result", "completed_with_confirmed_bundles",
+        ], plugin_root, "Docker cleanliness check failed")
+        backup_baseline.rename(real_baseline)
+
+        # Test 5a: completed_no_confirmed_findings fails when partial confirmed bundles exist
+        subprocess.run(write_event_cmd, capture_output=True, text=True)
+        # Remove the valid bundle rendered for Test 5
+        for entry in (workspace / "confirmed").iterdir():
+            if entry.is_dir() and not entry.name.startswith("."):
+                shutil.rmtree(entry)
+        partial_no_finding = workspace / "confirmed/C98-partial-no-finding"
+        partial_no_finding.mkdir(parents=True, exist_ok=True)
+        (partial_no_finding / "verification-evidence.json").write_text(
+            json.dumps({"verification_status": "confirmed_in_docker"}, indent=2),
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/finalize_audit_workspace.py"),
+            "--workspace-dir", str(workspace),
+            "--result", "completed_no_confirmed_findings",
+        ], plugin_root, "partial confirmed bundle",
+           extra_env=SKIP_DOCKER_ENV)
+        shutil.rmtree(partial_no_finding)
+
+        # Test 5b: completed_no_confirmed_findings fails when Docker cleanliness fails
+        subprocess.run(write_event_cmd, capture_output=True, text=True)
+        real_baseline2 = workspace / "docker" / "docker-resource-baseline.json"
+        backup_baseline2 = workspace / "docker" / "docker-resource-baseline.json.bak2"
+        real_baseline2.rename(backup_baseline2)
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/finalize_audit_workspace.py"),
+            "--workspace-dir", str(workspace),
+            "--result", "completed_no_confirmed_findings",
+        ], plugin_root, "Docker cleanliness check failed")
+        backup_baseline2.rename(real_baseline2)
+
+        # Test 5c: missing audit-event writer must be visible, not silent.
+        subprocess.run(write_event_cmd, capture_output=True, text=True)
+        isolated_finalizer_dir = Path(tempdir) / "isolated-finalizer"
+        isolated_finalizer_dir.mkdir(parents=True, exist_ok=True)
+        isolated_finalizer = isolated_finalizer_dir / "finalize_audit_workspace.py"
+        shutil.copy2(plugin_root / "scripts/finalize_audit_workspace.py", isolated_finalizer)
+        workspace_writer = workspace / "bin/write-audit-event.py"
+        hidden_workspace_writer = workspace / "bin/write-audit-event.py.hidden-for-selftest"
+        workspace_writer.rename(hidden_workspace_writer)
+        try:
+            proc = subprocess.run([
+                sys.executable,
+                str(isolated_finalizer),
+                "--workspace-dir", str(workspace),
+                "--result", "completed_no_confirmed_findings",
+            ], cwd=plugin_root, capture_output=True, text=True,
+                env={**os.environ, **SKIP_DOCKER_ENV})
+        finally:
+            hidden_workspace_writer.rename(workspace_writer)
+        if proc.returncode != 0:
+            raise SystemExit(
+                "FAILED: finalization should warn but continue when audit-event writer is missing: "
+                + ((proc.stdout or "") + (proc.stderr or ""))
+            )
+        if "WARNING: audit event writer not found" not in proc.stderr:
+            raise SystemExit("FAILED: missing audit-event writer did not produce a visible warning")
+
         claude_home = Path(tempdir) / "claude-home"
         claude_home.mkdir(parents=True, exist_ok=True)
         run([
@@ -2120,7 +2454,22 @@ def main() -> None:
         )
         require_text(
             installed_skill / "SKILL.md",
-            "Do not use `attack-surface.md` as a DOCX source or as a shortcut into",
+            "finalize-audit-workspace.py",
+            "installed Claude skill completion gate command",
+        )
+        require_text(
+            installed_skill / "SKILL.md",
+            "completed_no_confirmed_findings",
+            "installed Claude skill no-confirmed-findings result",
+        )
+        require_text(
+            installed_skill / "SKILL.md",
+            "A dogfood run is not complete until this gate passes",
+            "installed Claude skill completion gate enforcement",
+        )
+        require_text(
+            installed_skill / "SKILL.md",
+            "`attack-surface.md` as a DOCX source or as a shortcut into",
             "installed Claude skill attack-surface routing guardrail",
         )
         backups = sorted((claude_home / "skills" / ".zhulong-backups").glob("zhulong.backup.*"))

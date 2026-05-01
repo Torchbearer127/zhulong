@@ -415,6 +415,16 @@ exec python3 "$SCRIPT_DIR/../bin/validate-workspace-state.py" "$@"
 '
 chmod +x "$WORKSPACE_DIR/scripts/validate-workspace-state.py"
 copy_file \
+  "$SKILL_DIR/scripts/finalize_audit_workspace.py" \
+  "$WORKSPACE_DIR/bin/finalize-audit-workspace.py"
+chmod +x "$WORKSPACE_DIR/bin/finalize-audit-workspace.py"
+write_text_file "$WORKSPACE_DIR/scripts/finalize-audit-workspace.py" '#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec python3 "$SCRIPT_DIR/../bin/finalize-audit-workspace.py" "$@"
+'
+chmod +x "$WORKSPACE_DIR/scripts/finalize-audit-workspace.py"
+copy_file \
   "$SKILL_DIR/assets/attacker-container/Dockerfile" \
   "$WORKSPACE_DIR/docker/attacker-container/Dockerfile"
 copy_file \
