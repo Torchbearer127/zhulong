@@ -7,7 +7,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import zipfile
 from pathlib import Path
+from xml.etree import ElementTree as ET
 
 
 REQUIRED_FILES = [
@@ -66,6 +68,19 @@ def run_capture(command: list[str], cwd: Path) -> str:
     if proc.returncode != 0:
         raise SystemExit(f"FAILED: {' '.join(command)}\n{output}")
     return output
+
+
+def docx_text(docx_path: Path) -> list[str]:
+    with zipfile.ZipFile(docx_path) as archive:
+        xml = archive.read("word/document.xml")
+    root = ET.fromstring(xml)
+    ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+    lines: list[str] = []
+    for para in root.findall(".//w:p", ns):
+        text = "".join(node.text or "" for node in para.findall(".//w:t", ns)).strip()
+        if text:
+            lines.append(text)
+    return lines
 
 
 
@@ -1593,6 +1608,11 @@ def main() -> None:
             "exports.parse = function parse(input, options = {}) { return {input, options}; };\n",
             encoding="utf-8",
         )
+        (library_repo / "api").mkdir(parents=True, exist_ok=True)
+        (library_repo / "api" / "README.md").write_text(
+            "# Public API documentation\n\nThis directory documents exported library APIs; it is not an HTTP API.\n",
+            encoding="utf-8",
+        )
         stale_workspace_api = library_repo / "security-research-20250101-000000/api/app.py"
         stale_workspace_api.parent.mkdir(parents=True, exist_ok=True)
         stale_workspace_api.write_text(
@@ -1727,6 +1747,123 @@ def main() -> None:
             "--language",
             "zh-CN",
         ], plugin_root)
+        standard_fixture_poc = repo_dir / "poc/jwt-forge-poc.py"
+        standard_fixture_poc.parent.mkdir(parents=True, exist_ok=True)
+        standard_fixture_poc.write_text("print('forged token accepted')\n", encoding="utf-8")
+        standard_fixture_evidence = repo_dir / "poc/forged-token-response.json"
+        standard_fixture_evidence.write_text('{"ok":true,"user":{"id":1}}\n', encoding="utf-8")
+        standard_fixture = workspace / "standard-vulnerability-name-finding.json"
+        standard_fixture.write_text(json.dumps({
+            "project_name": "gothinkster/node-express-realworld-example-app",
+            "vulnerability_id": "SELFTEST-001",
+            "vulnerability_name": "硬编码 JWT 密钥导致身份认证绕过",
+            "vulnerability_name_en": "Hardcoded JWT Secret Leading to Authentication Bypass",
+            "severity": "critical",
+            "severity_cn": "严重",
+            "cwe": "CWE-798: Use of Hardcoded Credentials",
+            "description": [
+                "默认配置缺失 JWT_SECRET 时，应用回退到公开硬编码密钥，攻击者可伪造认证 token。"
+            ],
+            "impact": {
+                "package": "gothinkster/node-express-realworld-example-app",
+                "component": "src/app/routes/auth/auth.ts",
+                "affected_versions": "default configuration",
+                "repo_url": "https://github.com/gothinkster/node-express-realworld-example-app",
+            },
+            "cvss": {
+                "vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:L",
+                "score": "9.3",
+                "severity": "Critical",
+                "rationale": ["评估依据：攻击者可伪造任意用户 token，并完成未授权读写操作。"],
+            },
+            "analysis": [
+                "位置：src/app/routes/auth/auth.ts 使用 process.env.JWT_SECRET || 'superSecret'。",
+                "入口/可控输入：攻击者提交自签名 JWT token，请求受保护 API。",
+                "危险函数/危险操作：express-jwt 使用公开默认密钥验证 HS256 token。",
+                "触发路径：缺失 JWT_SECRET -> 默认密钥生效 -> 攻击者签发 token -> API 接受认证。",
+                "根因：认证密钥存在硬编码回退值。",
+                "现有校验为何失效：启动流程没有强制要求安全 JWT_SECRET。",
+            ],
+            "reproduction": [
+                {
+                    "title": "1. 伪造 token 并访问受保护接口",
+                    "details": [
+                        "在 Docker Compose 环境中不设置 JWT_SECRET，确认应用按默认配置启动。",
+                        "使用公开硬编码密钥 superSecret 构造 HS256 JWT，载荷中写入 user.id=1。",
+                        "将伪造 token 放入 Authorization: Token <token> 请求头访问受保护接口。",
+                    ],
+                    "commands": [
+                        "python3 poc/jwt-forge-poc.py",
+                        "curl -s http://localhost:3000/api/user -H 'Authorization: Token <FORGED_TOKEN>'",
+                    ],
+                    "expected": ["预期结果：伪造 token 被服务端接受。"],
+                    "observed": ["实际结果：HTTP 200 返回用户资料。"],
+                    "results": [
+                        "结果证据：forged-token-response.json 显示认证绕过成功。",
+                        "结果证据：响应中包含 user.id=1，且没有返回 401 未授权错误。",
+                    ],
+                }
+            ],
+            "verification_status": "confirmed_in_docker",
+            "verification_evidence": {
+                "docker_image": "selftest-realworld-api",
+                "docker_command": "docker compose up -d",
+                "poc_path": "poc/jwt-forge-poc.py",
+                "evidence_files": ["poc/forged-token-response.json"],
+                "expected_observation": "预期结果：伪造 token 被服务端接受。",
+                "observed_observation": "实际结果：HTTP 200 返回用户资料。",
+                "oracle_token": "认证绕过成功",
+                "severity_escalation_attempted": True,
+                "severity_escalation_result": "Critical impact confirmed in Docker.",
+            },
+            "attachments": [
+                {"path": "poc/jwt-forge-poc.py", "purpose": "JWT 伪造 PoC"},
+                {"path": "poc/forged-token-response.json", "purpose": "认证绕过响应证据"},
+            ],
+            "bundle_root_artifacts": [
+                {
+                    "generator": "reviewer-recording-shell",
+                    "output_name": "run-selftest-jwt-recording.sh",
+                    "purpose": "审核复现脚本",
+                    "generator_options": {"modes": ["quick"]},
+                }
+            ],
+        }, ensure_ascii=False, indent=2), encoding="utf-8")
+        run([
+            sys.executable,
+            str(workspace / "bin/render-confirmed-vuln-docx.py"),
+            "--input",
+            str(standard_fixture),
+            "--output-dir",
+            str(workspace / "confirmed"),
+            "--language",
+            "zh-CN",
+        ], plugin_root)
+        standard_bundle = next(
+            (
+                path for path in (workspace / "confirmed").iterdir()
+                if path.is_dir() and "硬编码" in path.name and "安全漏洞" not in path.name
+            ),
+            None,
+        )
+        if standard_bundle is None:
+            raise SystemExit("FAILED: standard vulnerability_name fixture did not render a finding-specific bundle name")
+        standard_docx = next(standard_bundle.glob("*.docx"))
+        if "硬编码" not in standard_docx.name or "安全漏洞" in standard_docx.name:
+            raise SystemExit("FAILED: standard vulnerability_name fixture rendered a generic DOCX filename")
+        run([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(standard_bundle),
+            "--language",
+            "zh-CN",
+        ], plugin_root)
+        standard_lines = docx_text(standard_docx)
+        if not standard_lines or "硬编码 JWT 密钥导致身份认证绕过" not in standard_lines[0]:
+            raise SystemExit("FAILED: standard vulnerability_name fixture rendered a generic DOCX title")
+        if "最终判定待补充" in "\n".join(standard_lines):
+            raise SystemExit("FAILED: standard vulnerability_name fixture left final verdict placeholder text")
         events_before_bundle_validation = [
             json.loads(line)
             for line in (workspace / "audit-events.jsonl").read_text(encoding="utf-8").splitlines()

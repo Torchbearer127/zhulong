@@ -214,7 +214,13 @@ def detect_attack_surface(root: Path) -> list[str]:
             indicators.append("python-web")
             indicators.append("http-api")
             break
-    if package_json_indicates_library(root) and "node-web" not in indicators and "http-api" not in indicators:
+    if package_json_indicates_library(root) and "node-web" not in indicators:
+        # Pure packages often have docs/api or public API folders. Directory names
+        # alone are not enough to force a web route/middleware model.
+        indicators = [
+            item for item in indicators
+            if item not in {"api", "routes", "route", "router", "controllers", "controller", "graphql", "auth", "http-api"}
+        ]
         indicators.append("node-library")
     return sorted(set(indicators))
 

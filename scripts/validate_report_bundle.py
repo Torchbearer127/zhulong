@@ -40,6 +40,26 @@ ABSOLUTE_PATH_PATTERNS = [
 GENERIC_DOCX_FILENAMES = {"report.docx", "vulnerability-report.docx", "漏洞报告.docx"}
 GENERIC_NOTE_FILENAMES = {"attachments.md", "attachment-index.md", "附件目录说明.md"}
 GENERIC_SUPPLEMENT_FILENAMES = {"reproduction.md", "reproduction_note.md", "补充复现说明.md"}
+PLACEHOLDER_REPORT_TEXT = {
+    "zh-CN": [
+        "最终判定待补充",
+        "漏洞分析待补充",
+        "评估依据待补充",
+        "复现步骤待补充",
+        "关键代码位置待补充",
+        "影响信息待补充",
+        "CVSS 信息待补充",
+    ],
+    "en-US": [
+        "Final verdict pending",
+        "Vulnerability analysis is not provided yet",
+        "Assessment rationale is not provided yet",
+        "Reproduction steps are not provided yet",
+        "Key code path is not provided yet",
+        "Impact details are not provided yet",
+        "CVSS details are not provided yet",
+    ],
+}
 HOST_FALLBACK_PATTERNS = [
     re.compile(r"\[record\|quick\]\s+\[docker\|host\]"),
     re.compile(r"\brecord host\b", re.IGNORECASE),
@@ -451,6 +471,9 @@ def load_bundle_identity(findings_path: Path, bundle_name: str, workspace_dir: P
         str(selected.get("title", "")).strip(),
         str(selected.get("title_zh", "")).strip(),
         str(selected.get("title_en", "")).strip(),
+        str(selected.get("vulnerability_name", "")).strip(),
+        str(selected.get("vulnerability_name_zh", "")).strip(),
+        str(selected.get("vulnerability_name_en", "")).strip(),
         str(selected.get("vuln_type", "")).strip(),
         str(selected.get("vuln_type_zh", "")).strip(),
         str(selected.get("vuln_type_en", "")).strip(),
@@ -542,6 +565,10 @@ def validate_bundle_identity(bundle_dir: Path, docx_lines: list[str], workspace_
     if normalized_titles and not any(token in normalized_first_line for token in normalized_titles):
         fail("report title does not match the expected vulnerability identity from findings.json")
 
+    generic_title_tokens = {normalize_token("安全漏洞"), normalize_token("Vulnerability")}
+    if normalized_titles and normalize_token(first_line) in generic_title_tokens:
+        fail("report title is generic; use the finding-specific vulnerability identity from findings.json")
+
 
 def validate_material_identity(text: str, label: str, project_name: str, title_tokens: list[str]) -> None:
     normalized_text = normalize_token(text)
@@ -573,6 +600,12 @@ def validate_no_absolute_paths(text: str) -> None:
         match = pattern.search(text)
         if match:
             fail(f"found absolute/operator-local path reference: {match.group(0)}")
+
+
+def validate_no_placeholder_text(text: str, language: str, label: str) -> None:
+    for placeholder in PLACEHOLDER_REPORT_TEXT.get(language, []):
+        if placeholder in text:
+            fail(f"{label} contains placeholder text that must be resolved before validation: {placeholder}")
 
 
 def validate_bundle_cleanliness(bundle_dir: Path) -> None:
@@ -895,10 +928,13 @@ def main() -> None:
     if "CVSS 2.0" in combined_text:
         fail("CVSS 2.0 is not allowed; use CVSS 4.0 by default or CVSS 3.1 when required")
     validate_no_absolute_paths(combined_text)
+    validate_no_placeholder_text(combined_text, language, "report docx")
     validate_relative_attachment_refs(combined_text, bundle_dir)
     validate_attachment_note(note_path, language)
     note_text = note_path.read_text(encoding="utf-8")
     supplement_text = validate_reproduction_supplement(supplement_path, language)
+    validate_no_placeholder_text(note_text, language, "attachment note")
+    validate_no_placeholder_text(supplement_text, language, "reproduction supplement")
     root_scripts = validate_bundle_root_scripts(bundle_dir, note_text)
     if project_name:
         validate_material_identity(supplement_text, f"reproduction supplement {supplement_path.name}", project_name, title_tokens)

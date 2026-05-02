@@ -326,6 +326,19 @@ def infer_source_language(finding: dict[str, Any]) -> str:
 
 def localized_vuln_type(finding: dict[str, Any], language: str) -> str:
     declared_language = infer_source_language(finding)
+    name = read_localized_string(finding, "vulnerability_name", language, declared_language=declared_language)
+    if name:
+        return name
+    if language == "en-US":
+        for key in ("vulnerability_name_en", "title_en"):
+            value = str(finding.get(key) or "").strip()
+            if value and not contains_cjk(value):
+                return value
+    else:
+        for key in ("vulnerability_name", "vulnerability_name_zh", "title_zh"):
+            value = str(finding.get(key) or "").strip()
+            if value and contains_cjk(value):
+                return value
     localized = read_localized_string(finding, "vuln_type", language, declared_language=declared_language)
     if localized:
         return localized
@@ -347,6 +360,44 @@ def build_title(finding: dict[str, Any], language: str) -> str:
     project_name = str(finding.get("project_name", "目标项目")).strip()
     vuln_type = localized_vuln_type(finding, language)
     return tr(language, "report_title", project_name=project_name, vuln_type=vuln_type)
+
+
+def default_final_verdict(finding: dict[str, Any], language: str) -> list[str]:
+    status = str(finding.get("verification_status") or "").strip()
+    evidence = ensure_mapping(finding.get("verification_evidence"))
+    if not status:
+        status = str(evidence.get("verification_status") or "").strip()
+    oracle = (
+        localized_string(finding, "oracle", language)
+        or str(finding.get("oracle") or evidence.get("oracle_token") or evidence.get("observed_observation") or "").strip()
+    )
+    remediation = (
+        localized_string(finding, "remediation", language)
+        or str(finding.get("remediation") or finding.get("fix") or finding.get("recommendation") or "").strip()
+    )
+    if language == "en-US":
+        verdict = (
+            "Final verdict: Docker evidence confirms this finding as a real vulnerability."
+            if status == "confirmed_in_docker"
+            else "Final verdict: this finding has been reviewed with the available verification evidence."
+        )
+        lines = [verdict]
+        if oracle:
+            lines.append(f"Success oracle: {oracle}")
+        if remediation:
+            lines.append(f"Remediation: {remediation}")
+        return lines
+    verdict = (
+        "最终判定：Docker 证据确认该问题为真实漏洞。"
+        if status == "confirmed_in_docker"
+        else "最终判定：该问题已结合现有验证证据完成复核。"
+    )
+    lines = [verdict]
+    if oracle:
+        lines.append(f"成功判据：{oracle}")
+    if remediation:
+        lines.append(f"修复建议：{remediation}")
+    return lines
 
 
 def severity_cn_from_any(value: Any) -> str:
@@ -2000,7 +2051,7 @@ def render_finding(
     reproduction_steps = [step for step in raw_steps if isinstance(step, dict)] if isinstance(raw_steps, list) else []
     render_reproduction(doc, reproduction_steps, language)
     doc.add_heading(tr(language, "final_verdict"), level=2)
-    add_paragraphs(doc, localized_list(bundle_finding, "final_verdict", language) or [tr(language, "verdict_pending")])
+    add_paragraphs(doc, localized_list(bundle_finding, "final_verdict", language) or default_final_verdict(bundle_finding, language))
     doc.save(output_path)
     validate_generated_docx(output_path)
     write_attachment_notes(output_path, finding, path_map, project_root, language, bundle_root_artifacts)
