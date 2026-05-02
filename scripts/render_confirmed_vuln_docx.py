@@ -324,32 +324,62 @@ def infer_source_language(finding: dict[str, Any]) -> str:
     return normalize_declared_language(finding.get("report_language") or finding.get("output_language"))
 
 
+def looks_like_short_vulnerability_name(value: Any) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return False
+    if "\n" in text or "\r" in text:
+        return False
+    lowered = text.lower()
+    if "漏洞报告" in text or "vulnerability report" in lowered:
+        return False
+    if len(text) > 80:
+        return False
+    if not contains_cjk(text) and len(text.split()) > 12:
+        return False
+    return True
+
+
+def fail_missing_vulnerability_name(finding: dict[str, Any], language: str) -> None:
+    title = (
+        read_localized_string(finding, "title", language, declared_language=infer_source_language(finding))
+        or str(finding.get("title") or finding.get("title_zh") or finding.get("title_en") or "").strip()
+    )
+    hint = (
+        "Confirmed findings must include vulnerability_name/vulnerability_name_zh/vulnerability_name_en "
+        "or a short vuln_type/vuln_type_zh/vuln_type_en. Do not derive the bundle identity from a long title."
+    )
+    if title:
+        raise SystemExit(f"{hint} Problem title: {title[:140]}")
+    raise SystemExit(hint)
+
+
 def localized_vuln_type(finding: dict[str, Any], language: str) -> str:
     declared_language = infer_source_language(finding)
     name = read_localized_string(finding, "vulnerability_name", language, declared_language=declared_language)
-    if name:
+    if looks_like_short_vulnerability_name(name):
         return name
     if language == "en-US":
-        for key in ("vulnerability_name_en", "title_en"):
+        for key in ("vulnerability_name_en",):
             value = str(finding.get(key) or "").strip()
-            if value and not contains_cjk(value):
+            if looks_like_short_vulnerability_name(value) and not contains_cjk(value):
                 return value
     else:
-        for key in ("vulnerability_name", "vulnerability_name_zh", "title_zh"):
+        for key in ("vulnerability_name", "vulnerability_name_zh"):
             value = str(finding.get(key) or "").strip()
-            if value and contains_cjk(value):
+            if looks_like_short_vulnerability_name(value) and contains_cjk(value):
                 return value
     localized = read_localized_string(finding, "vuln_type", language, declared_language=declared_language)
-    if localized:
+    if looks_like_short_vulnerability_name(localized):
         return localized
     fallback = str(finding.get("vuln_type", "")).strip()
-    if fallback and should_use_generic_field(language, declared_language):
+    if looks_like_short_vulnerability_name(fallback) and should_use_generic_field(language, declared_language):
         return fallback
-    if fallback and language == "en-US" and not contains_cjk(fallback):
+    if looks_like_short_vulnerability_name(fallback) and language == "en-US" and not contains_cjk(fallback):
         return fallback
-    if fallback and language == "zh-CN" and contains_cjk(fallback):
+    if looks_like_short_vulnerability_name(fallback) and language == "zh-CN" and contains_cjk(fallback):
         return fallback
-    return "Vulnerability" if language == "en-US" else "安全漏洞"
+    fail_missing_vulnerability_name(finding, language)
 
 
 def build_title(finding: dict[str, Any], language: str) -> str:
@@ -580,6 +610,17 @@ def collect_bundle_metadata(finding: dict[str, Any], project_root: Path, bundle_
     seen_targets: set[str] = set()
     source_to_bundle: dict[str, str] = {}
 
+    def choose_target(rel: str, source_path: Path) -> str:
+        base = Path(rel).name or source_path.name or "attachment"
+        stem = Path(base).stem or "attachment"
+        suffix = Path(base).suffix
+        candidate = f"attachments/{base}"
+        counter = 2
+        while candidate in seen_targets:
+            candidate = f"attachments/{stem}-{counter}{suffix}"
+            counter += 1
+        return candidate
+
     attachment_items = finding.get("attachments") if isinstance(finding.get("attachments"), list) else []
     for item in attachment_items:
         if not isinstance(item, dict):
@@ -587,13 +628,14 @@ def collect_bundle_metadata(finding: dict[str, Any], project_root: Path, bundle_
         rel, source_path, resolved = resolve_bundle_attachment_source(item, project_root, workspace_dir)
         if not rel:
             continue
-        bundled_rel = f"attachments/{rel.lstrip('/')}"
-        if bundled_rel in seen_targets:
-            if resolved and source_path.exists() and source_path.is_file():
-                source_to_bundle[str(source_path.resolve())] = bundled_rel
+        source_key = str(source_path.resolve()) if resolved and source_path.exists() and source_path.is_file() else ""
+        if source_key and source_key in source_to_bundle:
+            bundled_rel = source_to_bundle[source_key]
             mapping[rel] = bundled_rel
+            mapping[f"attachments/{rel.lstrip('/')}"] = bundled_rel
             mapping[str(item.get("path") or "")] = bundled_rel
             continue
+        bundled_rel = choose_target(rel, source_path) if source_key else f"attachments/{rel.lstrip('/')}"
         if resolved and source_path.exists() and source_path.is_file():
             target_path = bundle_dir / bundled_rel
             target_path.parent.mkdir(parents=True, exist_ok=True)
@@ -601,6 +643,7 @@ def collect_bundle_metadata(finding: dict[str, Any], project_root: Path, bundle_
             seen_targets.add(bundled_rel)
             source_to_bundle[str(source_path.resolve())] = bundled_rel
         mapping[rel] = bundled_rel
+        mapping[f"attachments/{rel.lstrip('/')}"] = bundled_rel
         mapping[str(item.get("path") or "")] = bundled_rel
 
     env_items = finding.get("environment_files") if isinstance(finding.get("environment_files"), list) else []
@@ -617,11 +660,12 @@ def collect_bundle_metadata(finding: dict[str, Any], project_root: Path, bundle_
             mapping[source_key] = existing
             mapping[str(item.get("path") or "")] = existing
             continue
-        bundled_rel = f"attachments/{rel}"
+        bundled_rel = choose_target(rel, source_path)
         target_path = bundle_dir / bundled_rel
         target_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source_path, target_path)
         mapping[rel] = bundled_rel
+        mapping[f"attachments/{rel.lstrip('/')}"] = bundled_rel
         mapping[source_key] = bundled_rel
         mapping[str(item.get("path") or "")] = bundled_rel
         source_to_bundle[source_key] = bundled_rel
@@ -1122,7 +1166,7 @@ def bundled_path_for_value(value: Any, path_map: dict[str, str]) -> str:
         return ""
     normalized = Path(text).as_posix().lstrip("./")
     if normalized.startswith("attachments/"):
-        return normalized
+        return path_map.get(normalized, path_map.get(text, normalized))
     return path_map.get(normalized, path_map.get(text, normalized))
 
 
@@ -1283,7 +1327,7 @@ def write_verification_evidence(
 
 def rewrite_value(value: Any, path_map: dict[str, str], project_root: Path) -> Any:
     if isinstance(value, str):
-        return value
+        return replace_paths_in_text(value, path_map)
     if isinstance(value, list):
         return [rewrite_value(item, path_map, project_root) for item in value]
     if isinstance(value, dict):

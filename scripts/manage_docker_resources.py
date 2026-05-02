@@ -308,6 +308,7 @@ def build_cleanup_plan(
     adopted_compose_projects: set[str] | None = None,
     adopted_image_refs: set[str] | None = None,
     adopt_build_cache: bool = False,
+    adopted_build_cache_ids: set[str] | None = None,
 ) -> dict[str, Any]:
     baseline_images = image_ids(baseline)
     current_images = by_id(current, "images")
@@ -351,8 +352,15 @@ def build_cleanup_plan(
     new_build_cache = [current_build_cache[item_id] for item_id in new_build_cache_ids]
     reclaimable_build_cache = [item for item in new_build_cache if item.get("reclaimable") is True]
     non_reclaimable_build_cache = [item for item in new_build_cache if item.get("reclaimable") is not True]
-    owned_build_cache = reclaimable_build_cache if adopt_build_cache else []
-    unowned_build_cache = [] if adopt_build_cache else reclaimable_build_cache
+    adopted_build_cache_ids = adopted_build_cache_ids or set()
+    owned_build_cache = [
+        item for item in reclaimable_build_cache
+        if str(item.get("id") or "").strip() in adopted_build_cache_ids
+    ]
+    unowned_build_cache = [
+        item for item in reclaimable_build_cache
+        if str(item.get("id") or "").strip() not in adopted_build_cache_ids
+    ]
 
     return {
         "schema_version": 1,
@@ -371,10 +379,11 @@ def build_cleanup_plan(
             "adopted_compose_projects": sorted(adopted_compose_projects or []),
             "adopted_image_refs": sorted(adopted_image_refs or []),
             "adopt_build_cache": adopt_build_cache,
+            "adopted_build_cache_ids": sorted(adopted_build_cache_ids),
             "note": (
                 "Only resources absent from the baseline and carrying this workspace's Zhulong ownership labels are eligible by default. "
-                "Explicitly adopted Compose projects, image refs, or build-cache cleanup are also eligible when absent from baseline. "
-                "Cleanup uses explicit docker rm/rmi/volume rm/network rm commands."
+                "Explicitly adopted Compose projects, image refs, or exact BuildKit cache IDs are also eligible when absent from baseline. "
+                "Cleanup uses explicit docker rm/rmi/volume rm/network rm commands and exact cache-id filtered BuildKit cleanup."
             ),
         },
         "containers": {
@@ -547,7 +556,14 @@ def main() -> int:
     parser.add_argument(
         "--adopt-build-cache",
         action="store_true",
-        help="Treat new reclaimable BuildKit cache records as audit-owned for this cleanup run; uses docker buildx prune filtered by cache id.",
+        help="Allow exact BuildKit cache-id adoption for this cleanup run. Pair with --adopt-build-cache-id.",
+    )
+    parser.add_argument(
+        "--adopt-build-cache-id",
+        action="append",
+        default=[],
+        metavar="CACHE_ID",
+        help="Treat one new reclaimable BuildKit cache record as audit-owned for this cleanup run by exact cache id.",
     )
     parser.add_argument("--apply", action="store_true", help="Actually remove resources. Without this, cleanup is dry-run only.")
     parser.add_argument(
@@ -601,6 +617,9 @@ def main() -> int:
 
     adopted_compose_projects = {str(value).strip() for value in args.adopt_compose_project if str(value).strip()}
     adopted_image_refs = {str(value).strip() for value in args.adopt_image_ref if str(value).strip()}
+    adopted_build_cache_ids = {str(value).strip() for value in args.adopt_build_cache_id if str(value).strip()}
+    if adopted_build_cache_ids and not args.adopt_build_cache:
+        raise SystemExit("--adopt-build-cache-id requires --adopt-build-cache so cache cleanup is explicitly acknowledged.")
     plan = build_cleanup_plan(
         baseline,
         current,
@@ -608,6 +627,7 @@ def main() -> int:
         adopted_compose_projects=adopted_compose_projects,
         adopted_image_refs=adopted_image_refs,
         adopt_build_cache=args.adopt_build_cache,
+        adopted_build_cache_ids=adopted_build_cache_ids if args.adopt_build_cache else set(),
     )
     plan_path.write_text(json.dumps(plan, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print_plan(plan)

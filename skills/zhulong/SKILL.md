@@ -303,7 +303,7 @@ python3 <audit-workspace>/bin/manage-docker-resources.py --workspace-dir <audit-
 ```
 
 If cleanup is blocked because a container or volume is still in use, record the
-blocker and do not fall back to broad `docker system prune` commands.
+blocker and do not fall back to broad Docker-wide cleanup commands.
 If the cleanup plan lists unlabeled resources created after the baseline, treat
 them as review-only because they may belong to another parallel Zhulong audit,
 the target project's own Compose stack, or an unrelated Docker application.
@@ -316,8 +316,9 @@ If Compose leaves post-baseline build images, networks, or pulled service images
 behind, rerun the cleanup helper with exact adoption flags such as
 `--adopt-compose-project <project>` and, only for images proven absent from the
 baseline and pulled by this audit, `--adopt-image-ref <image:tag>`. If BuildKit
-cache remains after review, use `--adopt-build-cache`; the helper prunes by
-cache id, not broad cache prune. Review the plan before adding `--apply`.
+cache remains after review, use `--adopt-build-cache --adopt-build-cache-id
+<cache-id>` so the helper cleans only exact cache IDs. Review the plan before
+adding `--apply`.
 
 After a vulnerability is first confirmed, do not stop at the weakest trigger and immediately settle on a low or medium rating.
 Run at least one deliberate severity-escalation pass that tries to verify stronger real-world impact inside Docker before final scoring.

@@ -143,8 +143,7 @@ parallel Zhulong audit or another application.
 
 ## Safety Rules
 
-- Do not use broad `docker system prune`, `docker image prune`, `docker volume
-  prune`, or `docker network prune` as a Zhulong cleanup path.
+- Do not use broad Docker-wide cleanup commands as a Zhulong cleanup path.
 - Do not delete resources that existed in the baseline.
 - Do not delete resources merely because they are absent from the baseline; in
   parallel Zhulong runs, they may belong to another audit. Automatic cleanup is
@@ -152,8 +151,8 @@ parallel Zhulong audit or another application.
   exact Compose project / image ref that this audit explicitly adopts for the
   current cleanup run.
 - BuildKit cache is also baseline-aware. It is review-only by default and can be
-  cleaned with `--adopt-build-cache`, which uses `docker buildx prune --filter
-  id=<cache-id>` rather than broad cache pruning.
+  cleaned only after `--adopt-build-cache --adopt-build-cache-id <cache-id>`;
+  the helper uses an exact cache-id filter rather than broad cache cleanup.
 - Running containers are skipped by default. Stop them deliberately only after
   confirming they belong to this audit.
 - Target project Docker Compose resources often do not carry Zhulong labels. The

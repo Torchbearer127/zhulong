@@ -125,6 +125,20 @@ REQUIRED_VERIFICATION_FIELDS = {
     "severity_escalation_attempted",
     "severity_escalation_result",
 }
+BROAD_AFFECTED_VERSION_PATTERNS = [
+    re.compile(r"\ball\s+versions\b", re.IGNORECASE),
+    re.compile(r"\bpotentially\s+all\s+versions\b", re.IGNORECASE),
+    re.compile(r"所有版本"),
+    re.compile(r"可能影响所有版本"),
+]
+RUNTIME_MISMATCH_TEXT_PATTERNS = [
+    re.compile(r"source/runtime mismatch", re.IGNORECASE),
+    re.compile(r"runtime/source mismatch", re.IGNORECASE),
+    re.compile(r"source[- ]runtime mismatch", re.IGNORECASE),
+    re.compile(r"源码/运行时不匹配"),
+    re.compile(r"源代码/运行时不匹配"),
+    re.compile(r"运行时.*不匹配"),
+]
 
 
 def parse_args() -> argparse.Namespace:
@@ -161,6 +175,10 @@ def parse_args() -> argparse.Namespace:
 
 def fail(message: str) -> None:
     raise SystemExit(f"VALIDATION FAILED: {message}")
+
+
+def warn(message: str) -> None:
+    print(f"WARN: {message}")
 
 
 def find_audit_event_writer() -> Path | None:
@@ -484,6 +502,146 @@ def load_bundle_identity(findings_path: Path, bundle_name: str, workspace_dir: P
     return project_name, title_tokens, selected
 
 
+def looks_like_short_vulnerability_name(value: object) -> bool:
+    text = str(value or "").strip()
+    if not text or "\n" in text or "\r" in text:
+        return False
+    lowered = text.lower()
+    if "漏洞报告" in text or "vulnerability report" in lowered:
+        return False
+    if len(text) > 80:
+        return False
+    if not any("\u4e00" <= ch <= "\u9fff" for ch in text) and len(text.split()) > 12:
+        return False
+    return True
+
+
+def validate_finding_vulnerability_name(finding: dict[str, object]) -> None:
+    explicit_names = [
+        finding.get("vulnerability_name"),
+        finding.get("vulnerability_name_zh"),
+        finding.get("vulnerability_name_en"),
+    ]
+    if any(looks_like_short_vulnerability_name(value) for value in explicit_names):
+        return
+    explicit_types = [
+        finding.get("vuln_type"),
+        finding.get("vuln_type_zh"),
+        finding.get("vuln_type_en"),
+        finding.get("vulnerability_type"),
+        finding.get("type"),
+    ]
+    if any(looks_like_short_vulnerability_name(value) for value in explicit_types):
+        return
+    title = str(finding.get("title") or finding.get("title_zh") or finding.get("title_en") or "").strip()
+    fail(
+        "findings.json must include vulnerability_name/vulnerability_name_zh/vulnerability_name_en "
+        "or a short vuln_type/vuln_type_zh/vuln_type_en; do not derive bundle identity from a long title"
+        + (f": {title[:140]}" if title else "")
+    )
+
+
+def nested_value(data: object, dotted_key: str) -> object:
+    current = data
+    for part in dotted_key.split("."):
+        if not isinstance(current, dict):
+            return None
+        current = current.get(part)
+    return current
+
+
+def boolish_false(value: object) -> bool:
+    if value is False:
+        return True
+    text = str(value or "").strip().lower()
+    return text in {"false", "no", "0", "mismatch", "not_matched", "runtime_only"}
+
+
+def detect_runtime_mismatch(defaults: dict[str, object], finding: dict[str, object], workspace_dir: Path) -> bool:
+    containers: list[object] = [
+        defaults,
+        finding,
+        finding.get("runtime_scope") if isinstance(finding.get("runtime_scope"), dict) else {},
+        finding.get("verification_evidence") if isinstance(finding.get("verification_evidence"), dict) else {},
+        defaults.get("metadata") if isinstance(defaults.get("metadata"), dict) else {},
+    ]
+    for data in containers:
+        if not isinstance(data, dict):
+            continue
+        for key in ("source_runtime_match", "runtime_source_match"):
+            if key in data and boolish_false(data.get(key)):
+                return True
+        for key in ("verified_runtime_only", "runtime_scope"):
+            value = data.get(key)
+            if value is True or (isinstance(value, str) and value.strip()):
+                return True
+
+    for rel in ("workspace-report.md", "audit-report.md", "audit-research-report.md", "attack-surface.md"):
+        path = workspace_dir / rel
+        if not path.exists():
+            continue
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        if any(pattern.search(text) for pattern in RUNTIME_MISMATCH_TEXT_PATTERNS):
+            return True
+    return False
+
+
+def runtime_scope_statement(defaults: dict[str, object], finding: dict[str, object], evidence: dict[str, object]) -> str:
+    values = [
+        finding.get("runtime_scope"),
+        finding.get("verified_runtime_only"),
+        finding.get("verified_runtime_version"),
+        finding.get("runtime_version"),
+        finding.get("runtime_image_digest"),
+        finding.get("runtime_commit"),
+        nested_value(defaults, "metadata.runtime_scope"),
+        nested_value(defaults, "metadata.verified_runtime_only"),
+        nested_value(defaults, "metadata.runtime_version"),
+        nested_value(defaults, "metadata.docker_image"),
+        evidence.get("runtime_scope"),
+        evidence.get("verified_runtime_only"),
+        evidence.get("docker_image"),
+    ]
+    return " ".join(str(value).strip() for value in values if str(value or "").strip())
+
+
+def affected_version_text(defaults: dict[str, object], finding: dict[str, object]) -> str:
+    impact = finding.get("impact") if isinstance(finding.get("impact"), dict) else {}
+    values = [
+        finding.get("affected_versions"),
+        finding.get("affected_versions_zh"),
+        finding.get("affected_versions_en"),
+        impact.get("affected_versions") if isinstance(impact, dict) else "",
+        impact.get("affected_versions_zh") if isinstance(impact, dict) else "",
+        impact.get("affected_versions_en") if isinstance(impact, dict) else "",
+        nested_value(defaults, "metadata.affected_versions"),
+    ]
+    return "\n".join(str(value).strip() for value in values if str(value or "").strip())
+
+
+def validate_runtime_scope(
+    defaults: dict[str, object],
+    finding: dict[str, object],
+    evidence: dict[str, object],
+    workspace_dir: Path,
+) -> None:
+    if not detect_runtime_mismatch(defaults, finding, workspace_dir):
+        return
+    versions = affected_version_text(defaults, finding)
+    for pattern in BROAD_AFFECTED_VERSION_PATTERNS:
+        if pattern.search(versions):
+            fail(
+                "source/runtime mismatch detected; affected_versions must not overclaim broad unsupported scope "
+                f"({pattern.pattern}). Limit the confirmed bundle to the verified runtime version/image/commit."
+            )
+    scope = runtime_scope_statement(defaults, finding, evidence)
+    if not scope:
+        fail(
+            "source/runtime mismatch detected; include verified_runtime_only/runtime_scope or the verified "
+            "runtime version, image digest, or commit before validating the confirmed bundle"
+        )
+
+
 def validate_severity_consistency(
     bundle_dir: Path,
     docx_path: Path,
@@ -738,6 +896,41 @@ def validate_attachment_note(note_path: Path, language: str) -> None:
     validate_relative_attachment_refs(text, note_path.parent)
 
 
+def warn_attachment_hygiene(bundle_dir: Path, texts: list[str], evidence: dict[str, object]) -> None:
+    refs: set[str] = set()
+    for text in texts:
+        refs.update(re.findall(r"attachments/[^\s`)>]+", text))
+    evidence_files = evidence.get("evidence_files")
+    if isinstance(evidence_files, list):
+        refs.update(str(item).strip() for item in evidence_files if str(item).strip().startswith("attachments/"))
+    poc_path = str(evidence.get("poc_path") or "").strip()
+    if poc_path.startswith("attachments/"):
+        refs.add(poc_path)
+
+    nested_refs = sorted(ref for ref in refs if re.search(r"attachments/(?:[^/]+/)*security-research-\d{8}-\d{6}", ref))
+    if nested_refs:
+        warn(
+            "nested workspace attachment paths detected; prefer stable bundle-local attachments/<short-name> paths: "
+            + ", ".join(nested_refs[:5])
+        )
+
+    attachments_dir = bundle_dir / "attachments"
+    basename_map: dict[str, list[str]] = {}
+    if attachments_dir.exists():
+        for path in attachments_dir.rglob("*"):
+            if path.is_file():
+                rel = path.relative_to(bundle_dir).as_posix()
+                basename_map.setdefault(path.name, []).append(rel)
+    duplicate_names = {
+        name: sorted(paths)
+        for name, paths in basename_map.items()
+        if len(paths) > 1
+    }
+    if duplicate_names:
+        preview = "; ".join(f"{name}: {', '.join(paths[:3])}" for name, paths in sorted(duplicate_names.items())[:5])
+        warn(f"duplicate attachment basenames detected; consider deduping flat/nested evidence copies: {preview}")
+
+
 def validate_reproduction_supplement(supplement_path: Path, language: str) -> str:
     text = supplement_path.read_text(encoding="utf-8")
     if supplement_path.name in GENERIC_SUPPLEMENT_FILENAMES:
@@ -920,9 +1113,13 @@ def main() -> None:
     title_tokens: list[str] = []
     selected_finding: dict[str, object] | None = None
     if findings_path is not None and findings_path.exists():
+        defaults, selected_finding = load_selected_finding(findings_path, bundle_dir.name, workspace_dir)
         project_name, title_tokens, selected_finding = load_bundle_identity(findings_path, bundle_dir.name, workspace_dir)
+        validate_finding_vulnerability_name(selected_finding)
         validate_severity_consistency(bundle_dir, docx_path, selected_finding, language)
     verification_evidence = validate_verification_evidence(bundle_dir, selected_finding)
+    if selected_finding is not None:
+        validate_runtime_scope(defaults, selected_finding, verification_evidence, workspace_dir)
 
     combined_text = "\n".join(lines)
     if "CVSS 2.0" in combined_text:
@@ -958,6 +1155,7 @@ def main() -> None:
         fail("attachments exists but is not a directory")
     if not any(path.is_file() for path in attachments_dir.rglob("*")):
         fail("attachments/ must contain at least one evidence, PoC, Docker, or supporting file")
+    warn_attachment_hygiene(bundle_dir, [combined_text, note_text, supplement_text], verification_evidence)
 
     if args.with_libreoffice:
         optional_libreoffice_check(docx_path)

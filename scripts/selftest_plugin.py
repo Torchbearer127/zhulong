@@ -1039,6 +1039,8 @@ def main() -> None:
             "--adopt-image-ref",
             "mysql:5.7",
             "--adopt-build-cache",
+            "--adopt-build-cache-id",
+            "cache1",
         ], plugin_root)
         cleanup_plan = json.loads((workspace / "docker" / "docker-cleanup-plan.json").read_text(encoding="utf-8"))
         planned_images = {item.get("id") for item in cleanup_plan.get("images", [])}
@@ -1056,6 +1058,37 @@ def main() -> None:
         planned_build_cache = {item.get("id") for item in cleanup_plan.get("build_cache", {}).get("adopted_reclaimable", [])}
         if planned_build_cache != {"cache1"}:
             raise SystemExit(f"FAILED: adopted build cache should enter cleanup plan: {planned_build_cache}")
+        run([
+            sys.executable,
+            str(plugin_root / "scripts/manage_docker_resources.py"),
+            "--workspace-dir",
+            str(workspace),
+            "--baseline-file",
+            str(docker_baseline),
+            "--current-file",
+            str(docker_current),
+            "--show-created",
+            "--adopt-build-cache",
+        ], plugin_root)
+        cleanup_plan = json.loads((workspace / "docker" / "docker-cleanup-plan.json").read_text(encoding="utf-8"))
+        if cleanup_plan.get("build_cache", {}).get("adopted_reclaimable"):
+            raise SystemExit("FAILED: BuildKit cache adoption must require explicit cache IDs")
+        skipped_build_cache = {item.get("id") for item in cleanup_plan.get("build_cache", {}).get("unattributed_new_skipped", [])}
+        if skipped_build_cache != {"cache1"}:
+            raise SystemExit(f"FAILED: unattributed BuildKit cache should remain review-only without exact IDs: {skipped_build_cache}")
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/manage_docker_resources.py"),
+            "--workspace-dir",
+            str(workspace),
+            "--baseline-file",
+            str(docker_baseline),
+            "--current-file",
+            str(docker_current),
+            "--show-created",
+            "--adopt-build-cache-id",
+            "cache1",
+        ], plugin_root, "--adopt-build-cache-id requires --adopt-build-cache")
         run([
             sys.executable,
             str(plugin_root / "scripts/manage_docker_resources.py"),
@@ -1864,6 +1897,73 @@ def main() -> None:
             raise SystemExit("FAILED: standard vulnerability_name fixture rendered a generic DOCX title")
         if "最终判定待补充" in "\n".join(standard_lines):
             raise SystemExit("FAILED: standard vulnerability_name fixture left final verdict placeholder text")
+        missing_name_fixture = workspace / "missing-vulnerability-name-finding.json"
+        missing_name_data = json.loads(standard_fixture.read_text(encoding="utf-8"))
+        missing_name_data.pop("vulnerability_name", None)
+        missing_name_data.pop("vulnerability_name_en", None)
+        missing_name_data["title_zh"] = "gothinkster/node-express-realworld-example-app 默认配置下硬编码 JWT 密钥导致身份认证绕过并允许攻击者伪造任意用户 token 的完整漏洞报告标题"
+        missing_name_fixture.write_text(json.dumps(missing_name_data, ensure_ascii=False, indent=2), encoding="utf-8")
+        run_expect_fail([
+            sys.executable,
+            str(workspace / "bin/render-confirmed-vuln-docx.py"),
+            "--input",
+            str(missing_name_fixture),
+            "--output-dir",
+            str(workspace / "confirmed"),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "must include vulnerability_name")
+
+        bad_runtime_scope = zh_bundle.parent / f"{standard_bundle.name}_runtime_scope_overclaim"
+        shutil.copytree(standard_bundle, bad_runtime_scope)
+        runtime_scope_findings_path = bad_runtime_scope / "findings.json"
+        if not runtime_scope_findings_path.exists():
+            shutil.copy2(standard_fixture, runtime_scope_findings_path)
+        runtime_scope_data = json.loads(runtime_scope_findings_path.read_text(encoding="utf-8"))
+        runtime_scope_data["source_runtime_match"] = False
+        runtime_scope_data.setdefault("impact", {})["affected_versions"] = "v2.9.1（Docker 验证版本），可能影响所有版本"
+        runtime_scope_findings_path.write_text(
+            json.dumps(runtime_scope_data, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_runtime_scope),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "source/runtime mismatch detected")
+
+        nested_warning_bundle = zh_bundle.parent / f"{standard_bundle.name}_nested_attachment_warning"
+        shutil.copytree(standard_bundle, nested_warning_bundle)
+        nested_dir = nested_warning_bundle / "attachments/security-research-20260502-123456/evidence"
+        nested_dir.mkdir(parents=True, exist_ok=True)
+        nested_file = nested_dir / "forged-token-response.json"
+        nested_file.write_text('{"ok":true,"nested":true}\n', encoding="utf-8")
+        nested_evidence_data = json.loads((nested_warning_bundle / "verification-evidence.json").read_text(encoding="utf-8"))
+        nested_evidence_data["evidence_files"].append("attachments/security-research-20260502-123456/evidence/forged-token-response.json")
+        (nested_warning_bundle / "verification-evidence.json").write_text(
+            json.dumps(nested_evidence_data, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        nested_proc = subprocess.run([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(nested_warning_bundle),
+            "--language",
+            "zh-CN",
+        ], cwd=plugin_root, capture_output=True, text=True)
+        nested_output = (nested_proc.stdout or "") + (nested_proc.stderr or "")
+        if nested_proc.returncode != 0:
+            raise SystemExit(f"FAILED: nested attachment warning fixture should still validate\n{nested_output}")
+        if "WARN: nested workspace attachment paths detected" not in nested_output:
+            raise SystemExit("FAILED: validator did not warn about nested workspace attachment paths")
+        if "WARN: duplicate attachment basenames detected" not in nested_output:
+            raise SystemExit("FAILED: validator did not warn about duplicate attachment basenames")
+        shutil.rmtree(bad_runtime_scope)
+        shutil.rmtree(nested_warning_bundle)
         events_before_bundle_validation = [
             json.loads(line)
             for line in (workspace / "audit-events.jsonl").read_text(encoding="utf-8").splitlines()
@@ -2251,6 +2351,8 @@ def main() -> None:
             bad_missing_attachments,
             bad_multi_finding,
             bad_runtime_state,
+            bad_runtime_scope,
+            nested_warning_bundle,
         ):
             if bad.exists():
                 shutil.rmtree(bad)
