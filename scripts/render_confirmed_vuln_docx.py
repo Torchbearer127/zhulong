@@ -484,6 +484,34 @@ def localized_severity_for_filename(finding: dict[str, Any], language: str) -> s
     return "中危"
 
 
+ANALYSIS_MARKER_TRANSLATIONS = {
+    "zh-CN": {
+        "Location:": "位置：",
+        "Entry / controllable input:": "入口/可控输入：",
+        "Dangerous operation:": "危险函数/危险操作：",
+        "Trigger path:": "触发路径：",
+        "Root cause:": "根因：",
+        "Why existing checks fail:": "现有校验为何失效：",
+    },
+    "en-US": {
+        "位置：": "Location:",
+        "入口/可控输入：": "Entry / controllable input:",
+        "危险函数/危险操作：": "Dangerous operation:",
+        "触发路径：": "Trigger path:",
+        "根因：": "Root cause:",
+        "现有校验为何失效：": "Why existing checks fail:",
+    },
+}
+
+
+def localize_analysis_marker(text: str, language: str) -> str:
+    stripped = str(text).strip()
+    for source_marker, target_marker in ANALYSIS_MARKER_TRANSLATIONS[language].items():
+        if stripped.startswith(source_marker):
+            return f"{target_marker} {stripped[len(source_marker):].strip()}"
+    return stripped
+
+
 def build_filename(finding: dict[str, Any], language: str) -> str:
     declared_language = infer_source_language(finding)
     explicit = read_localized_string(finding, "filename", language, declared_language=declared_language)
@@ -1704,7 +1732,7 @@ def render_analysis(doc: Document, finding: dict[str, Any], language: str) -> No
     analysis_items = localized_list(finding, "analysis", language)
     if analysis_items:
         for item in analysis_items:
-            doc.add_paragraph(item, style="List Bullet")
+            doc.add_paragraph(localize_analysis_marker(item, language), style="List Bullet")
     else:
         doc.add_paragraph(tr(language, "analysis_pending"), style="List Bullet")
     render_code_context(doc, finding, language)
@@ -1735,14 +1763,14 @@ def severity_label_from_score(score_text: str, language: str = "zh-CN") -> str:
     try:
         score = float(score_text)
     except ValueError:
-        return "Medium" if language == "en-US" else "中危 (MEDIUM)"
+        return "Medium" if language == "en-US" else "中危"
     if score >= 9:
-        return "Critical" if language == "en-US" else "严重 (CRITICAL)"
+        return "Critical" if language == "en-US" else "严重"
     if score >= 7:
-        return "High" if language == "en-US" else "高危 (HIGH)"
+        return "High" if language == "en-US" else "高危"
     if score >= 4:
-        return "Medium" if language == "en-US" else "中危 (MEDIUM)"
-    return "Low" if language == "en-US" else "低危 (LOW)"
+        return "Medium" if language == "en-US" else "中危"
+    return "Low" if language == "en-US" else "低危"
 
 
 def transform_legacy_finding(finding: dict[str, Any], defaults: dict[str, Any] | None = None) -> dict[str, Any]:

@@ -59,6 +59,32 @@ REQUIRED_FILES = [
     "templates/claude-skill/SKILL.md",
 ]
 
+INSTALLED_SKILL_REQUIRED_FILES = [
+    "SKILL.md",
+    "README.plugin-package.md",
+    "INSTALL.plugin-package.md",
+    "assets/tool-registry.json",
+    "assets/confirmed-vuln-report-template.docx",
+    "assets/references/docker-resource-hygiene.md",
+    "assets/references/docker-registry-fallbacks.example.json",
+    "assets/references/nodejs-web-audit-playbook.md",
+    "assets/references/php-swoole-audit-playbook.md",
+    "assets/references/python-library-audit-playbook.md",
+    "scripts/asr_start.sh",
+    "scripts/bootstrap_verification_workspace.sh",
+    "scripts/check_docker_gate.sh",
+    "scripts/check_security_tooling.sh",
+    "scripts/run_initial_probes.sh",
+    "scripts/run_verification_case.sh",
+    "scripts/manage_docker_resources.py",
+    "scripts/render_confirmed_vuln_docx.py",
+    "scripts/validate_report_bundle.py",
+    "scripts/validate_all_report_bundles.py",
+    "scripts/finalize_audit_workspace.py",
+    "scripts/assert_finalized_workspace.py",
+    "scripts/blocked_verification.py",
+]
+
 
 def run(command: list[str], cwd: Path) -> None:
     proc = subprocess.run(command, cwd=cwd, capture_output=True, text=True)
@@ -181,8 +207,76 @@ def require_probe_record(
     return probe
 
 
+def selftest_installed_skill(skill_root: Path) -> None:
+    for rel in INSTALLED_SKILL_REQUIRED_FILES:
+        path = skill_root / rel
+        if not path.exists():
+            raise SystemExit(f"FAILED: missing required installed skill file: {path}")
+
+    run([sys.executable, "-m", "py_compile",
+         str(skill_root / "scripts/plan_security_toolchain.py"),
+         str(skill_root / "scripts/render_handoff_summary.py"),
+         str(skill_root / "scripts/assert_finalized_workspace.py"),
+         str(skill_root / "scripts/blocked_verification.py"),
+         str(skill_root / "scripts/write_audit_event.py"),
+         str(skill_root / "scripts/validate_workspace_state.py"),
+         str(skill_root / "scripts/manage_docker_resources.py"),
+         str(skill_root / "scripts/render_confirmed_vuln_docx.py"),
+         str(skill_root / "scripts/validate_report_bundle.py"),
+         str(skill_root / "scripts/validate_all_report_bundles.py"),
+         str(skill_root / "scripts/finalize_audit_workspace.py")], skill_root)
+
+    for script in [
+        "scripts/bootstrap_verification_workspace.sh",
+        "scripts/asr_start.sh",
+        "scripts/prepare_target_repo.sh",
+        "scripts/check_docker_gate.sh",
+        "scripts/check_security_tooling.sh",
+        "scripts/run_initial_probes.sh",
+        "scripts/run_verification_case.sh",
+    ]:
+        run(["bash", "-n", str(skill_root / script)], skill_root)
+
+    require_text(
+        skill_root / "SKILL.md",
+        "Confirm vulnerabilities only with Docker evidence",
+        "installed skill Docker-confirmed-only contract",
+    )
+    require_text(
+        skill_root / "SKILL.md",
+        "completed_no_confirmed_findings",
+        "installed skill completion result contract",
+    )
+    require_text(
+        skill_root / "SKILL.md",
+        "Blocked Docker/runtime verification is not the same as",
+        "installed skill blocked verification semantics",
+    )
+    require_text(
+        skill_root / "SKILL.md",
+        "<audit-workspace>/SUMMARY.md",
+        "installed skill stable summary contract",
+    )
+    require_text(
+        skill_root / "assets/references/unverified-lead-template.md",
+        "Material blocker?",
+        "installed skill unverified lead materiality template",
+    )
+
+    operator_local_path = "/" + "Users" + "/" + "torchbearer"
+    require_no_repo_text(skill_root, operator_local_path, "operator-local absolute path")
+    stale_asr_name = "autonomous-security" + "-researcher"
+    require_no_repo_text(skill_root, stale_asr_name, "stale ASR naming")
+
+    print(f"SELFTEST PASSED: installed Claude skill layout {skill_root}")
+
+
 def main() -> None:
     plugin_root = Path(__file__).resolve().parent.parent
+
+    if (plugin_root / "SKILL.md").exists() and not (plugin_root / ".codex-plugin/plugin.json").exists():
+        selftest_installed_skill(plugin_root)
+        return
 
     for rel in REQUIRED_FILES:
         path = plugin_root / rel
@@ -2227,6 +2321,59 @@ def main() -> None:
             raise SystemExit("FAILED: standard vulnerability_name fixture rendered a generic DOCX title")
         if "最终判定待补充" in "\n".join(standard_lines):
             raise SystemExit("FAILED: standard vulnerability_name fixture left final verdict placeholder text")
+        legacy_marker_fixture = workspace / "legacy-english-analysis-markers-finding.json"
+        legacy_marker_data = json.loads(standard_fixture.read_text(encoding="utf-8"))
+        legacy_marker_data["vulnerability_id"] = "SELFTEST-LEGACY-MARKERS"
+        legacy_marker_data["vulnerability_name"] = "导入URL服务端请求伪造"
+        legacy_marker_data["severity"] = "高危"
+        legacy_marker_data["severity_cn"] = "高危"
+        legacy_marker_data["cvss"] = {
+            "vector": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N",
+            "score": "7.5",
+            "severity": "高危",
+            "rationale": ["评估依据：服务端可被诱导访问内部资源。"],
+        }
+        legacy_marker_data["analysis"] = [
+            "Location: api/src/services/files.ts importOne() accepts a user-supplied URL.",
+            "Entry / controllable input: an authenticated attacker submits an import URL.",
+            "Dangerous operation: axios.get() performs a server-side fetch.",
+            "Trigger path: URL import -> server fetch -> attacker-controlled internal destination.",
+            "Root cause: URL import lacks complete private-network deny-list validation.",
+            "Why existing checks fail: the current deny list is incomplete for common internal ranges.",
+        ]
+        legacy_marker_fixture.write_text(json.dumps(legacy_marker_data, ensure_ascii=False, indent=2), encoding="utf-8")
+        run([
+            sys.executable,
+            str(workspace / "bin/render-confirmed-vuln-docx.py"),
+            "--input",
+            str(legacy_marker_fixture),
+            "--output-dir",
+            str(workspace / "confirmed"),
+            "--language",
+            "zh-CN",
+        ], plugin_root)
+        legacy_marker_bundle = next(
+            (
+                path for path in (workspace / "confirmed").iterdir()
+                if path.is_dir() and "导入URL" in path.name
+            ),
+            None,
+        )
+        if legacy_marker_bundle is None:
+            raise SystemExit("FAILED: legacy marker fixture did not render a confirmed bundle")
+        run([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(legacy_marker_bundle),
+            "--language",
+            "zh-CN",
+        ], plugin_root)
+        legacy_marker_lines = "\n".join(docx_text(next(legacy_marker_bundle.glob("*.docx"))))
+        if "Location:" in legacy_marker_lines or "Entry / controllable input:" in legacy_marker_lines:
+            raise SystemExit("FAILED: renderer did not localize legacy English analysis markers for zh-CN output")
+        if "位置：" not in legacy_marker_lines or "入口/可控输入：" not in legacy_marker_lines:
+            raise SystemExit("FAILED: localized zh-CN analysis markers are missing from legacy marker fixture")
         missing_name_fixture = workspace / "missing-vulnerability-name-finding.json"
         missing_name_data = json.loads(standard_fixture.read_text(encoding="utf-8"))
         missing_name_data.pop("vulnerability_name", None)
@@ -3408,6 +3555,10 @@ def main() -> None:
             "`attack-surface.md` as a DOCX source or as a shortcut into",
             "installed Claude skill attack-surface routing guardrail",
         )
+        run([
+            sys.executable,
+            str(installed_skill / "scripts/selftest_plugin.py"),
+        ], installed_skill)
         backups = sorted((claude_home / "skills" / ".zhulong-backups").glob("zhulong.backup.*"))
         if len(backups) > 2:
             raise SystemExit("FAILED: sync_to_claude_skill.sh did not enforce backup retention")
