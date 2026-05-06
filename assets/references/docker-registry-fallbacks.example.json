@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "purpose": "Example-only configuration for operator-approved Docker registry fallback during blocked verification recovery.",
+  "policy": {
+    "configurable_not_hardcoded": true,
+    "equivalent_mirrors_only": true,
+    "explicit_image_mappings_only": true,
+    "fallback_does_not_bypass_blocked_verification": true,
+    "record_digest_before_reporting": true,
+    "mark_source_runtime_uncertain_without_digest_or_provenance": true
+  },
+  "mirrors": [
+    {
+      "name": "operator-approved-dockerhub-mirror",
+      "source_registry": "docker.io",
+      "mirror_registry": "mirror.example.invalid",
+      "allowed_prefixes": [
+        "library/",
+        "appwrite/"
+      ],
+      "notes": "Replace only with an equivalent mirror approved by the operator."
+    }
+  ],
+  "explicit_image_mappings": [
+    {
+      "original_image_ref": "mongo:8.2.5",
+      "attempted_image_ref": "mirror.example.invalid/library/mongo:8.2.5",
+      "registry_source": "operator-approved-dockerhub-mirror",
+      "equivalence_basis": "same upstream tag mirrored by digest",
+      "required_record_fields": [
+        "original_image_ref",
+        "attempted_image_ref",
+        "registry_source",
+        "success",
+        "failure_reason",
+        "final_digest"
+      ]
+    }
+  ],
+  "attempt_record_example": {
+    "original_image_ref": "mongo:8.2.5",
+    "attempted_image_ref": "mirror.example.invalid/library/mongo:8.2.5",
+    "registry_source": "operator-approved-dockerhub-mirror",
+    "success": false,
+    "failure_reason": "mirror unavailable",
+    "final_digest": "",
+    "source_runtime_identity": "uncertain"
+  }
+}

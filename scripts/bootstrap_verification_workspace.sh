@@ -420,6 +420,9 @@ copy_file \
   "$SKILL_DIR/scripts/assert_finalized_workspace.py" \
   "$WORKSPACE_DIR/bin/assert-finalized-workspace.py"
 chmod +x "$WORKSPACE_DIR/bin/assert-finalized-workspace.py"
+copy_file \
+  "$SKILL_DIR/scripts/blocked_verification.py" \
+  "$WORKSPACE_DIR/bin/blocked_verification.py"
 write_text_file "$WORKSPACE_DIR/scripts/assert-finalized-workspace.py" '#!/usr/bin/env bash
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

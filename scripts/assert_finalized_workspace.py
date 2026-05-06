@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from blocked_verification import detect_blocked_verification
+
 
 SUCCESS_EVENT = "finalization_succeeded"
 FAILURE_EVENT = "finalization_failed"
@@ -84,6 +86,7 @@ def validate_finalization(workspace: Path) -> tuple[bool, list[str], dict[str, A
     status = load_json(workspace / "stage-status.json")
     events = read_events(workspace / "audit-events.jsonl")
     docker_status = load_json(workspace / "docker" / "docker-cleanliness-status.json")
+    blocked_summary = detect_blocked_verification(workspace)
     latest = latest_finalization(events)
     success = latest_success(events)
     success_index = success[0] if success else None
@@ -123,6 +126,11 @@ def validate_finalization(workspace: Path) -> tuple[bool, list[str], dict[str, A
         errors.append(
             f"stage-status.json result={result} disagrees with finalization_succeeded result={success_result}."
         )
+    if result == "completed_no_confirmed_findings" and blocked_summary.get("blocked"):
+        errors.append(
+            "blocked verification evidence exists in lightweight workspace records; "
+            "completed_no_confirmed_findings is not a valid terminal result until Docker verification resumes."
+        )
 
     docker_clean_claim = details.get("docker_clean")
     docker_clean = docker_status.get("clean")
@@ -148,6 +156,7 @@ def validate_finalization(workspace: Path) -> tuple[bool, list[str], dict[str, A
         "status": state,
         "docker_clean": docker_clean,
         "docker_strict": docker_strict,
+        "blocked_verification": blocked_summary,
     }
     return not errors, errors, summary
 

@@ -22,10 +22,12 @@ REQUIRED_FILES = [
     "assets/references/unverified-lead-template.md",
     "assets/references/final-summary-template.md",
     "assets/references/docker-resource-hygiene.md",
+    "assets/references/docker-registry-fallbacks.example.json",
     "assets/references/java-web-audit-playbook.md",
     "assets/references/go-web-audit-playbook.md",
     "assets/references/nodejs-library-audit-playbook.md",
     "assets/references/nodejs-web-audit-playbook.md",
+    "assets/references/php-swoole-audit-playbook.md",
     "assets/references/python-library-audit-playbook.md",
     "assets/references/python-web-audit-playbook.md",
     "assets/references/ssrf-checklist.md",
@@ -42,6 +44,7 @@ REQUIRED_FILES = [
     "scripts/manage_docker_resources.py",
     "scripts/render_handoff_summary.py",
     "scripts/assert_finalized_workspace.py",
+    "scripts/blocked_verification.py",
     "scripts/refresh_workspace_helpers.sh",
     "scripts/sync_to_claude_skill.sh",
     "scripts/write_audit_event.py",
@@ -357,6 +360,21 @@ def main() -> None:
     )
     require_text(
         plugin_root / "templates/claude-skill/SKILL.md",
+        "php-swoole-audit-playbook.md",
+        "Claude skill template PHP/Swoole playbook reference",
+    )
+    require_text(
+        plugin_root / "templates/claude-skill/SKILL.md",
+        "Blocked Docker/runtime verification is not the same as",
+        "Claude skill template blocked verification semantics",
+    )
+    require_text(
+        plugin_root / "templates/claude-skill/SKILL.md",
+        "docker-registry-fallbacks.example.json",
+        "Claude skill template registry fallback reference",
+    )
+    require_text(
+        plugin_root / "templates/claude-skill/SKILL.md",
         "local_knowledge_checklists",
         "Claude skill template local checklist planner contract",
     )
@@ -486,6 +504,16 @@ def main() -> None:
         "finalization integrity checker failure heading",
     )
     require_text(
+        plugin_root / "scripts/blocked_verification.py",
+        "Docker Hub pull rate limit blocked runtime verification",
+        "blocked verification Docker Hub recovery guidance",
+    )
+    require_text(
+        plugin_root / "scripts/finalize_audit_workspace.py",
+        "Blocked Docker/runtime verification prevents completed_no_confirmed_findings",
+        "finalization blocks blocked verification no-confirmed success",
+    )
+    require_text(
         plugin_root / "scripts/manage_docker_resources.py",
         "BuildKit cache blocker",
         "Docker strict BuildKit blocker messaging",
@@ -494,6 +522,11 @@ def main() -> None:
         plugin_root / "assets/references/docker-resource-hygiene.md",
         "cannot be auto-deleted safely",
         "Docker hygiene BuildKit review-only blocker guidance",
+    )
+    require_text(
+        plugin_root / "assets/references/docker-resource-hygiene.md",
+        "Registry Fallback Guidance",
+        "Docker hygiene registry fallback guidance",
     )
     require_text(
         plugin_root / "assets/references/document-output-stability.md",
@@ -572,6 +605,35 @@ def main() -> None:
             expected,
             f"Python Library playbook required text {expected}",
         )
+    php_swoole_playbook = plugin_root / "assets/references/php-swoole-audit-playbook.md"
+    for expected in (
+        "PHP / Swoole Web Audit Playbook",
+        "Minimum entry inventory fields",
+        "Route / Command / Worker",
+        "HTTP-exposed controllers from CLI-only",
+        "curl_exec",
+        "GraphQL",
+        "Docker-Only Verification Reminders",
+        "verification_status=confirmed_in_docker",
+    ):
+        require_text(
+            php_swoole_playbook,
+            expected,
+            f"PHP/Swoole playbook required text {expected}",
+        )
+    registry_fallback = plugin_root / "assets/references/docker-registry-fallbacks.example.json"
+    registry_data = json.loads(registry_fallback.read_text(encoding="utf-8"))
+    if registry_data.get("policy", {}).get("configurable_not_hardcoded") is not True:
+        raise SystemExit("FAILED: registry fallback example must be configurable, not hardcoded")
+    for expected_field in (
+        "original_image_ref",
+        "attempted_image_ref",
+        "registry_source",
+        "final_digest",
+        "failure_reason",
+    ):
+        if expected_field not in json.dumps(registry_data, ensure_ascii=False):
+            raise SystemExit(f"FAILED: registry fallback example missing field: {expected_field}")
     for playbook in (
         "nodejs-web-audit-playbook.md",
         "python-web-audit-playbook.md",
@@ -803,6 +865,7 @@ def main() -> None:
          str(plugin_root / "scripts/plan_security_toolchain.py"),
          str(plugin_root / "scripts/render_handoff_summary.py"),
          str(plugin_root / "scripts/assert_finalized_workspace.py"),
+         str(plugin_root / "scripts/blocked_verification.py"),
          str(plugin_root / "scripts/write_audit_event.py"),
          str(plugin_root / "scripts/validate_workspace_state.py"),
          str(plugin_root / "scripts/manage_docker_resources.py"),
@@ -860,6 +923,8 @@ def main() -> None:
             raise SystemExit("FAILED: bootstrapped workspace is missing render-handoff-summary.py")
         if not (workspace / "bin/assert-finalized-workspace.py").exists():
             raise SystemExit("FAILED: bootstrapped workspace is missing assert-finalized-workspace.py")
+        if not (workspace / "bin/blocked_verification.py").exists():
+            raise SystemExit("FAILED: bootstrapped workspace is missing blocked_verification.py")
         if not (workspace / "scripts/render-handoff-summary.py").exists():
             raise SystemExit("FAILED: bootstrapped workspace is missing scripts/render-handoff-summary.py")
         if not (workspace / "scripts/assert-finalized-workspace.py").exists():
@@ -883,6 +948,7 @@ def main() -> None:
             "Context-Slimming Rules",
             "Attack-Surface Highlights",
             "Initial Probe Summary",
+            "Blocked Verification Status",
             "Candidate Findings",
             "False Positives / Non-Security Defects",
             "Unverified Leads",
@@ -1422,7 +1488,7 @@ def main() -> None:
         if gitleaks_summary.get("finding_count") != 2:
             raise SystemExit("FAILED: gitleaks summary did not preserve finding_count")
         samples = gitleaks_summary.get("sample_findings") or []
-        if len(samples) != 2:
+        if not (2 <= len(samples) <= 5):
             raise SystemExit("FAILED: gitleaks summary samples were not captured")
         if samples[0].get("rule_id") != "generic-api-key" or samples[0].get("file") != "config/example.env":
             raise SystemExit("FAILED: gitleaks summary did not include actionable metadata")
@@ -1436,6 +1502,9 @@ def main() -> None:
                 raise SystemExit("FAILED: gitleaks summary copied a secret-like value verbatim")
         if "secret_sha256_12" not in summary_text or "secret_redacted" not in summary_text:
             raise SystemExit("FAILED: gitleaks summary should include only redacted/hash secret hints")
+        for field in ("top_rule_ids", "path_category_counts", "top_rule_path_categories"):
+            if field not in gitleaks_summary:
+                raise SystemExit(f"FAILED: gitleaks summary missing aggregation field: {field}")
         if str(gitleaks_summary.get("raw_log_path", "")).startswith("/"):
             raise SystemExit("FAILED: gitleaks raw_log_path should be relative")
         if not (workspace / "evidence/initial-probes/gitleaks.log").exists():
@@ -1468,6 +1537,59 @@ def main() -> None:
             raise SystemExit("FAILED: initial-probes-summary.json workspace_dir should not leak an absolute path")
         if str(summary_data.get("output_dir")).startswith("/"):
             raise SystemExit("FAILED: initial-probes-summary.json output_dir should not leak an absolute path")
+        fake_gitleaks.write_text(
+            "#!/usr/bin/env bash\n"
+            "set -euo pipefail\n"
+            "report_path=''\n"
+            "while [[ $# -gt 0 ]]; do\n"
+            "  case \"$1\" in --report-path) report_path=\"${2:-}\"; shift 2 ;; *) shift ;; esac\n"
+            "done\n"
+            "[[ -n \"$report_path\" ]] || exit 64\n"
+            "python3 - <<'PY' \"$report_path\"\n"
+            "import json, sys\n"
+            "items=[]\n"
+            "paths=['tests/fixtures/a.env','docs/example.md','examples/demo.env','app/config/specs/open-api.json','src/Service.php','fixtures/key.txt']\n"
+            "rules=['generic-api-key','jwt','private-key']\n"
+            "for i in range(36):\n"
+            "    secret=f'SECRET_VALUE_{i:04d}_DO_NOT_COPY'\n"
+            "    items.append({'RuleID': rules[i % len(rules)], 'Description': 'Synthetic secret', 'File': paths[i % len(paths)], 'StartLine': i + 1, 'Commit': f'commit{i % 4}', 'Secret': secret, 'Match': 'TOKEN=' + secret})\n"
+            "open(sys.argv[1], 'w', encoding='utf-8').write(json.dumps(items))\n"
+            "PY\n"
+            "echo 'leaks found: 36'\n"
+            "exit 1\n",
+            encoding="utf-8",
+        )
+        fake_gitleaks.chmod(0o755)
+        large_gitleaks_output = workspace / "evidence/initial-probes-gitleaks-large"
+        run_with_env([
+            "/bin/bash",
+            str(workspace / "bin/run-initial-probes.sh"),
+            "--repo-root",
+            str(repo_dir),
+            "--workspace-dir",
+            str(workspace),
+            "--output-dir",
+            str(large_gitleaks_output),
+        ], plugin_root, probe_env)
+        large_probe = require_probe_record(
+            large_gitleaks_output / "initial-probes-summary.json",
+            large_gitleaks_output,
+            "gitleaks",
+            "failed_nonfatal",
+            1,
+            "gitleaks exited non-zero",
+        )
+        large_summary = large_probe.get("summary") or {}
+        if large_summary.get("finding_count") != 36:
+            raise SystemExit("FAILED: large gitleaks summary did not preserve finding_count")
+        if len(large_summary.get("sample_findings") or []) > 5:
+            raise SystemExit("FAILED: large gitleaks summary sample_findings exceeded cap")
+        for field in ("top_rule_ids", "path_category_counts", "top_rule_path_categories", "top_commits"):
+            if not large_summary.get(field):
+                raise SystemExit(f"FAILED: large gitleaks summary missing populated aggregation: {field}")
+        large_summary_text = json.dumps(large_summary, ensure_ascii=False)
+        if "SECRET_VALUE_" in large_summary_text or "TOKEN=SECRET" in large_summary_text:
+            raise SystemExit("FAILED: large gitleaks summary copied secret-like values verbatim")
         fake_osv.write_text(
             "#!/usr/bin/env bash\n"
             "echo 'OSV scan completed successfully with no vulnerable packages'\n"
@@ -1835,6 +1957,62 @@ def main() -> None:
         ):
             if expected not in python_library_guidance:
                 raise SystemExit(f"FAILED: planner output missing Python Library guidance: {expected}")
+        appwrite_like_repo = Path(tempdir) / "appwrite-like-repo"
+        appwrite_like_repo.mkdir(parents=True, exist_ok=True)
+        (appwrite_like_repo / "composer.json").write_text(
+            json.dumps({
+                "name": "selftest/appwrite-like",
+                "require": {
+                    "php": "^8.3",
+                    "ext-swoole": "*",
+                    "utopia-php/framework": "^0.0.0",
+                },
+            }),
+            encoding="utf-8",
+        )
+        php_worker = appwrite_like_repo / "src/Appwrite/Platform/Workers/Webhooks.php"
+        php_worker.parent.mkdir(parents=True, exist_ok=True)
+        php_worker.write_text(
+            "<?php\n"
+            "namespace Appwrite\\Platform\\Workers;\n"
+            "use Swoole\\Runtime;\n"
+            "final class Webhooks { public function execute($url) { $ch = curl_init($url); return curl_exec($ch); } }\n",
+            encoding="utf-8",
+        )
+        (appwrite_like_repo / "frontend").mkdir()
+        (appwrite_like_repo / "frontend/package-lock.json").write_text('{"lockfileVersion":3}\n', encoding="utf-8")
+        (appwrite_like_repo / "tests/resources").mkdir(parents=True)
+        (appwrite_like_repo / "tests/resources/package-lock.json").write_text('{"lockfileVersion":3}\n', encoding="utf-8")
+        (appwrite_like_repo / "docker-compose.yml").write_text(
+            "services:\n  appwrite:\n    image: appwrite/appwrite:dev\n",
+            encoding="utf-8",
+        )
+        appwrite_plan = json.loads(run_capture([
+            sys.executable,
+            str(workspace / "bin/plan-security-toolchain.py"),
+            "--target-dir",
+            str(appwrite_like_repo),
+            "--workspace-dir",
+            str(workspace),
+            "--format",
+            "json",
+        ], plugin_root))
+        appwrite_hints = set(appwrite_plan["attack_surface_hints"])
+        for expected in ("php-web", "php-swoole", "docker-compose"):
+            if expected not in appwrite_hints:
+                raise SystemExit(f"FAILED: Appwrite-like planner missing {expected}")
+        playbooks = appwrite_plan["specialized_playbooks"]
+        if not playbooks or playbooks[0] != "assets/references/php-swoole-audit-playbook.md":
+            raise SystemExit(f"FAILED: Appwrite-like planner should lead with PHP/Swoole playbook: {playbooks}")
+        if "assets/references/nodejs-web-audit-playbook.md" in playbooks:
+            raise SystemExit("FAILED: Appwrite-like planner should not lead with Node Web from frontend/test lockfiles")
+        appwrite_guidance = "\n".join(appwrite_plan["attack_surface_guidance"])
+        for expected in (
+            "PHP/Swoole: inventory Utopia routes/controllers",
+            "frontend/test package-lock files as secondary",
+        ):
+            if expected not in appwrite_guidance:
+                raise SystemExit(f"FAILED: Appwrite-like planner output missing PHP/Swoole guidance: {expected}")
         run_with_env([
             "bash",
             str(plugin_root / "scripts/refresh_workspace_helpers.sh"),
@@ -2579,6 +2757,80 @@ def main() -> None:
         if integrity_json.get("ok") is not True:
             raise SystemExit("FAILED: finalization integrity JSON did not pass for valid completion fixture")
 
+        blocked_finalization_workspace = repo_dir / "security-research-blocked-verification"
+        blocked_finalization_workspace.mkdir(parents=True, exist_ok=True)
+        (blocked_finalization_workspace / "confirmed").mkdir()
+        (blocked_finalization_workspace / "docker").mkdir()
+        (blocked_finalization_workspace / "asr-config.json").write_text(
+            json.dumps({
+                "workspace_root": blocked_finalization_workspace.name,
+                "workspace_created_at": "2026-05-06T00:00:00Z",
+                "confirmed_output_dir": f"{blocked_finalization_workspace.name}/confirmed",
+            }, indent=2),
+            encoding="utf-8",
+        )
+        (blocked_finalization_workspace / "candidate-findings.md").write_text(
+            "# Candidate Findings\n\n"
+            "| Candidate ID | Suspected Weakness | Evidence So Far | Source-to-Sink Hypothesis | Docker Verification Plan | Status |\n"
+            "| --- | --- | --- | --- | --- | --- |\n"
+            "| C1 | SSRF | curl_exec sink | webhook url -> curl_exec | start runtime and test internal service | BLOCKED (Docker rate limit) |\n",
+            encoding="utf-8",
+        )
+        (blocked_finalization_workspace / "unverified-leads.md").write_text("# Unverified Leads\n\n", encoding="utf-8")
+        (blocked_finalization_workspace / "attack-surface.md").write_text(
+            "# Attack Surface Handoff\n\n## Docker Verification Status\n\n"
+            "- Running service target: BLOCKED - Docker Hub rate limit, no cached images.\n",
+            encoding="utf-8",
+        )
+        (blocked_finalization_workspace / "docker/docker-cleanliness-status.json").write_text(
+            json.dumps({"schema_version": 1, "clean": True, "strict": True}, indent=2),
+            encoding="utf-8",
+        )
+        blocked_proc = subprocess.run([
+            sys.executable,
+            str(plugin_root / "scripts/finalize_audit_workspace.py"),
+            "--workspace-dir",
+            str(blocked_finalization_workspace),
+            "--result",
+            "completed_no_confirmed_findings",
+        ], cwd=plugin_root, capture_output=True, text=True, env={**os.environ, **SKIP_DOCKER_ENV})
+        blocked_output = (blocked_proc.stdout or "") + (blocked_proc.stderr or "")
+        if blocked_proc.returncode == 0:
+            raise SystemExit("FAILED: blocked verification finalized as completed_no_confirmed_findings")
+        for expected in (
+            "Blocked Docker/runtime verification prevents completed_no_confirmed_findings",
+            "blocked_verification",
+            "docker login",
+            "rerun Docker verification",
+        ):
+            if expected not in blocked_output:
+                raise SystemExit(f"FAILED: blocked finalization output missing: {expected}\n{blocked_output}")
+        blocked_events = (blocked_finalization_workspace / "audit-events.jsonl").read_text(encoding="utf-8")
+        if "finalization_succeeded" in blocked_events:
+            raise SystemExit("FAILED: blocked verification wrote finalization_succeeded")
+        blocked_status = json.loads((blocked_finalization_workspace / "stage-status.json").read_text(encoding="utf-8"))
+        if blocked_status.get("status") != "blocked" or blocked_status.get("blocker") != "blocked_verification":
+            raise SystemExit("FAILED: blocked verification did not leave stage-status.json in blocked state")
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/assert_finalized_workspace.py"),
+            "--workspace-dir",
+            str(blocked_finalization_workspace),
+        ], plugin_root, "stage-status.json does not declare a completed workspace")
+        run([
+            sys.executable,
+            str(plugin_root / "scripts/render_handoff_summary.py"),
+            "--workspace-dir",
+            str(blocked_finalization_workspace),
+            "--repo-root",
+            str(repo_dir),
+        ], plugin_root)
+        require_text(
+            blocked_finalization_workspace / "handoff-summary.md",
+            "Blocked verification: `blocked_verification`",
+            "handoff surfaces blocked verification",
+        )
+
         # Test 1: Finalization with valid bundles succeeds
         # Remove partial/bad bundles first so only valid ones remain
         for bad in (
@@ -2799,6 +3051,7 @@ def main() -> None:
         isolated_finalizer_dir.mkdir(parents=True, exist_ok=True)
         isolated_finalizer = isolated_finalizer_dir / "finalize_audit_workspace.py"
         shutil.copy2(plugin_root / "scripts/finalize_audit_workspace.py", isolated_finalizer)
+        shutil.copy2(plugin_root / "scripts/blocked_verification.py", isolated_finalizer_dir / "blocked_verification.py")
         workspace_writer = workspace / "bin/write-audit-event.py"
         hidden_workspace_writer = workspace / "bin/write-audit-event.py.hidden-for-selftest"
         workspace_writer.rename(hidden_workspace_writer)
@@ -2851,10 +3104,16 @@ def main() -> None:
             raise SystemExit("FAILED: Claude skill sync did not copy validate_workspace_state.py")
         if not (installed_skill / "scripts/assert_finalized_workspace.py").exists():
             raise SystemExit("FAILED: Claude skill sync did not copy assert_finalized_workspace.py")
+        if not (installed_skill / "scripts/blocked_verification.py").exists():
+            raise SystemExit("FAILED: Claude skill sync did not copy blocked_verification.py")
         if not (installed_skill / "assets/tool-registry.json").exists():
             raise SystemExit("FAILED: Claude skill sync did not copy assets")
         if not (installed_skill / "assets/references/python-library-audit-playbook.md").exists():
             raise SystemExit("FAILED: Claude skill sync did not copy Python Library playbook")
+        if not (installed_skill / "assets/references/php-swoole-audit-playbook.md").exists():
+            raise SystemExit("FAILED: Claude skill sync did not copy PHP/Swoole playbook")
+        if not (installed_skill / "assets/references/docker-registry-fallbacks.example.json").exists():
+            raise SystemExit("FAILED: Claude skill sync did not copy registry fallback example")
         require_text(
             installed_skill / "SKILL.md",
             "Documents` skill",
@@ -2947,6 +3206,11 @@ def main() -> None:
         )
         require_text(
             installed_skill / "SKILL.md",
+            "php-swoole-audit-playbook.md",
+            "installed Claude skill PHP/Swoole playbook reference",
+        )
+        require_text(
+            installed_skill / "SKILL.md",
             "run_verification_case.sh",
             "installed Claude skill verification runner reference",
         )
@@ -2979,6 +3243,11 @@ def main() -> None:
             installed_skill / "SKILL.md",
             "assert-finalized-workspace.py",
             "installed Claude skill finalization integrity checker",
+        )
+        require_text(
+            installed_skill / "SKILL.md",
+            "Blocked Docker/runtime verification is not the same as",
+            "installed Claude skill blocked verification semantics",
         )
         require_text(
             installed_skill / "SKILL.md",

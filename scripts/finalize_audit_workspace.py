@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from blocked_verification import detect_blocked_verification
+
 
 VALID_RESULTS = {
     "completed_with_confirmed_bundles",
@@ -31,8 +33,17 @@ def load_json(path: Path) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
-def write_event(workspace: Path, event: str, stage: str, status: str,
-                event_status: str, message: str, **details: Any) -> None:
+def write_event(
+    workspace: Path,
+    event: str,
+    stage: str,
+    status: str,
+    event_status: str,
+    message: str,
+    blocker: str = "",
+    resume_step: str = "",
+    **details: Any,
+) -> None:
     writer = workspace / "bin" / "write-audit-event.py"
     if not writer.exists():
         writer = Path(__file__).resolve().parent / "write_audit_event.py"
@@ -51,6 +62,10 @@ def write_event(workspace: Path, event: str, stage: str, status: str,
         "--event-status", event_status,
         "--message", message,
     ]
+    if blocker:
+        cmd.extend(["--blocker", blocker])
+    if resume_step:
+        cmd.extend(["--resume-step", resume_step])
     if details:
         cmd.extend(["--details-json", json.dumps(details, ensure_ascii=False)])
     proc = subprocess.run(cmd, capture_output=True, text=True)
@@ -167,6 +182,7 @@ def main() -> int:
     result = args.result
     language = args.language
     errors: list[str] = []
+    blocked_summary: dict[str, Any] = {}
 
     write_event(workspace, "finalization_started", "finalization", "running",
                 "started", f"Completion gate started with result={result}.",
@@ -247,6 +263,22 @@ def main() -> int:
                 f"Cannot finalize with no-confirmed-findings: {failed_count} bundle(s) failed validation. "
                 "Fix or remove them before finalizing."
             )
+        blocked_summary = detect_blocked_verification(workspace)
+        if blocked_summary.get("blocked"):
+            resume_step = str(blocked_summary.get("resume_step") or "")
+            evidence = blocked_summary.get("findings") or []
+            first_evidence = ""
+            if evidence and isinstance(evidence[0], dict):
+                first_evidence = (
+                    f"{evidence[0].get('source')}:{evidence[0].get('line')} "
+                    f"{evidence[0].get('excerpt')}"
+                )
+            errors.append(
+                "Blocked Docker/runtime verification prevents completed_no_confirmed_findings. "
+                "This is blocked_verification, not a terminal no-confirmed state. "
+                f"Resume step: {resume_step or 'resolve the Docker/runtime blocker and rerun Docker verification.'} "
+                f"Evidence: {first_evidence or 'see candidate-findings.md, unverified-leads.md, or attack-surface.md.'}"
+            )
 
     # --- Step 3: Docker strict cleanliness ---
     docker_status = run_docker_verify_clean(workspace, strict=True)
@@ -264,12 +296,32 @@ def main() -> int:
     # --- Step 4: Decide pass/fail ---
     if errors:
         error_text = "; ".join(errors)
-        write_event(workspace, "finalization_failed", "finalization", "running",
-                    "failed", f"Completion gate failed: {error_text}",
-                    errors=errors, expected_result=result)
+        if blocked_summary.get("blocked"):
+            blocker = "blocked_verification"
+            resume_step = str(blocked_summary.get("resume_step") or "Resolve the Docker/runtime blocker and rerun Docker verification.")
+            write_event(
+                workspace,
+                "finalization_failed",
+                "verification",
+                "blocked",
+                "failed",
+                f"Completion gate failed: {error_text}",
+                blocker=blocker,
+                resume_step=resume_step,
+                errors=errors,
+                expected_result=result,
+                blocked_verification=blocked_summary,
+            )
+        else:
+            write_event(workspace, "finalization_failed", "finalization", "running",
+                        "failed", f"Completion gate failed: {error_text}",
+                        errors=errors, expected_result=result)
         print(f"FINALIZATION FAILED: {error_text}", file=sys.stderr)
         for err in errors:
             print(f"  - {err}", file=sys.stderr)
+        if blocked_summary.get("blocked"):
+            print("  - blocked_verification resume_step: " + str(blocked_summary.get("resume_step") or ""), file=sys.stderr)
+        refresh_handoff(workspace, repo_root)
         return 1
 
     # --- Step 5: Update stage-status.json to completed ---

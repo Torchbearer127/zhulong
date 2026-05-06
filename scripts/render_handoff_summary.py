@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from blocked_verification import detect_blocked_verification
+
 
 MAX_ROWS = 5
 
@@ -218,6 +220,7 @@ def finalization_integrity_lines(workspace: Path, status: dict[str, Any]) -> lis
     latest = latest_finalization(events)
     success = latest_success(events)
     docker_status = read_json(workspace / "docker/docker-cleanliness-status.json")
+    blocked_summary = detect_blocked_verification(workspace)
     claimed = completion_claimed(status)
     issues: list[str] = []
 
@@ -235,6 +238,9 @@ def finalization_integrity_lines(workspace: Path, status: dict[str, Any]) -> lis
             not docker_status or docker_status.get("clean") is not True or docker_status.get("strict") is not True
         ):
             issues.append("finalization_succeeded claims docker_clean=true but Docker strict cleanliness does not agree")
+    result = str(event_details(success).get("result") or status.get("result") or "").strip()
+    if result == "completed_no_confirmed_findings" and blocked_summary.get("blocked"):
+        issues.append("blocked Docker/runtime verification exists; no-confirmed completion is not terminal")
 
     if issues:
         return [
@@ -294,6 +300,29 @@ def confirmed_bundle_lines(workspace: Path) -> list[str]:
             lines.append(f"- `{rel_workspace(bundle, workspace)}` ({status}; bundle artifacts present, validation still required)")
     if len(bundles) > MAX_ROWS:
         lines.append(f"- ... {len(bundles) - MAX_ROWS} more bundle(s) omitted.")
+    return lines
+
+
+def blocked_verification_lines(workspace: Path) -> list[str]:
+    summary = detect_blocked_verification(workspace)
+    if not summary.get("blocked"):
+        return [
+            "- Blocked verification: `none_detected`",
+        ]
+    lines = [
+        "- Blocked verification: `blocked_verification`",
+        f"- Resume step: {summary.get('resume_step') or 'Resolve Docker/runtime blocker and rerun Docker verification.'}",
+    ]
+    findings = summary.get("findings") or []
+    if isinstance(findings, list):
+        for item in findings[:MAX_ROWS]:
+            if not isinstance(item, dict):
+                continue
+            lines.append(
+                f"- `{item.get('source')}:{item.get('line')}` {item.get('classification')}: {item.get('excerpt')}"
+            )
+        if len(findings) > MAX_ROWS:
+            lines.append(f"- ... {len(findings) - MAX_ROWS} more blocked-verification signal(s) omitted.")
     return lines
 
 
@@ -371,6 +400,10 @@ def render(workspace: Path, repo_root: Path, output: Path) -> str:
         "## Initial Probe Summary",
         "",
         *initial_probe_lines(initial_probes, workspace),
+        "",
+        "## Blocked Verification Status",
+        "",
+        *blocked_verification_lines(workspace),
         "",
         "## Candidate Findings",
         "",

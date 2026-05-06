@@ -9,6 +9,12 @@ before the workspace was created.
 
 - Prefer suitable local images or cached base images before pulling from the
   network.
+- If Docker Hub anonymous rate limits (`toomanyrequests` or unauthenticated pull
+  rate limit), `pull access denied`, `authentication required`, DNS/network
+  timeouts, missing images, or no cached images block runtime startup, record
+  blocked verification. The safe resume step is operator action such as
+  `docker login`, pre-pulling the required images, or configuring an approved
+  equivalent mirror, then rerunning Docker verification.
 - Use `run-verification-case.sh --pull-if-missing` only when no suitable local
   image exists and a network pull is acceptable.
 - Avoid launching duplicate `docker pull`, `docker build`, or `docker compose
@@ -178,3 +184,14 @@ to a parallel Zhulong audit or another application.
   otherwise report the ambiguity instead of guessing.
 - Cleanup is an environment hygiene step. It does not change vulnerability
   confirmation status and must not alter confirmed bundle evidence.
+
+## Registry Fallback Guidance
+
+Registry fallback is a recovery path, not a way to bypass blocked verification
+semantics. Keep fallback configuration external and reviewable; see
+`docker-registry-fallbacks.example.json` for a minimal schema. Only equivalent
+registry mirrors or explicit image mappings are allowed. Every fallback attempt
+should record original image ref, attempted image ref, registry source,
+success/failure reason, and final digest when pull succeeds. If digest or
+provenance cannot be established, mark source/runtime identity uncertain and do
+not overclaim affected versions in reports.

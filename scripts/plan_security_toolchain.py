@@ -16,6 +16,7 @@ STACK_MARKERS = {
     "rust": ["Cargo.toml", "Cargo.lock"],
     "go": ["go.mod", "go.sum"],
     "java": ["pom.xml", "build.gradle", "build.gradle.kts"],
+    "php": ["composer.json", "composer.lock"],
     "docker": ["Dockerfile", "docker-compose.yml", "compose.yml", "compose.yaml"],
 }
 
@@ -232,6 +233,19 @@ def detect_attack_surface(root: Path) -> list[str]:
         "starlette(",
         "route(",
     ]
+    php_markers = [
+        "<?php",
+        "utopia\\",
+        "utopia\\app",
+        "appwrite\\",
+        "swoole",
+        "openswoole",
+        "curl_exec",
+        "curl_setopt",
+        "graphql",
+        "router",
+        "route",
+    ]
     for path in iter_repo_files(root):
         if path.suffix in {".java", ".kt"}:
             try:
@@ -269,6 +283,33 @@ def detect_attack_surface(root: Path) -> list[str]:
             indicators.append("python-web")
             indicators.append("http-api")
             break
+    if (root / "composer.json").exists():
+        indicators.append("php")
+        if (root / "src").is_dir() or any(name in names for name in ("app", "controllers", "workers")):
+            indicators.append("php-web")
+            indicators.append("http-api")
+        try:
+            composer_text = (root / "composer.json").read_text(encoding="utf-8", errors="ignore").lower()
+        except OSError:
+            composer_text = ""
+        if any(marker in composer_text for marker in ("swoole", "openswoole", "utopia", "appwrite")):
+            indicators.append("php-swoole")
+    for path in iter_repo_files(root, {".php"}):
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore").lower()
+        except OSError:
+            continue
+        if any(marker in text for marker in php_markers):
+            indicators.append("php-web")
+            indicators.append("http-api")
+        if "swoole" in text or "openswoole" in text:
+            indicators.append("php-swoole")
+        if "curl_exec" in text or "curl_setopt" in text:
+            indicators.append("ssrf-sinks")
+        if any(item in indicators for item in ("php-web", "php-swoole")):
+            break
+    if any((root / name).exists() for name in ("docker-compose.yml", "compose.yml", "compose.yaml")):
+        indicators.append("docker-compose")
     if package_json_indicates_library(root) and "node-web" not in indicators:
         # Pure packages often have docs/api or public API folders. Directory names
         # alone are not enough to force a web route/middleware model.
@@ -335,6 +376,14 @@ def choose_tools(root: Path, stacks: list[str], attack_surface: list[str]) -> di
             plan["sast"].append("spotbugs")
         if tool_available("findsecbugs"):
             plan["sast"].append("findsecbugs")
+    if "php" in stacks:
+        if tool_available("composer"):
+            plan["dependency"].append("composer audit")
+            plan["dependency"].append("composer show --locked")
+        if tool_available("phpstan"):
+            plan["sast"].append("phpstan")
+        if tool_available("psalm"):
+            plan["sast"].append("psalm")
     if "go" in stacks:
         if tool_available("go"):
             plan["dependency"].append("go list -m all")
@@ -495,6 +544,8 @@ def specialized_playbooks(stacks: list[str], attack_surface: list[str]) -> list[
         playbooks.append("assets/references/python-web-audit-playbook.md")
     if "python-library" in attack_surface or ("python" in stacks and not any(item in attack_surface for item in ("http-api", "python-web"))):
         playbooks.append("assets/references/python-library-audit-playbook.md")
+    if "php-web" in attack_surface or "php-swoole" in attack_surface:
+        playbooks.insert(0, "assets/references/php-swoole-audit-playbook.md")
     return playbooks
 
 
@@ -535,6 +586,12 @@ def audit_focus(stacks: list[str], attack_surface: list[str]) -> list[str]:
             "Build a Python library API map: public functions/classes, extension hooks, CLI entry points, parser/renderer/serializer APIs, and caller-controlled option objects.",
             "Prioritize consumer-controlled input reaching parsing, rendering/escaping, deserialization, path/file, subprocess, network client, or unsafe-default configuration paths.",
             "For each library candidate, separate library-local behavior from consumer-impact assumptions and design a minimal Docker consumer app or script for the oracle.",
+        ])
+    if "php-web" in attack_surface or "php-swoole" in attack_surface:
+        focus.extend([
+            "Build a PHP/Swoole entry map: Utopia routes/controllers, CLI tasks, workers, queues, GraphQL handlers, and Docker Compose services.",
+            "Prioritize SSRF via curl, filesystem/storage paths, GraphQL complexity/authorization gaps, async worker trust boundaries, and CLI-only code that may or may not be HTTP-exposed.",
+            "For each PHP/Swoole candidate, trace HTTP/API/queue input -> Utopia controller or worker -> sink and record Docker runtime prerequisites before confirmation.",
         ])
     if focus:
         focus.append("Write or update <audit-workspace>/attack-surface.md before final confirmation so the review path is recoverable.")
@@ -606,6 +663,14 @@ def attack_surface_guidance(stacks: list[str], attack_surface: list[str]) -> lis
         )
         guidance.append(
             "For pure Python library/framework targets, do not force a route/method/handler table; use a library API map and keep consumer-impact claims unverified until a realistic Docker consumer reproduction proves them."
+        )
+    if "php-web" in attack_surface or "php-swoole" in attack_surface:
+        guidance.append(
+            "PHP/Swoole: inventory Utopia routes/controllers, CLI tasks, workers, queues, GraphQL handlers, and Docker Compose services in attack-surface.md."
+        )
+        append_once(minimum_fields)
+        guidance.append(
+            "For Appwrite-like monorepos, treat frontend/test package-lock files as secondary unless Node.js routes are part of the runtime being verified."
         )
     if "http-api" in attack_surface:
         guidance.append("HTTP/API: summarize route or API inventory in attack-surface.md before deep verification.")

@@ -34,6 +34,7 @@ Use this Claude Code skill when you want a repository audit workflow that is:
   - [go-web-audit-playbook.md](./assets/references/go-web-audit-playbook.md)
   - [nodejs-library-audit-playbook.md](./assets/references/nodejs-library-audit-playbook.md)
   - [nodejs-web-audit-playbook.md](./assets/references/nodejs-web-audit-playbook.md)
+  - [php-swoole-audit-playbook.md](./assets/references/php-swoole-audit-playbook.md)
   - [python-library-audit-playbook.md](./assets/references/python-library-audit-playbook.md)
   - [python-web-audit-playbook.md](./assets/references/python-web-audit-playbook.md)
 - optional vulnerability-type checklists:
@@ -104,6 +105,12 @@ default contract even when the user does not restate them:
 - Static scanning, source-to-sink reasoning, pattern matching, dependency alerts,
   and LLM analysis can only create candidates. They must not be written as
   confirmed findings unless Docker reproduction succeeds.
+- Blocked Docker/runtime verification is not the same as
+  `completed_no_confirmed_findings`. If material candidates or unverified leads
+  say `BLOCKED`, `Docker rate limit`, `pull access denied`, `authentication
+  required`, `missing image`, `runtime not started`, or equivalent Docker
+  verification blocker language, keep the workspace blocked and rerun Docker
+  verification after recovery. Do not finalize as no-confirmed.
 - Initial probe results are classification evidence only. Read
   `<audit-workspace>/evidence/initial-probes/initial-probes-summary.json` before
   interpreting raw scanner logs. Statuses such as `ran_ok`,
@@ -185,6 +192,13 @@ bash <audit-workspace>/bin/check_security_tooling.sh
 ```
 
 If the Docker gate blocks verification, stop immediately. Keep all collected artifacts under `<repo>/<audit-workspace>/`, update `<audit-workspace>/audit-log.md`, and do not execute PoCs on the host.
+If an image pull blocks verification because of Docker Hub rate limits,
+`toomanyrequests`, `pull access denied`, `authentication required`, DNS/network
+timeout, `missing image`, or no cached images, record blocked verification in
+candidate/unverified records. The resume step should be operator action such as
+`docker login`, pre-pulling the required images, or configuring an approved
+equivalent registry mirror; then rerun Docker verification, not finalization.
+Never auto-login, store credentials, or silently swap to a non-equivalent image.
 
 If Docker gate or OMC runtime gate pauses the workflow, do not fail silently. Print a clear terminal pause block that includes:
 
@@ -225,8 +239,8 @@ python3 <audit-workspace>/bin/plan-security-toolchain.py --target-dir <repo-root
 ```
 
 If the plan prints `specialized_playbooks`, use those playbooks as focused
-source-to-sink guidance for this audit. For Java Web, Go Web, Node.js Web, and
-Python Web repositories, create or update `<audit-workspace>/attack-surface.md`
+source-to-sink guidance for this audit. For Java Web, Go Web, Node.js Web,
+PHP/Swoole, and Python Web repositories, create or update `<audit-workspace>/attack-surface.md`
 with the route/handler map, trust boundaries, authentication requirements, and
 high-risk sinks before turning candidates into confirmed findings. For pure
 Node.js or Python library/framework repositories, use the library playbooks
@@ -242,6 +256,8 @@ status. For library playbooks, each entry should include public API or CLI,
 input shape, caller-controlled options, transformation path, high-risk sink,
 consumer impact assumption, and current verification status. Do not use
 `attack-surface.md` as a DOCX source or as a shortcut into `confirmed/`.
+For Appwrite-like PHP/Swoole monorepos, treat frontend/test package-lock files
+as secondary unless Node.js services are part of the verified runtime.
 
 If the plan prints `local_knowledge_checklists`, read only the relevant local
 checklists as concise source-to-sink and Docker-verification aids. These files
@@ -334,6 +350,14 @@ accepts a new baseline before verification resumes. Use
 cache ID is proven to belong to this isolated audit. Review the plan before
 adding `--apply`, and never manually mark the audit completed while strict
 Docker cleanliness is blocked.
+
+Registry fallback is optional and operator-configured. If used, keep the
+fallback list outside core logic, for example based on
+`assets/references/docker-registry-fallbacks.example.json`. Only equivalent
+mirrors or explicit image mappings are allowed. Record original image ref,
+attempted image ref, registry source, success/failure reason, and final digest
+when a pull succeeds. If digest or provenance is uncertain, mark source/runtime
+identity uncertain and do not overclaim affected versions.
 
 After a vulnerability is first confirmed, do not stop at the weakest trigger and immediately settle on a low or medium rating.
 Run at least one deliberate severity-escalation pass that tries to verify stronger real-world impact inside Docker before final scoring.
@@ -454,6 +478,9 @@ manually edited `stage-status.json` or a hand-written summary is not completion.
   the workspace as blocked/failed rather than completed. For
   `completed_no_confirmed_findings`, no confirmed findings is a successful
   result only after finalization integrity passes.
+- If blocked Docker/runtime verification remains in candidate-findings.md,
+  unverified-leads.md, attack-surface.md, or stage-status.json, the completion
+  gate must fail rather than write `finalization_succeeded`.
 
 ## Output Language
 
@@ -466,11 +493,13 @@ manually edited `stage-status.json` or a hand-written summary is not completion.
 - [claude-code-invocation-template.md](./assets/references/claude-code-invocation-template.md)
 - [document-output-stability.md](./assets/references/document-output-stability.md)
 - [docker-resource-hygiene.md](./assets/references/docker-resource-hygiene.md)
+- [docker-registry-fallbacks.example.json](./assets/references/docker-registry-fallbacks.example.json)
 - [recommended-security-tooling.md](./assets/references/recommended-security-tooling.md)
 - [java-web-audit-playbook.md](./assets/references/java-web-audit-playbook.md)
 - [go-web-audit-playbook.md](./assets/references/go-web-audit-playbook.md)
 - [nodejs-library-audit-playbook.md](./assets/references/nodejs-library-audit-playbook.md)
 - [nodejs-web-audit-playbook.md](./assets/references/nodejs-web-audit-playbook.md)
+- [php-swoole-audit-playbook.md](./assets/references/php-swoole-audit-playbook.md)
 - [python-library-audit-playbook.md](./assets/references/python-library-audit-playbook.md)
 - [python-web-audit-playbook.md](./assets/references/python-web-audit-playbook.md)
 - [ssrf-checklist.md](./assets/references/ssrf-checklist.md)

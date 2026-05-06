@@ -418,6 +418,7 @@ write_gitleaks_metadata() {
 import hashlib
 import json
 import sys
+from collections import Counter
 from pathlib import Path
 
 report_path = Path(sys.argv[1])
@@ -463,6 +464,26 @@ def first_present(item, keys):
             return item.get(key)
     return None
 
+def path_category(path_value):
+    path = safe_path(path_value).lower()
+    parts = [part for part in path.split("/") if part]
+    joined = "/".join(parts)
+    if any(part in {"tests", "test", "__tests__"} for part in parts):
+        return "tests"
+    if any(part in {"docs", "doc", "documentation"} for part in parts):
+        return "docs"
+    if any(part in {"examples", "example", "sample", "samples"} for part in parts):
+        return "examples"
+    if any(part in {"fixtures", "fixture", "mocks", "mock"} for part in parts):
+        return "fixtures"
+    if "openapi" in joined or "open-api" in joined or "swagger" in joined or "spec" in parts or "specs" in parts:
+        return "openapi_specs"
+    if parts and parts[0] in {"src", "lib", "app"}:
+        return parts[0]
+    if any(part in {"config", "configs"} for part in parts):
+        return "config"
+    return parts[0] if parts else "unknown"
+
 try:
     report_data = json.loads(report_path.read_text(encoding="utf-8")) if report_path.exists() else []
 except Exception:
@@ -470,25 +491,63 @@ except Exception:
 
 findings = [item for item in as_list(report_data) if isinstance(item, dict)]
 samples = []
-for item in findings[:5]:
+seen_sample_keys = set()
+sample_candidates = []
+for item in findings:
+    rule = short_text(first_present(item, ("RuleID", "RuleId", "rule_id", "ruleID", "rule")))
+    category = path_category(first_present(item, ("File", "file", "Path", "path")))
+    key = (rule, category)
+    if key in seen_sample_keys:
+        continue
+    seen_sample_keys.add(key)
+    sample_candidates.append(item)
+    if len(sample_candidates) >= 5:
+        break
+if len(sample_candidates) < 5:
+    sample_candidates.extend(findings[: 5 - len(sample_candidates)])
+
+for item in sample_candidates[:5]:
     sample = {
         "rule_id": short_text(first_present(item, ("RuleID", "RuleId", "rule_id", "ruleID", "rule"))),
         "description": short_text(first_present(item, ("Description", "description"))),
         "file": safe_path(first_present(item, ("File", "file", "Path", "path"))),
+        "path_category": path_category(first_present(item, ("File", "file", "Path", "path"))),
         "line": first_present(item, ("StartLine", "Line", "line", "LineNumber", "line_number")),
         "commit": short_text(first_present(item, ("Commit", "commit")), 40),
     }
     secret_material = first_present(item, ("Secret", "secret", "Match", "match"))
     if secret_material not in (None, ""):
         secret_text = str(secret_material)
+        sample["secret_length"] = len(secret_text)
         sample["secret_redacted"] = f"<redacted length={len(secret_text)}>"
         sample["secret_sha256_12"] = hashlib.sha256(secret_text.encode("utf-8", errors="ignore")).hexdigest()[:12]
     samples.append({key: value for key, value in sample.items() if value not in (None, "")})
+
+rule_counts = Counter()
+category_counts = Counter()
+rule_category_counts = Counter()
+commit_counts = Counter()
+for item in findings:
+    rule = short_text(first_present(item, ("RuleID", "RuleId", "rule_id", "ruleID", "rule"))) or "unknown"
+    file_value = first_present(item, ("File", "file", "Path", "path"))
+    category = path_category(file_value)
+    commit = short_text(first_present(item, ("Commit", "commit")), 40) or "unknown"
+    rule_counts[rule] += 1
+    category_counts[category] += 1
+    rule_category_counts[f"{rule}@{category}"] += 1
+    commit_counts[commit] += 1
+
+def top(counter, limit=10):
+    return [{"key": key, "count": count} for key, count in counter.most_common(limit)]
 
 metadata = {
     "finding_count": len(findings),
     "sample_limit": 5,
     "sample_findings": samples,
+    "top_rule_ids": top(rule_counts),
+    "path_category_counts": top(category_counts),
+    "top_rule_path_categories": top(rule_category_counts),
+    "top_commits": top(commit_counts, 5),
     "raw_log_path": log_rel,
     "json_report_path": report_rel if report_path.exists() else "",
     "redaction": "Full Secret and Match values are omitted; summaries include only metadata and optional short hashes.",
