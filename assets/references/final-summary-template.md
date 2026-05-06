@@ -18,6 +18,8 @@ Use this structure for the final terminal / chat summary after an audit run fini
 - Docker-confirmed evidence with incomplete bundle artifacts must be reported as `Docker-confirmed but bundle incomplete`, not as a completed confirmed deliverable.
 - If validation fails, list the validation failure and remediation step instead of claiming the bundle is ready.
 - When no confirmed vulnerabilities exist, write `确认漏洞：无` / `Confirmed vulnerabilities: none` instead of creating a fake confirmed bundle.
+- After the completion gate passes, keep a stable workspace-level `SUMMARY.md` (or `final-audit-summary.md`) under `<audit-workspace>/`. Do not leave the final human-facing summary only in chat output or timestamped terminal logs.
+- Before writing the final summary, refresh or explicitly resolve stale blocker wording in lightweight files. `attack-surface.md`, `candidate-findings.md`, `unverified-leads.md`, and `handoff-summary.md` must not still claim `blocked_no_docker`, `NOT STARTED`, or `image pull required` after the summary claims Docker verification succeeded.
 
 ## Chinese Template
 
@@ -43,6 +45,7 @@ Docker-confirmed but bundle incomplete：
 - 最终提交材料位于 <audit-workspace>/confirmed/，每个确认漏洞一个独立文件夹。
 - 误报、非安全缺陷和未确认线索仅作为工作区记录保留，不属于最终确认漏洞交付。
 - 如果本轮做了清理，可补一句 Docker 清理结果。
+- 本总结已保存为 <audit-workspace>/SUMMARY.md，后续交叉审计不需要从聊天日志中恢复最终结论。
 ```
 
 ## English Template
@@ -69,4 +72,5 @@ Additional notes:
 - Final deliverables are under <audit-workspace>/confirmed/, with one folder per confirmed vulnerability.
 - False positives, non-security defects, and unverified leads are retained only as workspace records, not final confirmed deliverables.
 - If cleanup was performed in this run, optionally add one short Docker cleanup note.
+- This summary is saved as <audit-workspace>/SUMMARY.md so later cross-audits do not need to recover the final conclusion from chat logs.
 ```

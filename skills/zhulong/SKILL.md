@@ -111,6 +111,10 @@ default contract even when the user does not restate them:
   required`, `missing image`, `runtime not started`, or equivalent Docker
   verification blocker language, keep the workspace blocked and rerun Docker
   verification after recovery. Do not finalize as no-confirmed.
+- If a high-confidence unverified lead still has blocked/no-Docker verification,
+  record `Material blocker?`, `Default runtime scope?`, and `Why completion is
+  still safe?`. Without that materiality rationale, do not finalize as
+  `completed_no_confirmed_findings`.
 - Initial probe results are classification evidence only. Read
   `<audit-workspace>/evidence/initial-probes/initial-probes-summary.json` before
   interpreting raw scanner logs. Statuses such as `ran_ok`,
@@ -447,6 +451,7 @@ Reviewer-facing supplements should not stop at "technical trigger" when the clai
 The final CVSS and severity label should reflect the strongest verified oracle from the severity-escalation pass, not merely the first technical trigger that proved the bug exists.
 
 Final summaries must explicitly distinguish confirmed vulnerabilities, false positives / non-security defects, and unverified leads. If Docker confirmation did not complete, say that no vulnerability was confirmed for that lead, identify the missing evidence, and give the safe Docker-only resume step.
+Save the final human-facing summary as `<audit-workspace>/SUMMARY.md` or `<audit-workspace>/final-audit-summary.md`; do not leave it only in chat output or timestamped terminal logs. Before writing that summary, refresh or explicitly resolve stale blocker wording in `attack-surface.md`, `candidate-findings.md`, `unverified-leads.md`, and `handoff-summary.md` so they do not still claim `blocked_no_docker`, `NOT STARTED`, or `image pull required` after the summary claims Docker verification succeeded.
 
 6. Run the completion gate before writing the final summary:
 

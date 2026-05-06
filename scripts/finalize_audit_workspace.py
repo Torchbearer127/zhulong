@@ -147,6 +147,52 @@ def refresh_handoff(workspace: Path, repo_root: Path) -> bool:
     return proc.returncode == 0
 
 
+def ensure_workspace_summary(
+    workspace: Path,
+    *,
+    result: str,
+    validated_count: int,
+    docker_clean: bool,
+    docker_strict: bool,
+    language: str,
+) -> Path:
+    summary_path = workspace / "SUMMARY.md"
+    placeholder_marker = "<!-- zhulong_completion_summary_placeholder: 1 -->"
+    if summary_path.exists() and placeholder_marker not in summary_path.read_text(encoding="utf-8", errors="ignore"):
+        return summary_path
+    config = load_json(workspace / "asr-config.json")
+    configured_language = str(config.get("summary_language") or config.get("output_language") or "").strip()
+    effective_language = configured_language if language == "auto" and configured_language else language
+    if effective_language == "en-US":
+        content = (
+            f"{placeholder_marker}\n"
+            "# Audit Summary\n\n"
+            "This workspace passed the Zhulong completion gate. This file is a stable workspace-level "
+            "summary placeholder; expand it with the final human-facing audit summary after finalization.\n\n"
+            f"- Result: `{result}`\n"
+            f"- Validated confirmed bundles: `{validated_count}`\n"
+            f"- Docker clean: `{str(docker_clean).lower()}`\n"
+            f"- Docker strict clean: `{str(docker_strict).lower()}`\n"
+            "- Confirmed-output guardrail: scanner-only, dependency-only, static-only, unverified, blocked, "
+            "or timed-out findings are not confirmed vulnerabilities.\n"
+        )
+    else:
+        content = (
+            f"{placeholder_marker}\n"
+            "# 审计总结\n\n"
+            "该工作区已通过 Zhulong 完成门控。本文件是稳定的 workspace-level 总结占位；"
+            "最终化后请在这里补充面向人的审计总结，不要只保留在聊天或终端日志中。\n\n"
+            f"- 完成结果：`{result}`\n"
+            f"- 已验证 confirmed bundles：`{validated_count}`\n"
+            f"- Docker clean：`{str(docker_clean).lower()}`\n"
+            f"- Docker strict clean：`{str(docker_strict).lower()}`\n"
+            "- confirmed-only 约束：scanner-only、dependency-only、static-only、unverified、blocked、"
+            "timed-out 结果都不是确认漏洞。\n"
+        )
+    summary_path.write_text(content, encoding="utf-8")
+    return summary_path
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -331,6 +377,16 @@ def main() -> int:
                 docker_clean=docker_clean,
                 docker_skipped=docker_status.get("skipped", False))
 
+    docker_strict = bool(docker_status.get("strict", True))
+    summary_path = ensure_workspace_summary(
+        workspace,
+        result=result,
+        validated_count=validated_count,
+        docker_clean=bool(docker_clean),
+        docker_strict=docker_strict,
+        language=language,
+    )
+
     # --- Step 6: Refresh handoff-summary.md ---
     refresh_handoff(workspace, repo_root)
 
@@ -338,6 +394,7 @@ def main() -> int:
     print(f"result={result}")
     print(f"validated_bundles={validated_count}")
     print(f"docker_clean={str(docker_clean).lower()}")
+    print(f"summary={summary_path.relative_to(workspace).as_posix()}")
     print(f"stage=completed")
     print(f"FINALIZATION PASSED: {workspace}")
     return 0

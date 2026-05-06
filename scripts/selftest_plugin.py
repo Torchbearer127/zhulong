@@ -410,6 +410,16 @@ def main() -> None:
     )
     require_text(
         plugin_root / "templates/claude-skill/SKILL.md",
+        "Material blocker?",
+        "Claude skill template unverified lead materiality requirement",
+    )
+    require_text(
+        plugin_root / "templates/claude-skill/SKILL.md",
+        "<audit-workspace>/SUMMARY.md",
+        "Claude skill template stable workspace summary requirement",
+    )
+    require_text(
+        plugin_root / "templates/claude-skill/SKILL.md",
         "manually edited `stage-status.json`",
         "Claude skill template manual completion guardrail",
     )
@@ -440,6 +450,11 @@ def main() -> None:
     )
     require_text(
         plugin_root / "assets/references/unverified-lead-template.md",
+        "Why completion is still safe?",
+        "unverified lead template materiality rationale field",
+    )
+    require_text(
+        plugin_root / "assets/references/unverified-lead-template.md",
         "Confirmed-output guardrail",
         "unverified lead template confirmed-output guardrail field",
     )
@@ -457,6 +472,11 @@ def main() -> None:
         plugin_root / "assets/references/final-summary-template.md",
         "high-confidence-but-not-Docker-confirmed leads",
         "final summary high-confidence unverified section",
+    )
+    require_text(
+        plugin_root / "assets/references/final-summary-template.md",
+        "<audit-workspace>/SUMMARY.md",
+        "final summary stable workspace summary requirement",
     )
     require_text(
         plugin_root / "templates/claude-skill/SKILL.md",
@@ -512,6 +532,11 @@ def main() -> None:
         plugin_root / "scripts/finalize_audit_workspace.py",
         "Blocked Docker/runtime verification prevents completed_no_confirmed_findings",
         "finalization blocks blocked verification no-confirmed success",
+    )
+    require_text(
+        plugin_root / "scripts/finalize_audit_workspace.py",
+        "zhulong_completion_summary_placeholder",
+        "finalization writes stable summary placeholder",
     )
     require_text(
         plugin_root / "scripts/manage_docker_resources.py",
@@ -1711,6 +1736,11 @@ def main() -> None:
             "High-Confidence-Unverified?",
             "bootstrapped unverified leads stable columns",
         )
+        require_text(
+            workspace / "unverified-leads.md",
+            "Why completion is still safe?",
+            "bootstrapped unverified leads materiality columns",
+        )
         if not (workspace / "stage-status.json").exists():
             raise SystemExit("FAILED: bootstrapped workspace is missing stage-status.json")
         if not (workspace / "audit-events.jsonl").exists():
@@ -2831,6 +2861,110 @@ def main() -> None:
             "handoff surfaces blocked verification",
         )
 
+        stale_blocker_workspace = repo_dir / "security-research-stale-blocker"
+        stale_blocker_workspace.mkdir(parents=True, exist_ok=True)
+        (stale_blocker_workspace / "confirmed").mkdir()
+        (stale_blocker_workspace / "docker").mkdir()
+        (stale_blocker_workspace / "asr-config.json").write_text(
+            json.dumps({
+                "workspace_root": stale_blocker_workspace.name,
+                "workspace_created_at": "2026-05-06T00:00:00Z",
+                "confirmed_output_dir": f"{stale_blocker_workspace.name}/confirmed",
+            }, indent=2),
+            encoding="utf-8",
+        )
+        (stale_blocker_workspace / "candidate-findings.md").write_text("# Candidate Findings\n\n", encoding="utf-8")
+        (stale_blocker_workspace / "unverified-leads.md").write_text("# Unverified Leads\n\n", encoding="utf-8")
+        (stale_blocker_workspace / "attack-surface.md").write_text(
+            "# Attack Surface Handoff\n\n## Docker Verification Status\n\n"
+            "- Docker gate: ready\n"
+            "- Running service target: NOT STARTED (images being pulled)\n"
+            "- Still blocked or missing: Image pull required\n",
+            encoding="utf-8",
+        )
+        stale_proc = subprocess.run([
+            sys.executable,
+            str(plugin_root / "scripts/finalize_audit_workspace.py"),
+            "--workspace-dir",
+            str(stale_blocker_workspace),
+            "--result",
+            "completed_no_confirmed_findings",
+        ], cwd=plugin_root, capture_output=True, text=True, env={**os.environ, **SKIP_DOCKER_ENV})
+        stale_output = (stale_proc.stdout or "") + (stale_proc.stderr or "")
+        if stale_proc.returncode == 0:
+            raise SystemExit("FAILED: stale attack-surface Docker blocker finalized as no-confirmed")
+        for expected in ("images being pulled", "Blocked Docker/runtime verification prevents completed_no_confirmed_findings"):
+            if expected not in stale_output:
+                raise SystemExit(f"FAILED: stale blocker finalization output missing: {expected}\n{stale_output}")
+
+        high_confidence_blocked_workspace = repo_dir / "security-research-high-confidence-blocked"
+        high_confidence_blocked_workspace.mkdir(parents=True, exist_ok=True)
+        (high_confidence_blocked_workspace / "confirmed").mkdir()
+        (high_confidence_blocked_workspace / "asr-config.json").write_text(
+            json.dumps({
+                "workspace_root": high_confidence_blocked_workspace.name,
+                "workspace_created_at": "2026-05-06T00:00:00Z",
+                "confirmed_output_dir": f"{high_confidence_blocked_workspace.name}/confirmed",
+            }, indent=2),
+            encoding="utf-8",
+        )
+        (high_confidence_blocked_workspace / "candidate-findings.md").write_text("# Candidate Findings\n\n", encoding="utf-8")
+        (high_confidence_blocked_workspace / "attack-surface.md").write_text("# Attack Surface Handoff\n\n", encoding="utf-8")
+        (high_confidence_blocked_workspace / "unverified-leads.md").write_text(
+            "# Unverified Leads\n\n"
+            "| Lead ID | Suspected Weakness | Evidence So Far | Missing Evidence | Docker Confirmation Status | Safe Resume Step | High-Confidence-Unverified? |\n"
+            "| --- | --- | --- | --- | --- | --- | --- |\n"
+            "| U1 | Optional Kafka TLS | rejectUnauthorized:false | deployment materiality | blocked_no_docker | configure Kafka and rerun Docker verification | Yes |\n",
+            encoding="utf-8",
+        )
+        high_conf_blocked_proc = subprocess.run([
+            sys.executable,
+            str(plugin_root / "scripts/finalize_audit_workspace.py"),
+            "--workspace-dir",
+            str(high_confidence_blocked_workspace),
+            "--result",
+            "completed_no_confirmed_findings",
+        ], cwd=plugin_root, capture_output=True, text=True, env={**os.environ, **SKIP_DOCKER_ENV})
+        high_conf_output = (high_conf_blocked_proc.stdout or "") + (high_conf_blocked_proc.stderr or "")
+        if high_conf_blocked_proc.returncode == 0:
+            raise SystemExit("FAILED: high-confidence blocked lead without materiality finalized as no-confirmed")
+        if "Material blocker?" not in high_conf_output:
+            raise SystemExit("FAILED: high-confidence blocked lead failure did not request materiality rationale")
+
+        high_confidence_safe_workspace = repo_dir / "security-research-high-confidence-safe"
+        high_confidence_safe_workspace.mkdir(parents=True, exist_ok=True)
+        (high_confidence_safe_workspace / "confirmed").mkdir()
+        (high_confidence_safe_workspace / "asr-config.json").write_text(
+            json.dumps({
+                "workspace_root": high_confidence_safe_workspace.name,
+                "workspace_created_at": "2026-05-06T00:00:00Z",
+                "confirmed_output_dir": f"{high_confidence_safe_workspace.name}/confirmed",
+            }, indent=2),
+            encoding="utf-8",
+        )
+        (high_confidence_safe_workspace / "candidate-findings.md").write_text("# Candidate Findings\n\n", encoding="utf-8")
+        (high_confidence_safe_workspace / "attack-surface.md").write_text("# Attack Surface Handoff\n\n", encoding="utf-8")
+        (high_confidence_safe_workspace / "unverified-leads.md").write_text(
+            "# Unverified Leads\n\n"
+            "| Lead ID | Suspected Weakness | Evidence So Far | Missing Evidence | Docker Confirmation Status | Safe Resume Step | High-Confidence-Unverified? | Material blocker? | Default runtime scope? | Why completion is still safe? |\n"
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n"
+            "| U1 | Optional Kafka TLS | rejectUnauthorized:false | deployment materiality | blocked_no_docker | configure Kafka and rerun Docker verification | Yes | No | optional integration | Kafka is disabled in default runtime and this is a non-material optional integration follow-up. |\n",
+            encoding="utf-8",
+        )
+        run_with_env([
+            sys.executable,
+            str(plugin_root / "scripts/finalize_audit_workspace.py"),
+            "--workspace-dir",
+            str(high_confidence_safe_workspace),
+            "--result",
+            "completed_no_confirmed_findings",
+        ], plugin_root, SKIP_DOCKER_ENV)
+        require_text(
+            high_confidence_safe_workspace / "SUMMARY.md",
+            "completed_no_confirmed_findings",
+            "finalization creates stable workspace SUMMARY.md",
+        )
+
         # Test 1: Finalization with valid bundles succeeds
         # Remove partial/bad bundles first so only valid ones remain
         for bad in (
@@ -2888,6 +3022,11 @@ def main() -> None:
             "--workspace-dir",
             str(workspace),
         ], plugin_root)
+        require_text(
+            workspace / "SUMMARY.md",
+            "completed_with_confirmed_bundles",
+            "bundle finalization writes stable workspace SUMMARY.md",
+        )
         # Test 2: Finalization with no confirmed bundles succeeds under completed_no_confirmed_findings
         # Reset stage-status back to running for next test
         write_event_cmd = [
@@ -2922,6 +3061,11 @@ def main() -> None:
             raise SystemExit("FAILED: no-finding handoff still shows stale initial_probing")
         if "running" in no_finding_handoff.split("Status:")[1].split("\n")[0] if "Status:" in no_finding_handoff else "":
             raise SystemExit("FAILED: no-finding handoff still reports running status")
+        require_text(
+            workspace / "SUMMARY.md",
+            "completed_no_confirmed_findings",
+            "no-finding finalization updates generated SUMMARY.md",
+        )
         run([
             sys.executable,
             str(workspace / "bin/assert-finalized-workspace.py"),
@@ -3168,6 +3312,16 @@ def main() -> None:
             installed_skill / "SKILL.md",
             "Final summaries must explicitly distinguish confirmed vulnerabilities",
             "installed Claude skill final summary triage contract",
+        )
+        require_text(
+            installed_skill / "SKILL.md",
+            "Material blocker?",
+            "installed Claude skill unverified lead materiality requirement",
+        )
+        require_text(
+            installed_skill / "SKILL.md",
+            "<audit-workspace>/SUMMARY.md",
+            "installed Claude skill stable workspace summary requirement",
         )
         require_text(
             installed_skill / "SKILL.md",

@@ -20,11 +20,22 @@ PULL_BLOCKER_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("registry_auth_required", re.compile(r"authentication required|authorization failed|not authorized", re.I)),
     ("missing_image", re.compile(r"missing image|blocked_missing_image|no cached images?|image .* not found", re.I)),
     ("runtime_not_started", re.compile(r"runtime not started|running service target:\s*blocked|docker verification blocked", re.I)),
+    ("stale_or_unresolved_image_pull", re.compile(r"running service target:\s*not started.*images? being pulled|image pull required", re.I)),
     ("network_timeout", re.compile(r"i/o timeout|context deadline exceeded|temporary failure in name resolution|no such host|network.*timeout|dns.*(timeout|failure|resolution)", re.I)),
 ]
 
 GENERIC_BLOCKED_PATTERN = re.compile(r"\bBLOCKED\b")
+LOWER_BLOCKED_PATTERN = re.compile(r"\bblocked[_ -]no[_ -]docker\b|\bblocked[_ -]verification\b", re.I)
 DOCKER_CONTEXT_PATTERN = re.compile(r"docker|runtime|verification|image|pull|registry|compose|service target", re.I)
+HIGH_CONFIDENCE_YES_PATTERN = re.compile(
+    r"high[- ]confidence[- ]unverified\?\s*(?:\||:)?\s*yes|\|\s*yes\s*(?:\([^|]*\))?\s*\|?\s*$",
+    re.I,
+)
+MATERIALITY_MARKER_PATTERN = re.compile(
+    r"material blocker\?|default runtime scope\?|why completion is still safe\?|materiality|non[- ]material|not material|optional integration|out[- ]of[- ]scope optional",
+    re.I,
+)
+MATERIAL_NO_PATTERN = re.compile(r"material blocker\?\s*(?:\||:)?\s*no|\bnon[- ]material\b|\bnot material\b", re.I)
 
 
 def read_text(path: Path) -> str:
@@ -69,6 +80,11 @@ def recovery_step(label: str) -> str:
             "Required Docker image is missing. Build or pre-pull the exact required image, record its digest/provenance, "
             "then rerun Docker verification."
         )
+    if label == "high_confidence_blocked_without_materiality":
+        return (
+            "A high-confidence unverified lead still has blocked/no-Docker verification without materiality rationale. "
+            "Add Material blocker?, Default runtime scope?, and Why completion is still safe? rationale, or resume Docker verification."
+        )
     if label == "network_timeout":
         return (
             "Docker image pull appears blocked by network/DNS timeout. Fix network access or configure an approved mirror, "
@@ -77,13 +93,53 @@ def recovery_step(label: str) -> str:
     return "Resolve the Docker/runtime blocker, start the target runtime, rerun Docker verification, and only then retry finalization."
 
 
+def markdown_cells(line: str) -> list[str]:
+    stripped = line.strip()
+    if not stripped.startswith("|") or not stripped.endswith("|"):
+        return []
+    return [cell.strip() for cell in stripped.strip("|").split("|")]
+
+
+def has_materiality_rationale(line: str) -> bool:
+    normalized = line.strip()
+    if MATERIAL_NO_PATTERN.search(normalized) and MATERIALITY_MARKER_PATTERN.search(normalized):
+        return True
+    cells = markdown_cells(normalized)
+    if len(cells) >= 10:
+        material = cells[7].lower()
+        runtime_scope = cells[8].strip()
+        rationale = cells[9].strip()
+        return material in {"no", "n", "false"} and bool(runtime_scope) and bool(rationale)
+    return False
+
+
+def high_confidence_yes(line: str) -> bool:
+    normalized = line.strip()
+    if HIGH_CONFIDENCE_YES_PATTERN.search(normalized):
+        return True
+    cells = markdown_cells(normalized)
+    if len(cells) >= 7:
+        return cells[6].strip().lower().startswith("yes")
+    return False
+
+
 def interesting_line(line: str) -> tuple[str, str]:
     normalized = line.strip()
     if not normalized:
         return "", ""
+    if LOWER_BLOCKED_PATTERN.search(normalized) and has_materiality_rationale(normalized):
+        return "", ""
+    if (
+        LOWER_BLOCKED_PATTERN.search(normalized)
+        and high_confidence_yes(normalized)
+        and not has_materiality_rationale(normalized)
+    ):
+        return "high_confidence_blocked_without_materiality", recovery_step("high_confidence_blocked_without_materiality")
     label, step = classify_pull_blocker(normalized)
     if label:
         return label, step
+    if LOWER_BLOCKED_PATTERN.search(normalized) and DOCKER_CONTEXT_PATTERN.search(normalized):
+        return "docker_verification_blocked", recovery_step("docker_verification_blocked")
     if GENERIC_BLOCKED_PATTERN.search(normalized) and DOCKER_CONTEXT_PATTERN.search(normalized):
         return "docker_verification_blocked", recovery_step("docker_verification_blocked")
     return "", ""
