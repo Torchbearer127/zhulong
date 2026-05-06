@@ -105,8 +105,10 @@ For a target Compose project that this audit explicitly started, pass the exact
 project name to adopt its post-baseline resources. If the Compose file pulled
 service images that do not carry Compose labels, adopt only the exact image refs
 that were absent from the baseline and are known to belong to this audit. If
-Docker BuildKit cache remains, adopt build-cache cleanup only after reviewing
-that the new cache records belong to this isolated audit run:
+Docker BuildKit cache remains, it is review-only by default and cannot be auto-deleted safely.
+BuildKit records often lack enough ownership metadata to distinguish this audit
+from another build. Adopt build-cache cleanup only after reviewing that exact
+cache records belong to this isolated audit run:
 
 ```bash
 python3 <audit-workspace>/bin/manage-docker-resources.py \
@@ -114,7 +116,8 @@ python3 <audit-workspace>/bin/manage-docker-resources.py \
   --cleanup-created \
   --adopt-compose-project "$ZHULONG_COMPOSE_PROJECT" \
   --adopt-image-ref mysql:5.7 \
-  --adopt-build-cache
+  --adopt-build-cache \
+  --adopt-build-cache-id <cache-id>
 ```
 
 Review the plan before adding `--apply`. Adoption never bypasses the baseline:
@@ -137,9 +140,10 @@ This writes:
 
 `clean=true` with `--strict` means the Docker state has no current-workspace
 owned resources and no post-baseline unattributed resources. If `clean=false`,
-the final summary should report the cleanup blocker and safe resume command.
-Unattributed resources are never auto-deleted because they may belong to a
-parallel Zhulong audit or another application.
+the workspace must remain blocked, the final summary should report the cleanup
+blocker and safe resume command, and the agent must not manually mark the audit
+completed. Unattributed resources are never auto-deleted because they may belong
+to a parallel Zhulong audit or another application.
 
 ## Safety Rules
 
@@ -153,6 +157,10 @@ parallel Zhulong audit or another application.
 - BuildKit cache is also baseline-aware. It is review-only by default and can be
   cleaned only after `--adopt-build-cache --adopt-build-cache-id <cache-id>`;
   the helper uses an exact cache-id filter rather than broad cache cleanup.
+- If strict verification is blocked by unattributed BuildKit cache, either
+  resolve the exact records manually, rerun the helper with exact cache-ID
+  adoption only for records proven to belong to this audit, or have the operator
+  deliberately accept a new baseline before verification resumes.
 - Running containers are skipped by default. Stop them deliberately only after
   confirming they belong to this audit.
 - Target project Docker Compose resources often do not carry Zhulong labels. The

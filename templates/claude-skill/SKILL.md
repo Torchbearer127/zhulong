@@ -34,6 +34,7 @@ Use this Claude Code skill when you want a repository audit workflow that is:
   - [go-web-audit-playbook.md](./assets/references/go-web-audit-playbook.md)
   - [nodejs-library-audit-playbook.md](./assets/references/nodejs-library-audit-playbook.md)
   - [nodejs-web-audit-playbook.md](./assets/references/nodejs-web-audit-playbook.md)
+  - [python-library-audit-playbook.md](./assets/references/python-library-audit-playbook.md)
   - [python-web-audit-playbook.md](./assets/references/python-web-audit-playbook.md)
 - optional vulnerability-type checklists:
   - [ssrf-checklist.md](./assets/references/ssrf-checklist.md)
@@ -49,6 +50,7 @@ Use this Claude Code skill when you want a repository audit workflow that is:
   - [validate_all_report_bundles.py](./scripts/validate_all_report_bundles.py)
 - completion gate:
   - [finalize_audit_workspace.py](./scripts/finalize_audit_workspace.py)
+  - [assert_finalized_workspace.py](./scripts/assert_finalized_workspace.py)
 
 ## Plugin-Owned Hard Constraints
 
@@ -88,6 +90,10 @@ default contract even when the user does not restate them:
 - Prefer `gh` for GitHub repositories, advisories, issues, pull requests,
   commits, and releases. Do not execute `web_search`, `Search(...)`,
   `Fetch(...)`, or `WebFetch(...)` as Bash commands.
+- If `git clone` fails and a GitHub archive or `gh api` fallback is used,
+  record the exact source commit SHA and archive source in `fingerprint.md`.
+  Archive fallback without an exact commit identity is not acceptable for final
+  source/runtime claims.
 - Before multi-agent execution, run the OMC runtime gate. If it reports
   `single_agent_only`, continue single-agent. If it reports `cleanup_needed`,
   show suspect processes or sockets for manual review; never auto-kill teammate
@@ -165,6 +171,11 @@ If a manual fallback is truly needed, do not call `./scripts/prepare_target_repo
 bash "$HOME/.claude/skills/zhulong/scripts/asr_start.sh" --source <local-path-or-repo-url>
 ```
 
+If `git clone` fails, a `gh api` or source-archive fallback is acceptable only
+when the exact commit SHA is recorded. Update `fingerprint.md` with the archive
+URL/source, resolved commit SHA, and any runtime/source alignment caveat before
+verification continues.
+
 2. Check Docker gate, runtime, and tooling capability:
 
 ```bash
@@ -218,10 +229,10 @@ source-to-sink guidance for this audit. For Java Web, Go Web, Node.js Web, and
 Python Web repositories, create or update `<audit-workspace>/attack-surface.md`
 with the route/handler map, trust boundaries, authentication requirements, and
 high-risk sinks before turning candidates into confirmed findings. For pure
-Node.js library/package repositories, use the Node.js Library playbook instead
-of forcing web route or middleware inventories; map public APIs, parser inputs,
-option objects, transformations, high-risk sinks, and consumer-impact
-assumptions.
+Node.js or Python library/framework repositories, use the library playbooks
+instead of forcing web route or middleware inventories; map public APIs,
+extension hooks, parser inputs, option objects, transformations, high-risk
+sinks, and consumer-impact assumptions.
 
 If the plan prints `attack_surface_guidance`, use it to keep the handoff packet
 small and stack-specific. For supported web playbooks, each entry inventory
@@ -316,9 +327,13 @@ If Compose leaves post-baseline build images, networks, or pulled service images
 behind, rerun the cleanup helper with exact adoption flags such as
 `--adopt-compose-project <project>` and, only for images proven absent from the
 baseline and pulled by this audit, `--adopt-image-ref <image:tag>`. If BuildKit
-cache remains after review, use `--adopt-build-cache --adopt-build-cache-id
-<cache-id>` so the helper cleans only exact cache IDs. Review the plan before
-adding `--apply`.
+cache remains after review, it is review-only and cannot be auto-deleted
+safely; the workspace must remain blocked unless the operator resolves it or
+accepts a new baseline before verification resumes. Use
+`--adopt-build-cache --adopt-build-cache-id <cache-id>` only after the exact
+cache ID is proven to belong to this isolated audit. Review the plan before
+adding `--apply`, and never manually mark the audit completed while strict
+Docker cleanliness is blocked.
 
 After a vulnerability is first confirmed, do not stop at the weakest trigger and immediately settle on a low or medium rating.
 Run at least one deliberate severity-escalation pass that tries to verify stronger real-world impact inside Docker before final scoring.
@@ -413,11 +428,16 @@ Final summaries must explicitly distinguish confirmed vulnerabilities, false pos
 
 ```bash
 python3 <audit-workspace>/bin/finalize-audit-workspace.py --workspace-dir <audit-workspace> --language <zh-CN|en-US|auto> --result <completed_with_confirmed_bundles|completed_no_confirmed_findings>
+python3 <audit-workspace>/bin/assert-finalized-workspace.py --workspace-dir <audit-workspace>
 ```
 
 The completion gate enforces that bundle validation state, Docker strict
 cleanliness, stage-status.json, and handoff-summary.md all agree before the
 audit is declared finished. A dogfood run is not complete until this gate passes.
+Before writing "completion gate passed" in a workspace summary, run the
+finalization integrity verifier and confirm that `audit-events.jsonl` contains a
+latest successful `finalization_succeeded` event for the declared result. A
+manually edited `stage-status.json` or a hand-written summary is not completion.
 
 - Use `completed_with_confirmed_bundles` when at least one confirmed bundle
   passes validation. This requires zero partial or failed bundles.
@@ -430,6 +450,10 @@ audit is declared finished. A dogfood run is not complete until this gate passes
 - The gate updates stage-status.json to `stage=completed`, refreshes
   handoff-summary.md, and writes finalization audit events.
 - If the gate fails, fix the reported issues before declaring the audit complete.
+- If Docker strict cleanliness fails, including a BuildKit cache blocker, report
+  the workspace as blocked/failed rather than completed. For
+  `completed_no_confirmed_findings`, no confirmed findings is a successful
+  result only after finalization integrity passes.
 
 ## Output Language
 
@@ -447,6 +471,7 @@ audit is declared finished. A dogfood run is not complete until this gate passes
 - [go-web-audit-playbook.md](./assets/references/go-web-audit-playbook.md)
 - [nodejs-library-audit-playbook.md](./assets/references/nodejs-library-audit-playbook.md)
 - [nodejs-web-audit-playbook.md](./assets/references/nodejs-web-audit-playbook.md)
+- [python-library-audit-playbook.md](./assets/references/python-library-audit-playbook.md)
 - [python-web-audit-playbook.md](./assets/references/python-web-audit-playbook.md)
 - [ssrf-checklist.md](./assets/references/ssrf-checklist.md)
 - [path-traversal-checklist.md](./assets/references/path-traversal-checklist.md)

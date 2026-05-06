@@ -26,6 +26,7 @@ REQUIRED_FILES = [
     "assets/references/go-web-audit-playbook.md",
     "assets/references/nodejs-library-audit-playbook.md",
     "assets/references/nodejs-web-audit-playbook.md",
+    "assets/references/python-library-audit-playbook.md",
     "assets/references/python-web-audit-playbook.md",
     "assets/references/ssrf-checklist.md",
     "assets/references/path-traversal-checklist.md",
@@ -40,6 +41,7 @@ REQUIRED_FILES = [
     "scripts/run_verification_case.sh",
     "scripts/manage_docker_resources.py",
     "scripts/render_handoff_summary.py",
+    "scripts/assert_finalized_workspace.py",
     "scripts/refresh_workspace_helpers.sh",
     "scripts/sync_to_claude_skill.sh",
     "scripts/write_audit_event.py",
@@ -335,8 +337,8 @@ def main() -> None:
     )
     require_text(
         plugin_root / "templates/claude-skill/SKILL.md",
-        "For pure\nNode.js library/package repositories",
-        "Claude skill template Node.js Library route-inventory guardrail",
+        "For pure\nNode.js or Python library/framework repositories",
+        "Claude skill template library route-inventory guardrail",
     )
     require_text(
         plugin_root / "templates/claude-skill/SKILL.md",
@@ -347,6 +349,11 @@ def main() -> None:
         plugin_root / "templates/claude-skill/SKILL.md",
         "python-web-audit-playbook.md",
         "Claude skill template Python Web playbook reference",
+    )
+    require_text(
+        plugin_root / "templates/claude-skill/SKILL.md",
+        "python-library-audit-playbook.md",
+        "Claude skill template Python Library playbook reference",
     )
     require_text(
         plugin_root / "templates/claude-skill/SKILL.md",
@@ -377,6 +384,21 @@ def main() -> None:
         plugin_root / "templates/claude-skill/SKILL.md",
         "A dogfood run is not complete until this gate passes",
         "Claude skill template completion gate enforcement",
+    )
+    require_text(
+        plugin_root / "templates/claude-skill/SKILL.md",
+        "assert-finalized-workspace.py",
+        "Claude skill template finalization integrity checker",
+    )
+    require_text(
+        plugin_root / "templates/claude-skill/SKILL.md",
+        "manually edited `stage-status.json`",
+        "Claude skill template manual completion guardrail",
+    )
+    require_text(
+        plugin_root / "templates/claude-skill/SKILL.md",
+        "exact source commit SHA",
+        "Claude skill template archive fallback commit identity",
     )
     require_text(
         plugin_root / "assets/references/false-positive-template.md",
@@ -454,6 +476,26 @@ def main() -> None:
         "handoff renderer partial bundle classification hint",
     )
     require_text(
+        plugin_root / "scripts/render_handoff_summary.py",
+        "Finalization integrity",
+        "handoff renderer finalization integrity hint",
+    )
+    require_text(
+        plugin_root / "scripts/assert_finalized_workspace.py",
+        "FINALIZATION INTEGRITY FAILED",
+        "finalization integrity checker failure heading",
+    )
+    require_text(
+        plugin_root / "scripts/manage_docker_resources.py",
+        "BuildKit cache blocker",
+        "Docker strict BuildKit blocker messaging",
+    )
+    require_text(
+        plugin_root / "assets/references/docker-resource-hygiene.md",
+        "cannot be auto-deleted safely",
+        "Docker hygiene BuildKit review-only blocker guidance",
+    )
+    require_text(
         plugin_root / "assets/references/document-output-stability.md",
         "Claude Code built-in `Documents` skill",
         "document-output-stability Documents skill rule",
@@ -510,6 +552,25 @@ def main() -> None:
             node_library_playbook,
             expected,
             f"Node.js Library playbook required text {expected}",
+        )
+    python_library_playbook = plugin_root / "assets/references/python-library-audit-playbook.md"
+    for expected in (
+        "Python Library / Framework Audit Playbook",
+        "Minimum Python library inventory fields",
+        "Public API / Hook",
+        "Caller-Controlled Options",
+        "Consumer Impact Assumption",
+        "Source-To-Sink Tracing Guidance",
+        "Docker-Only Verification Reminders",
+        "Flask, Werkzeug, Jinja, Click",
+        "Do not force a route / method / handler table",
+        "cannot confirm a vulnerability by themselves",
+        "verification_status=confirmed_in_docker",
+    ):
+        require_text(
+            python_library_playbook,
+            expected,
+            f"Python Library playbook required text {expected}",
         )
     for playbook in (
         "nodejs-web-audit-playbook.md",
@@ -741,6 +802,7 @@ def main() -> None:
     run([sys.executable, "-m", "py_compile",
          str(plugin_root / "scripts/plan_security_toolchain.py"),
          str(plugin_root / "scripts/render_handoff_summary.py"),
+         str(plugin_root / "scripts/assert_finalized_workspace.py"),
          str(plugin_root / "scripts/write_audit_event.py"),
          str(plugin_root / "scripts/validate_workspace_state.py"),
          str(plugin_root / "scripts/manage_docker_resources.py"),
@@ -763,6 +825,7 @@ def main() -> None:
     run(["bash", str(plugin_root / "scripts/run_verification_case.sh"), "--help"], plugin_root)
     run([sys.executable, str(plugin_root / "scripts/manage_docker_resources.py"), "--help"], plugin_root)
     run([sys.executable, str(plugin_root / "scripts/render_handoff_summary.py"), "--help"], plugin_root)
+    run([sys.executable, str(plugin_root / "scripts/assert_finalized_workspace.py"), "--help"], plugin_root)
     run([sys.executable, str(plugin_root / "scripts/finalize_audit_workspace.py"), "--help"], plugin_root)
     require_text(
         plugin_root / "scripts/manage_docker_resources.py",
@@ -795,8 +858,12 @@ def main() -> None:
             raise SystemExit("FAILED: bootstrapped workspace is missing manage-docker-resources.py")
         if not (workspace / "bin/render-handoff-summary.py").exists():
             raise SystemExit("FAILED: bootstrapped workspace is missing render-handoff-summary.py")
+        if not (workspace / "bin/assert-finalized-workspace.py").exists():
+            raise SystemExit("FAILED: bootstrapped workspace is missing assert-finalized-workspace.py")
         if not (workspace / "scripts/render-handoff-summary.py").exists():
             raise SystemExit("FAILED: bootstrapped workspace is missing scripts/render-handoff-summary.py")
+        if not (workspace / "scripts/assert-finalized-workspace.py").exists():
+            raise SystemExit("FAILED: bootstrapped workspace is missing scripts/assert-finalized-workspace.py")
         if not (workspace / "handoff-summary.md").exists():
             raise SystemExit("FAILED: bootstrapped workspace is missing handoff-summary.md")
         require_text(
@@ -843,6 +910,11 @@ def main() -> None:
             workspace / "handoff-summary.md",
             "Confirmed vulnerabilities belong only under `confirmed/<one-folder-per-vulnerability>/`",
             "bootstrapped handoff confirmed-only guardrail",
+        )
+        require_text(
+            workspace / "handoff-summary.md",
+            "Finalization integrity: `not_finalized`",
+            "bootstrapped handoff finalization integrity state",
         )
 
         docker_baseline = workspace / "docker" / "baseline-fixture.json"
@@ -1160,7 +1232,7 @@ def main() -> None:
         cleanliness_status = json.loads((workspace / "docker" / "docker-cleanliness-status.json").read_text(encoding="utf-8"))
         if cleanliness_status.get("clean") is not True:
             raise SystemExit("FAILED: Docker verify-clean must pass when no current-workspace owned resources remain")
-        run_expect_fail([
+        strict_blocker_proc = subprocess.run([
             sys.executable,
             str(plugin_root / "scripts/manage_docker_resources.py"),
             "--workspace-dir",
@@ -1171,7 +1243,20 @@ def main() -> None:
             str(docker_clean_current),
             "--verify-clean",
             "--strict",
-        ], plugin_root, "unattributed Docker resources remain")
+        ], cwd=plugin_root, capture_output=True, text=True)
+        strict_blocker_output = (strict_blocker_proc.stdout or "") + (strict_blocker_proc.stderr or "")
+        if strict_blocker_proc.returncode == 0:
+            raise SystemExit("FAILED: Docker strict verify-clean unexpectedly passed on post-baseline unattributed resources")
+        for expected in (
+            "unattributed Docker resources remain",
+            "BuildKit cache blocker",
+            "review-only and cannot be auto-deleted safely",
+            "must remain blocked",
+            "must not manually mark the audit completed",
+            "--adopt-build-cache --adopt-build-cache-id <cache-id>",
+        ):
+            if expected not in strict_blocker_output:
+                raise SystemExit(f"FAILED: Docker strict BuildKit blocker output missing: {expected}")
         cleanliness_status = json.loads((workspace / "docker" / "docker-cleanliness-status.json").read_text(encoding="utf-8"))
         if cleanliness_status.get("clean") is not False or cleanliness_status.get("strict") is not True:
             raise SystemExit("FAILED: Docker strict verify-clean must fail on post-baseline unattributed resources")
@@ -1713,6 +1798,43 @@ def main() -> None:
         ):
             if expected not in python_planner_output:
                 raise SystemExit(f"FAILED: planner output missing Python Web playbook recommendation: {expected}")
+        python_library_repo = Path(tempdir) / "python-library-repo"
+        python_library_repo.mkdir(parents=True, exist_ok=True)
+        (python_library_repo / "pyproject.toml").write_text(
+            "[project]\nname = \"werkzeug-style-selftest\"\nversion = \"1.0.0\"\n",
+            encoding="utf-8",
+        )
+        package_dir = python_library_repo / "src/werkzeug_style_selftest"
+        package_dir.mkdir(parents=True, exist_ok=True)
+        (package_dir / "__init__.py").write_text(
+            "def parse_path(user_value, options=None):\n"
+            "    return user_value\n",
+            encoding="utf-8",
+        )
+        python_library_plan = json.loads(run_capture([
+            sys.executable,
+            str(workspace / "bin/plan-security-toolchain.py"),
+            "--target-dir",
+            str(python_library_repo),
+            "--workspace-dir",
+            str(workspace),
+            "--format",
+            "json",
+        ], plugin_root))
+        if "python-library" not in python_library_plan["attack_surface_hints"]:
+            raise SystemExit("FAILED: planner did not classify pure Python package as python-library")
+        if "http-api" in python_library_plan["attack_surface_hints"]:
+            raise SystemExit("FAILED: planner forced a web route model on a pure Python library")
+        if "assets/references/python-library-audit-playbook.md" not in python_library_plan["specialized_playbooks"]:
+            raise SystemExit("FAILED: planner did not recommend Python Library playbook")
+        python_library_guidance = "\n".join(python_library_plan["attack_surface_guidance"])
+        for expected in (
+            "Python Library: inventory public APIs",
+            "Minimum Python library inventory fields: public API or hook",
+            "do not force a route/method/handler table",
+        ):
+            if expected not in python_library_guidance:
+                raise SystemExit(f"FAILED: planner output missing Python Library guidance: {expected}")
         run_with_env([
             "bash",
             str(plugin_root / "scripts/refresh_workspace_helpers.sh"),
@@ -2331,6 +2453,132 @@ def main() -> None:
 
         SKIP_DOCKER_ENV = {"ZHULONG_TEST_SKIP_DOCKER_CLEAN_CHECK": "1"}
 
+        def write_integrity_fixture(
+            fixture_workspace: Path,
+            *,
+            events: list[dict],
+            status: dict,
+            docker_status: dict,
+        ) -> None:
+            fixture_workspace.mkdir(parents=True, exist_ok=True)
+            (fixture_workspace / "docker").mkdir(parents=True, exist_ok=True)
+            (fixture_workspace / "asr-config.json").write_text(
+                json.dumps({
+                    "workspace_root": fixture_workspace.name,
+                    "workspace_created_at": "2026-05-06T00:00:00Z",
+                    "confirmed_output_dir": f"{fixture_workspace.name}/confirmed",
+                }, indent=2),
+                encoding="utf-8",
+            )
+            (fixture_workspace / "stage-status.json").write_text(
+                json.dumps(status, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            (fixture_workspace / "audit-events.jsonl").write_text(
+                "".join(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n" for event in events),
+                encoding="utf-8",
+            )
+            (fixture_workspace / "docker/docker-cleanliness-status.json").write_text(
+                json.dumps(docker_status, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+
+        bad_integrity_workspace = repo_dir / "security-research-integrity-bad"
+        write_integrity_fixture(
+            bad_integrity_workspace,
+            events=[
+                {
+                    "ts": "2026-05-06T00:00:01Z",
+                    "event": "finalization_failed",
+                    "stage": "finalization",
+                    "status": "failed",
+                    "message": "Completion gate failed.",
+                    "details": {"expected_result": "completed_no_confirmed_findings"},
+                }
+            ],
+            status={
+                "stage": "completed",
+                "status": "completed",
+                "result": "completed_no_confirmed_findings",
+                "completed_at": "2026-05-06T00:00:02Z",
+            },
+            docker_status={
+                "schema_version": 1,
+                "clean": False,
+                "strict": True,
+                "workspace": bad_integrity_workspace.name,
+            },
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/assert_finalized_workspace.py"),
+            "--workspace-dir",
+            str(bad_integrity_workspace),
+        ], plugin_root, "latest finalization event is finalization_failed")
+        run([
+            sys.executable,
+            str(plugin_root / "scripts/render_handoff_summary.py"),
+            "--workspace-dir",
+            str(bad_integrity_workspace),
+            "--repo-root",
+            str(repo_dir),
+        ], plugin_root)
+        require_text(
+            bad_integrity_workspace / "handoff-summary.md",
+            "Finalization integrity: `blocked`",
+            "handoff blocks manually completed failed finalization",
+        )
+        require_text(
+            bad_integrity_workspace / "handoff-summary.md",
+            "Completion gate passed: `false`",
+            "handoff does not claim completion gate passed after failed finalization",
+        )
+
+        good_integrity_workspace = repo_dir / "security-research-integrity-good"
+        write_integrity_fixture(
+            good_integrity_workspace,
+            events=[
+                {
+                    "ts": "2026-05-06T00:00:01Z",
+                    "event": "finalization_succeeded",
+                    "stage": "completed",
+                    "status": "ok",
+                    "message": "Audit finalized.",
+                    "details": {
+                        "result": "completed_no_confirmed_findings",
+                        "docker_clean": True,
+                        "validated_bundles": 0,
+                    },
+                }
+            ],
+            status={
+                "stage": "completed",
+                "status": "completed",
+                "result": "completed_no_confirmed_findings",
+            },
+            docker_status={
+                "schema_version": 1,
+                "clean": True,
+                "strict": True,
+                "workspace": good_integrity_workspace.name,
+            },
+        )
+        run([
+            sys.executable,
+            str(plugin_root / "scripts/assert_finalized_workspace.py"),
+            "--workspace-dir",
+            str(good_integrity_workspace),
+        ], plugin_root)
+        integrity_json = json.loads(run_capture([
+            sys.executable,
+            str(plugin_root / "scripts/assert_finalized_workspace.py"),
+            "--workspace-dir",
+            str(good_integrity_workspace),
+            "--json",
+        ], plugin_root))
+        if integrity_json.get("ok") is not True:
+            raise SystemExit("FAILED: finalization integrity JSON did not pass for valid completion fixture")
+
         # Test 1: Finalization with valid bundles succeeds
         # Remove partial/bad bundles first so only valid ones remain
         for bad in (
@@ -2382,6 +2630,12 @@ def main() -> None:
             raise SystemExit("FAILED: finalization did not write finalization_started event")
         if "bundle_validation_outcome" not in finalized_events:
             raise SystemExit("FAILED: finalization did not write bundle_validation_outcome event")
+        run([
+            sys.executable,
+            str(workspace / "bin/assert-finalized-workspace.py"),
+            "--workspace-dir",
+            str(workspace),
+        ], plugin_root)
         # Test 2: Finalization with no confirmed bundles succeeds under completed_no_confirmed_findings
         # Reset stage-status back to running for next test
         write_event_cmd = [
@@ -2416,6 +2670,12 @@ def main() -> None:
             raise SystemExit("FAILED: no-finding handoff still shows stale initial_probing")
         if "running" in no_finding_handoff.split("Status:")[1].split("\n")[0] if "Status:" in no_finding_handoff else "":
             raise SystemExit("FAILED: no-finding handoff still reports running status")
+        run([
+            sys.executable,
+            str(workspace / "bin/assert-finalized-workspace.py"),
+            "--workspace-dir",
+            str(workspace),
+        ], plugin_root)
 
         # Test 3: Finalization fails when partial confirmed bundles exist
         subprocess.run(write_event_cmd, capture_output=True, text=True)
@@ -2589,8 +2849,12 @@ def main() -> None:
             raise SystemExit("FAILED: Claude skill sync did not copy write_audit_event.py")
         if not (installed_skill / "scripts/validate_workspace_state.py").exists():
             raise SystemExit("FAILED: Claude skill sync did not copy validate_workspace_state.py")
+        if not (installed_skill / "scripts/assert_finalized_workspace.py").exists():
+            raise SystemExit("FAILED: Claude skill sync did not copy assert_finalized_workspace.py")
         if not (installed_skill / "assets/tool-registry.json").exists():
             raise SystemExit("FAILED: Claude skill sync did not copy assets")
+        if not (installed_skill / "assets/references/python-library-audit-playbook.md").exists():
+            raise SystemExit("FAILED: Claude skill sync did not copy Python Library playbook")
         require_text(
             installed_skill / "SKILL.md",
             "Documents` skill",
@@ -2678,6 +2942,11 @@ def main() -> None:
         )
         require_text(
             installed_skill / "SKILL.md",
+            "python-library-audit-playbook.md",
+            "installed Claude skill Python Library playbook reference",
+        )
+        require_text(
+            installed_skill / "SKILL.md",
             "run_verification_case.sh",
             "installed Claude skill verification runner reference",
         )
@@ -2705,6 +2974,11 @@ def main() -> None:
             installed_skill / "SKILL.md",
             "A dogfood run is not complete until this gate passes",
             "installed Claude skill completion gate enforcement",
+        )
+        require_text(
+            installed_skill / "SKILL.md",
+            "assert-finalized-workspace.py",
+            "installed Claude skill finalization integrity checker",
         )
         require_text(
             installed_skill / "SKILL.md",

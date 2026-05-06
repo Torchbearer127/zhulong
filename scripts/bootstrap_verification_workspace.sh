@@ -36,6 +36,7 @@ What it creates:
       validate-all-report-bundles.py
       write-audit-event.py
       validate-workspace-state.py
+      assert-finalized-workspace.py
     scripts/
       asr-start.sh
       asr-exec.sh
@@ -52,6 +53,7 @@ What it creates:
       validate-all-report-bundles.py
       write-audit-event.py
       validate-workspace-state.py
+      assert-finalized-workspace.py
     poc/
     evidence/
     docker/
@@ -414,6 +416,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 exec python3 "$SCRIPT_DIR/../bin/validate-workspace-state.py" "$@"
 '
 chmod +x "$WORKSPACE_DIR/scripts/validate-workspace-state.py"
+copy_file \
+  "$SKILL_DIR/scripts/assert_finalized_workspace.py" \
+  "$WORKSPACE_DIR/bin/assert-finalized-workspace.py"
+chmod +x "$WORKSPACE_DIR/bin/assert-finalized-workspace.py"
+write_text_file "$WORKSPACE_DIR/scripts/assert-finalized-workspace.py" '#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec python3 "$SCRIPT_DIR/../bin/assert-finalized-workspace.py" "$@"
+'
+chmod +x "$WORKSPACE_DIR/scripts/assert-finalized-workspace.py"
 copy_file \
   "$SKILL_DIR/scripts/finalize_audit_workspace.py" \
   "$WORKSPACE_DIR/bin/finalize-audit-workspace.py"

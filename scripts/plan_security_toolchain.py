@@ -106,6 +106,60 @@ def package_json_indicates_library(root: Path) -> bool:
     return (root / "lib").is_dir() or (root / "src").is_dir()
 
 
+def python_package_indicates_library(root: Path) -> bool:
+    package_markers = ["pyproject.toml", "setup.py", "setup.cfg", "tox.ini", "noxfile.py"]
+    if any((root / marker).exists() for marker in package_markers):
+        return True
+    if (root / "src").is_dir():
+        return True
+    package_dirs = [
+        path for path in root.iterdir()
+        if path.is_dir()
+        and not skip_scan_dir(path.name)
+        and (path / "__init__.py").exists()
+    ]
+    return bool(package_dirs)
+
+
+def python_framework_library_indicators(root: Path) -> bool:
+    metadata_markers = [
+        "flask",
+        "werkzeug",
+        "jinja",
+        "click",
+        "requests",
+        "parser",
+        "serializer",
+        "serialization",
+        "framework",
+        "extension",
+    ]
+    for metadata in ("pyproject.toml", "setup.cfg", "setup.py", "requirements.txt"):
+        path = root / metadata
+        if not path.exists():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore").lower()
+        except OSError:
+            continue
+        if any(marker in text for marker in metadata_markers):
+            return True
+    code_markers = [
+        "def render_template",
+        "class baseconverter",
+        "click.command",
+        "jinja2",
+        "werkzeug",
+        "requests.sessions",
+        "pickle.loads",
+        "yaml.load",
+        "serializer",
+        "parser",
+        "extension",
+    ]
+    return repository_contains(root, code_markers, {".py"})
+
+
 def detect_attack_surface(root: Path) -> list[str]:
     indicators: list[str] = []
     interesting_dirs = ["routes", "route", "router", "controllers", "controller", "api", "graphql", "auth", "cmd"]
@@ -168,7 +222,8 @@ def detect_attack_surface(root: Path) -> list[str]:
         "blueprint(",
         "django.urls",
         "urlpatterns",
-        "path(",
+        "path('",
+        'path("',
         "re_path(",
         "fastapi(",
         "apirouter(",
@@ -222,6 +277,9 @@ def detect_attack_surface(root: Path) -> list[str]:
             if item not in {"api", "routes", "route", "router", "controllers", "controller", "graphql", "auth", "http-api"}
         ]
         indicators.append("node-library")
+    if python_package_indicates_library(root):
+        if "python-web" not in indicators or python_framework_library_indicators(root):
+            indicators.append("python-library")
     return sorted(set(indicators))
 
 
@@ -435,6 +493,8 @@ def specialized_playbooks(stacks: list[str], attack_surface: list[str]) -> list[
         playbooks.append("assets/references/nodejs-web-audit-playbook.md")
     if "python-web" in attack_surface or ("python" in stacks and "http-api" in attack_surface):
         playbooks.append("assets/references/python-web-audit-playbook.md")
+    if "python-library" in attack_surface or ("python" in stacks and not any(item in attack_surface for item in ("http-api", "python-web"))):
+        playbooks.append("assets/references/python-library-audit-playbook.md")
     return playbooks
 
 
@@ -469,6 +529,12 @@ def audit_focus(stacks: list[str], attack_surface: list[str]) -> list[str]:
             "Build a Python Web entry map: Flask/Django/FastAPI/Starlette routes, middleware, dependencies/decorators, upload handlers, and auth/session/CORS/CSRF coverage.",
             "Prioritize authz gaps, raw SQL/ORM injection, SSRF, command execution, path traversal/upload issues, template injection/XSS, deserialization, and missing body/upload/timeouts limits.",
             "For each candidate, trace request input -> middleware/dependency/decorator -> handler/view -> sink and record validation, permissions, settings, and parameterization assumptions.",
+        ])
+    if "python-library" in attack_surface:
+        focus.extend([
+            "Build a Python library API map: public functions/classes, extension hooks, CLI entry points, parser/renderer/serializer APIs, and caller-controlled option objects.",
+            "Prioritize consumer-controlled input reaching parsing, rendering/escaping, deserialization, path/file, subprocess, network client, or unsafe-default configuration paths.",
+            "For each library candidate, separate library-local behavior from consumer-impact assumptions and design a minimal Docker consumer app or script for the oracle.",
         ])
     if focus:
         focus.append("Write or update <audit-workspace>/attack-surface.md before final confirmation so the review path is recoverable.")
@@ -530,6 +596,16 @@ def attack_surface_guidance(stacks: list[str], attack_surface: list[str]) -> lis
         append_once(minimum_fields)
         guidance.append(
             "For each Python entry, note handler/view/path operation, request readers such as query/path/body/header/cookie/files, middleware/dependency/auth coverage, downstream service, and sink function when known."
+        )
+    if "python-library" in attack_surface:
+        guidance.append(
+            "Python Library: inventory public APIs, extension hooks, CLI commands, parser/renderer/serializer entry points, and caller-controlled configuration in attack-surface.md."
+        )
+        guidance.append(
+            "Minimum Python library inventory fields: public API or hook, input shape, caller-controlled options, transformation path, high-risk sink, consumer impact assumption, current verification status."
+        )
+        guidance.append(
+            "For pure Python library/framework targets, do not force a route/method/handler table; use a library API map and keep consumer-impact claims unverified until a realistic Docker consumer reproduction proves them."
         )
     if "http-api" in attack_surface:
         guidance.append("HTTP/API: summarize route or API inventory in attack-surface.md before deep verification.")

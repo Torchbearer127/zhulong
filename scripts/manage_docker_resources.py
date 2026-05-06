@@ -448,6 +448,56 @@ def print_plan(plan: dict[str, Any]) -> None:
         print("- note: new resources without this workspace's Zhulong ownership labels are listed for review but will not be removed.")
 
 
+def print_strict_unattributed_blocker(plan: dict[str, Any]) -> None:
+    print(
+        "unattributed Docker resources remain; inspect the cleanup plan and remove only resources proven to belong to this audit.",
+        file=sys.stderr,
+    )
+    build_cache = plan.get("build_cache", {})
+    review_only_cache = [
+        item for key in ("unattributed_new_skipped", "non_reclaimable_new_skipped")
+        for item in build_cache.get(key, [])
+        if isinstance(item, dict)
+    ]
+    if review_only_cache:
+        exact_ids = [str(item.get("id") or "").strip() for item in review_only_cache if str(item.get("id") or "").strip()]
+        print(
+            "BuildKit cache blocker: unattributed BuildKit cache is review-only and cannot be auto-deleted safely.",
+            file=sys.stderr,
+        )
+        print(
+            "The workspace must remain blocked unless the operator explicitly resolves the cache or accepts a new baseline before verification resumes.",
+            file=sys.stderr,
+        )
+        print("The agent must not manually mark the audit completed while strict Docker cleanliness is blocked.", file=sys.stderr)
+        if exact_ids:
+            print("Review-only BuildKit cache IDs:", file=sys.stderr)
+            for cache_id in exact_ids[:8]:
+                print(f"- {cache_id}", file=sys.stderr)
+            if len(exact_ids) > 8:
+                print(f"- ... {len(exact_ids) - 8} more omitted; inspect docker-cleanup-plan.json", file=sys.stderr)
+            print(
+                "If one exact cache ID is proven to belong to this isolated audit, use this command shape:",
+                file=sys.stderr,
+            )
+            print(
+                "python3 <audit-workspace>/bin/manage-docker-resources.py "
+                "--workspace-dir <audit-workspace> --cleanup-created "
+                "--adopt-build-cache --adopt-build-cache-id <cache-id> --apply",
+                file=sys.stderr,
+            )
+        non_reclaimable_ids = [
+            str(item.get("id") or "").strip()
+            for item in build_cache.get("non_reclaimable_new_skipped", [])
+            if isinstance(item, dict) and str(item.get("id") or "").strip()
+        ]
+        if non_reclaimable_ids:
+            print(
+                "Some BuildKit cache records are not reclaimable by Docker; leave the audit blocked until the operator resolves or baselines them deliberately.",
+                file=sys.stderr,
+            )
+
+
 def write_cleanliness_status(workspace: Path, plan: dict[str, Any], *, strict: bool) -> dict[str, Any]:
     counts = plan_counts(plan)
     owned_remaining = owned_residue_count(plan)
@@ -641,10 +691,7 @@ def main() -> int:
             if owned_residue_count(plan) != 0:
                 print("owned Docker resources remain; run --cleanup-created --apply, then verify again.", file=sys.stderr)
             elif args.strict:
-                print(
-                    "unattributed Docker resources remain; inspect the cleanup plan and remove only resources proven to belong to this audit.",
-                    file=sys.stderr,
-                )
+                print_strict_unattributed_blocker(plan)
             return 1
         return 0
 

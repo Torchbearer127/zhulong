@@ -137,6 +137,7 @@ copy_helper "$SKILL_DIR/scripts/validate_report_bundle.py" "$WORKSPACE_DIR/bin/v
 copy_helper "$SKILL_DIR/scripts/validate_all_report_bundles.py" "$WORKSPACE_DIR/bin/validate-all-report-bundles.py"
 copy_helper_if_present "$SKILL_DIR/scripts/write_audit_event.py" "$WORKSPACE_DIR/bin/write-audit-event.py"
 copy_helper_if_present "$SKILL_DIR/scripts/validate_workspace_state.py" "$WORKSPACE_DIR/bin/validate-workspace-state.py"
+copy_helper_if_present "$SKILL_DIR/scripts/assert_finalized_workspace.py" "$WORKSPACE_DIR/bin/assert-finalized-workspace.py"
 copy_helper_if_present "$SKILL_DIR/scripts/finalize_audit_workspace.py" "$WORKSPACE_DIR/bin/finalize-audit-workspace.py"
 
 if [[ -f "$WORKSPACE_DIR/bin/write-audit-event.py" ]]; then

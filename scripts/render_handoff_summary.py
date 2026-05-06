@@ -53,6 +53,23 @@ def read_jsonl_tail(path: Path, limit: int = 5) -> list[dict[str, Any]]:
     return events[-limit:]
 
 
+def read_jsonl(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    events: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            data = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, dict):
+            events.append(data)
+    return events
+
+
 def rel(path: Path, base: Path) -> str:
     try:
         return path.resolve().relative_to(base.resolve()).as_posix()
@@ -165,6 +182,81 @@ def initial_probe_lines(path: Path, workspace: Path) -> list[str]:
     return lines
 
 
+def event_details(event: dict[str, Any] | None) -> dict[str, Any]:
+    if not event:
+        return {}
+    raw = event.get("details")
+    return raw if isinstance(raw, dict) else {}
+
+
+def latest_finalization(events: list[dict[str, Any]]) -> dict[str, Any] | None:
+    for event in reversed(events):
+        if event.get("event") in {"finalization_succeeded", "finalization_failed"}:
+            return event
+    return None
+
+
+def latest_success(events: list[dict[str, Any]]) -> dict[str, Any] | None:
+    for event in reversed(events):
+        if event.get("event") == "finalization_succeeded":
+            return event
+    return None
+
+
+def completion_claimed(status: dict[str, Any]) -> bool:
+    result = str(status.get("result") or status.get("completion_result") or "").strip()
+    return (
+        str(status.get("stage") or "").strip() == "completed"
+        or str(status.get("status") or "").strip() == "completed"
+        or result in {"completed_with_confirmed_bundles", "completed_no_confirmed_findings"}
+        or bool(status.get("completed_at"))
+    )
+
+
+def finalization_integrity_lines(workspace: Path, status: dict[str, Any]) -> list[str]:
+    events = read_jsonl(workspace / "audit-events.jsonl")
+    latest = latest_finalization(events)
+    success = latest_success(events)
+    docker_status = read_json(workspace / "docker/docker-cleanliness-status.json")
+    claimed = completion_claimed(status)
+    issues: list[str] = []
+
+    if claimed and success is None:
+        issues.append("stage-status claims completed but audit-events.jsonl has no finalization_succeeded event")
+    if claimed and latest and latest.get("event") == "finalization_failed":
+        issues.append("latest finalization event is finalization_failed")
+    if claimed and docker_status and docker_status.get("clean") is False:
+        issues.append("docker-cleanliness-status.json has clean=false")
+    if claimed and docker_status and docker_status.get("strict") is not True:
+        issues.append("Docker strict cleanliness status is not strict=true")
+    if success:
+        details = event_details(success)
+        if details.get("docker_clean") is True and (
+            not docker_status or docker_status.get("clean") is not True or docker_status.get("strict") is not True
+        ):
+            issues.append("finalization_succeeded claims docker_clean=true but Docker strict cleanliness does not agree")
+
+    if issues:
+        return [
+            "- Finalization integrity: `blocked`",
+            "- Completion gate passed: `false`",
+            "- Reason: " + "; ".join(issues),
+            "- Next action: rerun `assert-finalized-workspace.py`, resolve the blocker, then rerun `finalize-audit-workspace.py`.",
+        ]
+    if claimed and success:
+        result = str(event_details(success).get("result") or status.get("result") or "").strip() or "completed"
+        return [
+            "- Finalization integrity: `ok`",
+            "- Completion gate passed: `true`",
+            f"- Finalization result: `{result}`",
+        ]
+    return [
+        "- Finalization integrity: `not_finalized`",
+        "- Completion gate passed: `false`",
+        "- Next action: keep auditing or run `finalize-audit-workspace.py` only when bundle and Docker strict-clean gates are ready.",
+    ]
+
+
 def confirmed_bundle_lines(workspace: Path) -> list[str]:
     confirmed_dir = workspace / "confirmed"
     lines = [f"- Directory: {file_status(confirmed_dir, workspace)}"]
@@ -207,7 +299,8 @@ def confirmed_bundle_lines(workspace: Path) -> list[str]:
 
 def render(workspace: Path, repo_root: Path, output: Path) -> str:
     status = read_json(workspace / "stage-status.json")
-    events = read_jsonl_tail(workspace / "audit-events.jsonl")
+    events_path = workspace / "audit-events.jsonl"
+    events = read_jsonl_tail(events_path)
     attack_surface = workspace / "attack-surface.md"
     initial_probes = workspace / "evidence/initial-probes/initial-probes-summary.json"
     candidate = workspace / "candidate-findings.md"
@@ -246,6 +339,7 @@ def render(workspace: Path, repo_root: Path, output: Path) -> str:
         f"- Last message: {last_message or '_none_'}",
         f"- Blocker: {blocker or '_none_'}",
         f"- Resume step: {resume_step or '_none_'}",
+        *finalization_integrity_lines(workspace, status),
         "",
         "## Recommended First Reads",
         "",
