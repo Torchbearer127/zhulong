@@ -10,6 +10,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from audit_disposition import (
+    LEDGER_FILENAME,
+    synthesize_disposition_ledger,
+    validate_disposition_ledger,
+    write_disposition_ledger,
+)
 from blocked_verification import detect_blocked_verification
 
 
@@ -121,13 +127,22 @@ def run_docker_verify_clean(workspace: Path, *, strict: bool) -> dict[str, Any]:
     ]
     if strict:
         cmd.append("--strict")
-    proc = subprocess.run(cmd, capture_output=True, text=True)
     status_path = workspace / "docker" / "docker-cleanliness-status.json"
-    if status_path.exists():
+    status_mtime_before = status_path.stat().st_mtime_ns if status_path.exists() else None
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    status_refreshed = (
+        status_path.exists()
+        and (
+            status_mtime_before is None
+            or status_path.stat().st_mtime_ns != status_mtime_before
+        )
+    )
+    if status_refreshed:
         return load_json(status_path)
     return {
-        "clean": proc.returncode == 0,
+        "clean": False,
         "exit_code": proc.returncode,
+        "error": "Docker cleanliness helper did not refresh docker-cleanliness-status.json; refusing to trust stale status",
         "output": ((proc.stdout or "") + (proc.stderr or "")).strip()[:500],
     }
 
@@ -147,6 +162,38 @@ def refresh_handoff(workspace: Path, repo_root: Path) -> bool:
     return proc.returncode == 0
 
 
+def runtime_hygiene_summary_line(workspace: Path, *, language: str) -> str:
+    status = load_json(workspace / "runtime/runtime-hygiene-status.json")
+    if not status:
+        if language == "en-US":
+            return "- OMC runtime hygiene: `not_recorded`; run `bin/check_omc_runtime.sh --json` before `/team` or `/ultrawork`.\n"
+        return "- OMC runtime hygiene：`not_recorded`；使用 `/team` 或 `/ultrawork` 前运行 `bin/check_omc_runtime.sh --json`。\n"
+
+    mode = str(status.get("recommended_mode") or "unknown")
+    clean = bool(status.get("clean"))
+    unresolved = status.get("unresolved_review_only")
+    unresolved_count = len(unresolved) if isinstance(unresolved, list) else 0
+    resume_step = str(status.get("resume_step") or "")
+    attention_needed = mode == "cleanup_needed" or unresolved_count > 0 or not clean
+
+    if language == "en-US":
+        if attention_needed:
+            return (
+                f"- OMC runtime hygiene: `{mode}`; attention needed before `/team` or `/ultrawork`; "
+                f"unresolved review-only: `{unresolved_count}`; teammate PID cleanup is manual outside Zhulong; "
+                f"resume: {resume_step or '_none_'}\n"
+            )
+        return f"- OMC runtime hygiene: `{mode}`; clean: `{str(clean).lower()}`.\n"
+
+    if attention_needed:
+        return (
+            f"- OMC runtime hygiene：`{mode}`；使用 `/team` 或 `/ultrawork` 前需要处理；"
+            f"unresolved review-only：`{unresolved_count}`；teammate PID 只能由操作员在 Zhulong 外手动处理；"
+            f"resume：{resume_step or '_none_'}\n"
+        )
+    return f"- OMC runtime hygiene：`{mode}`；clean：`{str(clean).lower()}`。\n"
+
+
 def ensure_workspace_summary(
     workspace: Path,
     *,
@@ -163,6 +210,7 @@ def ensure_workspace_summary(
     config = load_json(workspace / "asr-config.json")
     configured_language = str(config.get("summary_language") or config.get("output_language") or "").strip()
     effective_language = configured_language if language == "auto" and configured_language else language
+    runtime_line = runtime_hygiene_summary_line(workspace, language=effective_language)
     if effective_language == "en-US":
         content = (
             f"{placeholder_marker}\n"
@@ -173,6 +221,7 @@ def ensure_workspace_summary(
             f"- Validated confirmed bundles: `{validated_count}`\n"
             f"- Docker clean: `{str(docker_clean).lower()}`\n"
             f"- Docker strict clean: `{str(docker_strict).lower()}`\n"
+            f"{runtime_line}"
             "- Confirmed-output guardrail: scanner-only, dependency-only, static-only, unverified, blocked, "
             "or timed-out findings are not confirmed vulnerabilities.\n"
         )
@@ -186,6 +235,7 @@ def ensure_workspace_summary(
             f"- 已验证 confirmed bundles：`{validated_count}`\n"
             f"- Docker clean：`{str(docker_clean).lower()}`\n"
             f"- Docker strict clean：`{str(docker_strict).lower()}`\n"
+            f"{runtime_line}"
             "- confirmed-only 约束：scanner-only、dependency-only、static-only、unverified、blocked、"
             "timed-out 结果都不是确认漏洞。\n"
         )
@@ -326,7 +376,42 @@ def main() -> int:
                 f"Evidence: {first_evidence or 'see candidate-findings.md, unverified-leads.md, or attack-surface.md.'}"
             )
 
-    # --- Step 3: Docker strict cleanliness ---
+    # --- Step 3: Audit disposition ledger ---
+    if not blocked_summary:
+        blocked_summary = detect_blocked_verification(workspace)
+    disposition_ledger = synthesize_disposition_ledger(
+        workspace,
+        blocked_summary=blocked_summary,
+    )
+    write_disposition_ledger(workspace, disposition_ledger)
+    disposition_validation = validate_disposition_ledger(
+        workspace,
+        result=result,
+        ledger=disposition_ledger,
+        bundle_summary=bundle_summary,
+        language=language,
+    )
+    disposition_summary = disposition_validation.get("summary", {})
+    if not disposition_validation.get("ok"):
+        for error in disposition_validation.get("errors", []):
+            errors.append(f"{LEDGER_FILENAME}: {error}")
+
+    write_event(
+        workspace,
+        "audit_disposition_outcome",
+        "finalization",
+        "running",
+        "ok" if disposition_validation.get("ok") else "warning",
+        (
+            f"Audit disposition ledger: items={disposition_summary.get('item_count', 0)}, "
+            f"unresolved={disposition_summary.get('unresolved_count', 0)}."
+        ),
+        ledger=LEDGER_FILENAME,
+        validation_ok=bool(disposition_validation.get("ok")),
+        disposition_summary=disposition_summary,
+    )
+
+    # --- Step 4: Docker strict cleanliness ---
     docker_status = run_docker_verify_clean(workspace, strict=True)
     docker_clean = docker_status.get("clean", False)
     if not docker_clean:
@@ -339,7 +424,7 @@ def main() -> int:
                 "Run manage-docker-resources.py --cleanup-created --apply and --verify-clean --strict."
             )
 
-    # --- Step 4: Decide pass/fail ---
+    # --- Step 5: Decide pass/fail ---
     if errors:
         error_text = "; ".join(errors)
         if blocked_summary.get("blocked"):
@@ -370,7 +455,7 @@ def main() -> int:
         refresh_handoff(workspace, repo_root)
         return 1
 
-    # --- Step 5: Update stage-status.json to completed ---
+    # --- Step 6: Update stage-status.json to completed ---
     write_event(workspace, "finalization_succeeded", "completed", "completed",
                 "ok", f"Audit finalized as {result}.",
                 result=result, validated_bundles=validated_count,
@@ -387,7 +472,7 @@ def main() -> int:
         language=language,
     )
 
-    # --- Step 6: Refresh handoff-summary.md ---
+    # --- Step 7: Refresh handoff-summary.md ---
     refresh_handoff(workspace, repo_root)
 
     # --- Output ---

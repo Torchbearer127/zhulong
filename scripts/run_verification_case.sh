@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-STABLE_LABELS="blocked_docker_unavailable blocked_missing_image failed_timeout failed_resource_limit rejected_not_reproducible confirmed_in_docker"
+STABLE_LABELS="blocked_docker_unavailable blocked_missing_image failed_timeout failed_resource_limit rejected_unsafe_sandbox rejected_not_reproducible confirmed_in_docker"
 
 usage() {
   cat <<'EOF'
@@ -14,7 +14,7 @@ Usage:
     --image <local-or-cached-image> \
     --timeout-seconds 300 \
     --expected-oracle <token-or-regex> \
-    --network none|bridge|host|<docker-network> \
+    --network none|bridge|<docker-network> \
     -- <container command...>
 
   bash scripts/run_verification_case.sh \
@@ -39,6 +39,7 @@ Stable outcome labels:
   blocked_missing_image
   failed_timeout
   failed_resource_limit
+  rejected_unsafe_sandbox
   rejected_not_reproducible
   confirmed_in_docker
 
@@ -244,6 +245,21 @@ find_state_writer() {
   fi
 }
 
+find_sandbox_preflight() {
+  if [[ -f "$SCRIPT_DIR/check_sandbox_preflight.py" ]]; then
+    printf '%s\n' "$SCRIPT_DIR/check_sandbox_preflight.py"
+    return
+  fi
+  if [[ -f "$SCRIPT_DIR/check-sandbox-preflight.py" ]]; then
+    printf '%s\n' "$SCRIPT_DIR/check-sandbox-preflight.py"
+    return
+  fi
+  if [[ -f "$SCRIPT_DIR/../bin/check-sandbox-preflight.py" ]]; then
+    printf '%s\n' "$SCRIPT_DIR/../bin/check-sandbox-preflight.py"
+    return
+  fi
+}
+
 write_state_event() {
   local writer
   writer="$(find_state_writer)"
@@ -390,6 +406,22 @@ classify_and_exit() {
         --detail "evidence_dir=$EVIDENCE_DIR"
       write_audit_log_block "$status" "$reason"
       ;;
+    rejected_unsafe_sandbox)
+      write_state_event \
+        --workspace-dir "$WORKSPACE_DIR" \
+        --target-repo "$(cd "$WORKSPACE_DIR/.." && pwd)" \
+        --event verification_case_blocked \
+        --stage candidate_verifying \
+        --status paused \
+        --event-status "$status" \
+        --message "Verification case rejected by sandbox preflight." \
+        --blocker "$reason" \
+        --resume-step "Rewrite the verification container or script to avoid privileged/host/docker.sock/root-mount behavior; keep this case out of confirmed/ until safe Docker verification succeeds." \
+        --detail "case_id=$CASE_ID" \
+        --detail "evidence_dir=$EVIDENCE_DIR" \
+        --detail "sandbox_preflight_status=runtime/sandbox-preflight-status.json"
+      write_audit_log_block "$status" "$reason"
+      ;;
     rejected_not_reproducible)
       write_state_event \
         --workspace-dir "$WORKSPACE_DIR" \
@@ -417,8 +449,90 @@ classify_and_exit() {
 STDOUT_PATH="$EVIDENCE_DIR/stdout.log"
 STDERR_PATH="$EVIDENCE_DIR/stderr.log"
 COMMAND_JSON_PATH="$EVIDENCE_DIR/command.json"
+SANDBOX_PREFLIGHT_JSON="$EVIDENCE_DIR/sandbox-preflight.json"
 : >"$STDOUT_PATH"
 : >"$STDERR_PATH"
+
+write_command_json() {
+  python3 - "$COMMAND_JSON_PATH" "$WORKSPACE_DIR" "$EVIDENCE_DIR" "$@" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+workspace = sys.argv[2]
+evidence_dir = sys.argv[3]
+
+def scrub(value: str) -> str:
+    return value.replace(evidence_dir, "<evidence-dir>").replace(workspace, "<audit-workspace>")
+
+path.write_text(json.dumps([scrub(arg) for arg in sys.argv[4:]], ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+PY
+}
+
+run_sandbox_preflight() {
+  local preflight reason
+  preflight="$(find_sandbox_preflight)"
+  if [[ -z "$preflight" ]]; then
+    printf 'Sandbox preflight helper is missing; refresh workspace helpers before verification.\n' >"$SANDBOX_PREFLIGHT_JSON"
+    classify_and_exit "rejected_unsafe_sandbox" "Sandbox preflight helper is missing; refresh workspace helpers before verification."
+  fi
+
+  preflight_args=(
+    --workspace-dir "$WORKSPACE_DIR"
+    --case-id "$CASE_ID"
+    --mode "$MODE"
+    --json
+  )
+  preflight_command=(docker "$MODE")
+  if [[ "$MODE" == "docker-run" ]]; then
+    preflight_args+=(--network "$NETWORK")
+    preflight_command=(docker run --network "$NETWORK")
+    if [[ "${#EXTRA_DOCKER_ARGS[@]}" -gt 0 ]]; then
+      for arg in "${EXTRA_DOCKER_ARGS[@]}"; do
+        preflight_args+=("--docker-run-arg=$arg")
+        preflight_command+=("$arg")
+      done
+    fi
+    [[ -n "$IMAGE" ]] && preflight_command+=("$IMAGE")
+    if [[ "${#CASE_COMMAND[@]}" -gt 0 ]]; then
+      preflight_command+=("${CASE_COMMAND[@]}")
+    fi
+  elif [[ "$MODE" == "docker-compose" ]]; then
+    preflight_command=(docker compose)
+    if [[ "${#COMPOSE_FILES[@]}" -gt 0 ]]; then
+      for compose_file in "${COMPOSE_FILES[@]}"; do
+        preflight_args+=(--compose-file "$compose_file")
+        preflight_command+=(-f "$compose_file")
+      done
+    fi
+    preflight_command+=(run --rm -T "$COMPOSE_SERVICE")
+    if [[ "${#CASE_COMMAND[@]}" -gt 0 ]]; then
+      preflight_command+=("${CASE_COMMAND[@]}")
+    fi
+  fi
+
+  write_command_json "${preflight_command[@]}"
+  if ! python3 "$preflight" "${preflight_args[@]}" >"$SANDBOX_PREFLIGHT_JSON"; then
+    cat "$SANDBOX_PREFLIGHT_JSON" >>"$STDERR_PATH" 2>/dev/null || true
+    reason="$(python3 - "$SANDBOX_PREFLIGHT_JSON" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+try:
+    data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+except Exception:
+    print("Sandbox preflight rejected unsafe Docker configuration.")
+else:
+    print(data.get("resume_step") or "Sandbox preflight rejected unsafe Docker configuration.")
+PY
+)"
+    classify_and_exit "rejected_unsafe_sandbox" "$reason"
+  fi
+}
+
+run_sandbox_preflight
 
 if ! docker info >/dev/null 2>&1; then
   printf 'Docker unavailable. This helper will not execute PoC logic on the host.\n' >"$STDERR_PATH"

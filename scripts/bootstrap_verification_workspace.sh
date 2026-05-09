@@ -297,6 +297,16 @@ exec bash "$SCRIPT_DIR/../bin/check_omc_runtime.sh" "$@"
 '
 chmod +x "$WORKSPACE_DIR/scripts/check_omc_runtime.sh"
 copy_file \
+  "$SKILL_DIR/scripts/check_sandbox_preflight.py" \
+  "$WORKSPACE_DIR/bin/check-sandbox-preflight.py"
+chmod +x "$WORKSPACE_DIR/bin/check-sandbox-preflight.py"
+write_text_file "$WORKSPACE_DIR/scripts/check-sandbox-preflight.py" '#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec python3 "$SCRIPT_DIR/../bin/check-sandbox-preflight.py" "$@"
+'
+chmod +x "$WORKSPACE_DIR/scripts/check-sandbox-preflight.py"
+copy_file \
   "$SKILL_DIR/scripts/check_security_tooling.sh" \
   "$WORKSPACE_DIR/bin/check_security_tooling.sh"
 chmod +x "$WORKSPACE_DIR/bin/check_security_tooling.sh"
@@ -423,6 +433,9 @@ chmod +x "$WORKSPACE_DIR/bin/assert-finalized-workspace.py"
 copy_file \
   "$SKILL_DIR/scripts/blocked_verification.py" \
   "$WORKSPACE_DIR/bin/blocked_verification.py"
+copy_file \
+  "$SKILL_DIR/scripts/audit_disposition.py" \
+  "$WORKSPACE_DIR/bin/audit_disposition.py"
 write_text_file "$WORKSPACE_DIR/scripts/assert-finalized-workspace.py" '#!/usr/bin/env bash
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

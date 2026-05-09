@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from audit_disposition import LEDGER_FILENAME, validate_disposition_ledger
 from blocked_verification import detect_blocked_verification
 
 
@@ -132,6 +133,11 @@ def validate_finalization(workspace: Path) -> tuple[bool, list[str], dict[str, A
             "completed_no_confirmed_findings is not a valid terminal result until Docker verification resumes."
         )
 
+    disposition_validation = validate_disposition_ledger(workspace, result=result, language="auto")
+    if not disposition_validation.get("ok"):
+        for error in disposition_validation.get("errors", []):
+            errors.append(f"{LEDGER_FILENAME}: {error}")
+
     docker_clean_claim = details.get("docker_clean")
     docker_clean = docker_status.get("clean")
     docker_strict = docker_status.get("strict")
@@ -157,6 +163,7 @@ def validate_finalization(workspace: Path) -> tuple[bool, list[str], dict[str, A
         "docker_clean": docker_clean,
         "docker_strict": docker_strict,
         "blocked_verification": blocked_summary,
+        "audit_disposition": disposition_validation.get("summary", {}),
     }
     return not errors, errors, summary
 

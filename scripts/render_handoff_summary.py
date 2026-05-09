@@ -8,6 +8,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from audit_disposition import (
+    LEDGER_FILENAME,
+    render_unresolved_disposition_lines,
+    validate_disposition_ledger,
+)
 from blocked_verification import detect_blocked_verification
 
 
@@ -241,6 +246,12 @@ def finalization_integrity_lines(workspace: Path, status: dict[str, Any]) -> lis
     result = str(event_details(success).get("result") or status.get("result") or "").strip()
     if result == "completed_no_confirmed_findings" and blocked_summary.get("blocked"):
         issues.append("blocked Docker/runtime verification exists; no-confirmed completion is not terminal")
+    if claimed:
+        disposition_validation = validate_disposition_ledger(workspace, result=result, language="auto")
+        if not disposition_validation.get("ok"):
+            errors = disposition_validation.get("errors", [])
+            first = str(errors[0]) if errors else "unknown ledger validation error"
+            issues.append(f"{LEDGER_FILENAME} validation failed: {first}")
 
     if issues:
         return [
@@ -326,6 +337,81 @@ def blocked_verification_lines(workspace: Path) -> list[str]:
     return lines
 
 
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if str(item).strip()]
+
+
+def runtime_hygiene_lines(workspace: Path) -> list[str]:
+    path = workspace / "runtime/runtime-hygiene-status.json"
+    lines = [f"- Source: {file_status(path, workspace)}"]
+    data = read_json(path)
+    if not data:
+        lines.append("- Runtime hygiene: `not_recorded`")
+        lines.append("- Resume step: run `bin/check_omc_runtime.sh --json` before using `/team` or `/ultrawork`.")
+        return lines
+
+    mode = str(data.get("recommended_mode") or "unknown")
+    clean = data.get("clean")
+    teams_enabled = data.get("teams_enabled")
+    heartbeat_seen = data.get("heartbeat_seen")
+    lines.append(f"- Recommended mode: `{mode}`")
+    lines.append(f"- Clean: `{str(bool(clean)).lower()}`")
+    lines.append(f"- Teams enabled: `{str(bool(teams_enabled)).lower()}`")
+    lines.append(f"- Heartbeat/live swarm seen: `{str(bool(heartbeat_seen)).lower()}`")
+
+    suspect_pids = _string_list(data.get("suspect_teammate_pids"))
+    ignored_pids = _string_list(data.get("ignored_current_session_teammate_pids"))
+    stale_sockets = _string_list(data.get("stale_swarm_sockets"))
+    live_sockets = _string_list(data.get("live_swarm_sockets"))
+    unresolved = data.get("unresolved_review_only")
+    suspect_processes = data.get("suspect_teammate_processes")
+
+    lines.append("- Suspect teammate PIDs: " + (", ".join(f"`{pid}`" for pid in suspect_pids) if suspect_pids else "`none`"))
+    if suspect_pids:
+        lines.append("- Suspect teammate PID handling: `review-only`; Zhulong does not signal teammate PIDs. Inspect the owning terminal/session before using `/team` or `/ultrawork`.")
+    if isinstance(suspect_processes, list) and suspect_processes:
+        lines.append("- Suspect teammate process metadata:")
+        for item in suspect_processes[:MAX_ROWS]:
+            if not isinstance(item, dict):
+                continue
+            pid = str(item.get("pid") or "")
+            ppid = str(item.get("ppid") or "")
+            pgid = str(item.get("pgid") or "")
+            sess = str(item.get("sess") or "")
+            tty = str(item.get("tty") or "")
+            stat = str(item.get("stat") or "")
+            command = str(item.get("command") or "")
+            uncertain = str(bool(item.get("active_session_uncertain"))).lower()
+            lines.append(
+                f"  - pid=`{pid}` ppid=`{ppid}` pgid=`{pgid}` sess=`{sess}` tty=`{tty}` stat=`{stat}` "
+                f"active_session_uncertain=`{uncertain}` command=`{command}`"
+            )
+    lines.append("- Ignored current-session teammate PIDs: " + (", ".join(f"`{pid}`" for pid in ignored_pids) if ignored_pids else "`none`"))
+    lines.append("- Stale swarm sockets: " + (", ".join(f"`{sock}`" for sock in stale_sockets) if stale_sockets else "`none`"))
+    lines.append("- Live swarm sockets: " + (", ".join(f"`{sock}`" for sock in live_sockets) if live_sockets else "`none`"))
+
+    if isinstance(unresolved, list) and unresolved:
+        lines.append("- Unresolved review-only items:")
+        for item in unresolved[:MAX_ROWS]:
+            if not isinstance(item, dict):
+                continue
+            kind = str(item.get("kind") or "unknown")
+            value = str(item.get("value") or "")
+            reason = str(item.get("reason") or "")
+            resume = str(item.get("resume_step") or "")
+            lines.append(f"  - `{kind}` `{value}`: {reason}; resume: {resume}")
+        if len(unresolved) > MAX_ROWS:
+            lines.append(f"- ... {len(unresolved) - MAX_ROWS} more runtime hygiene item(s) omitted.")
+    else:
+        lines.append("- Unresolved review-only items: `none`")
+
+    resume_step = str(data.get("resume_step") or "")
+    lines.append(f"- Exact resume step: {resume_step or '_none_'}")
+    return lines
+
+
 def render(workspace: Path, repo_root: Path, output: Path) -> str:
     status = read_json(workspace / "stage-status.json")
     events_path = workspace / "audit-events.jsonl"
@@ -375,6 +461,7 @@ def render(workspace: Path, repo_root: Path, output: Path) -> str:
         f"- {file_status(workspace / 'stage-status.json', workspace)}",
         f"- {file_status(workspace / 'attack-surface.md', workspace)}",
         f"- {file_status(initial_probes, workspace)}",
+        f"- {file_status(workspace / 'runtime/runtime-hygiene-status.json', workspace)}",
         f"- {file_status(candidate, workspace)}",
         f"- {file_status(false_positive, workspace)}",
         f"- {file_status(unverified, workspace)}",
@@ -404,6 +491,14 @@ def render(workspace: Path, repo_root: Path, output: Path) -> str:
         "## Blocked Verification Status",
         "",
         *blocked_verification_lines(workspace),
+        "",
+        "## OMC Runtime Hygiene",
+        "",
+        *runtime_hygiene_lines(workspace),
+        "",
+        "## Audit Disposition Ledger",
+        "",
+        *render_unresolved_disposition_lines(workspace),
         "",
         "## Candidate Findings",
         "",

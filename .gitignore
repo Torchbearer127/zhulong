@@ -4,6 +4,9 @@
 *.swp
 *.swo
 *~
+.idea/
+.vscode/
+Thumbs.db
 
 # Python caches and local environments
 *.py[cod]
@@ -13,6 +16,7 @@ __pycache__/
 .ruff_cache/
 .venv/
 venv/
+env/
 
 # Node / package-manager caches, if docs or tooling use them later
 node_modules/
@@ -26,6 +30,7 @@ dist/
 build/
 coverage/
 *.log
+*.tmp
 
 # Local secrets and machine-specific config
 .env
@@ -36,6 +41,7 @@ coverage/
 security-research/
 security-research-*/
 .asr-latest-workspace
+*this-session-is-being-continued*.txt
 
 # Claude runtime sync backups are installation artifacts, not source
 *.backup.*

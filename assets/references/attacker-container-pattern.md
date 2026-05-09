@@ -84,8 +84,15 @@ Stable runner labels:
 - `blocked_missing_image`
 - `failed_timeout`
 - `failed_resource_limit`
+- `rejected_unsafe_sandbox`
 - `rejected_not_reproducible`
 - `confirmed_in_docker`
+
+`rejected_unsafe_sandbox` means the local preflight blocked privileged mode,
+host network, host PID, Docker socket mounts, or host-root mounts before Docker
+execution. It is a verification safety guard, not vulnerability confirmation;
+rewrite the verification container or script and keep the case out of
+`confirmed/`.
 
 Timeouts are not generic failures. If a case returns `failed_timeout`, inspect
 the PoC for service readiness waits, network blocking, infinite loops, or

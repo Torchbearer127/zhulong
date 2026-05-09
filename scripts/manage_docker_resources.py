@@ -16,6 +16,7 @@ PLAN_RELATIVE_PATH = Path("docker") / "docker-cleanup-plan.json"
 CLEAN_STATUS_RELATIVE_PATH = Path("docker") / "docker-cleanliness-status.json"
 LABEL_MANAGED = "org.zhulong.managed"
 LABEL_WORKSPACE = "org.zhulong.workspace"
+LEGACY_LABEL_WORKSPACE = "com.zhulong.workspace"
 
 
 def utc_now() -> str:
@@ -253,6 +254,8 @@ def is_owned(item: dict[str, Any], workspace_name: str, adopted_compose_projects
     item_labels = labels(item)
     if item_labels.get(LABEL_MANAGED) == "true" and item_labels.get(LABEL_WORKSPACE) == workspace_name:
         return True
+    if item_labels.get(LEGACY_LABEL_WORKSPACE) == workspace_name:
+        return True
     compose_project = item_labels.get("com.docker.compose.project", "")
     return bool(compose_project and adopted_compose_projects and compose_project in adopted_compose_projects)
 
@@ -284,6 +287,24 @@ def split_owned(
     return owned, unowned
 
 
+def split_owned_named(
+    items: list[dict[str, Any]],
+    workspace_name: str,
+    adopted_compose_projects: set[str] | None = None,
+    adopted_names: set[str] | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    owned: list[dict[str, Any]] = []
+    unowned: list[dict[str, Any]] = []
+    adopted_names = adopted_names or set()
+    for item in items:
+        name = str(item.get("name") or "").strip()
+        if is_owned(item, workspace_name, adopted_compose_projects) or (name and name in adopted_names):
+            owned.append(item)
+        else:
+            unowned.append(item)
+    return owned, unowned
+
+
 def split_owned_images(
     items: list[dict[str, Any]],
     workspace_name: str,
@@ -307,6 +328,8 @@ def build_cleanup_plan(
     *,
     adopted_compose_projects: set[str] | None = None,
     adopted_image_refs: set[str] | None = None,
+    adopted_network_names: set[str] | None = None,
+    adopted_volume_names: set[str] | None = None,
     adopt_build_cache: bool = False,
     adopted_build_cache_ids: set[str] | None = None,
 ) -> dict[str, Any]:
@@ -347,8 +370,18 @@ def build_cleanup_plan(
         adopted_compose_projects,
         adopted_image_refs,
     )
-    owned_volumes, unowned_volumes = split_owned([current_volumes[name] for name in new_volume_names], workspace_name, adopted_compose_projects)
-    owned_networks, unowned_networks = split_owned([current_networks[name] for name in new_network_names], workspace_name, adopted_compose_projects)
+    owned_volumes, unowned_volumes = split_owned_named(
+        [current_volumes[name] for name in new_volume_names],
+        workspace_name,
+        adopted_compose_projects,
+        adopted_volume_names,
+    )
+    owned_networks, unowned_networks = split_owned_named(
+        [current_networks[name] for name in new_network_names],
+        workspace_name,
+        adopted_compose_projects,
+        adopted_network_names,
+    )
     new_build_cache = [current_build_cache[item_id] for item_id in new_build_cache_ids]
     reclaimable_build_cache = [item for item in new_build_cache if item.get("reclaimable") is True]
     non_reclaimable_build_cache = [item for item in new_build_cache if item.get("reclaimable") is not True]
@@ -378,6 +411,8 @@ def build_cleanup_plan(
             },
             "adopted_compose_projects": sorted(adopted_compose_projects or []),
             "adopted_image_refs": sorted(adopted_image_refs or []),
+            "adopted_network_names": sorted(adopted_network_names or []),
+            "adopted_volume_names": sorted(adopted_volume_names or []),
             "adopt_build_cache": adopt_build_cache,
             "adopted_build_cache_ids": sorted(adopted_build_cache_ids),
             "note": (
@@ -498,6 +533,49 @@ def print_strict_unattributed_blocker(plan: dict[str, Any]) -> None:
             )
 
 
+def refuse_baseline_overwrite_if_residue_exists(
+    *,
+    workspace: Path,
+    baseline_path: Path,
+    plan_path: Path,
+    adopted_compose_projects: set[str],
+    adopted_image_refs: set[str],
+    adopted_network_names: set[str],
+    adopted_volume_names: set[str],
+    adopt_build_cache: bool,
+    adopted_build_cache_ids: set[str],
+    current_file: str | None,
+) -> None:
+    baseline = load_json(baseline_path)
+    if not baseline.get("docker_available", True):
+        return
+    current = load_json(Path(current_file).expanduser().resolve()) if current_file else capture_snapshot()
+    if not current.get("docker_available", True):
+        raise SystemExit("Docker is unavailable; refusing to overwrite baseline safely.")
+    plan = build_cleanup_plan(
+        baseline,
+        current,
+        workspace.name,
+        adopted_compose_projects=adopted_compose_projects,
+        adopted_image_refs=adopted_image_refs,
+        adopted_network_names=adopted_network_names,
+        adopted_volume_names=adopted_volume_names,
+        adopt_build_cache=adopt_build_cache,
+        adopted_build_cache_ids=adopted_build_cache_ids if adopt_build_cache else set(),
+    )
+    plan_path.write_text(json.dumps(plan, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    counts = plan_counts(plan)
+    if owned_residue_count(plan) or counts["unattributed_new_skipped"]:
+        raise SystemExit(
+            "Refusing to overwrite Docker baseline while post-baseline resources remain.\n"
+            f"cleanup_plan={plan_path}\n"
+            "Overwriting now would hide Docker residue from strict cleanliness checks. "
+            "Clean owned resources with --cleanup-created --apply, adopt only exact proven resources "
+            "with --adopt-image-ref/--adopt-network-name/--adopt-volume-name/--adopt-build-cache-id, "
+            "or leave the workspace blocked with the review-only residue recorded."
+        )
+
+
 def write_cleanliness_status(workspace: Path, plan: dict[str, Any], *, strict: bool) -> dict[str, Any]:
     counts = plan_counts(plan)
     owned_remaining = owned_residue_count(plan)
@@ -604,6 +682,20 @@ def main() -> int:
         help="Treat a new image ref such as mysql:5.7 as audit-owned for this cleanup run when it was absent from the baseline.",
     )
     parser.add_argument(
+        "--adopt-network-name",
+        action="append",
+        default=[],
+        metavar="NETWORK",
+        help="Treat one exact new Docker network name as audit-owned for this cleanup run when it was absent from the baseline.",
+    )
+    parser.add_argument(
+        "--adopt-volume-name",
+        action="append",
+        default=[],
+        metavar="VOLUME",
+        help="Treat one exact new Docker volume name as audit-owned for this cleanup run when it was absent from the baseline.",
+    )
+    parser.add_argument(
         "--adopt-build-cache",
         action="store_true",
         help="Allow exact BuildKit cache-id adoption for this cleanup run. Pair with --adopt-build-cache-id.",
@@ -636,6 +728,13 @@ def main() -> int:
     docker_dir.mkdir(parents=True, exist_ok=True)
     baseline_path = Path(args.baseline_file).expanduser().resolve() if args.baseline_file else workspace / BASELINE_RELATIVE_PATH
     plan_path = workspace / PLAN_RELATIVE_PATH
+    adopted_compose_projects = {str(value).strip() for value in args.adopt_compose_project if str(value).strip()}
+    adopted_image_refs = {str(value).strip() for value in args.adopt_image_ref if str(value).strip()}
+    adopted_network_names = {str(value).strip() for value in args.adopt_network_name if str(value).strip()}
+    adopted_volume_names = {str(value).strip() for value in args.adopt_volume_name if str(value).strip()}
+    adopted_build_cache_ids = {str(value).strip() for value in args.adopt_build_cache_id if str(value).strip()}
+    if adopted_build_cache_ids and not args.adopt_build_cache:
+        raise SystemExit("--adopt-build-cache-id requires --adopt-build-cache so cache cleanup is explicitly acknowledged.")
 
     if args.capture_baseline:
         if baseline_path.exists() and not args.force_overwrite_baseline:
@@ -650,7 +749,20 @@ def main() -> int:
                     "created by this audit. If Docker was deliberately reset before verification, rerun with "
                     "--force-overwrite-baseline."
                 )
-        snapshot = capture_snapshot()
+        if baseline_path.exists() and args.force_overwrite_baseline:
+            refuse_baseline_overwrite_if_residue_exists(
+                workspace=workspace,
+                baseline_path=baseline_path,
+                plan_path=plan_path,
+                adopted_compose_projects=adopted_compose_projects,
+                adopted_image_refs=adopted_image_refs,
+                adopted_network_names=adopted_network_names,
+                adopted_volume_names=adopted_volume_names,
+                adopt_build_cache=args.adopt_build_cache,
+                adopted_build_cache_ids=adopted_build_cache_ids,
+                current_file=args.current_file,
+            )
+        snapshot = load_json(Path(args.current_file).expanduser().resolve()) if args.current_file else capture_snapshot()
         baseline_path.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         if snapshot.get("docker_available"):
             print(f"docker_resource_baseline={baseline_path}")
@@ -665,17 +777,14 @@ def main() -> int:
     if not current.get("docker_available", True):
         raise SystemExit("Docker is unavailable; cannot compute cleanup plan safely.")
 
-    adopted_compose_projects = {str(value).strip() for value in args.adopt_compose_project if str(value).strip()}
-    adopted_image_refs = {str(value).strip() for value in args.adopt_image_ref if str(value).strip()}
-    adopted_build_cache_ids = {str(value).strip() for value in args.adopt_build_cache_id if str(value).strip()}
-    if adopted_build_cache_ids and not args.adopt_build_cache:
-        raise SystemExit("--adopt-build-cache-id requires --adopt-build-cache so cache cleanup is explicitly acknowledged.")
     plan = build_cleanup_plan(
         baseline,
         current,
         workspace.name,
         adopted_compose_projects=adopted_compose_projects,
         adopted_image_refs=adopted_image_refs,
+        adopted_network_names=adopted_network_names,
+        adopted_volume_names=adopted_volume_names,
         adopt_build_cache=args.adopt_build_cache,
         adopted_build_cache_ids=adopted_build_cache_ids if args.adopt_build_cache else set(),
     )

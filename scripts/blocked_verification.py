@@ -22,6 +22,7 @@ PULL_BLOCKER_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("runtime_not_started", re.compile(r"runtime not started|running service target:\s*blocked|docker verification blocked", re.I)),
     ("stale_or_unresolved_image_pull", re.compile(r"running service target:\s*not started.*images? being pulled|image pull required", re.I)),
     ("network_timeout", re.compile(r"i/o timeout|context deadline exceeded|temporary failure in name resolution|no such host|network.*timeout|dns.*(timeout|failure|resolution)", re.I)),
+    ("dangerous_sandbox_preflight", re.compile(r"rejected_unsafe_sandbox|dangerous_docker_config|dangerous_shell_flag|credential_exposure_risk", re.I)),
 ]
 
 GENERIC_BLOCKED_PATTERN = re.compile(r"\bBLOCKED\b")
@@ -89,6 +90,11 @@ def recovery_step(label: str) -> str:
         return (
             "Docker image pull appears blocked by network/DNS timeout. Fix network access or configure an approved mirror, "
             "then rerun Docker verification."
+        )
+    if label == "dangerous_sandbox_preflight":
+        return (
+            "Sandbox preflight rejected unsafe Docker configuration. Rewrite the verification container or script to avoid "
+            "privileged/host/docker.sock/root-mount behavior, then rerun Docker verification."
         )
     return "Resolve the Docker/runtime blocker, start the target runtime, rerun Docker verification, and only then retry finalization."
 

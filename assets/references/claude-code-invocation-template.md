@@ -9,7 +9,7 @@ prompt. Do not copy the full plugin contract into every audit request.
 - Sync this package into Claude Code before use:
 
 ```bash
-bash plugins/zhulong-plugin/scripts/sync_to_claude_skill.sh
+bash scripts/sync_to_claude_skill.sh
 ```
 
 - Restart Claude Code or open a new session after syncing.
@@ -17,8 +17,13 @@ bash plugins/zhulong-plugin/scripts/sync_to_claude_skill.sh
 - If manual fallback is genuinely needed, use the single launcher:
 
 ```bash
-bash plugins/zhulong-plugin/scripts/asr_start.sh --source <repo-or-url>
+bash scripts/asr_start.sh --source <repo-or-url>
 ```
+
+By default the launcher records OMC suspect teammate PIDs in workspace status
+and handoff documents without interrupting the run. Add
+`--prompt-runtime-pid-review` only when you want an explicit terminal prompt for
+operator review at startup. The option never enables automatic PID cleanup.
 
 ## Prompt Contract
 
@@ -39,6 +44,7 @@ The skill itself owns the hard rules:
 - Do not produce a thin report; include detailed DOCX analysis, attachment index, reproduction supplement, `attachments/`, and a reviewer-friendly bundle-root reproduction script
 - explicit Docker gate, OMC runtime gate, validation, and visible pause summaries
 - one severity-escalation pass in Docker before final scoring
+- P5 disposition ledger, runtime hygiene, sandbox preflight, and confirmed-report quality gates
 
 If a future rule is important enough to repeat in every prompt, put it into the
 skill or validator instead, then keep this invocation template short.
@@ -46,7 +52,7 @@ skill or validator instead, then keep this invocation template short.
 ## Recommended: GitHub, Chinese Output
 
 ```text
-Please use the zhulong skill to perform end-to-end autonomous vulnerability research on this repository:
+Please use the zhulong skill to perform an end-to-end security-focused code audit on this repository:
 https://github.com/owner/repo
 
 Output language: zh-CN.
@@ -55,7 +61,7 @@ Output language: zh-CN.
 ## Recommended: GitHub, English Output
 
 ```text
-Please use the zhulong skill to perform end-to-end autonomous vulnerability research on this repository:
+Please use the zhulong skill to perform an end-to-end security-focused code audit on this repository:
 https://github.com/owner/repo
 
 Output language: en-US.
@@ -64,7 +70,7 @@ Output language: en-US.
 ## Local Repository
 
 ```text
-Please use the zhulong skill to perform end-to-end autonomous vulnerability research on this local repository:
+Please use the zhulong skill to perform an end-to-end security-focused code audit on this local repository:
 /path/to/repo
 
 Output language: zh-CN.
@@ -75,7 +81,7 @@ Output language: zh-CN.
 Add only the preferences that are truly specific to this run:
 
 ```text
-Please use the zhulong skill to perform end-to-end autonomous vulnerability research on this repository:
+Please use the zhulong skill to perform an end-to-end security-focused code audit on this repository:
 https://github.com/owner/repo
 
 Output language: zh-CN.
@@ -94,16 +100,48 @@ repair.
 Use this form when testing Zhulong on a real repository before broad rollout:
 
 ```text
-Please use the zhulong skill to perform an end-to-end dogfood vulnerability research pilot on this repository:
+Please use the zhulong skill to perform an end-to-end dogfood security-focused code audit pilot on this repository:
 https://github.com/owner/repo
 
 Output language: zh-CN.
 Preferences:
 - Treat this as a product validation run, not a quota-driven bug hunt.
 - Do not force a confirmed finding; "no confirmed vulnerabilities" is acceptable if Docker evidence does not support any candidate.
+- Record security issues, non-security defects, hardening-only observations, false positives, and unverified leads in the appropriate workspace files instead of forcing them into confirmed bundles.
 - Keep playbooks and checklists as starting maps, not fences. Expand attack-surface.md for repository-specific frameworks, data flows, sinks, or deployment shapes not covered by the references.
 - At the end, summarize confirmed findings, false positives, unverified leads, Docker blockers, and any friction in the Zhulong workflow itself.
 ```
 
 For the first few real-world pilots, prefer a small Docker-ready repository or a
 known-vulnerable benchmark before moving to a medium-sized production project.
+
+## Release Candidate 5-Repository Pilot Prompt
+
+Use this form for future release-candidate validation cycles after plugin
+selftests pass and before publishing a new tagged release. The 0.2.0 P5
+release-candidate dogfood pass has already been run and documented.
+
+```text
+Please use the zhulong skill to perform a P5 release-candidate dogfood security-focused code audit pilot on this repository:
+https://github.com/owner/repo
+
+Output language: zh-CN.
+Preferences:
+- Treat this as release validation, not a quota-driven bug hunt.
+- Do not force confirmed findings; no-confirmed is acceptable when Docker evidence does not support any candidate.
+- Record security issues, non-security defects, hardening-only observations, false positives, and unverified leads in the appropriate workspace files instead of forcing them into confirmed bundles.
+- Preserve P5 gates: audit-disposition ledger, OMC runtime hygiene, sandbox preflight, finalization integrity, Docker strict clean, and attacker/server/impact report quality.
+- At the end, export or summarize the workspace log with confirmed findings, false positives, unverified leads, blocked verification, sandbox preflight status, runtime hygiene status, Docker cleanup status, finalization/assert status, and Zhulong workflow friction.
+```
+
+For the manual release-candidate set, choose about five repositories that cover:
+
+- one Docker-ready Web/API target
+- one medium or large monorepo
+- one Python or Node library/framework target
+- one realistic Docker Compose stack
+- one expected no-confirmed control
+
+Pause release only for High/Medium workflow defects. Record Low-severity wording,
+alias, or ergonomics issues as follow-up issues instead of restarting the P5
+hardening loop.

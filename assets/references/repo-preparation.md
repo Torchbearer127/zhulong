@@ -10,6 +10,13 @@ Recommended manual fallback:
 bash "$HOME/.claude/skills/zhulong/scripts/asr_start.sh" --source <local-path-or-repo-url>
 ```
 
+By default, OMC suspect teammate PIDs are written to
+`runtime/runtime-hygiene-status.json`, `handoff-summary.md`, and the final
+workspace summary without interrupting the operator. If you want the launcher to
+print an explicit end-of-startup PID review block, add
+`--prompt-runtime-pid-review`. This is a prompt-only affordance; Zhulong still
+does not signal teammate PIDs.
+
 Use `prepare_target_repo.sh` only as an internal helper or when you are already invoking it by absolute path from a known location.
 
 ## Supported Inputs

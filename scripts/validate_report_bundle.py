@@ -103,6 +103,70 @@ EN_ANALYSIS_MARKERS = [
 ]
 ZH_REPRODUCTION_MARKERS = ["环境准备", "执行", "预期", "实际", "结果证据"]
 EN_REPRODUCTION_MARKERS = ["Environment", "Run command", "Expected", "Observed", "Evidence"]
+ZH_QUALITY_LABELS = {
+    "attacker": ["攻击者条件", "攻击前提", "攻击者前提"],
+    "server": ["服务端条件", "服务端前提", "服务端配置条件"],
+    "impact": ["安全影响", "安全影响说明"],
+}
+EN_QUALITY_LABELS = {
+    "attacker": ["Attacker Condition", "Attack Preconditions", "Attacker Preconditions"],
+    "server": ["Server Condition", "Server Preconditions", "Server Configuration Condition"],
+    "impact": ["Security Impact", "Confirmed Security Impact"],
+}
+ZH_LEGACY_QUALITY_MARKERS = {
+    "attacker": ["入口/可控输入："],
+    "server": ["服务端条件：", "服务端前提：", "默认配置", "默认 IMPORT_IP_DENY_LIST", "服务端配置"],
+    "impact": ["实际影响/边界：", "评估依据：", "结果证据：", "安全影响："],
+}
+EN_LEGACY_QUALITY_MARKERS = {
+    "attacker": ["Entry / controllable input:"],
+    "server": ["Server condition:", "Server precondition:", "default configuration", "server configuration"],
+    "impact": ["Practical impact / boundary:", "Assessment rationale:", "Evidence:", "Security impact:"],
+}
+ZH_QUALITY_PLACEHOLDERS = {
+    "待补充",
+    "暂无",
+    "无",
+    "未知",
+    "不详",
+    "请补充",
+    "占位",
+    "todo",
+    "tbd",
+    "n/a",
+}
+EN_QUALITY_PLACEHOLDERS = {
+    "pending",
+    "todo",
+    "tbd",
+    "n/a",
+    "na",
+    "none",
+    "unknown",
+    "placeholder",
+    "fillin",
+    "notprovided",
+}
+ZH_IMPACT_PATTERNS = [
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"机密性",
+        r"数据泄露|信息泄露|敏感(?:信息|文件|数据)?(?:读取|泄露|暴露)?",
+        r"读取|窃取|泄露|暴露|内网|SSRF",
+        r"完整性|未授权|越权|篡改|修改|写入|伪造|权限",
+        r"可用性|拒绝服务|DoS|崩溃|资源耗尽",
+    )
+]
+EN_IMPACT_PATTERNS = [
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"confidentiality|data exposure|information disclosure",
+        r"sensitive (?:file|data|information)|read|exfiltrat|leak|disclos",
+        r"integrity|unauthori[sz]ed|authorization|modify|write|tamper|forge|privilege",
+        r"availability|denial of service|DoS|crash|resource exhaustion",
+        r"SSRF|internal service|internal network",
+    )
+]
 ALLOWED_VERIFICATION_STATUSES = {
     "confirmed_in_docker",
     "high_confidence_unverified_due_to_sandbox_limitation",
@@ -139,6 +203,86 @@ RUNTIME_MISMATCH_TEXT_PATTERNS = [
     re.compile(r"源代码/运行时不匹配"),
     re.compile(r"运行时.*不匹配"),
 ]
+UNAUTHENTICATED_TITLE_PATTERNS = [
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"\bunauthenticated\b",
+        r"\bno[- ]auth\b",
+        r"\bpre[- ]auth(?:enticated|entication)?\b",
+        r"未认证",
+        r"未授权",
+        r"无需认证",
+        r"认证前",
+    )
+]
+AUTHENTICATED_FLOW_MARKERS = [
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"/auth/login",
+        r"Authorization:\s*Bearer",
+        r"\baccess_token\b",
+        r"\brefresh_token\b",
+    )
+]
+RECORDING_ZERO_STEP_PATTERNS = [
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"\[0/\d+\]",
+        r"\b0/\d+\b",
+        r"\bStep\s+0/\d+\b",
+        r"步骤\s*0/\d+",
+    )
+]
+SHELL_CONFIRMATION_PHRASE_PATTERNS = [
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"\bVULNERABILITY CONFIRMED\b",
+        r"\bATTACK SUCCESS\b",
+        r"漏洞已确认",
+        r"攻击成功",
+    )
+]
+SHELL_CONFIRMATION_PRINT_PATTERNS = [
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"\b(?:echo|printf|highlight_success|highlight_danger)\b[^\n'\"]*['\"]\s*(?:VULNERABILITY CONFIRMED|ATTACK SUCCESS)\b",
+        r"\b(?:echo|printf|highlight_success|highlight_danger)\b[^\n'\"]*['\"]\s*(?:漏洞已确认|攻击成功)",
+    )
+]
+SHELL_SUCCESS_ORACLE_PATTERNS = [
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"\bjq\s+-e\b",
+        r"\bgrep\s+-q\b",
+        r"\btest\s+",
+        r"\[\[",
+        r"^\s*case\s+",
+        r"^\s*if\b",
+        r";\s*then\b",
+        r"\bHTTP[_ -]?(?:status|code)?\b",
+        r"\bstatus_code\b",
+        r"\bresponse[_-]?(?:body|json|content)?\b",
+        r"\bjson\b",
+        r"\b(?:require|assert|check|verify)[A-Za-z0-9_ -]*(?:success|oracle|status|response|json|ok)\b",
+        r"\bexit\s+1\b",
+    )
+]
+TECHNICAL_TEXT_PATTERNS = [
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"https?://",
+        r"\b(?:curl|docker|python3?|jq|grep|sed|awk|npm|yarn|pnpm|uv|bash|sh)\b",
+        r"\b(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+/",
+        r"\b(?:Authorization|Content-Type|Accept|Cookie|User-Agent):",
+        r"\bCVSS:\d\.\d/",
+        r"\b[A-Za-z_][A-Za-z0-9_]*=",
+        r"[{}[\]<>`$]",
+        r"(?:^|\s)/(?:[A-Za-z0-9_.-]+/)+",
+        r"\b(?:VULNERABILITY CONFIRMED|ATTACK SUCCESS)\b",
+        r"漏洞已确认|攻击成功",
+    )
+]
+STRUCTURED_TARGET_FIELDS = ("attack_target", "ssrf_target", "target_url")
 
 
 def parse_args() -> argparse.Namespace:
@@ -379,6 +523,169 @@ def expected_supplement_filename(docx_path: Path, language: str) -> str:
 
 def normalize_token(text: str) -> str:
     return "".join(ch.lower() for ch in str(text) if ch.isalnum() or "\u4e00" <= ch <= "\u9fff")
+
+
+def strip_quality_prefix(line: str) -> str:
+    return re.sub(r"^[\s#>*\-•\d.、)）]+", "", str(line).strip()).strip()
+
+
+def quality_labels(language: str) -> dict[str, list[str]]:
+    return ZH_QUALITY_LABELS if language == "zh-CN" else EN_QUALITY_LABELS
+
+
+def legacy_quality_markers(language: str) -> dict[str, list[str]]:
+    return ZH_LEGACY_QUALITY_MARKERS if language == "zh-CN" else EN_LEGACY_QUALITY_MARKERS
+
+
+def quality_display_name(language: str, kind: str) -> str:
+    if language == "zh-CN":
+        return {"attacker": "攻击者条件", "server": "服务端条件", "impact": "安全影响"}[kind]
+    return {"attacker": "Attacker Condition", "server": "Server Condition", "impact": "Security Impact"}[kind]
+
+
+def split_quality_label_line(line: str, labels: list[str]) -> tuple[str, str] | None:
+    stripped = strip_quality_prefix(line)
+    if not stripped:
+        return None
+    lowered = stripped.lower()
+    for label in labels:
+        label_lower = label.lower()
+        if lowered == label_lower:
+            return label, ""
+        for sep in ("：", ":"):
+            prefix = f"{label}{sep}"
+            if stripped.startswith(prefix) or lowered.startswith(prefix.lower()):
+                return label, stripped[len(prefix):].strip()
+    return None
+
+
+def find_explicit_quality_text(
+    lines: list[str],
+    labels: list[str],
+    stop_headings: set[str],
+    all_quality_labels: list[str],
+) -> str:
+    for index, line in enumerate(lines):
+        match = split_quality_label_line(line, labels)
+        if match is None:
+            continue
+        _, inline_text = match
+        if inline_text:
+            return inline_text
+        collected: list[str] = []
+        for follow in lines[index + 1:]:
+            stripped = follow.strip()
+            if not stripped:
+                continue
+            if stripped in stop_headings:
+                break
+            if split_quality_label_line(stripped, all_quality_labels) is not None:
+                break
+            collected.append(stripped)
+        return "\n".join(collected).strip()
+    return ""
+
+
+def has_any_explicit_quality_label(lines: list[str], language: str) -> bool:
+    labels = [label for group in quality_labels(language).values() for label in group]
+    return any(split_quality_label_line(line, labels) is not None for line in lines)
+
+
+def legacy_quality_search_space(lines: list[str], language: str) -> str:
+    if language == "zh-CN":
+        headings = ZH_HEADINGS | {"关键代码上下文", "验证环境关键文件"}
+        analysis_heading = "漏洞分析"
+        risk_heading = "漏洞危险性评估"
+    else:
+        headings = EN_HEADINGS | {"Key Code Context", "Verification Environment Key Files"}
+        analysis_heading = "Vulnerability Analysis"
+        risk_heading = "Risk Assessment"
+    analysis = section_text(lines, analysis_heading, headings)
+    risk = section_text(lines, risk_heading, headings)
+    return "\n".join(part for part in (risk, analysis) if part).strip() or "\n".join(lines)
+
+
+def find_legacy_quality_text(lines: list[str], language: str, kind: str) -> str:
+    search_space = legacy_quality_search_space(lines, language)
+    markers = legacy_quality_markers(language)[kind]
+    hits = []
+    lowered_markers = [marker.lower() for marker in markers]
+    for raw in search_space.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        lowered = line.lower()
+        if any(marker in line or marker in lowered for marker in markers + lowered_markers):
+            hits.append(line)
+    if kind == "attacker" and not hits:
+        for raw in search_space.splitlines():
+            line = raw.strip()
+            if language == "zh-CN" and "攻击者" in line and ("可控" in line or "认证" in line or "权限" in line):
+                hits.append(line)
+            elif language == "en-US" and "attacker" in line.lower() and (
+                "control" in line.lower() or "auth" in line.lower() or "privilege" in line.lower()
+            ):
+                hits.append(line)
+    if kind == "server" and not hits:
+        for raw in search_space.splitlines():
+            line = raw.strip()
+            lowered = line.lower()
+            if language == "zh-CN" and ("默认" in line or "配置" in line or "环境" in line):
+                hits.append(line)
+            elif language == "en-US" and ("default" in lowered or "configuration" in lowered or "environment" in lowered):
+                hits.append(line)
+    if kind == "impact" and not hits:
+        patterns = ZH_IMPACT_PATTERNS if language == "zh-CN" else EN_IMPACT_PATTERNS
+        for raw in search_space.splitlines():
+            line = raw.strip()
+            if any(pattern.search(line) for pattern in patterns):
+                hits.append(line)
+    return "\n".join(hits[:3]).strip()
+
+
+def placeholder_only_quality_text(text: str, language: str) -> bool:
+    normalized = normalize_token(text)
+    if not normalized:
+        return True
+    placeholders = ZH_QUALITY_PLACEHOLDERS if language == "zh-CN" else EN_QUALITY_PLACEHOLDERS
+    return normalized in {normalize_token(item) for item in placeholders}
+
+
+def validate_quality_text_meaningful(text: str, language: str, kind: str) -> None:
+    label = quality_display_name(language, kind)
+    if not text.strip():
+        fail(f"report quality gate missing {label}; add a non-empty {label} section")
+    if placeholder_only_quality_text(text, language):
+        fail(f"report quality gate {label} is placeholder-only; replace it with concrete reviewer-facing conditions")
+
+
+def validate_quality_impact_wording(text: str, language: str) -> None:
+    patterns = ZH_IMPACT_PATTERNS if language == "zh-CN" else EN_IMPACT_PATTERNS
+    if not any(pattern.search(text) for pattern in patterns):
+        label = quality_display_name(language, "impact")
+        fail(
+            f"report quality gate {label} must mention a concrete CIA impact or equivalent "
+            "such as data exposure, unauthorized modification, DoS, SSRF/internal access, or information disclosure"
+        )
+
+
+def validate_quality_gate(lines: list[str], language: str) -> None:
+    labels_by_kind = quality_labels(language)
+    all_quality_labels = [label for group in labels_by_kind.values() for label in group]
+    stop_headings = (
+        ZH_HEADINGS | {"关键代码上下文", "验证环境关键文件"}
+        if language == "zh-CN"
+        else EN_HEADINGS | {"Key Code Context", "Verification Environment Key Files"}
+    )
+    strict_explicit_mode = has_any_explicit_quality_label(lines, language)
+
+    extracted: dict[str, str] = {}
+    for kind, labels in labels_by_kind.items():
+        explicit_text = find_explicit_quality_text(lines, labels, stop_headings, all_quality_labels)
+        extracted[kind] = explicit_text if strict_explicit_mode else (explicit_text or find_legacy_quality_text(lines, language, kind))
+        validate_quality_text_meaningful(extracted[kind], language, kind)
+
+    validate_quality_impact_wording(extracted["impact"], language)
 
 
 def severity_cn_from_any(value: object) -> str:
@@ -701,6 +1008,75 @@ def validate_severity_consistency(
         )
 
 
+def cvss_vector_from_finding(finding: dict[str, object]) -> str:
+    cvss = finding.get("cvss")
+    if isinstance(cvss, dict):
+        return str(cvss.get("vector") or "").strip()
+    return str(finding.get("cvss_vector") or finding.get("cvss31_vector") or finding.get("cvss4_vector") or "").strip()
+
+
+def cvss_requires_privileges(vector: str) -> bool:
+    return bool(re.search(r"(?:^|/)PR:[LH](?:/|$)", str(vector or ""), re.IGNORECASE))
+
+
+def unauthenticated_claim_matches(text: str) -> list[str]:
+    return [match.group(0) for pattern in UNAUTHENTICATED_TITLE_PATTERNS for match in pattern.finditer(text or "")]
+
+
+def contains_authenticated_flow_markers(text: str) -> bool:
+    return any(pattern.search(text or "") for pattern in AUTHENTICATED_FLOW_MARKERS)
+
+
+def finding_reproduction_text(finding: dict[str, object]) -> str:
+    parts: list[str] = []
+    raw_steps = finding.get("reproduction")
+    if isinstance(raw_steps, list):
+        for step in raw_steps:
+            if isinstance(step, dict):
+                parts.extend(str(value) for value in step.values())
+            else:
+                parts.append(str(step))
+    for key in ("reproduction", "steps", "proof", "poc", "verification_evidence"):
+        value = finding.get(key)
+        if isinstance(value, (dict, list)):
+            parts.append(json.dumps(value, ensure_ascii=False, sort_keys=True))
+        elif value is not None:
+            parts.append(str(value))
+    return "\n".join(parts)
+
+
+def validate_title_auth_cvss_consistency(
+    bundle_dir: Path,
+    docx_path: Path,
+    docx_lines: list[str],
+    finding: dict[str, object],
+) -> None:
+    title_values = [
+        docx_lines[0] if docx_lines else "",
+        bundle_dir.name,
+        docx_path.stem,
+        str(finding.get("title") or ""),
+        str(finding.get("title_zh") or ""),
+        str(finding.get("title_en") or ""),
+        str(finding.get("filename") or ""),
+        str(finding.get("report_file") or ""),
+    ]
+    title_text = "\n".join(value for value in title_values if str(value).strip())
+    claims = unauthenticated_claim_matches(title_text)
+    if not claims:
+        return
+
+    vector = cvss_vector_from_finding(finding)
+    auth_markers = contains_authenticated_flow_markers(finding_reproduction_text(finding) + "\n" + "\n".join(docx_lines))
+    if cvss_requires_privileges(vector) or auth_markers:
+        reason = f"CVSS vector {vector or '<missing>'} requires privileges" if cvss_requires_privileges(vector) else "reproduction uses authenticated-flow markers"
+        fail(
+            "title/CVSS/auth consistency failure: report title, DOCX first line, bundle directory, "
+            "or findings title must not claim unauthenticated/pre-auth reachability when "
+            f"{reason}. Offending title term(s): {', '.join(sorted(set(claims)))}"
+        )
+
+
 def validate_bundle_identity(bundle_dir: Path, docx_lines: list[str], workspace_dir: Path) -> None:
     findings_path = resolve_findings_path(bundle_dir)
     if findings_path is None:
@@ -964,6 +1340,42 @@ def validate_relative_attachment_refs(text: str, bundle_dir: Path | None = None)
                 fail(f"attachment reference does not exist inside bundle: {match}")
 
 
+def validate_recording_step_labels(script_path: Path, text: str) -> None:
+    for pattern in RECORDING_ZERO_STEP_PATTERNS:
+        match = pattern.search(text)
+        if match:
+            fail(
+                f"bundle root recording script must not use 0/N step labels: "
+                f"{script_path.name} contains {match.group(0)!r}. Use [代码]/[Code], [证据]/[Evidence], "
+                "or another non-numeric label for non-reproduction sections."
+            )
+
+
+def line_prints_final_confirmation(line: str) -> bool:
+    if not any(pattern.search(line) for pattern in SHELL_CONFIRMATION_PHRASE_PATTERNS):
+        return False
+    return any(pattern.search(line) for pattern in SHELL_CONFIRMATION_PRINT_PATTERNS)
+
+
+def has_preceding_success_oracle(lines: list[str], index: int) -> bool:
+    window = "\n".join(lines[max(0, index - 80): index + 1])
+    return any(pattern.search(window) for pattern in SHELL_SUCCESS_ORACLE_PATTERNS)
+
+
+def validate_shell_success_oracles(script_path: Path, text: str) -> None:
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        if not line_prints_final_confirmation(line):
+            continue
+        if has_preceding_success_oracle(lines, index):
+            continue
+        fail(
+            f"{script_path.relative_to(script_path.parent)} prints a final vulnerability confirmation without a "
+            "nearby or preceding concrete success oracle. Add a jq -e/grep -q/test/if/case/status/JSON/content "
+            "assertion before printing VULNERABILITY CONFIRMED, ATTACK SUCCESS, 漏洞已确认, or 攻击成功."
+        )
+
+
 def validate_bundle_root_scripts(bundle_dir: Path, note_text: str) -> list[str]:
     script_paths = sorted(
         [
@@ -974,6 +1386,8 @@ def validate_bundle_root_scripts(bundle_dir: Path, note_text: str) -> list[str]:
     for script_path in script_paths:
         text = script_path.read_text(encoding="utf-8")
         validate_no_absolute_paths(text)
+        validate_recording_step_labels(script_path, text)
+        validate_shell_success_oracles(script_path, text)
         if script_path.name not in note_text:
             fail(f"bundle root script is missing from attachment note: {script_path.name}")
         if not os.access(script_path, os.X_OK):
@@ -997,6 +1411,181 @@ def validate_bundle_root_scripts(bundle_dir: Path, note_text: str) -> list[str]:
     if not script_paths:
         fail("confirmed bundle must include at least one bundle-root run-*.sh reproduction helper")
     return [path.name for path in script_paths]
+
+
+def is_shell_script(path: Path) -> bool:
+    if path.suffix in {".sh", ".bash"}:
+        return True
+    try:
+        first = path.read_text(encoding="utf-8", errors="ignore").splitlines()[0]
+    except IndexError:
+        return False
+    return bool(re.search(r"^#!.*\b(?:sh|bash|dash|zsh)\b", first))
+
+
+def validate_attachment_shell_scripts(attachments_dir: Path) -> None:
+    for path in sorted(item for item in attachments_dir.rglob("*") if item.is_file()):
+        if not is_shell_script(path):
+            continue
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        validate_no_absolute_paths(text)
+        validate_shell_success_oracles(path, text)
+
+
+def split_markdown_paragraphs(text: str) -> list[str]:
+    paragraphs: list[str] = []
+    current: list[str] = []
+    in_fence = False
+    for raw in text.splitlines():
+        stripped = raw.strip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            if current:
+                paragraphs.append(" ".join(current).strip())
+                current = []
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        if not stripped:
+            if current:
+                paragraphs.append(" ".join(current).strip())
+                current = []
+            continue
+        current.append(stripped)
+    if current:
+        paragraphs.append(" ".join(current).strip())
+    return paragraphs
+
+
+def looks_like_technical_fragment(text: str) -> bool:
+    stripped = text.strip()
+    if not stripped:
+        return True
+    if any(pattern.search(stripped) for pattern in TECHNICAL_TEXT_PATTERNS):
+        return True
+    punctuation = sum(1 for char in stripped if char in "/:_=|{}[]<>`$\\")
+    if punctuation >= 4:
+        return True
+    return False
+
+
+def looks_like_long_english_prose(text: str) -> bool:
+    stripped = re.sub(r"^[#>*\-\s\d.、)）]+", "", text.strip())
+    if not stripped:
+        return False
+    if any("\u4e00" <= ch <= "\u9fff" for ch in stripped):
+        return False
+    if looks_like_technical_fragment(stripped):
+        return False
+    words = re.findall(r"\b[A-Za-z]{2,}\b", stripped)
+    if len(words) < 16:
+        return False
+    letters = sum(1 for ch in stripped if ch.isalpha())
+    ascii_letters = sum(1 for ch in stripped if ("a" <= ch.lower() <= "z"))
+    if letters and ascii_letters / letters < 0.85:
+        return False
+    if not re.search(r"[.!?]\s+[A-Z]", stripped) and len(words) < 24:
+        return False
+    natural_markers = {
+        "the",
+        "this",
+        "that",
+        "with",
+        "without",
+        "attacker",
+        "server",
+        "vulnerability",
+        "endpoint",
+        "request",
+        "response",
+        "because",
+        "allows",
+        "could",
+        "should",
+        "impact",
+        "security",
+    }
+    hits = sum(1 for word in words if word.lower() in natural_markers)
+    return hits >= 4
+
+
+def validate_no_untranslated_english_text(lines: list[str], markdown_texts: list[tuple[str, str]], language: str) -> None:
+    if language != "zh-CN":
+        return
+    for index, line in enumerate(lines, start=1):
+        if looks_like_long_english_prose(line):
+            fail(
+                "zh-CN report contains a long English natural-language paragraph in DOCX "
+                f"paragraph {index}; translate reviewer-facing prose and keep only technical tokens in English"
+            )
+    for label, text in markdown_texts:
+        for para_index, paragraph in enumerate(split_markdown_paragraphs(text), start=1):
+            if looks_like_long_english_prose(paragraph):
+                fail(
+                    f"zh-CN artifact {label} contains a long English natural-language paragraph "
+                    f"near paragraph {para_index}; translate reviewer-facing prose and keep commands, URLs, "
+                    "headers, JSON keys, CVSS vectors, and oracle tokens as technical text only"
+                )
+
+
+def explicit_structured_values(*containers: object, fields: tuple[str, ...]) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for container in containers:
+        if not isinstance(container, dict):
+            continue
+        for field in fields:
+            value = str(container.get(field) or "").strip()
+            if value:
+                values[field] = value
+        nested = container.get("verification_evidence")
+        if isinstance(nested, dict):
+            for field in fields:
+                value = str(nested.get(field) or "").strip()
+                if value:
+                    values[field] = value
+    return values
+
+
+def validate_structured_material_consistency(
+    bundle_dir: Path,
+    finding: dict[str, object] | None,
+    evidence: dict[str, object],
+    docx_text_value: str,
+    supplement_text: str,
+    root_scripts: list[str],
+) -> None:
+    finding_obj = finding or {}
+    target_values = explicit_structured_values(finding_obj, evidence, fields=STRUCTURED_TARGET_FIELDS)
+    material_texts = [docx_text_value, supplement_text]
+    for script_name in root_scripts:
+        path = bundle_dir / script_name
+        if path.exists():
+            material_texts.append(path.read_text(encoding="utf-8", errors="ignore"))
+    attachments_dir = bundle_dir / "attachments"
+    if attachments_dir.exists():
+        for path in sorted(attachments_dir.rglob("*")):
+            if path.is_file() and is_shell_script(path):
+                material_texts.append(path.read_text(encoding="utf-8", errors="ignore"))
+    combined = "\n".join(material_texts)
+    for field, value in target_values.items():
+        if value not in combined:
+            fail(
+                f"structured {field} from findings/verification-evidence does not appear in reviewer-facing "
+                "DOCX, supplement, PoC, or recording script material"
+            )
+
+    docker_command = str(evidence.get("docker_command") or "").strip()
+    if docker_command:
+        docker_material = "\n".join([docx_text_value, supplement_text] + [
+            (bundle_dir / script_name).read_text(encoding="utf-8", errors="ignore")
+            for script_name in root_scripts
+            if (bundle_dir / script_name).exists()
+        ])
+        if docker_command not in docker_material:
+            warn(
+                "verification-evidence.json docker_command is not repeated exactly in the DOCX, "
+                "supplement, or recording script; keep future generated artifacts aligned when possible"
+            )
 
 
 def validate_success_evidence(text: str, language: str, *, label: str = "report") -> None:
@@ -1106,6 +1695,7 @@ def main() -> None:
     supplement_name = expected_supplement_filename(docx_path, language)
     supplement_path = find_single([p for p in markdown_paths if p.name == supplement_name], "reproduction supplement markdown")
     validate_required_headings(lines, language)
+    validate_quality_gate(lines, language)
     validate_report_depth(lines, language)
     validate_bundle_identity(bundle_dir, lines, workspace_dir)
     findings_path = resolve_findings_path(bundle_dir)
@@ -1117,6 +1707,7 @@ def main() -> None:
         project_name, title_tokens, selected_finding = load_bundle_identity(findings_path, bundle_dir.name, workspace_dir)
         validate_finding_vulnerability_name(selected_finding)
         validate_severity_consistency(bundle_dir, docx_path, selected_finding, language)
+        validate_title_auth_cvss_consistency(bundle_dir, docx_path, lines, selected_finding)
     verification_evidence = validate_verification_evidence(bundle_dir, selected_finding)
     if selected_finding is not None:
         validate_runtime_scope(defaults, selected_finding, verification_evidence, workspace_dir)
@@ -1130,6 +1721,11 @@ def main() -> None:
     validate_attachment_note(note_path, language)
     note_text = note_path.read_text(encoding="utf-8")
     supplement_text = validate_reproduction_supplement(supplement_path, language)
+    validate_no_untranslated_english_text(
+        lines,
+        [(path.name, path.read_text(encoding="utf-8")) for path in markdown_paths],
+        language,
+    )
     validate_no_placeholder_text(note_text, language, "attachment note")
     validate_no_placeholder_text(supplement_text, language, "reproduction supplement")
     root_scripts = validate_bundle_root_scripts(bundle_dir, note_text)
@@ -1155,6 +1751,15 @@ def main() -> None:
         fail("attachments exists but is not a directory")
     if not any(path.is_file() for path in attachments_dir.rglob("*")):
         fail("attachments/ must contain at least one evidence, PoC, Docker, or supporting file")
+    validate_attachment_shell_scripts(attachments_dir)
+    validate_structured_material_consistency(
+        bundle_dir,
+        selected_finding,
+        verification_evidence,
+        combined_text,
+        supplement_text,
+        root_scripts,
+    )
     warn_attachment_hygiene(bundle_dir, [combined_text, note_text, supplement_text], verification_evidence)
 
     if args.with_libreoffice:

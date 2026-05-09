@@ -1,0 +1,33 @@
+{
+  "name": "zhulong",
+  "version": "0.2.0",
+  "displayName": "Zhulong (烛龙)",
+    "description": "Docker-first, agent-operable security-focused code audit workflow packaged for local discovery.",
+    "publisher": "Torchbearer127",
+    "author": {
+        "name": "Torchbearer127",
+        "email": "torchbearer127@qq.com",
+        "url": "https://github.com/Torchbearer127"
+    },
+  "license": "MIT",
+  "keywords": [
+    "security",
+    "code-audit",
+    "docker",
+    "vulnerability-research",
+    "claude-code"
+  ],
+  "skills": "./skills",
+  "assets": "./assets",
+  "scripts": "./scripts",
+  "runtime": {
+    "type": "skill-and-scripts",
+    "entrypoint": "./skills/zhulong/SKILL.md",
+    "notes": "Metadata only. Zhulong's stable runtime remains the Claude skill plus helper scripts; no hooks, MCP servers, apps, agents, commands, or background services are required."
+  },
+  "hooks": [],
+  "mcpServers": [],
+  "apps": [],
+  "agents": [],
+  "commands": []
+}

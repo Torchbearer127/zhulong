@@ -23,6 +23,9 @@ Options:
   --ref REF                   Branch or tag for remote clone
   --force                     Recreate conflicting clone/workspace files when safe
   --skip-plan                 Skip toolchain planning
+  --prompt-runtime-pid-review
+                              Print an end-of-startup operator review block for suspect OMC teammate PIDs.
+                              Default is quiet: write runtime details to workspace docs/status only.
   --json                      Emit machine-readable summary at the end
   -h, --help                  Show help
 EOF
@@ -39,6 +42,7 @@ REF=""
 FORCE="0"
 SKIP_PLAN="0"
 JSON_OUTPUT="0"
+PROMPT_RUNTIME_PID_REVIEW="0"
 docker_gate_status="unknown"
 docker_gate_audit_log=""
 docker_gate_message=""
@@ -139,6 +143,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --skip-plan)
       SKIP_PLAN="1"
+      shift
+      ;;
+    --prompt-runtime-pid-review)
+      PROMPT_RUNTIME_PID_REVIEW="1"
       shift
       ;;
     --json)
@@ -333,7 +341,7 @@ These belong to the current Claude session and must not be terminated as stale r
 EOF
 fi
 
-if [[ "$runtime_mode" == "cleanup_needed" ]]; then
+if [[ "$runtime_mode" == "cleanup_needed" && "$PROMPT_RUNTIME_PID_REVIEW" == "1" ]]; then
   cat <<EOF
 
 ============================================================
@@ -357,9 +365,12 @@ EOF
   fi
   cat <<EOF
 Automatic cleanup is disabled to avoid killing unrelated Claude Code sessions.
-If you are sure these are stale, inspect them first and then run manually:
+If you are sure stale sockets are stale, inspect them first and then run manually:
   bash $WORKSPACE_DIR/bin/check_omc_runtime.sh --cleanup-stale
-If teammate-mode processes still need termination after inspection, do it manually.
+If teammate-mode processes still need termination after inspection, ask the operator
+to explicitly name the PIDs to terminate. Do not use Zhulong helper scripts to
+signal teammate PIDs; run any process termination as a separate operator-approved
+terminal action after re-checking ps output.
 ============================================================
 EOF
 fi

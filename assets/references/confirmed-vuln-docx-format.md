@@ -103,6 +103,19 @@ This section must be detailed enough for a human to locate and understand the vu
 
 Do not compress this section into one summary sentence. A report that only says "input reaches function X and triggers Y" is incomplete even if the PoC is real.
 
+Start this section with the quality-gate triplet in the selected report language:
+
+- `攻击者条件：...` / `Attacker Condition: ...`
+- `服务端条件：...` / `Server Condition: ...`
+- `安全影响：...` / `Security Impact: ...`
+
+Each line must be non-empty and concrete. `攻击者条件` states who can attack,
+from where, with what privilege, and what input is controllable. `服务端条件`
+states the required default setting, feature flag, plugin, OS/environment, or
+server configuration. `安全影响` states a confirmed CIA impact or equivalent
+concrete effect such as data exposure, unauthorized modification, DoS, SSRF
+internal access, or information disclosure.
+
 Prefer this structure:
 
 - `位置：<相对于项目根目录的文件路径:行号>`

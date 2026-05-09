@@ -42,6 +42,9 @@ L10N = {
         "vuln_description": "漏洞描述",
         "risk_assessment": "漏洞危险性评估",
         "analysis": "漏洞分析",
+        "attacker_condition": "攻击者条件",
+        "server_condition": "服务端条件",
+        "security_impact": "安全影响",
         "reproduction": "漏洞复现",
         "final_verdict": "最终判定：",
         "code_context": "关键代码上下文",
@@ -100,6 +103,9 @@ L10N = {
         "vuln_description": "Vulnerability Description",
         "risk_assessment": "Risk Assessment",
         "analysis": "Vulnerability Analysis",
+        "attacker_condition": "Attacker Condition",
+        "server_condition": "Server Condition",
+        "security_impact": "Security Impact",
         "reproduction": "Reproduction",
         "final_verdict": "Final Verdict:",
         "code_context": "Key Code Context",
@@ -911,6 +917,7 @@ def build_generated_recording_shell(
             "docker_only": "该审核脚本仅支持 Docker，不提供宿主机回退执行。",
             "docker_unavailable": "Docker daemon 未启动，请先启动 Docker/OrbStack。",
             "code_hint_step": "展示关键代码提示",
+            "code_hint_label": "代码",
             "code_hint_title": "关键代码位置：",
             "code_hint_summary": "代码摘要：",
             "step": "步骤",
@@ -918,6 +925,7 @@ def build_generated_recording_shell(
             "run_command": "执行命令：",
             "evidence_hint": "关键证据提示：",
             "final_focus": "请在录屏中让最终关键证据停留几秒。",
+            "final_focus_label": "证据",
             "code_unavailable": "未提供可展示的代码片段，将直接进入复现步骤。",
             "review_title": title,
             "focus_location": "关键代码位置",
@@ -937,6 +945,7 @@ def build_generated_recording_shell(
             "docker_only": "This reviewer-facing helper only supports Docker and must not fall back to host execution.",
             "docker_unavailable": "Docker daemon is not running. Please start Docker first.",
             "code_hint_step": "Show key code hint",
+            "code_hint_label": "Code",
             "code_hint_title": "Key code location:",
             "code_hint_summary": "Code summary:",
             "step": "Step",
@@ -944,6 +953,7 @@ def build_generated_recording_shell(
             "run_command": "Run command:",
             "evidence_hint": "Key evidence hint:",
             "final_focus": "Keep the final proof lines on screen for a few seconds.",
+            "final_focus_label": "Evidence",
             "code_unavailable": "No code snippet is available yet; continuing directly to the reproduction steps.",
             "review_title": title,
             "focus_location": "Key path",
@@ -1047,7 +1057,7 @@ def build_generated_recording_shell(
         "}",
         "",
         "show_code_hint() {",
-        f"    announce_step {shell_quote('0/' + str(len(steps) + 1))} {shell_quote(strings['code_hint_step'])}",
+        f"    announce_step {shell_quote(strings['code_hint_label'])} {shell_quote(strings['code_hint_step'])}",
     ]
     if code_snippet:
         script_lines.append(
@@ -1117,7 +1127,7 @@ def build_generated_recording_shell(
             script_lines.append("    pause_step \"$PAUSE_LONG\"")
 
     if evidence_lines:
-        script_lines.append("    announce_step 'evidence' " + shell_quote(strings["final_focus"]))
+        script_lines.append(f"    announce_step {shell_quote(strings['final_focus_label'])} {shell_quote(strings['final_focus'])}")
         for line in evidence_lines:
             script_lines.append(f"    highlight_danger {shell_quote(line)}")
         script_lines.append("    pause_step \"$PAUSE_SHORT\"")
@@ -1459,6 +1469,165 @@ def render_code_context(doc: Document, finding: dict[str, Any], language: str) -
             doc.add_paragraph(explanation)
 
 
+def collect_quality_values(finding: dict[str, Any], keys: tuple[str, ...], language: str) -> list[str]:
+    for key in keys:
+        values = localized_list(finding, key, language)
+        if values:
+            return values
+        value = localized_string(finding, key, language)
+        if value:
+            return [value]
+    for key in keys:
+        raw = finding.get(key)
+        values = ensure_list(raw)
+        if values:
+            return values
+    return []
+
+
+def strip_known_analysis_marker(text: str, language: str) -> str:
+    localized = localize_analysis_marker(text, language).strip()
+    markers = (
+        ["入口/可控输入：", "实际影响/边界：", "前置条件："]
+        if language == "zh-CN"
+        else ["Entry / controllable input:", "Practical impact / boundary:", "Preconditions:"]
+    )
+    for marker in markers:
+        if localized.startswith(marker):
+            return localized[len(marker):].strip()
+    return localized
+
+
+def first_analysis_value(finding: dict[str, Any], language: str, markers: tuple[str, ...]) -> str:
+    for item in localized_list(finding, "analysis", language):
+        localized = localize_analysis_marker(item, language)
+        for marker in markers:
+            if localized.startswith(marker):
+                return strip_known_analysis_marker(localized, language)
+    return ""
+
+
+def impact_extra_text(finding: dict[str, Any], language: str) -> str:
+    impact = ensure_mapping(finding.get("impact"))
+    extras = localized_list(impact, "extra", language)
+    if not extras:
+        return ""
+    skip_markers = (
+        ("路径", "验证环境", "执行位置", "poc")
+        if language == "zh-CN"
+        else ("path", "verification environment", "execution location", "poc")
+    )
+    impact_markers = (
+        ("影响", "读取", "泄露", "暴露", "未授权", "拒绝服务", "ssrf", "内网", "敏感")
+        if language == "zh-CN"
+        else ("impact", "read", "leak", "disclos", "exposure", "unauthorized", "denial of service", "ssrf", "sensitive")
+    )
+    focused = [
+        item for item in extras
+        if any(marker in item.lower() for marker in impact_markers)
+        and not any(marker in item.lower() for marker in skip_markers)
+    ]
+    return "；".join(focused)
+
+
+def cvss_rationale_text(finding: dict[str, Any], language: str) -> str:
+    cvss = ensure_mapping(finding.get("cvss"))
+    rationale = localized_list(cvss, "rationale", language)
+    return "；".join(rationale)
+
+
+def quality_condition_text(finding: dict[str, Any], kind: str, language: str) -> str:
+    if kind == "attacker":
+        explicit = collect_quality_values(
+            finding,
+            ("attacker_condition", "attacker_conditions", "attacker_precondition", "attack_preconditions"),
+            language,
+        )
+        if explicit:
+            return "；".join(explicit)
+        entry = first_analysis_value(
+            finding,
+            language,
+            ("入口/可控输入：", "Entry / controllable input:"),
+        )
+        if entry:
+            return entry
+        preconditions = collect_quality_values(finding, ("preconditions", "precondition"), language)
+        if language == "zh-CN":
+            attacker_preconditions = [item for item in preconditions if "攻击者" in item or "可控" in item]
+        else:
+            attacker_preconditions = [
+                item for item in preconditions
+                if "attacker" in item.lower() or "control" in item.lower()
+            ]
+        if attacker_preconditions:
+            return "；".join(attacker_preconditions)
+        return (
+            "攻击者需要能够访问已确认的漏洞入口，并控制复现步骤中使用的输入；具体权限以 Docker 复现命令和成功证据为准。"
+            if language == "zh-CN"
+            else "The attacker must be able to reach the confirmed vulnerable entry point and control the input used by the Docker PoC; required privilege is bounded by the reproduction steps and success evidence."
+        )
+
+    if kind == "server":
+        explicit = collect_quality_values(
+            finding,
+            ("server_condition", "server_conditions", "server_precondition", "server_preconditions"),
+            language,
+        )
+        if explicit:
+            return "；".join(explicit)
+        preconditions = collect_quality_values(finding, ("preconditions", "precondition"), language)
+        if preconditions:
+            return "；".join(preconditions)
+        impact = ensure_mapping(finding.get("impact"))
+        affected = localized_string(impact, "affected_versions", language) or str(impact.get("affected_versions") or "").strip()
+        component = ensure_relpath(impact.get("component"))
+        pieces = []
+        if affected:
+            pieces.append(affected)
+        if component:
+            pieces.append(component)
+        if pieces:
+            return (
+                "服务端运行报告影响范围中的组件/版本：" + "；".join(pieces)
+                if language == "zh-CN"
+                else "The server runs the affected component/version described in the report: " + "; ".join(pieces)
+            )
+        return (
+            "服务端运行受影响版本，并启用报告复现步骤中使用的组件路径；Docker 证据未依赖宿主机回退。"
+            if language == "zh-CN"
+            else "The server runs the affected version and component path exercised by the report reproduction steps; the Docker evidence does not rely on a host fallback."
+        )
+
+    explicit = collect_quality_values(
+        finding,
+        ("security_impact", "security_impacts", "impact_statement", "confirmed_impact"),
+        language,
+    )
+    if explicit:
+        return "；".join(explicit)
+    text = impact_extra_text(finding, language) or cvss_rationale_text(finding, language)
+    if text:
+        return text
+    return (
+        "安全影响限定为 Docker 证据确认的机密性、完整性或可用性影响；不得扩大到未验证的更强效果。"
+        if language == "zh-CN"
+        else "Security impact is limited to the confidentiality, integrity, or availability effect confirmed by Docker evidence; stronger unverified effects must not be claimed."
+    )
+
+
+def render_quality_gate_sections(doc: Document, finding: dict[str, Any], language: str) -> None:
+    for kind, key in (
+        ("attacker", "attacker_condition"),
+        ("server", "server_condition"),
+        ("impact", "security_impact"),
+    ):
+        doc.add_paragraph(
+            format_kv(language, tr(language, key), quality_condition_text(finding, kind, language)),
+            style="List Bullet",
+        )
+
+
 def render_environment_files(doc: Document, finding: dict[str, Any], language: str) -> None:
     items = finding.get("environment_files")
     if not isinstance(items, list) or not items:
@@ -1729,6 +1898,7 @@ def write_attachment_notes(
 
 def render_analysis(doc: Document, finding: dict[str, Any], language: str) -> None:
     doc.add_heading(tr(language, "analysis"), level=1)
+    render_quality_gate_sections(doc, finding, language)
     analysis_items = localized_list(finding, "analysis", language)
     if analysis_items:
         for item in analysis_items:
@@ -1989,6 +2159,23 @@ def transform_legacy_finding(finding: dict[str, Any], defaults: dict[str, Any] |
     rationale = [
         (f"Assessment rationale: {impact_text}" if language == "en-US" else f"评估依据：{impact_text}") if impact_text else ("Assessment rationale is not provided yet." if language == "en-US" else "评估依据：请根据实际验证到的影响范围补充评分依据。")
     ]
+    attacker_condition = (
+        "attacker-controlled input reaches the parser or vulnerable component through the confirmed PoC vectors"
+        + (f" ({'; '.join(proof_titles)})." if proof_titles else ".")
+        if language == "en-US"
+        else "攻击者可控输入会通过已确认 PoC 向量进入解析器或漏洞组件"
+        + (f"（{'; '.join(proof_titles)}）。" if proof_titles else "。")
+    )
+    server_condition = (
+        f"The server runs the affected component/version: {location or project_name} {affected_versions}".strip()
+        if language == "en-US"
+        else f"服务端运行受影响组件/版本：{location or project_name} {affected_versions}".strip()
+    )
+    security_impact = impact_text or (
+        "Security impact is limited to the confidentiality, integrity, or availability effect confirmed by Docker evidence."
+        if language == "en-US"
+        else "安全影响限定为 Docker 证据确认的机密性、完整性或可用性影响。"
+    )
 
     return {
         "project_name": project_name,
@@ -1999,6 +2186,9 @@ def transform_legacy_finding(finding: dict[str, Any], defaults: dict[str, Any] |
         "filename": filename,
         "title": raw_title or build_title({"project_name": project_name, "vuln_type": vuln_type}, language),
         "description": description,
+        "attacker_condition": attacker_condition,
+        "server_condition": server_condition,
+        "security_impact": security_impact,
         "impact": {
             "package": project_name,
             "component": location,

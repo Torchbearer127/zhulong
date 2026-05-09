@@ -12,6 +12,8 @@ BACKUP_ROOT=""
 REPO_ROOT="$(cd "${PLUGIN_ROOT}/../.." && pwd)"
 CANONICAL_PROMPT_PATH="${PLUGIN_ROOT}/assets/references/claude-code-invocation-template.md"
 ROOT_PROMPT_PATH="${REPO_ROOT}/claude-code-zhulong-prompt-template.md"
+PROMPT_TEMPLATE_OUTPUT=""
+SYNC_ROOT_PROMPT_TEMPLATE="0"
 
 usage() {
   cat <<'EOF'
@@ -23,16 +25,22 @@ Description:
   can actually load and use it from ~/.claude/skills.
 
 Options:
-  --skill-name NAME         Claude skill directory name. Default: zhulong
-  --claude-skills-dir DIR   Override Claude skills root. Default: ~/.claude/skills
-  --keep-backups N          Keep only the most recent N timestamped backups. Default: 5
-  -h, --help                Show this help message
+  --skill-name NAME              Claude skill directory name. Default: zhulong
+  --claude-skills-dir DIR        Override Claude skills root. Default: ~/.claude/skills
+  --keep-backups N               Keep only the most recent N timestamped backups. Default: 5
+  --prompt-template-output PATH  Also copy the canonical prompt template to PATH.
+  --sync-root-prompt-template    Legacy convenience: copy the prompt template to the
+                                 parent repository root when this package lives under
+                                 plugins/zhulong. Prefer --prompt-template-output
+                                 for standalone plugin clones.
+  -h, --help                     Show this help message
 EOF
 }
 
-sync_root_prompt() {
-  if [[ -f "$CANONICAL_PROMPT_PATH" ]]; then
-    cp "$CANONICAL_PROMPT_PATH" "$ROOT_PROMPT_PATH"
+sync_prompt_template() {
+  if [[ -n "$PROMPT_TEMPLATE_OUTPUT" && -f "$CANONICAL_PROMPT_PATH" ]]; then
+    mkdir -p "$(dirname "$PROMPT_TEMPLATE_OUTPUT")"
+    cp "$CANONICAL_PROMPT_PATH" "$PROMPT_TEMPLATE_OUTPUT"
   fi
 }
 
@@ -66,6 +74,14 @@ while [[ $# -gt 0 ]]; do
       KEEP_BACKUPS="$2"
       shift 2
       ;;
+    --prompt-template-output)
+      PROMPT_TEMPLATE_OUTPUT="$2"
+      shift 2
+      ;;
+    --sync-root-prompt-template)
+      SYNC_ROOT_PROMPT_TEMPLATE="1"
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -77,6 +93,10 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ -z "$PROMPT_TEMPLATE_OUTPUT" && "$SYNC_ROOT_PROMPT_TEMPLATE" == "1" ]]; then
+  PROMPT_TEMPLATE_OUTPUT="$ROOT_PROMPT_PATH"
+fi
 
 DEST_DIR="${CLAUDE_SKILLS_DIR%/}/${SKILL_NAME}"
 BACKUP_ROOT="${CLAUDE_SKILLS_DIR%/}/.${SKILL_NAME}-backups"
@@ -92,9 +112,10 @@ mkdir -p "$DEST_DIR"
 cp "$PLUGIN_ROOT/templates/claude-skill/SKILL.md" "$DEST_DIR/SKILL.md"
 cp -R "$PLUGIN_ROOT/scripts" "$DEST_DIR/scripts"
 cp -R "$PLUGIN_ROOT/assets" "$DEST_DIR/assets"
+cp -R "$PLUGIN_ROOT/docs" "$DEST_DIR/docs"
 cp "$PLUGIN_ROOT/README.md" "$DEST_DIR/README.plugin-package.md"
-cp "$PLUGIN_ROOT/INSTALL.md" "$DEST_DIR/INSTALL.plugin-package.md"
-sync_root_prompt
+cp "$PLUGIN_ROOT/docs/INSTALL.md" "$DEST_DIR/INSTALL.plugin-package.md"
+sync_prompt_template
 prune_old_backups
 
 cat <<EOF
@@ -110,9 +131,19 @@ Previous skill backup:
 EOF
 fi
 
+if [[ -n "$PROMPT_TEMPLATE_OUTPUT" ]]; then
+  cat <<EOF
+Prompt template synced from canonical source:
+  $PROMPT_TEMPLATE_OUTPUT
+EOF
+else
+  cat <<'EOF'
+Prompt template sync:
+  skipped (use --prompt-template-output PATH if you want an external copy)
+EOF
+fi
+
 cat <<EOF
-Root prompt template synced from canonical source:
-  $ROOT_PROMPT_PATH
 Backup directory:
   $BACKUP_ROOT
 Backup retention:

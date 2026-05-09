@@ -1,13 +1,14 @@
 ---
 name: zhulong
-description: Zhulong (烛龙), a Docker-first autonomous security auditing workflow with runtime checks, dynamic toolchain planning, deterministic vulnerability reporting, and final bundle validation.
+description: Zhulong (烛龙), a Docker-first security-focused code audit workflow with runtime checks, dynamic toolchain planning, deterministic confirmed vulnerability bundles, and final workspace validation.
 ---
 
 # Zhulong (烛龙)
 
-Use this Claude Code skill when you want a repository audit workflow that is:
+Use this Claude Code skill when you want a repository-level security-focused code audit workflow that is:
 
 - Docker-first for PoC execution and verification
+- broader than vulnerability scanning: it records confirmed vulnerabilities, candidates, false positives, non-security defects, hardening-only observations, and unverified leads separately
 - dynamic in tool selection based on stack and installed capabilities
 - deterministic in report generation
 - packaged from the open-source plugin repository into a Claude-native skill layout
@@ -17,6 +18,7 @@ Use this Claude Code skill when you want a repository audit workflow that is:
 - runtime checks:
   - [check_docker_gate.sh](./scripts/check_docker_gate.sh)
   - [check_omc_runtime.sh](./scripts/check_omc_runtime.sh)
+  - [check_sandbox_preflight.py](./scripts/check_sandbox_preflight.py)
   - [check_security_tooling.sh](./scripts/check_security_tooling.sh)
   - [asr_exec.sh](./scripts/asr_exec.sh)
 - Docker verification runner:
@@ -52,6 +54,7 @@ Use this Claude Code skill when you want a repository audit workflow that is:
 - completion gate:
   - [finalize_audit_workspace.py](./scripts/finalize_audit_workspace.py)
   - [assert_finalized_workspace.py](./scripts/assert_finalized_workspace.py)
+  - [audit_disposition.py](./scripts/audit_disposition.py)
 
 ## Plugin-Owned Hard Constraints
 
@@ -80,14 +83,22 @@ default contract even when the user does not restate them:
   `--verify-clean --strict`; if it fails, report or resolve the exact residual
   resources instead of calling the environment clean. For Compose stacks this
   audit explicitly started, use exact `--adopt-compose-project` and, when
-  needed, exact `--adopt-image-ref` cleanup flags rather than broad matching.
-  Never use broad Docker prune commands as the cleanup path.
+  needed, exact `--adopt-image-ref`, `--adopt-network-name`, or
+  `--adopt-volume-name` cleanup flags rather than broad matching. Never
+  overwrite the Docker baseline to make residue disappear; `--force-overwrite-baseline`
+  is not a cleanup mechanism. Never use broad Docker prune commands as the
+  cleanup path.
 - For individual PoC checks, prefer `run_verification_case.sh` or an equivalent
   Docker-only wrapper with a mandatory timeout, explicit network setting,
   resource limits, and structured evidence. The stable verification case labels
   are `blocked_docker_unavailable`, `blocked_missing_image`, `failed_timeout`,
-  `failed_resource_limit`, `rejected_not_reproducible`, and
+  `failed_resource_limit`, `rejected_unsafe_sandbox`,
+  `rejected_not_reproducible`, and
   `confirmed_in_docker`.
+- Docker / sandbox preflight is a verification safety guard, not vulnerability
+  confirmation. If `rejected_unsafe_sandbox` appears, keep the case in
+  candidate/blocked/unverified notes only, manually rewrite the verification
+  container or script, and never place that result under `confirmed/`.
 - Prefer `gh` for GitHub repositories, advisories, issues, pull requests,
   commits, and releases. Do not execute `web_search`, `Search(...)`,
   `Fetch(...)`, or `WebFetch(...)` as Bash commands.
@@ -97,8 +108,13 @@ default contract even when the user does not restate them:
   source/runtime claims.
 - Before multi-agent execution, run the OMC runtime gate. If it reports
   `single_agent_only`, continue single-agent. If it reports `cleanup_needed`,
-  show suspect processes or sockets for manual review; never auto-kill teammate
-  processes.
+  show `suspect_teammate_pids`, `stale_swarm_sockets`, `live_swarm_sockets`,
+  `ignored_current_session_teammate_pids`, and `unresolved_review_only` from
+  `runtime/runtime-hygiene-status.json`; never auto-kill teammate processes.
+  Teammate PID cleanup is review-only inside Zhulong, even when `--apply` is
+  supplied; inspect with `ps -fp <pid>` and the owning terminal/session, and
+  terminate stale teammate PIDs manually outside Zhulong only after operator
+  confirmation.
 - Confirm vulnerabilities only with Docker evidence. After the first
   confirmation, run one explicit severity-escalation pass in Docker before final
   scoring, and only upgrade severity when stronger impact is verified.
@@ -182,6 +198,11 @@ If a manual fallback is truly needed, do not call `./scripts/prepare_target_repo
 bash "$HOME/.claude/skills/zhulong/scripts/asr_start.sh" --source <local-path-or-repo-url>
 ```
 
+By default this launcher writes OMC suspect teammate PIDs to workspace status and
+handoff artifacts without interrupting the run. Add
+`--prompt-runtime-pid-review` only when the operator wants an explicit terminal
+review block. This option never enables automatic teammate PID cleanup.
+
 If `git clone` fails, a `gh api` or source-archive fallback is acceptable only
 when the exact commit SHA is recorded. Update `fingerprint.md` with the archive
 URL/source, resolved commit SHA, and any runtime/source alignment caveat before
@@ -191,7 +212,7 @@ verification continues.
 
 ```bash
 bash <audit-workspace>/bin/check-docker-gate.sh --repo-root <repo-root> --note "pre-verification gate"
-bash <audit-workspace>/bin/check_omc_runtime.sh
+bash <audit-workspace>/bin/check_omc_runtime.sh --json
 bash <audit-workspace>/bin/check_security_tooling.sh
 ```
 
@@ -213,7 +234,17 @@ If Docker gate or OMC runtime gate pauses the workflow, do not fail silently. Pr
 - a pointer to `<audit-workspace>/handoff-summary.md` or the command to render it:
   `python3 <audit-workspace>/bin/render-handoff-summary.py --workspace-dir <audit-workspace>`
 
-If `check_omc_runtime.sh` reports `cleanup_needed`, treat it as a manual-review state first. Do not auto-kill teammate-mode processes. If `suspect_teammate_pids` or `stale_swarm_sockets` are reported, show them explicitly and require inspection before cleanup.
+If `check_omc_runtime.sh` reports `cleanup_needed`, treat it as a manual-review
+state first. Do not auto-kill teammate-mode processes and do not use deprecated
+`--force-kill-suspect-teammates`. If `suspect_teammate_pids` or
+`stale_swarm_sockets` are reported, show them explicitly with the exact
+`resume_step` from `runtime/runtime-hygiene-status.json`. Stale socket cleanup
+uses `--cleanup-stale` only when no live socket exists. Suspect PID cleanup is
+always review-only in Zhulong, records process metadata and
+`unresolved_review_only`, and must not signal teammate PIDs. A missing live
+swarm socket does not prove the process is stale. OMC runtime residue is not
+Docker residue and must not be routed through Docker cleanup or counted as
+Docker dirty state.
 
 Workspace bootstrap captures a Docker resource baseline when Docker is
 available. If Docker was unavailable during bootstrap, capture a baseline before
@@ -290,6 +321,16 @@ manifest, or SBOM source. Record that state as `skipped_no_package_sources` and
 continue with source review and Docker-based verification; it is not a confirmed
 vulnerability and not a reason to stop the audit.
 
+Before promoting suspicious behavior, perform a security-boundary triage check
+when project materials are available: read `SECURITY.md`, the official security
+policy, default configuration docs, or the project security model. Decide whether
+the behavior is a vulnerability, expected behavior, administrator-trust behavior,
+default-config-safe behavior, or outside the project's security boundary. Record
+false-positive reasons with stable codes when applicable:
+`expected_behavior`, `outside_security_boundary`,
+`requires_non_default_admin_trust`, `default_config_not_vulnerable`,
+`insufficient_attacker_condition`, or `insufficient_security_impact`.
+
 4. Verify findings only inside Docker or Docker Compose.
 When verification needs Docker images, prefer suitable local images or already-cached base images first. Only pull from the network if no suitable local image is available.
 
@@ -307,21 +348,26 @@ bash <audit-workspace>/bin/run-verification-case.sh \
   -- <container command...>
 ```
 
-The runner enforces a mandatory timeout, records stdout/stderr plus
-`verification-result.json` under `<audit-workspace>/evidence/<case-id>/`, and
-never executes PoC logic on the host. For `docker-run`, defaults include memory,
-CPU, pids, read-only root filesystem, dropped capabilities, no-new-privileges,
-and explicit network selection. Network use must be intentional: default
-`--network none` is safe for offline parser/package PoCs, while service probes
-should name the target Docker network. If the runner returns `failed_timeout`,
-pause and re-analyze service readiness, waiting conditions, network blocking,
-loops, or interactive prompts before retrying.
+The runner enforces sandbox preflight before any Docker execution, then a
+mandatory timeout, records stdout/stderr plus `verification-result.json` under
+`<audit-workspace>/evidence/<case-id>/`, and never executes PoC logic on the
+host. For `docker-run`, defaults include memory, CPU, pids, read-only root
+filesystem, dropped capabilities, no-new-privileges, and explicit network
+selection. Network use must be intentional: default `--network none` is safe for
+offline parser/package PoCs, while service probes should name the target Docker
+network. If the runner returns `rejected_unsafe_sandbox`, do not run Docker,
+do not create confirmed bundles, and rewrite privileged/host/docker.sock/root
+mount behavior before retrying. If the runner returns `failed_timeout`, pause
+and re-analyze service readiness, waiting conditions, network blocking, loops,
+or interactive prompts before retrying.
 
 Runner-produced evidence is a workspace artifact. To confirm a vulnerability,
 copy the relevant runner logs/result JSON into the final bundle's
 `attachments/` and keep `verification-evidence.json` set to
 `verification_status=confirmed_in_docker`; timed-out, blocked, resource-limited,
-or rejected cases must stay out of `confirmed/`.
+or rejected cases, including `rejected_unsafe_sandbox`, must stay out of
+`confirmed/`. Sandbox preflight does not replace Docker cleanup and never
+permits broad Docker prune.
 
 Before final summary, inspect Docker resources created after the workspace
 baseline. Start with a dry-run cleanup plan and apply only after confirming the
@@ -346,14 +392,25 @@ use broad prune as the Zhulong cleanup path.
 If Compose leaves post-baseline build images, networks, or pulled service images
 behind, rerun the cleanup helper with exact adoption flags such as
 `--adopt-compose-project <project>` and, only for images proven absent from the
-baseline and pulled by this audit, `--adopt-image-ref <image:tag>`. If BuildKit
-cache remains after review, it is review-only and cannot be auto-deleted
-safely; the workspace must remain blocked unless the operator resolves it or
-accepts a new baseline before verification resumes. Use
+baseline and pulled by this audit, `--adopt-image-ref <image:tag>`. For
+unlabeled networks or anonymous volumes, adopt only the exact name shown in
+`docker-cleanup-plan.json` with `--adopt-network-name <network>` or
+`--adopt-volume-name <volume>` after proving it belongs to this audit. If
+BuildKit cache remains after review, it is review-only and cannot be
+auto-deleted safely; the workspace must remain blocked unless the operator
+resolves it before verification resumes. Use
 `--adopt-build-cache --adopt-build-cache-id <cache-id>` only after the exact
 cache ID is proven to belong to this isolated audit. Review the plan before
 adding `--apply`, and never manually mark the audit completed while strict
-Docker cleanliness is blocked.
+Docker cleanliness is blocked. Do not use `--capture-baseline
+--force-overwrite-baseline` after verification has created Docker resources;
+the helper refuses this when post-baseline residue exists because it would hide
+the residue from finalization.
+Finalization reruns
+`manage-docker-resources.py --verify-clean --strict` and must not trust a stale
+`docker-cleanliness-status.json`. `assert-finalized-workspace.py` is an
+after-the-fact consistency checker, not a substitute for rerunning
+finalization.
 
 Registry fallback is optional and operator-configured. If used, keep the
 fallback list outside core logic, for example based on
@@ -405,6 +462,14 @@ Do not produce thin DOCX reports. The `Vulnerability Analysis` section must expl
 - the root cause
 - why existing checks, mitigations, or prior fixes do not block the issue
 
+Confirmed reports must also include the three quality-gate labels in the report
+language: `攻击者条件` / `Attacker Condition`, `服务端条件` /
+`Server Condition`, and `安全影响` / `Security Impact`. Keep these sections
+short but concrete: who can attack and what they control, what server-side
+configuration or default runtime condition is required, and the confirmed CIA or
+equivalent security impact. Do not use placeholder-only text, and do not claim a
+security impact that the Docker evidence does not prove.
+
 The `Reproduction` section must include setup, exact Docker commands, expected result, observed result, and direct success evidence. If those details are missing from `findings.json`, enrich the finding before rendering instead of producing a shallow report.
 
 Keep bundle identity strict:
@@ -451,7 +516,7 @@ Reviewer-facing supplements should not stop at "technical trigger" when the clai
 The final CVSS and severity label should reflect the strongest verified oracle from the severity-escalation pass, not merely the first technical trigger that proved the bug exists.
 
 Final summaries must explicitly distinguish confirmed vulnerabilities, false positives / non-security defects, and unverified leads. If Docker confirmation did not complete, say that no vulnerability was confirmed for that lead, identify the missing evidence, and give the safe Docker-only resume step.
-Save the final human-facing summary as `<audit-workspace>/SUMMARY.md` or `<audit-workspace>/final-audit-summary.md`; do not leave it only in chat output or timestamped terminal logs. Before writing that summary, refresh or explicitly resolve stale blocker wording in `attack-surface.md`, `candidate-findings.md`, `unverified-leads.md`, and `handoff-summary.md` so they do not still claim `blocked_no_docker`, `NOT STARTED`, or `image pull required` after the summary claims Docker verification succeeded.
+Save the final human-facing summary as `<audit-workspace>/SUMMARY.md` or `<audit-workspace>/final-audit-summary.md`; do not leave it only in chat output or timestamped terminal logs. Before writing that summary, refresh or explicitly resolve stale blocker wording in `attack-surface.md`, `candidate-findings.md`, `unverified-leads.md`, `audit-disposition.json`, and `handoff-summary.md` so they do not still claim `blocked_no_docker`, `NOT STARTED`, or `image pull required` after the summary claims Docker verification succeeded.
 
 6. Run the completion gate before writing the final summary:
 
@@ -460,9 +525,13 @@ python3 <audit-workspace>/bin/finalize-audit-workspace.py --workspace-dir <audit
 python3 <audit-workspace>/bin/assert-finalized-workspace.py --workspace-dir <audit-workspace>
 ```
 
-The completion gate enforces that bundle validation state, Docker strict
-cleanliness, stage-status.json, and handoff-summary.md all agree before the
-audit is declared finished. A dogfood run is not complete until this gate passes.
+The completion gate refreshes `<audit-workspace>/audit-disposition.json` from
+`confirmed/`, candidate findings, false positives, unverified leads, and blocked
+verification signals. It enforces that the disposition ledger, bundle validation
+state, Docker strict cleanliness, stage-status.json, and handoff-summary.md all
+agree before the audit is declared finished. The Docker check is recomputed by
+the finalization helper; a stale `docker-cleanliness-status.json` is not enough.
+A dogfood run is not complete until this gate passes.
 Before writing "completion gate passed" in a workspace summary, run the
 finalization integrity verifier and confirm that `audit-events.jsonl` contains a
 latest successful `finalization_succeeded` event for the declared result. A
@@ -476,8 +545,12 @@ manually edited `stage-status.json` or a hand-written summary is not completion.
   directories and zero validation failures.
 - Scanner-only findings, unverified leads, dependency alerts, static hypotheses,
   and failed or timed-out Docker cases must not become confirmed.
+- In `audit-disposition.json`, `state=confirmed` requires a valid
+  `confirmed_bundle_path` and Docker `docker_status=reproduced`; scanner-only,
+  dependency-only, static-only, and LLM-only items must remain non-confirmed.
 - The gate updates stage-status.json to `stage=completed`, refreshes
-  handoff-summary.md, and writes finalization audit events.
+  audit-disposition.json and handoff-summary.md, and writes finalization audit
+  events.
 - If the gate fails, fix the reported issues before declaring the audit complete.
 - If Docker strict cleanliness fails, including a BuildKit cache blocker, report
   the workspace as blocked/failed rather than completed. For

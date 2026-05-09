@@ -1,5 +1,5 @@
 {
-  "plugin": "zhulong-plugin",
+  "plugin": "zhulong",
   "tiers": {
     "runtime": [
       {

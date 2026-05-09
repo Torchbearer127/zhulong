@@ -17,6 +17,11 @@ Unverified leads are workspace records only. They must stay in `candidate-findin
   - <project-relative file, line, scanner output, or observation>
 - Missing evidence:
   - <PoC, Docker runtime, reachable route, exploitability proof, oracle, or affected version boundary>
+- Security policy / scope checked: <SECURITY.md | official security policy | default configuration docs | project security model | unavailable>
+- In project security scope?: <yes | no | unclear>
+- Expected behavior?: <yes | no | unclear>
+- Administrator-trust or non-default configuration assumption?: <yes | no | unclear>
+- Outside project security boundary?: <yes | no | unclear>
 - Docker confirmation status: <not attempted | blocked | attempted but inconclusive | rejected>
 - Why Docker confirmation was not completed: <specific blocker or uncertainty>
 - Safe resume step: <exact next safe action, normally a Docker-only command or investigation step>
@@ -31,6 +36,7 @@ Unverified leads are workspace records only. They must stay in `candidate-findin
 ## Required Discipline
 
 - A lead can be high-confidence and still not be a confirmed vulnerability.
+- Before preserving a candidate as a material unverified lead, check `SECURITY.md`, the official security policy, default configuration docs, or the project security model when available. If the behavior is expected, outside scope, admin-trust-only, default-config-safe, or lacks an attacker condition/security impact, move it to false positives with the appropriate reason code instead.
 - `high-confidence-unverified/` is reserved for a future separate evidence pool. It is not confirmed output, must not generate confirmed DOCX reports, and must not be included in confirmed-only summaries.
 - If Docker is unavailable, pause and record the blocker. Do not switch to host-local PoC execution.
 - If a high-confidence lead is also blocked/no-Docker, finalization requires an explicit materiality rationale. Without `Material blocker?`, `Default runtime scope?`, and `Why completion is still safe?`, keep the workspace blocked instead of declaring `completed_no_confirmed_findings`.

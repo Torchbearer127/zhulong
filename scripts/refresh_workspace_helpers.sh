@@ -125,6 +125,7 @@ copy_helper "$SKILL_DIR/scripts/asr_start.sh" "$WORKSPACE_DIR/bin/asr-start.sh"
 copy_helper "$SKILL_DIR/scripts/asr_exec.sh" "$WORKSPACE_DIR/bin/asr-exec.sh"
 copy_helper "$SKILL_DIR/scripts/check_docker_gate.sh" "$WORKSPACE_DIR/bin/check-docker-gate.sh"
 copy_helper "$SKILL_DIR/scripts/check_omc_runtime.sh" "$WORKSPACE_DIR/bin/check_omc_runtime.sh"
+copy_helper_if_present "$SKILL_DIR/scripts/check_sandbox_preflight.py" "$WORKSPACE_DIR/bin/check-sandbox-preflight.py"
 copy_helper "$SKILL_DIR/scripts/check_security_tooling.sh" "$WORKSPACE_DIR/bin/check_security_tooling.sh"
 copy_helper "$SKILL_DIR/scripts/run_initial_probes.sh" "$WORKSPACE_DIR/bin/run-initial-probes.sh"
 copy_helper_if_present "$SKILL_DIR/scripts/run_verification_case.sh" "$WORKSPACE_DIR/bin/run-verification-case.sh"
@@ -139,6 +140,7 @@ copy_helper_if_present "$SKILL_DIR/scripts/write_audit_event.py" "$WORKSPACE_DIR
 copy_helper_if_present "$SKILL_DIR/scripts/validate_workspace_state.py" "$WORKSPACE_DIR/bin/validate-workspace-state.py"
 copy_helper_if_present "$SKILL_DIR/scripts/assert_finalized_workspace.py" "$WORKSPACE_DIR/bin/assert-finalized-workspace.py"
 copy_helper_if_present "$SKILL_DIR/scripts/blocked_verification.py" "$WORKSPACE_DIR/bin/blocked_verification.py"
+copy_helper_if_present "$SKILL_DIR/scripts/audit_disposition.py" "$WORKSPACE_DIR/bin/audit_disposition.py"
 copy_helper_if_present "$SKILL_DIR/scripts/finalize_audit_workspace.py" "$WORKSPACE_DIR/bin/finalize-audit-workspace.py"
 
 if [[ -f "$WORKSPACE_DIR/bin/write-audit-event.py" ]]; then

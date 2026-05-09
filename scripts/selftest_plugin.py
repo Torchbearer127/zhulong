@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -13,6 +14,7 @@ from xml.etree import ElementTree as ET
 
 
 REQUIRED_FILES = [
+    ".claude-plugin/plugin.json",
     ".codex-plugin/plugin.json",
     "README.md",
     "assets/tool-registry.json",
@@ -38,12 +40,14 @@ REQUIRED_FILES = [
     "scripts/prepare_target_repo.sh",
     "scripts/check_docker_gate.sh",
     "scripts/check_omc_runtime.sh",
+    "scripts/check_sandbox_preflight.py",
     "scripts/check_security_tooling.sh",
     "scripts/run_initial_probes.sh",
     "scripts/run_verification_case.sh",
     "scripts/manage_docker_resources.py",
     "scripts/render_handoff_summary.py",
     "scripts/assert_finalized_workspace.py",
+    "scripts/audit_disposition.py",
     "scripts/blocked_verification.py",
     "scripts/refresh_workspace_helpers.sh",
     "scripts/sync_to_claude_skill.sh",
@@ -73,6 +77,8 @@ INSTALLED_SKILL_REQUIRED_FILES = [
     "scripts/asr_start.sh",
     "scripts/bootstrap_verification_workspace.sh",
     "scripts/check_docker_gate.sh",
+    "scripts/check_omc_runtime.sh",
+    "scripts/check_sandbox_preflight.py",
     "scripts/check_security_tooling.sh",
     "scripts/run_initial_probes.sh",
     "scripts/run_verification_case.sh",
@@ -82,7 +88,9 @@ INSTALLED_SKILL_REQUIRED_FILES = [
     "scripts/validate_all_report_bundles.py",
     "scripts/finalize_audit_workspace.py",
     "scripts/assert_finalized_workspace.py",
+    "scripts/audit_disposition.py",
     "scripts/blocked_verification.py",
+    "scripts/render_handoff_summary.py",
 ]
 
 
@@ -101,6 +109,24 @@ def run_capture(command: list[str], cwd: Path) -> str:
     return output
 
 
+def run_capture_with_env(
+    command: list[str],
+    cwd: Path,
+    env: dict[str, str],
+    *,
+    expected_returncode: int = 0,
+) -> str:
+    merged_env = {**os.environ, **env}
+    proc = subprocess.run(command, cwd=cwd, env=merged_env, capture_output=True, text=True)
+    output = ((proc.stdout or "") + (proc.stderr or "")).strip()
+    if proc.returncode != expected_returncode:
+        raise SystemExit(
+            f"FAILED: {' '.join(command)}\n"
+            f"Expected exit code {expected_returncode}, got {proc.returncode}\n{output}"
+        )
+    return output
+
+
 def docx_text(docx_path: Path) -> list[str]:
     with zipfile.ZipFile(docx_path) as archive:
         xml = archive.read("word/document.xml")
@@ -112,6 +138,20 @@ def docx_text(docx_path: Path) -> list[str]:
         if text:
             lines.append(text)
     return lines
+
+
+def rewrite_docx_paragraphs(docx_path: Path, replacer) -> None:
+    from docx import Document
+
+    doc = Document(docx_path)
+    for paragraph in list(doc.paragraphs):
+        replacement = replacer(paragraph.text.strip())
+        if replacement is None:
+            element = paragraph._element
+            element.getparent().remove(element)
+        elif replacement != paragraph.text:
+            paragraph.text = replacement
+    doc.save(docx_path)
 
 
 
@@ -161,6 +201,125 @@ def require_no_repo_text(plugin_root: Path, needle: str, label: str) -> None:
             raise SystemExit(f"FAILED: forbidden repository text for {label}: {path}: {needle}")
 
 
+def iter_json_strings(value) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        strings: list[str] = []
+        for nested in value.values():
+            strings.extend(iter_json_strings(nested))
+        return strings
+    if isinstance(value, list):
+        strings = []
+        for nested in value:
+            strings.extend(iter_json_strings(nested))
+        return strings
+    return []
+
+
+def is_empty_manifest_component(value) -> bool:
+    if value is None or value is False or value == "":
+        return True
+    if isinstance(value, (list, dict)) and not value:
+        return True
+    return False
+
+
+def require_relative_manifest_path(
+    plugin_root: Path,
+    manifest: dict,
+    field: str,
+    *,
+    must_be_file: bool = False,
+) -> Path:
+    value = manifest.get(field)
+    if not isinstance(value, str) or not value.strip():
+        raise SystemExit(f"FAILED: Claude plugin manifest missing relative path field: {field}")
+    token = value.strip()
+    if "://" in token:
+        raise SystemExit(f"FAILED: Claude plugin manifest path must be relative, not URL: {field}={token}")
+    if Path(token).is_absolute() or token.startswith("~"):
+        raise SystemExit(f"FAILED: Claude plugin manifest path must be relative: {field}={token}")
+    candidate = (plugin_root / token).resolve()
+    try:
+        candidate.relative_to(plugin_root.resolve())
+    except ValueError as exc:
+        raise SystemExit(f"FAILED: Claude plugin manifest path escapes package: {field}={token}") from exc
+    if must_be_file and not candidate.is_file():
+        raise SystemExit(f"FAILED: Claude plugin manifest file path does not exist: {field}={token}")
+    if not must_be_file and not candidate.exists():
+        raise SystemExit(f"FAILED: Claude plugin manifest path does not exist: {field}={token}")
+    return candidate
+
+
+def validate_claude_plugin_manifest(plugin_root: Path) -> None:
+    manifest_path = plugin_root / ".claude-plugin/plugin.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"FAILED: invalid Claude plugin manifest JSON: {manifest_path}: {exc}") from exc
+
+    if not isinstance(manifest, dict):
+        raise SystemExit("FAILED: Claude plugin manifest must be a JSON object")
+    if manifest.get("name") != "zhulong":
+        raise SystemExit("FAILED: Claude plugin manifest name must be zhulong")
+    for field in ("version", "displayName", "description"):
+        if not isinstance(manifest.get(field), str) or not manifest[field].strip():
+            raise SystemExit(f"FAILED: Claude plugin manifest missing metadata field: {field}")
+    description = manifest["description"].lower()
+    if "docker" not in description or "audit" not in description:
+        raise SystemExit("FAILED: Claude plugin manifest description must describe Docker audit workflow")
+
+    for field in ("skills", "scripts", "assets"):
+        require_relative_manifest_path(plugin_root, manifest, field)
+    if not (plugin_root / "skills/zhulong/SKILL.md").is_file():
+        raise SystemExit("FAILED: Claude plugin package missing skills/zhulong/SKILL.md")
+    if not (plugin_root / "scripts").is_dir():
+        raise SystemExit("FAILED: Claude plugin package missing scripts/")
+    if not (plugin_root / "assets").is_dir():
+        raise SystemExit("FAILED: Claude plugin package missing assets/")
+
+    runtime = manifest.get("runtime")
+    if runtime is not None:
+        if not isinstance(runtime, dict):
+            raise SystemExit("FAILED: Claude plugin manifest runtime must be metadata object")
+        if runtime.get("entrypoint"):
+            require_relative_manifest_path(
+                plugin_root,
+                runtime,
+                "entrypoint",
+                must_be_file=True,
+            )
+
+    for text in iter_json_strings(manifest):
+        if text.startswith("file://") or text.startswith("/"):
+            raise SystemExit(f"FAILED: Claude plugin manifest contains an absolute local path: {text}")
+        if re.match(r"^[A-Za-z]:[\\/]", text):
+            raise SystemExit(f"FAILED: Claude plugin manifest contains a Windows absolute path: {text}")
+        operator_local_path = "/" + "Users" + "/" + "torchbearer"
+        if operator_local_path in text:
+            raise SystemExit("FAILED: Claude plugin manifest contains operator-local absolute path")
+
+    forbidden_component_fields = (
+        "hooks",
+        "mcpServers",
+        "mcp_servers",
+        "apps",
+        "agents",
+        "commands",
+        "services",
+        "platformServices",
+        "backgroundServices",
+        "daemons",
+    )
+    for field in forbidden_component_fields:
+        if field in manifest and not is_empty_manifest_component(manifest[field]):
+            raise SystemExit(
+                "FAILED: Claude plugin manifest must not declare runtime component "
+                f"{field!r}; Zhulong remains skill-and-scripts only"
+            )
+
+
 def require_probe_record(
     summary_path: Path,
     output_dir: Path,
@@ -207,6 +366,470 @@ def require_probe_record(
     return probe
 
 
+RUNTIME_STATUS_FIELDS = {
+    "checked_at",
+    "recommended_mode",
+    "teams_enabled",
+    "suspect_teammate_pids",
+    "suspect_teammate_processes",
+    "stale_swarm_sockets",
+    "live_swarm_sockets",
+    "ignored_current_session_teammate_pids",
+    "ignored_current_session_teammate_processes",
+    "cleanup_actions",
+    "attempt_history",
+    "heartbeat_seen",
+    "resume_step",
+    "unresolved_review_only",
+    "clean",
+}
+
+
+def require_runtime_status_shape(status: dict, label: str) -> None:
+    missing = sorted(RUNTIME_STATUS_FIELDS - set(status))
+    if missing:
+        raise SystemExit(f"FAILED: runtime hygiene status missing fields for {label}: {missing}")
+    if status.get("recommended_mode") not in {"native_team_ready", "cleanup_needed", "single_agent_only"}:
+        raise SystemExit(f"FAILED: invalid runtime hygiene mode for {label}: {status.get('recommended_mode')}")
+    for key in (
+        "suspect_teammate_pids",
+        "suspect_teammate_processes",
+        "stale_swarm_sockets",
+        "live_swarm_sockets",
+        "ignored_current_session_teammate_pids",
+        "ignored_current_session_teammate_processes",
+        "cleanup_actions",
+        "attempt_history",
+        "unresolved_review_only",
+    ):
+        if not isinstance(status.get(key), list):
+            raise SystemExit(f"FAILED: runtime hygiene status field must be a list for {label}: {key}")
+
+
+def run_omc_runtime_mock(
+    script_path: Path,
+    workspace: Path,
+    plugin_root: Path,
+    *,
+    args: list[str] | None = None,
+    env: dict[str, str] | None = None,
+    expected_returncode: int = 0,
+) -> dict:
+    command = [
+        "bash",
+        str(script_path),
+        "--workspace-dir",
+        str(workspace),
+        "--json",
+    ]
+    if args:
+        command.extend(args)
+    output = run_capture_with_env(
+        command,
+        plugin_root,
+        {
+            "ZHULONG_OMC_MOCK_TEAMS_ENABLED": "1",
+            **(env or {}),
+        },
+        expected_returncode=expected_returncode,
+    )
+    try:
+        status = json.loads(output)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"FAILED: OMC runtime helper did not emit JSON for {script_path}: {output}") from exc
+    require_runtime_status_shape(status, script_path.name)
+    status_path = workspace / "runtime/runtime-hygiene-status.json"
+    if not status_path.exists():
+        raise SystemExit(f"FAILED: OMC runtime helper did not write status file: {status_path}")
+    stored = json.loads(status_path.read_text(encoding="utf-8"))
+    require_runtime_status_shape(stored, f"stored {script_path.name}")
+    return status
+
+
+def exercise_omc_runtime_hygiene(script_path: Path, workspace: Path, plugin_root: Path) -> None:
+    def assert_no_teammate_signal_actions(status: dict, label: str) -> None:
+        forbidden = {
+            item.get("status")
+            for item in status.get("cleanup_actions", [])
+            if item.get("kind") == "cleanup_suspect_pid"
+        }
+        if forbidden & {"term_sent", "terminated"}:
+            raise SystemExit(f"FAILED: OMC teammate PID cleanup recorded signal action for {label}: {status}")
+
+    status = run_omc_runtime_mock(
+        script_path,
+        workspace,
+        plugin_root,
+        env={"ZHULONG_OMC_MOCK_TEAMMATE_RECORDS": "12345|111|222|333|ttys123|S+|claude --teammate-mode tmux audit"},
+    )
+    if status.get("recommended_mode") != "cleanup_needed" or status.get("suspect_teammate_pids") != ["12345"]:
+        raise SystemExit(f"FAILED: OMC runtime helper did not report exact suspect PID: {status}")
+    process = (status.get("suspect_teammate_processes") or [{}])[0]
+    if process.get("tty") != "ttys123" or process.get("active_session_uncertain") is not True:
+        raise SystemExit(f"FAILED: OMC runtime helper did not preserve process metadata: {status}")
+    if not any(item.get("kind") == "suspect_teammate_pid" for item in status.get("unresolved_review_only", [])):
+        raise SystemExit("FAILED: OMC runtime helper must record suspect teammate PIDs as review-only")
+    assert_no_teammate_signal_actions(status, "initial suspect report")
+    handoff = workspace / "handoff-summary.md"
+    require_text(handoff, "## OMC Runtime Hygiene", "handoff runtime hygiene section")
+    require_text(handoff, "`12345`", "handoff suspect PID")
+    require_text(handoff, "review-only", "handoff review-only teammate PID guidance")
+    require_text(handoff, "ttys123", "handoff suspect PID process metadata")
+    forbidden_apply = "--" + "cleanup-suspect-pid 12345 --" + "apply"
+    forbid_text(handoff, forbidden_apply, "handoff must not recommend teammate PID cleanup apply")
+
+    kill_log = workspace / "runtime/mock-kill-dry-run.log"
+    status = run_omc_runtime_mock(
+        script_path,
+        workspace,
+        plugin_root,
+        args=["--cleanup-suspect-pid", "12346"],
+        env={
+            "ZHULONG_OMC_MOCK_TEAMMATE_RECORDS": "12346|claude --teammate-mode tmux audit",
+            "ZHULONG_OMC_MOCK_PID_EXISTS": "12346",
+            "ZHULONG_OMC_MOCK_KILL_LOG": str(kill_log),
+        },
+    )
+    if kill_log.exists() and kill_log.read_text(encoding="utf-8").strip():
+        raise SystemExit("FAILED: OMC exact PID dry-run sent a signal")
+    if status.get("cleanup_actions"):
+        raise SystemExit(f"FAILED: OMC teammate PID review-only dry-run must not create cleanup actions: {status}")
+    if not any(item.get("kind") == "suspect_teammate_pid" and "review-only" in item.get("reason", "") for item in status.get("unresolved_review_only", [])):
+        raise SystemExit("FAILED: OMC exact PID dry-run must be unresolved review-only")
+    assert_no_teammate_signal_actions(status, "review-only dry-run")
+
+    status = run_omc_runtime_mock(
+        script_path,
+        workspace,
+        plugin_root,
+        args=["--cleanup-suspect-pid", "12347", "--apply"],
+        env={
+            "ZHULONG_OMC_MOCK_PID_EXISTS": "12347",
+            "ZHULONG_OMC_MOCK_CMDLINE_RECORDS": "12347|python unrelated.py",
+        },
+        expected_returncode=1,
+    )
+    if not any(item.get("status") == "refused" and "command line" in item.get("reason", "") for item in status.get("cleanup_actions", [])):
+        raise SystemExit("FAILED: OMC exact PID cleanup must refuse command-line mismatch")
+    assert_no_teammate_signal_actions(status, "command-line mismatch")
+
+    status = run_omc_runtime_mock(
+        script_path,
+        workspace,
+        plugin_root,
+        args=["--cleanup-suspect-pid", "12348", "--apply"],
+        env={
+            "ZHULONG_OMC_MOCK_TEAMMATE_RECORDS": "12348|claude --teammate-mode tmux audit",
+            "ZHULONG_OMC_MOCK_PID_EXISTS": "12348",
+            "ZHULONG_OMC_MOCK_LIVE_SOCKETS": "/private/tmp/tmux-501/claude-swarm-live",
+        },
+        expected_returncode=1,
+    )
+    if not any(item.get("kind") == "live_swarm_socket" for item in status.get("unresolved_review_only", [])):
+        raise SystemExit("FAILED: OMC exact PID cleanup must refuse when a live swarm socket exists")
+    assert_no_teammate_signal_actions(status, "live swarm socket")
+
+    status = run_omc_runtime_mock(
+        script_path,
+        workspace,
+        plugin_root,
+        args=["--cleanup-suspect-pid", "12349", "--apply"],
+        env={
+            "ZHULONG_OMC_MOCK_TEAMMATE_RECORDS": "12349|claude --teammate-mode tmux audit",
+            "ZHULONG_OMC_MOCK_PID_EXISTS": "12349",
+            "ZHULONG_OMC_MOCK_CURRENT_SESSION_TEAMMATE_PIDS": "12349",
+        },
+        expected_returncode=1,
+    )
+    if status.get("ignored_current_session_teammate_pids") != ["12349"]:
+        raise SystemExit("FAILED: OMC runtime helper must record ignored current-session teammate PIDs")
+    ignored_process = (status.get("ignored_current_session_teammate_processes") or [{}])[0]
+    if ignored_process.get("active_session_uncertain") is not False:
+        raise SystemExit(f"FAILED: current-session teammate metadata must be marked certain/protected: {status}")
+    if not any(item.get("kind") == "current_session_teammate_pid" for item in status.get("unresolved_review_only", [])):
+        raise SystemExit("FAILED: OMC exact PID cleanup must refuse current-session teammate PIDs")
+    assert_no_teammate_signal_actions(status, "current-session PID")
+
+    kill_log = workspace / "runtime/mock-kill-apply.log"
+    status = run_omc_runtime_mock(
+        script_path,
+        workspace,
+        plugin_root,
+        args=["--cleanup-suspect-pid", "12350", "--apply"],
+        env={
+            "ZHULONG_OMC_MOCK_TEAMMATE_RECORDS": "12350|claude --teammate-mode tmux audit",
+            "ZHULONG_OMC_MOCK_PID_EXISTS": "12350",
+            "ZHULONG_OMC_MOCK_KILL_LOG": str(kill_log),
+        },
+        expected_returncode=1,
+    )
+    if kill_log.exists() and kill_log.read_text(encoding="utf-8").strip():
+        raise SystemExit("FAILED: OMC exact PID cleanup with --apply must not send a signal")
+    if not any("refused --apply" in item.get("reason", "") for item in status.get("unresolved_review_only", [])):
+        raise SystemExit("FAILED: OMC exact PID cleanup with --apply must be refused review-only")
+    assert_no_teammate_signal_actions(status, "apply refused teammate PID")
+
+    socket_log = workspace / "runtime/mock-socket-cleanup.log"
+    status = run_omc_runtime_mock(
+        script_path,
+        workspace,
+        plugin_root,
+        args=["--cleanup-stale"],
+        env={
+            "ZHULONG_OMC_MOCK_STALE_SOCKETS": "/tmp/claude-swarm-stale\n/tmp/not-omc.sock",
+            "ZHULONG_OMC_MOCK_SOCKET_CLEANUP_LOG": str(socket_log),
+        },
+    )
+    socket_text = socket_log.read_text(encoding="utf-8")
+    if "REMOVE_SOCKET /tmp/claude-swarm-stale" not in socket_text or "not-omc.sock" in socket_text:
+        raise SystemExit("FAILED: OMC stale socket cleanup must remove only stale claude-swarm sockets")
+    if not any(item.get("kind") == "stale_swarm_socket" and "non-claude-swarm" in item.get("reason", "") for item in status.get("unresolved_review_only", [])):
+        raise SystemExit("FAILED: OMC stale socket cleanup must review-only non claude-swarm mock sockets")
+
+    run_expect_fail(
+        ["bash", str(script_path), "--force-kill-suspect-teammates"],
+        plugin_root,
+        "Refusing deprecated --force-kill-suspect-teammates",
+    )
+
+
+def run_sandbox_preflight(
+    script_path: Path,
+    workspace: Path,
+    plugin_root: Path,
+    args: list[str],
+    *,
+    expected_returncode: int,
+) -> dict:
+    output = run_capture_with_env(
+        [
+            sys.executable,
+            str(script_path),
+            "--workspace-dir",
+            str(workspace),
+            "--case-id",
+            "sandbox-selftest",
+            "--json",
+            *args,
+        ],
+        plugin_root,
+        {},
+        expected_returncode=expected_returncode,
+    )
+    try:
+        status = json.loads(output)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"FAILED: sandbox preflight did not emit JSON: {output}") from exc
+    for key in ("checked_at", "ok", "status", "findings", "labels", "resume_step", "review_only"):
+        if key not in status:
+            raise SystemExit(f"FAILED: sandbox preflight missing status field: {key}")
+    status_path = workspace / "runtime/sandbox-preflight-status.json"
+    if not status_path.exists():
+        raise SystemExit("FAILED: sandbox preflight did not write runtime/sandbox-preflight-status.json")
+    return status
+
+
+def require_sandbox_rejection(status: dict, pattern: str, label: str) -> None:
+    if status.get("status") != "rejected_unsafe_sandbox" or status.get("ok") is not False:
+        raise SystemExit(f"FAILED: sandbox preflight should reject {label}: {status}")
+    if not any(item.get("pattern") == pattern for item in status.get("findings", [])):
+        raise SystemExit(f"FAILED: sandbox preflight missing pattern {pattern} for {label}: {status}")
+    if not status.get("review_only"):
+        raise SystemExit(f"FAILED: rejected sandbox status must be review-only for {label}")
+
+
+def exercise_sandbox_preflight(script_path: Path, workspace: Path, plugin_root: Path) -> None:
+    fixtures = workspace / "sandbox-preflight-fixtures"
+    fixtures.mkdir(parents=True, exist_ok=True)
+
+    compose_privileged = fixtures / "privileged.yml"
+    compose_privileged.write_text("services:\n  app:\n    image: alpine\n    privileged: true\n", encoding="utf-8")
+    require_sandbox_rejection(
+        run_sandbox_preflight(script_path, workspace, plugin_root, ["--compose-file", str(compose_privileged)], expected_returncode=1),
+        "privileged_true",
+        "Compose privileged:true",
+    )
+
+    compose_host_network = fixtures / "host-network.yml"
+    compose_host_network.write_text("services:\n  app:\n    image: alpine\n    network_mode: host\n", encoding="utf-8")
+    require_sandbox_rejection(
+        run_sandbox_preflight(script_path, workspace, plugin_root, ["--compose-file", str(compose_host_network)], expected_returncode=1),
+        "network_mode_host",
+        "Compose network_mode:host",
+    )
+
+    compose_host_pid = fixtures / "host-pid.yml"
+    compose_host_pid.write_text("services:\n  app:\n    image: alpine\n    pid: host\n", encoding="utf-8")
+    require_sandbox_rejection(
+        run_sandbox_preflight(script_path, workspace, plugin_root, ["--compose-file", str(compose_host_pid)], expected_returncode=1),
+        "pid_host",
+        "Compose pid:host",
+    )
+
+    compose_sock = fixtures / "docker-sock.yml"
+    compose_sock.write_text(
+        "services:\n  app:\n    image: alpine\n    volumes:\n      - /var/run/docker.sock:/var/run/docker.sock\n",
+        encoding="utf-8",
+    )
+    require_sandbox_rejection(
+        run_sandbox_preflight(script_path, workspace, plugin_root, ["--compose-file", str(compose_sock)], expected_returncode=1),
+        "docker_socket_mount",
+        "Compose Docker socket mount",
+    )
+
+    compose_root = fixtures / "root-mount.yml"
+    compose_root.write_text("services:\n  app:\n    image: alpine\n    volumes:\n      - /:/host:ro\n", encoding="utf-8")
+    require_sandbox_rejection(
+        run_sandbox_preflight(script_path, workspace, plugin_root, ["--compose-file", str(compose_root)], expected_returncode=1),
+        "host_root_mount",
+        "Compose host root mount",
+    )
+
+    script_sock_root = fixtures / "unsafe-run.sh"
+    script_sock_root.write_text(
+        "#!/usr/bin/env bash\n"
+        "docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v /:/host alpine true\n",
+        encoding="utf-8",
+    )
+    status = run_sandbox_preflight(script_path, workspace, plugin_root, ["--shell-script", str(script_sock_root)], expected_returncode=1)
+    require_sandbox_rejection(status, "docker_socket_mount", "script Docker socket mount")
+    require_sandbox_rejection(status, "host_root_mount", "script host root mount")
+
+    require_sandbox_rejection(
+        run_sandbox_preflight(script_path, workspace, plugin_root, ["--docker-run-arg=--privileged"], expected_returncode=1),
+        "docker_run_privileged",
+        "docker run --privileged",
+    )
+    require_sandbox_rejection(
+        run_sandbox_preflight(
+            script_path,
+            workspace,
+            plugin_root,
+            ["--docker-run-arg=--network", "--docker-run-arg=host"],
+            expected_returncode=1,
+        ),
+        "docker_run_network_host",
+        "docker run --network host",
+    )
+    require_sandbox_rejection(
+        run_sandbox_preflight(
+            script_path,
+            workspace,
+            plugin_root,
+            ["--docker-run-arg=--pid=host"],
+            expected_returncode=1,
+        ),
+        "docker_run_pid_host",
+        "docker run --pid host",
+    )
+
+    safe_compose = fixtures / "safe-attacker.yml"
+    safe_compose.write_text(
+        "services:\n"
+        "  attacker:\n"
+        "    image: alpine:3.20\n"
+        "    labels:\n"
+        "      org.zhulong.managed: \"true\"\n"
+        "    cap_drop:\n"
+        "      - ALL\n"
+        "    security_opt:\n"
+        "      - no-new-privileges:true\n"
+        "    network_mode: bridge\n"
+        "    volumes:\n"
+        "      - type: bind\n"
+        "        source: ./poc\n"
+        "        target: /workspace/poc\n"
+        "        read_only: true\n",
+        encoding="utf-8",
+    )
+    status = run_sandbox_preflight(script_path, workspace, plugin_root, ["--compose-file", str(safe_compose)], expected_returncode=0)
+    if status.get("status") != "passed" or status.get("findings"):
+        raise SystemExit(f"FAILED: safe Zhulong attacker compose should pass sandbox preflight: {status}")
+
+
+def exercise_runner_sandbox_rejection(run_script: Path, workspace: Path, plugin_root: Path) -> None:
+    fakebin = workspace / "fakebin"
+    fakebin.mkdir(parents=True, exist_ok=True)
+    docker_log = workspace / "runtime/docker-called.log"
+    fake_docker = fakebin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "echo docker-called \"$@\" >> \"$ZHULONG_DOCKER_CALL_LOG\"\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+
+    output = run_capture_with_env(
+        [
+            "bash",
+            str(run_script),
+            "--workspace-dir",
+            str(workspace),
+            "--case-id",
+            "unsafe-host-network",
+            "--mode",
+            "docker-run",
+            "--image",
+            "alpine:3.20",
+            "--timeout-seconds",
+            "30",
+            "--allow-exit-zero-oracle",
+            "--network",
+            "host",
+            "--",
+            "true",
+        ],
+        plugin_root,
+        {
+            "PATH": f"{fakebin}{os.pathsep}{os.environ.get('PATH', '')}",
+            "ZHULONG_DOCKER_CALL_LOG": str(docker_log),
+        },
+        expected_returncode=1,
+    )
+    if "rejected_unsafe_sandbox" not in output:
+        raise SystemExit(f"FAILED: runner did not surface rejected_unsafe_sandbox:\n{output}")
+    if docker_log.exists():
+        raise SystemExit("FAILED: run_verification_case.sh called docker after sandbox preflight rejection")
+    result_path = workspace / "evidence/unsafe-host-network/verification-result.json"
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    if result.get("status") != "rejected_unsafe_sandbox":
+        raise SystemExit(f"FAILED: runner result did not persist rejected_unsafe_sandbox: {result}")
+    status_path = workspace / "runtime/sandbox-preflight-status.json"
+    status = json.loads(status_path.read_text(encoding="utf-8"))
+    if status.get("status") != "rejected_unsafe_sandbox" or not status.get("review_only"):
+        raise SystemExit(f"FAILED: runtime sandbox status is not rejected review-only: {status}")
+
+
+def exercise_sandbox_ledger_guard(workspace: Path, plugin_root: Path) -> None:
+    sys.path.insert(0, str(plugin_root / "scripts"))
+    from audit_disposition import synthesize_disposition_ledger  # type: ignore
+
+    unverified_path = workspace / "unverified-leads.md"
+    original = unverified_path.read_text(encoding="utf-8", errors="ignore") if unverified_path.exists() else ""
+    try:
+        unverified_path.write_text(
+            "| Lead ID | Suspected Weakness | Evidence So Far | Missing Evidence | Docker Confirmation Status | Safe Resume Step | High-Confidence-Unverified? | Material blocker? | Default runtime scope? | Why completion is still safe? |\n"
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n"
+            "| U-SANDBOX | SSRF candidate | PoC needs unsafe Docker flags | safe sandbox rewrite | rejected_unsafe_sandbox | rewrite verification container without host/privileged/docker.sock/root mount | Yes | Yes | default runtime | unsafe sandbox rejection is blocked/unverified, not confirmed |\n",
+            encoding="utf-8",
+        )
+        ledger = synthesize_disposition_ledger(workspace, merge_existing=False)
+    finally:
+        unverified_path.write_text(original, encoding="utf-8")
+
+    matches = [
+        item for item in ledger.get("items", [])
+        if "sandbox" in str(item.get("id", "")).lower() or "sandbox" in str(item.get("title", "")).lower()
+    ]
+    if not matches:
+        raise SystemExit("FAILED: audit disposition ledger did not capture rejected_unsafe_sandbox lead")
+    if any(item.get("state") == "confirmed" or item.get("confirmed_bundle_path") for item in matches):
+        raise SystemExit(f"FAILED: rejected_unsafe_sandbox entered confirmed ledger state: {matches}")
+    if not any(item.get("state") in {"blocked", "unverified"} for item in matches):
+        raise SystemExit(f"FAILED: rejected_unsafe_sandbox must stay blocked/unverified: {matches}")
+
+
 def selftest_installed_skill(skill_root: Path) -> None:
     for rel in INSTALLED_SKILL_REQUIRED_FILES:
         path = skill_root / rel
@@ -217,9 +840,11 @@ def selftest_installed_skill(skill_root: Path) -> None:
          str(skill_root / "scripts/plan_security_toolchain.py"),
          str(skill_root / "scripts/render_handoff_summary.py"),
          str(skill_root / "scripts/assert_finalized_workspace.py"),
+         str(skill_root / "scripts/audit_disposition.py"),
          str(skill_root / "scripts/blocked_verification.py"),
          str(skill_root / "scripts/write_audit_event.py"),
          str(skill_root / "scripts/validate_workspace_state.py"),
+         str(skill_root / "scripts/check_sandbox_preflight.py"),
          str(skill_root / "scripts/manage_docker_resources.py"),
          str(skill_root / "scripts/render_confirmed_vuln_docx.py"),
          str(skill_root / "scripts/validate_report_bundle.py"),
@@ -231,6 +856,7 @@ def selftest_installed_skill(skill_root: Path) -> None:
         "scripts/asr_start.sh",
         "scripts/prepare_target_repo.sh",
         "scripts/check_docker_gate.sh",
+        "scripts/check_omc_runtime.sh",
         "scripts/check_security_tooling.sh",
         "scripts/run_initial_probes.sh",
         "scripts/run_verification_case.sh",
@@ -254,6 +880,46 @@ def selftest_installed_skill(skill_root: Path) -> None:
     )
     require_text(
         skill_root / "SKILL.md",
+        "runtime/runtime-hygiene-status.json",
+        "installed skill OMC runtime hygiene status contract",
+    )
+    require_text(
+        skill_root / "SKILL.md",
+        "Teammate PID cleanup is review-only",
+        "installed skill review-only OMC PID cleanup contract",
+    )
+    require_text(
+        skill_root / "SKILL.md",
+        "check_sandbox_preflight.py",
+        "installed skill sandbox preflight helper reference",
+    )
+    require_text(
+        skill_root / "SKILL.md",
+        "rejected_unsafe_sandbox",
+        "installed skill sandbox preflight rejected label",
+    )
+    require_text(
+        skill_root / "SKILL.md",
+        "攻击者条件",
+        "installed skill confirmed quality-gate attacker label",
+    )
+    require_text(
+        skill_root / "SKILL.md",
+        "Security Impact",
+        "installed skill confirmed quality-gate impact label",
+    )
+    require_text(
+        skill_root / "SKILL.md",
+        "SECURITY.md",
+        "installed skill security-boundary triage check",
+    )
+    require_text(
+        skill_root / "SKILL.md",
+        "outside_security_boundary",
+        "installed skill false-positive boundary reason code",
+    )
+    require_text(
+        skill_root / "SKILL.md",
         "<audit-workspace>/SUMMARY.md",
         "installed skill stable summary contract",
     )
@@ -262,11 +928,60 @@ def selftest_installed_skill(skill_root: Path) -> None:
         "Material blocker?",
         "installed skill unverified lead materiality template",
     )
+    require_text(
+        skill_root / "assets/references/false-positive-template.md",
+        "expected_behavior",
+        "installed skill false-positive expected behavior reason code",
+    )
+    require_text(
+        skill_root / "assets/references/false-positive-template.md",
+        "outside_security_boundary",
+        "installed skill false-positive outside boundary reason code",
+    )
+    require_text(
+        skill_root / "assets/references/false-positive-template.md",
+        "requires_non_default_admin_trust",
+        "installed skill false-positive admin trust reason code",
+    )
+    require_text(
+        skill_root / "assets/references/unverified-lead-template.md",
+        "Security policy / scope checked",
+        "installed skill unverified security policy check field",
+    )
 
     operator_local_path = "/" + "Users" + "/" + "torchbearer"
     require_no_repo_text(skill_root, operator_local_path, "operator-local absolute path")
     stale_asr_name = "autonomous-security" + "-researcher"
     require_no_repo_text(skill_root, stale_asr_name, "stale ASR naming")
+
+    with tempfile.TemporaryDirectory(prefix="zhulong-installed-omc-selftest-") as tempdir:
+        repo_dir = Path(tempdir) / "repo"
+        repo_dir.mkdir(parents=True, exist_ok=True)
+        run([
+            "bash",
+            str(skill_root / "scripts/bootstrap_verification_workspace.sh"),
+            "--target-dir",
+            str(repo_dir),
+            "--workspace-name",
+            "security-research-installed-omc",
+        ], skill_root)
+        exercise_omc_runtime_hygiene(
+            skill_root / "scripts/check_omc_runtime.sh",
+            repo_dir / "security-research-installed-omc",
+            skill_root,
+        )
+        installed_workspace = repo_dir / "security-research-installed-omc"
+        exercise_sandbox_preflight(
+            skill_root / "scripts/check_sandbox_preflight.py",
+            installed_workspace,
+            skill_root,
+        )
+        exercise_runner_sandbox_rejection(
+            skill_root / "scripts/run_verification_case.sh",
+            installed_workspace,
+            skill_root,
+        )
+        exercise_sandbox_ledger_guard(installed_workspace, skill_root)
 
     print(f"SELFTEST PASSED: installed Claude skill layout {skill_root}")
 
@@ -284,8 +999,9 @@ def main() -> None:
             raise SystemExit(f"FAILED: missing required plugin file: {path}")
 
     plugin_json = json.loads((plugin_root / ".codex-plugin/plugin.json").read_text(encoding="utf-8"))
-    if plugin_json.get("name") != "zhulong-plugin":
+    if plugin_json.get("name") != "zhulong":
         raise SystemExit("FAILED: plugin.json name mismatch")
+    validate_claude_plugin_manifest(plugin_root)
 
     require_text(
         plugin_root / "templates/claude-skill/SKILL.md",
@@ -316,6 +1032,26 @@ def main() -> None:
         plugin_root / "templates/claude-skill/SKILL.md",
         "Do not produce thin DOCX reports",
         "Claude skill template report-depth contract",
+    )
+    require_text(
+        plugin_root / "templates/claude-skill/SKILL.md",
+        "攻击者条件",
+        "Claude skill template confirmed quality-gate attacker label",
+    )
+    require_text(
+        plugin_root / "templates/claude-skill/SKILL.md",
+        "Security Impact",
+        "Claude skill template confirmed quality-gate impact label",
+    )
+    require_text(
+        plugin_root / "templates/claude-skill/SKILL.md",
+        "SECURITY.md",
+        "Claude skill template security-boundary triage check",
+    )
+    require_text(
+        plugin_root / "templates/claude-skill/SKILL.md",
+        "outside_security_boundary",
+        "Claude skill template false-positive boundary reason codes",
     )
     require_text(
         plugin_root / "templates/claude-skill/SKILL.md",
@@ -399,6 +1135,16 @@ def main() -> None:
     )
     require_text(
         plugin_root / "templates/claude-skill/SKILL.md",
+        "rejected_unsafe_sandbox",
+        "Claude skill template sandbox preflight rejected label",
+    )
+    require_text(
+        plugin_root / "templates/claude-skill/SKILL.md",
+        "check_sandbox_preflight.py",
+        "Claude skill template sandbox preflight helper reference",
+    )
+    require_text(
+        plugin_root / "templates/claude-skill/SKILL.md",
         "timed-out, blocked, resource-limited",
         "Claude skill template verification runner confirmed-output guardrail",
     )
@@ -461,6 +1207,16 @@ def main() -> None:
         plugin_root / "templates/claude-skill/SKILL.md",
         "Blocked Docker/runtime verification is not the same as",
         "Claude skill template blocked verification semantics",
+    )
+    require_text(
+        plugin_root / "templates/claude-skill/SKILL.md",
+        "runtime/runtime-hygiene-status.json",
+        "Claude skill template OMC runtime hygiene status contract",
+    )
+    require_text(
+        plugin_root / "templates/claude-skill/SKILL.md",
+        "Teammate PID cleanup is review-only",
+        "Claude skill template review-only OMC PID cleanup contract",
     )
     require_text(
         plugin_root / "templates/claude-skill/SKILL.md",
@@ -533,6 +1289,36 @@ def main() -> None:
         "false-positive template Docker status field",
     )
     require_text(
+        plugin_root / "assets/references/false-positive-template.md",
+        "expected_behavior",
+        "false-positive template expected behavior reason code",
+    )
+    require_text(
+        plugin_root / "assets/references/false-positive-template.md",
+        "outside_security_boundary",
+        "false-positive template outside boundary reason code",
+    )
+    require_text(
+        plugin_root / "assets/references/false-positive-template.md",
+        "requires_non_default_admin_trust",
+        "false-positive template admin trust reason code",
+    )
+    require_text(
+        plugin_root / "assets/references/false-positive-template.md",
+        "default_config_not_vulnerable",
+        "false-positive template default config reason code",
+    )
+    require_text(
+        plugin_root / "assets/references/false-positive-template.md",
+        "insufficient_attacker_condition",
+        "false-positive template attacker-condition reason code",
+    )
+    require_text(
+        plugin_root / "assets/references/false-positive-template.md",
+        "insufficient_security_impact",
+        "false-positive template security-impact reason code",
+    )
+    require_text(
         plugin_root / "assets/references/unverified-lead-template.md",
         "Safe resume step",
         "unverified lead template resume field",
@@ -551,6 +1337,11 @@ def main() -> None:
         plugin_root / "assets/references/unverified-lead-template.md",
         "Confirmed-output guardrail",
         "unverified lead template confirmed-output guardrail field",
+    )
+    require_text(
+        plugin_root / "assets/references/unverified-lead-template.md",
+        "Security policy / scope checked",
+        "unverified lead template security policy check field",
     )
     require_text(
         plugin_root / "templates/claude-skill/SKILL.md",
@@ -613,9 +1404,39 @@ def main() -> None:
         "handoff renderer finalization integrity hint",
     )
     require_text(
+        plugin_root / "scripts/render_handoff_summary.py",
+        "OMC Runtime Hygiene",
+        "handoff renderer OMC runtime hygiene section",
+    )
+    require_text(
+        plugin_root / "scripts/check_omc_runtime.sh",
+        "--cleanup-suspect-pid",
+        "OMC runtime helper exact PID cleanup flag",
+    )
+    require_text(
+        plugin_root / "scripts/check_omc_runtime.sh",
+        "--force-kill-suspect-teammates",
+        "OMC runtime helper deprecated broad cleanup refusal",
+    )
+    require_text(
+        plugin_root / "scripts/asr_start.sh",
+        "--prompt-runtime-pid-review",
+        "asr launcher optional runtime PID review prompt flag",
+    )
+    require_text(
+        plugin_root / "templates/claude-skill/SKILL.md",
+        "--prompt-runtime-pid-review",
+        "Claude skill optional runtime PID review prompt guidance",
+    )
+    require_text(
         plugin_root / "scripts/assert_finalized_workspace.py",
         "FINALIZATION INTEGRITY FAILED",
         "finalization integrity checker failure heading",
+    )
+    require_text(
+        plugin_root / "scripts/audit_disposition.py",
+        "state=confirmed requires confirmed_bundle_path",
+        "audit disposition confirmed bundle gate",
     )
     require_text(
         plugin_root / "scripts/blocked_verification.py",
@@ -845,7 +1666,7 @@ def main() -> None:
     )
     require_text(
         plugin_root / "scripts/run_verification_case.sh",
-        "STABLE_LABELS=\"blocked_docker_unavailable blocked_missing_image failed_timeout failed_resource_limit rejected_not_reproducible confirmed_in_docker\"",
+        "STABLE_LABELS=\"blocked_docker_unavailable blocked_missing_image failed_timeout failed_resource_limit rejected_unsafe_sandbox rejected_not_reproducible confirmed_in_docker\"",
         "verification runner stable labels",
     )
     require_text(
@@ -974,19 +1795,21 @@ def main() -> None:
     )
     canonical_prompt = plugin_root / "assets" / "references" / "claude-code-invocation-template.md"
     root_prompt = plugin_root.parent.parent / "claude-code-zhulong-prompt-template.md"
-    if canonical_prompt.read_text(encoding="utf-8") != root_prompt.read_text(encoding="utf-8"):
+    if root_prompt.exists() and canonical_prompt.read_text(encoding="utf-8") != root_prompt.read_text(encoding="utf-8"):
         raise SystemExit(
             "FAILED: root prompt template is out of sync with the canonical plugin invocation template. "
-            "Run scripts/sync_to_claude_skill.sh or resync the repository prompt copy."
+            "Run scripts/sync_to_claude_skill.sh --sync-root-prompt-template or resync the repository prompt copy."
         )
 
     run([sys.executable, "-m", "py_compile",
          str(plugin_root / "scripts/plan_security_toolchain.py"),
          str(plugin_root / "scripts/render_handoff_summary.py"),
          str(plugin_root / "scripts/assert_finalized_workspace.py"),
+         str(plugin_root / "scripts/audit_disposition.py"),
          str(plugin_root / "scripts/blocked_verification.py"),
          str(plugin_root / "scripts/write_audit_event.py"),
          str(plugin_root / "scripts/validate_workspace_state.py"),
+         str(plugin_root / "scripts/check_sandbox_preflight.py"),
          str(plugin_root / "scripts/manage_docker_resources.py"),
          str(plugin_root / "scripts/render_confirmed_vuln_docx.py"),
          str(plugin_root / "scripts/scaffold_bilingual_findings.py"),
@@ -1036,6 +1859,8 @@ def main() -> None:
             raise SystemExit("FAILED: bootstrapped workspace is missing run-initial-probes.sh")
         if not (workspace / "bin/run-verification-case.sh").exists():
             raise SystemExit("FAILED: bootstrapped workspace is missing run-verification-case.sh")
+        if not (workspace / "bin/check-sandbox-preflight.py").exists():
+            raise SystemExit("FAILED: bootstrapped workspace is missing check-sandbox-preflight.py")
         if not (workspace / "bin/manage-docker-resources.py").exists():
             raise SystemExit("FAILED: bootstrapped workspace is missing manage-docker-resources.py")
         if not (workspace / "bin/render-handoff-summary.py").exists():
@@ -1044,6 +1869,8 @@ def main() -> None:
             raise SystemExit("FAILED: bootstrapped workspace is missing assert-finalized-workspace.py")
         if not (workspace / "bin/blocked_verification.py").exists():
             raise SystemExit("FAILED: bootstrapped workspace is missing blocked_verification.py")
+        if not (workspace / "bin/audit_disposition.py").exists():
+            raise SystemExit("FAILED: bootstrapped workspace is missing audit_disposition.py")
         if not (workspace / "scripts/render-handoff-summary.py").exists():
             raise SystemExit("FAILED: bootstrapped workspace is missing scripts/render-handoff-summary.py")
         if not (workspace / "scripts/assert-finalized-workspace.py").exists():
@@ -1068,6 +1895,7 @@ def main() -> None:
             "Attack-Surface Highlights",
             "Initial Probe Summary",
             "Blocked Verification Status",
+            "Audit Disposition Ledger",
             "Candidate Findings",
             "False Positives / Non-Security Defects",
             "Unverified Leads",
@@ -1147,6 +1975,18 @@ def main() -> None:
                             },
                         },
                         {
+                            "id": "sha256:projectonly",
+                            "repository": "project-only-app",
+                            "tag": "latest",
+                            "labels": {"com.zhulong.project": workspace_name},
+                        },
+                        {
+                            "id": "sha256:legacy",
+                            "repository": "starlette-verify",
+                            "tag": "zhulong",
+                            "labels": {"com.zhulong.workspace": workspace_name},
+                        },
+                        {
                             "id": "sha256:compose",
                             "repository": "<none>",
                             "tag": "<none>",
@@ -1170,6 +2010,16 @@ def main() -> None:
                             "driver": "local",
                             "labels": {"com.docker.compose.project": "zhulong-test-compose"},
                         },
+                        {
+                            "name": "legacy-labeled-volume",
+                            "driver": "local",
+                            "labels": {"com.zhulong.workspace": workspace_name},
+                        },
+                        {
+                            "name": "project-only-volume",
+                            "driver": "local",
+                            "labels": {"com.zhulong.project": workspace_name},
+                        },
                         {"name": "parallel-created-volume", "driver": "local"},
                     ],
                     "networks": [
@@ -1188,6 +2038,18 @@ def main() -> None:
                             "name": "target-compose-network",
                             "driver": "bridge",
                             "labels": {"com.docker.compose.project": "zhulong-test-compose"},
+                        },
+                        {
+                            "id": "net4",
+                            "name": "legacy-labeled-network",
+                            "driver": "bridge",
+                            "labels": {"com.zhulong.workspace": workspace_name},
+                        },
+                        {
+                            "id": "net5",
+                            "name": "project-only-network",
+                            "driver": "bridge",
+                            "labels": {"com.zhulong.project": workspace_name},
                         },
                         {"id": "net2", "name": "parallel-created-network", "driver": "bridge"},
                     ],
@@ -1212,6 +2074,12 @@ def main() -> None:
                             },
                         },
                         {
+                            "id": "container6",
+                            "name": "legacy-labeled-stopped",
+                            "state": "exited",
+                            "labels": {"com.zhulong.workspace": workspace_name},
+                        },
+                        {
                             "id": "container5",
                             "name": "target-compose-stopped",
                             "state": "exited",
@@ -1225,6 +2093,12 @@ def main() -> None:
                                 "org.zhulong.managed": "true",
                                 "org.zhulong.workspace": "security-research-other",
                             },
+                        },
+                        {
+                            "id": "container7",
+                            "name": "project-only-stopped",
+                            "state": "exited",
+                            "labels": {"com.zhulong.project": workspace_name},
                         },
                         {"id": "container4", "name": "parallel-unlabeled-stopped", "state": "exited"},
                     ],
@@ -1255,32 +2129,66 @@ def main() -> None:
         if cleanup_plan.get("safety_policy", {}).get("delete_unowned_resources") is not False:
             raise SystemExit("FAILED: Docker cleanup helper must not delete unowned resources")
         planned_images = {item.get("id") for item in cleanup_plan.get("images", [])}
-        if planned_images != {"sha256:new"}:
+        if planned_images != {"sha256:new", "sha256:legacy"}:
             raise SystemExit(f"FAILED: Docker cleanup image plan should only include owned new image: {planned_images}")
         planned_volumes = {item.get("name") for item in cleanup_plan.get("volumes", [])}
-        if planned_volumes != {"target-created-volume"}:
+        if planned_volumes != {"target-created-volume", "legacy-labeled-volume"}:
             raise SystemExit(f"FAILED: Docker cleanup volume plan should only include owned new volume: {planned_volumes}")
         planned_networks = {item.get("name") for item in cleanup_plan.get("networks", [])}
-        if planned_networks != {"target-created-network"}:
+        if planned_networks != {"target-created-network", "legacy-labeled-network"}:
             raise SystemExit(f"FAILED: Docker cleanup network plan should only include owned new non-default network: {planned_networks}")
         running_skipped = {item.get("name") for item in cleanup_plan.get("containers", {}).get("running_owned_skipped", [])}
         if running_skipped != {"target-running"}:
             raise SystemExit("FAILED: Docker cleanup helper must skip running containers by default")
         planned_containers = {item.get("name") for item in cleanup_plan.get("containers", {}).get("stopped_owned", [])}
-        if planned_containers != {"target-stopped"}:
+        if planned_containers != {"target-stopped", "legacy-labeled-stopped"}:
             raise SystemExit(f"FAILED: Docker cleanup should only remove owned stopped containers: {planned_containers}")
         skipped_containers = {item.get("name") for item in cleanup_plan.get("containers", {}).get("unattributed_new_skipped", [])}
-        if skipped_containers != {"other-zhulong-stopped", "parallel-unlabeled-stopped", "target-compose-stopped"}:
+        if skipped_containers != {"other-zhulong-stopped", "parallel-unlabeled-stopped", "project-only-stopped", "target-compose-stopped"}:
             raise SystemExit(f"FAILED: Docker cleanup must skip foreign/unlabeled containers: {skipped_containers}")
         skipped_images = {item.get("id") for item in cleanup_plan.get("unattributed_new_skipped", {}).get("images", [])}
-        if skipped_images != {"sha256:foreign", "sha256:unlabeled", "sha256:compose", "sha256:compose-pulled"}:
+        if skipped_images != {"sha256:foreign", "sha256:projectonly", "sha256:unlabeled", "sha256:compose", "sha256:compose-pulled"}:
             raise SystemExit(f"FAILED: Docker cleanup must skip foreign/unlabeled images: {skipped_images}")
         skipped_volumes = {item.get("name") for item in cleanup_plan.get("unattributed_new_skipped", {}).get("volumes", [])}
-        if skipped_volumes != {"parallel-created-volume", "target-compose-volume"}:
+        if skipped_volumes != {"parallel-created-volume", "project-only-volume", "target-compose-volume"}:
             raise SystemExit(f"FAILED: Docker cleanup must skip unlabeled volumes: {skipped_volumes}")
         skipped_networks = {item.get("name") for item in cleanup_plan.get("unattributed_new_skipped", {}).get("networks", [])}
-        if skipped_networks != {"parallel-created-network", "target-compose-network"}:
+        if skipped_networks != {"parallel-created-network", "project-only-network", "target-compose-network"}:
             raise SystemExit(f"FAILED: Docker cleanup must skip unlabeled networks: {skipped_networks}")
+        run([
+            sys.executable,
+            str(plugin_root / "scripts/manage_docker_resources.py"),
+            "--workspace-dir",
+            str(workspace),
+            "--baseline-file",
+            str(docker_baseline),
+            "--current-file",
+            str(docker_current),
+            "--show-created",
+            "--adopt-compose-project",
+            "zhulong-*",
+            "--adopt-image-ref",
+            "*",
+            "--adopt-network-name",
+            "parallel-*",
+            "--adopt-volume-name",
+            "parallel-*",
+            "--adopt-build-cache",
+            "--adopt-build-cache-id",
+            "cache*",
+        ], plugin_root)
+        cleanup_plan = json.loads((workspace / "docker" / "docker-cleanup-plan.json").read_text(encoding="utf-8"))
+        planned_images = {item.get("id") for item in cleanup_plan.get("images", [])}
+        planned_volumes = {item.get("name") for item in cleanup_plan.get("volumes", [])}
+        planned_networks = {item.get("name") for item in cleanup_plan.get("networks", [])}
+        planned_build_cache = {item.get("id") for item in cleanup_plan.get("build_cache", {}).get("adopted_reclaimable", [])}
+        if (
+            planned_images != {"sha256:new", "sha256:legacy"}
+            or planned_volumes != {"target-created-volume", "legacy-labeled-volume"}
+            or planned_networks != {"target-created-network", "legacy-labeled-network"}
+            or planned_build_cache
+        ):
+            raise SystemExit("FAILED: Docker adoption flags must use exact literal matches, not wildcard/prefix semantics")
         run([
             sys.executable,
             str(plugin_root / "scripts/manage_docker_resources.py"),
@@ -1294,23 +2202,31 @@ def main() -> None:
             "--adopt-compose-project",
             "zhulong-test-compose",
             "--adopt-image-ref",
+            "node:20-alpine",
+            "--adopt-image-ref",
             "mysql:5.7",
             "--adopt-build-cache",
             "--adopt-build-cache-id",
             "cache1",
+            "--adopt-volume-name",
+            "existing-volume",
+            "--adopt-network-name",
+            "parallel-created-network",
+            "--adopt-volume-name",
+            "parallel-created-volume",
         ], plugin_root)
         cleanup_plan = json.loads((workspace / "docker" / "docker-cleanup-plan.json").read_text(encoding="utf-8"))
         planned_images = {item.get("id") for item in cleanup_plan.get("images", [])}
-        if planned_images != {"sha256:new", "sha256:compose", "sha256:compose-pulled"}:
+        if planned_images != {"sha256:new", "sha256:legacy", "sha256:compose", "sha256:compose-pulled"}:
             raise SystemExit(f"FAILED: adopted compose/image resources should enter cleanup image plan: {planned_images}")
         planned_volumes = {item.get("name") for item in cleanup_plan.get("volumes", [])}
-        if planned_volumes != {"target-created-volume", "target-compose-volume"}:
-            raise SystemExit(f"FAILED: adopted compose resources should enter cleanup volume plan: {planned_volumes}")
+        if planned_volumes != {"target-created-volume", "legacy-labeled-volume", "target-compose-volume", "parallel-created-volume"}:
+            raise SystemExit(f"FAILED: adopted compose/exact resources should enter cleanup volume plan: {planned_volumes}")
         planned_networks = {item.get("name") for item in cleanup_plan.get("networks", [])}
-        if planned_networks != {"target-created-network", "target-compose-network"}:
-            raise SystemExit(f"FAILED: adopted compose resources should enter cleanup network plan: {planned_networks}")
+        if planned_networks != {"target-created-network", "legacy-labeled-network", "target-compose-network", "parallel-created-network"}:
+            raise SystemExit(f"FAILED: adopted compose/exact resources should enter cleanup network plan: {planned_networks}")
         planned_containers = {item.get("name") for item in cleanup_plan.get("containers", {}).get("stopped_owned", [])}
-        if planned_containers != {"target-stopped", "target-compose-stopped"}:
+        if planned_containers != {"target-stopped", "legacy-labeled-stopped", "target-compose-stopped"}:
             raise SystemExit(f"FAILED: adopted compose containers should enter cleanup plan: {planned_containers}")
         planned_build_cache = {item.get("id") for item in cleanup_plan.get("build_cache", {}).get("adopted_reclaimable", [])}
         if planned_build_cache != {"cache1"}:
@@ -1346,6 +2262,114 @@ def main() -> None:
             "--adopt-build-cache-id",
             "cache1",
         ], plugin_root, "--adopt-build-cache-id requires --adopt-build-cache")
+
+        def docker_overwrite_fixture(
+            name: str,
+            *,
+            images: list[dict[str, object]] | None = None,
+            volumes: list[dict[str, object]] | None = None,
+            networks: list[dict[str, object]] | None = None,
+            containers: list[dict[str, object]] | None = None,
+            build_cache: list[dict[str, object]] | None = None,
+        ) -> Path:
+            path = workspace / "docker" / f"{name}.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "captured_at": "2026-04-28T00:15:00Z",
+                        "docker_available": True,
+                        "images": [
+                            {"id": "sha256:base", "repository": "node", "tag": "20-alpine"},
+                            *(images or []),
+                        ],
+                        "volumes": [
+                            {"name": "existing-volume", "driver": "local"},
+                            *(volumes or []),
+                        ],
+                        "networks": [
+                            {"id": "net0", "name": "bridge", "driver": "bridge"},
+                            *(networks or []),
+                        ],
+                        "containers": [
+                            {"id": "container0", "name": "existing", "state": "exited"},
+                            *(containers or []),
+                        ],
+                        "build_cache": [
+                            {"id": "cache0", "reclaimable": True, "size": "1MB"},
+                            *(build_cache or []),
+                        ],
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            return path
+
+        overwrite_owned_image = docker_overwrite_fixture(
+            "current-overwrite-owned-image",
+            images=[
+                {
+                    "id": "sha256:owned-overwrite",
+                    "repository": "owned-overwrite",
+                    "tag": "latest",
+                    "labels": {
+                        "org.zhulong.managed": "true",
+                        "org.zhulong.workspace": workspace_name,
+                    },
+                }
+            ],
+        )
+        overwrite_unlabeled_image = docker_overwrite_fixture(
+            "current-overwrite-unlabeled-image",
+            images=[{"id": "sha256:unlabeled-overwrite", "repository": "unlabeled-overwrite", "tag": "latest"}],
+        )
+        overwrite_unlabeled_network_volume = docker_overwrite_fixture(
+            "current-overwrite-unlabeled-network-volume",
+            volumes=[{"name": "unlabeled-overwrite-volume", "driver": "local"}],
+            networks=[{"id": "net-overwrite", "name": "unlabeled-overwrite-network", "driver": "bridge"}],
+        )
+        overwrite_build_cache = docker_overwrite_fixture(
+            "current-overwrite-build-cache",
+            build_cache=[{"id": "cache-overwrite", "reclaimable": True, "size": "2MB"}],
+        )
+        for overwrite_current in (
+            overwrite_owned_image,
+            overwrite_unlabeled_image,
+            overwrite_unlabeled_network_volume,
+            overwrite_build_cache,
+        ):
+            run_expect_fail([
+                sys.executable,
+                str(plugin_root / "scripts/manage_docker_resources.py"),
+                "--workspace-dir",
+                str(workspace),
+                "--baseline-file",
+                str(docker_baseline),
+                "--current-file",
+                str(overwrite_current),
+                "--capture-baseline",
+                "--force-overwrite-baseline",
+            ], plugin_root, "hide Docker residue from strict cleanliness checks")
+        cleanup_plan = json.loads((workspace / "docker" / "docker-cleanup-plan.json").read_text(encoding="utf-8"))
+        skipped_build_cache = {
+            item.get("id")
+            for item in cleanup_plan.get("build_cache", {}).get("unattributed_new_skipped", [])
+        }
+        if skipped_build_cache != {"cache-overwrite"}:
+            raise SystemExit(f"FAILED: baseline overwrite refusal must record BuildKit cache residue: {skipped_build_cache}")
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/manage_docker_resources.py"),
+            "--workspace-dir",
+            str(workspace),
+            "--baseline-file",
+            str(docker_baseline),
+            "--current-file",
+            str(docker_current),
+            "--capture-baseline",
+            "--force-overwrite-baseline",
+        ], plugin_root, "Refusing to overwrite Docker baseline while post-baseline resources remain")
         run([
             sys.executable,
             str(plugin_root / "scripts/manage_docker_resources.py"),
@@ -1477,6 +2501,23 @@ def main() -> None:
         cleanliness_status = json.loads((workspace / "docker" / "docker-cleanliness-status.json").read_text(encoding="utf-8"))
         if cleanliness_status.get("clean") is not True or cleanliness_status.get("strict") is not True:
             raise SystemExit("FAILED: Docker strict verify-clean must pass when the Docker state matches the baseline")
+        docker_overwrite_success_baseline = workspace / "docker" / "baseline-overwrite-success.json"
+        docker_overwrite_success_baseline.write_text(docker_baseline.read_text(encoding="utf-8"), encoding="utf-8")
+        run([
+            sys.executable,
+            str(plugin_root / "scripts/manage_docker_resources.py"),
+            "--workspace-dir",
+            str(workspace),
+            "--baseline-file",
+            str(docker_overwrite_success_baseline),
+            "--current-file",
+            str(docker_strict_clean_current),
+            "--capture-baseline",
+            "--force-overwrite-baseline",
+        ], plugin_root)
+        overwritten_baseline = json.loads(docker_overwrite_success_baseline.read_text(encoding="utf-8"))
+        if overwritten_baseline.get("captured_at") != "2026-04-28T00:30:00Z":
+            raise SystemExit("FAILED: force-overwrite baseline should succeed only after current state matches baseline residue-free")
         require_text(
             workspace / "handoff-summary.md",
             "Do not generate DOCX reports from handoff content",
@@ -1855,6 +2896,26 @@ def main() -> None:
             "--repo-root",
             str(repo_dir),
         ], plugin_root)
+        sandbox_workspace = Path(tempdir) / "sandbox-preflight-workspace"
+        sandbox_workspace.mkdir(parents=True, exist_ok=True)
+        (sandbox_workspace / "asr-config.json").write_text('{"schema_version":1}\n', encoding="utf-8")
+        (sandbox_workspace / "audit-log.md").write_text("# Audit Log\n", encoding="utf-8")
+        exercise_sandbox_preflight(
+            plugin_root / "scripts/check_sandbox_preflight.py",
+            sandbox_workspace,
+            plugin_root,
+        )
+        exercise_sandbox_preflight(
+            workspace / "bin/check-sandbox-preflight.py",
+            sandbox_workspace,
+            plugin_root,
+        )
+        exercise_runner_sandbox_rejection(
+            plugin_root / "scripts/run_verification_case.sh",
+            sandbox_workspace,
+            plugin_root,
+        )
+        exercise_sandbox_ledger_guard(sandbox_workspace, plugin_root)
         run([
             "bash",
             str(workspace / "bin/check_omc_runtime.sh"),
@@ -1862,6 +2923,16 @@ def main() -> None:
             str(workspace),
             "--json",
         ], plugin_root)
+        exercise_omc_runtime_hygiene(
+            plugin_root / "scripts/check_omc_runtime.sh",
+            workspace,
+            plugin_root,
+        )
+        exercise_omc_runtime_hygiene(
+            workspace / "bin/check_omc_runtime.sh",
+            workspace,
+            plugin_root,
+        )
         run([
             sys.executable,
             str(workspace / "bin/plan-security-toolchain.py"),
@@ -2321,6 +3392,296 @@ def main() -> None:
             raise SystemExit("FAILED: standard vulnerability_name fixture rendered a generic DOCX title")
         if "最终判定待补充" in "\n".join(standard_lines):
             raise SystemExit("FAILED: standard vulnerability_name fixture left final verdict placeholder text")
+        standard_text = "\n".join(standard_lines)
+        for label in ("攻击者条件", "服务端条件", "安全影响"):
+            if label not in standard_text:
+                raise SystemExit(f"FAILED: zh-CN confirmed report is missing quality-gate label: {label}")
+        en_docx = next(en_bundle.glob("*.docx"))
+        en_text = "\n".join(docx_text(en_docx))
+        for label in ("Attacker Condition", "Server Condition", "Security Impact"):
+            if label not in en_text:
+                raise SystemExit(f"FAILED: en-US confirmed report is missing quality-gate label: {label}")
+        standard_script = standard_bundle / "run-selftest-jwt-recording.sh"
+        standard_script_text = standard_script.read_text(encoding="utf-8")
+        if "announce_step '代码'" not in standard_script_text or re.search(
+            r"(?:announce_step\s+['\"]0/\d+|\[0/\d+\]|Step\s+0/\d+|步骤\s*0/\d+)",
+            standard_script_text,
+        ):
+            raise SystemExit("FAILED: generated zh-CN recording script must use [代码], not 0/N, for code hints")
+
+        def copy_standard_bundle(suffix: str) -> Path:
+            copied = standard_bundle.parent / f"{standard_bundle.name}_{suffix}"
+            if copied.exists():
+                shutil.rmtree(copied)
+            shutil.copytree(standard_bundle, copied)
+            return copied
+
+        def mutate_bundle_finding(bundle: Path, mutator) -> None:
+            findings_path = bundle / "findings.json"
+            if not findings_path.exists():
+                shared_findings_path = bundle.parent / "findings.json"
+                source_findings_path = shared_findings_path if shared_findings_path.exists() else standard_fixture
+                shared_data = json.loads(source_findings_path.read_text(encoding="utf-8"))
+                if isinstance(shared_data, dict) and isinstance(shared_data.get("findings"), list):
+                    candidates = [item for item in shared_data["findings"] if isinstance(item, dict)]
+                    selected = next(
+                        (
+                            item for item in candidates
+                            if str(item.get("slug") or "").strip() == standard_bundle.name
+                            or Path(str(item.get("filename") or item.get("report_file") or "")).stem == standard_bundle.name
+                            or "硬编码" in str(item.get("vulnerability_name") or item.get("vulnerability_name_zh") or "")
+                        ),
+                        candidates[0] if candidates else None,
+                    )
+                elif isinstance(shared_data, dict):
+                    selected = shared_data
+                elif isinstance(shared_data, list) and shared_data and isinstance(shared_data[0], dict):
+                    selected = shared_data[0]
+                else:
+                    raise SystemExit("FAILED: shared selftest findings.json has unexpected shape")
+                if selected is None:
+                    raise SystemExit("FAILED: shared selftest findings.json has no finding objects")
+                findings_path.write_text(json.dumps(selected, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            data = json.loads(findings_path.read_text(encoding="utf-8"))
+            if isinstance(data, dict) and isinstance(data.get("findings"), list):
+                target = data["findings"][0]
+            elif isinstance(data, dict):
+                target = data
+            else:
+                raise SystemExit("FAILED: selftest bundle findings.json has unexpected shape")
+            mutator(target)
+            findings_path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+        neutral_pr_bundle = copy_standard_bundle("prl_neutral_title_pass")
+        mutate_bundle_finding(
+            neutral_pr_bundle,
+            lambda finding: finding.setdefault("cvss", {}).update({"vector": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:C/C:H/I:H/A:L"}),
+        )
+        run([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(neutral_pr_bundle),
+            "--language",
+            "zh-CN",
+        ], plugin_root)
+        shutil.rmtree(neutral_pr_bundle)
+
+        bad_unauth_title = copy_standard_bundle("unauthenticated_title_prl")
+        mutate_bundle_finding(
+            bad_unauth_title,
+            lambda finding: finding.setdefault("cvss", {}).update({"vector": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:C/C:H/I:H/A:L"}),
+        )
+        rewrite_docx_paragraphs(
+            next(bad_unauth_title.glob("*.docx")),
+            lambda text: (
+                "gothinkster/node-express-realworld-example-app Unauthenticated SSRF 硬编码 JWT 密钥导致身份认证绕过 严重漏洞报告"
+                if text.startswith("gothinkster/node-express-realworld-example-app")
+                else text
+            ),
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_unauth_title),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "title/CVSS/auth consistency failure")
+        shutil.rmtree(bad_unauth_title)
+
+        bad_zero_step = copy_standard_bundle("recording_zero_step")
+        zero_script = bad_zero_step / "run-selftest-jwt-recording.sh"
+        zero_script.write_text(
+            zero_script.read_text(encoding="utf-8").replace("announce_step '代码'", "announce_step '0/2'"),
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_zero_step),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "must not use 0/N step labels")
+        shutil.rmtree(bad_zero_step)
+
+        bad_unconditional_poc = copy_standard_bundle("unconditional_poc_confirmation")
+        bad_confirm_script = bad_unconditional_poc / "attachments/unconditional-confirm.sh"
+        bad_confirm_script.write_text(
+            "#!/bin/sh\nset -eu\necho \"VULNERABILITY CONFIRMED\"\n",
+            encoding="utf-8",
+        )
+        bad_confirm_script.chmod(0o755)
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_unconditional_poc),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "without a nearby or preceding concrete success oracle")
+        shutil.rmtree(bad_unconditional_poc)
+
+        good_conditional_poc = copy_standard_bundle("conditional_poc_confirmation")
+        good_confirm_script = good_conditional_poc / "attachments/conditional-confirm.sh"
+        good_confirm_script.write_text(
+            "#!/bin/sh\n"
+            "set -eu\n"
+            "RESPONSE='{\"ok\":true,\"status_code\":200}'\n"
+            "if printf '%s' \"$RESPONSE\" | grep -q '\"ok\":true'; then\n"
+            "  echo \"VULNERABILITY CONFIRMED\"\n"
+            "else\n"
+            "  echo \"$RESPONSE\"\n"
+            "  exit 1\n"
+            "fi\n",
+            encoding="utf-8",
+        )
+        good_confirm_script.chmod(0o755)
+        run([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(good_conditional_poc),
+            "--language",
+            "zh-CN",
+        ], plugin_root)
+        shutil.rmtree(good_conditional_poc)
+
+        bad_english_docx = copy_standard_bundle("untranslated_english_docx")
+        rewrite_docx_paragraphs(
+            next(bad_english_docx.glob("*.docx")),
+            lambda text: (
+                "The vulnerable endpoint accepts attacker controlled input and forwards it to a sensitive server side operation. This vulnerability allows an attacker to trigger a security impact through the default configuration."
+                if text.startswith("默认配置缺失 JWT_SECRET")
+                else text
+            ),
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_english_docx),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "long English natural-language paragraph")
+        shutil.rmtree(bad_english_docx)
+
+        bad_english_supplement = copy_standard_bundle("untranslated_english_supplement")
+        bad_supplement_path = next(bad_english_supplement.glob("*_补充复现说明.md"))
+        bad_supplement_path.write_text(
+            bad_supplement_path.read_text(encoding="utf-8")
+            + "\nThe vulnerable endpoint accepts attacker controlled input and forwards it to a sensitive server side operation. This vulnerability allows an attacker to trigger a security impact through the default configuration.\n",
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_english_supplement),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "long English natural-language paragraph")
+        shutil.rmtree(bad_english_supplement)
+
+        technical_english_ok = copy_standard_bundle("technical_english_ok")
+        technical_supplement_path = next(technical_english_ok.glob("*_补充复现说明.md"))
+        technical_supplement_path.write_text(
+            technical_supplement_path.read_text(encoding="utf-8")
+            + "\n```sh\ncurl -s http://localhost:3000/api/user -H 'Authorization: Bearer TOKEN'\n```\n"
+            + "`{\"access_token\":\"TOKEN\",\"status_code\":200}`\n"
+            + "`CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:C/C:H/I:H/A:L`\n"
+            + "`VULNERABILITY CONFIRMED`\n",
+            encoding="utf-8",
+        )
+        run([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(technical_english_ok),
+            "--language",
+            "zh-CN",
+        ], plugin_root)
+        shutil.rmtree(technical_english_ok)
+
+        def quality_gate_bad_bundle(suffix: str, replacer) -> Path:
+            bad_bundle = standard_bundle.parent / f"{standard_bundle.name}_{suffix}"
+            shutil.copytree(standard_bundle, bad_bundle)
+            rewrite_docx_paragraphs(next(bad_bundle.glob("*.docx")), replacer)
+            return bad_bundle
+
+        bad_missing_attacker = quality_gate_bad_bundle(
+            "missing_attacker_condition",
+            lambda text: None if text.startswith("攻击者条件") or text.startswith("入口/可控输入") else text,
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_missing_attacker),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "missing 攻击者条件")
+
+        bad_missing_server = quality_gate_bad_bundle(
+            "missing_server_condition",
+            lambda text: None if text.startswith("服务端条件") else text,
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_missing_server),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "missing 服务端条件")
+
+        bad_missing_impact = quality_gate_bad_bundle(
+            "missing_security_impact",
+            lambda text: None if text.startswith("安全影响") else text,
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_missing_impact),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "missing 安全影响")
+
+        bad_placeholder_attacker = quality_gate_bad_bundle(
+            "placeholder_attacker_condition",
+            lambda text: "攻击者条件：待补充" if text.startswith("攻击者条件") else text,
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_placeholder_attacker),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "placeholder-only")
+
+        bad_weak_impact = quality_gate_bad_bundle(
+            "weak_security_impact",
+            lambda text: "安全影响：该问题很危险。" if text.startswith("安全影响") else text,
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_weak_impact),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "must mention a concrete CIA impact")
+        for bad_quality_bundle in (
+            bad_missing_attacker,
+            bad_missing_server,
+            bad_missing_impact,
+            bad_placeholder_attacker,
+            bad_weak_impact,
+        ):
+            shutil.rmtree(bad_quality_bundle)
         legacy_marker_fixture = workspace / "legacy-english-analysis-markers-finding.json"
         legacy_marker_data = json.loads(standard_fixture.read_text(encoding="utf-8"))
         legacy_marker_data["vulnerability_id"] = "SELFTEST-LEGACY-MARKERS"
@@ -2331,7 +3692,7 @@ def main() -> None:
             "vector": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N",
             "score": "7.5",
             "severity": "高危",
-            "rationale": ["评估依据：服务端可被诱导访问内部资源。"],
+            "rationale": ["评估依据：服务端可被诱导访问内网资源，形成 SSRF 信息泄露风险。"],
         }
         legacy_marker_data["analysis"] = [
             "Location: api/src/services/files.ts importOne() accepts a user-supplied URL.",
@@ -2808,12 +4169,204 @@ def main() -> None:
 
         SKIP_DOCKER_ENV = {"ZHULONG_TEST_SKIP_DOCKER_CLEAN_CHECK": "1"}
 
+        def disposition_item(
+            *,
+            item_id: str,
+            state: str,
+            source_type: str,
+            docker_status: str,
+            reason_code: str,
+            confirmed_bundle_path: str = "",
+            docker_applicable: bool = True,
+            title: str = "selftest disposition item",
+            materiality_rationale: str = "selftest material item",
+        ) -> dict:
+            return {
+                "id": item_id,
+                "title": title,
+                "state": state,
+                "source_type": source_type,
+                "docker_applicable": docker_applicable,
+                "docker_status": docker_status,
+                "reason_code": reason_code,
+                "confirmed_bundle_path": confirmed_bundle_path,
+                "materiality_rationale": materiality_rationale,
+            }
+
+        def make_disposition_fixture(
+            name: str,
+            *,
+            items: list[dict],
+            copy_valid_bundle: bool,
+        ) -> Path:
+            fixture = repo_dir / name
+            if fixture.exists():
+                shutil.rmtree(fixture)
+            (fixture / "confirmed").mkdir(parents=True, exist_ok=True)
+            (fixture / "docker").mkdir(parents=True, exist_ok=True)
+            (fixture / "asr-config.json").write_text(
+                json.dumps({
+                    "workspace_root": fixture.name,
+                    "workspace_created_at": "2026-05-06T00:00:00Z",
+                    "confirmed_output_dir": f"{fixture.name}/confirmed",
+                }, indent=2),
+                encoding="utf-8",
+            )
+            for filename, heading in (
+                ("candidate-findings.md", "# Candidate Findings\n\n"),
+                ("false-positives.md", "# False Positives and Non-Security Defects\n\n"),
+                ("unverified-leads.md", "# Unverified Leads\n\n"),
+                ("attack-surface.md", "# Attack Surface Handoff\n\n"),
+            ):
+                (fixture / filename).write_text(heading, encoding="utf-8")
+            if copy_valid_bundle:
+                shutil.copytree(zh_bundle, fixture / "confirmed" / zh_bundle.name)
+            (fixture / "audit-disposition.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "generated_at": "2026-05-06T00:00:01Z",
+                        "workspace": fixture.name,
+                        "items": items,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                ) + "\n",
+                encoding="utf-8",
+            )
+            return fixture
+
+        valid_bundle_rel = f"confirmed/{zh_bundle.name}"
+        valid_disposition_workspace = make_disposition_fixture(
+            "security-research-disposition-valid",
+            items=[
+                disposition_item(
+                    item_id="confirmed:selftest",
+                    state="confirmed",
+                    source_type="hybrid",
+                    docker_status="reproduced",
+                    reason_code="docker_reproduced",
+                    confirmed_bundle_path=valid_bundle_rel,
+                    materiality_rationale="Docker reproduction succeeded and bundle validation passes.",
+                )
+            ],
+            copy_valid_bundle=True,
+        )
+        run([
+            sys.executable,
+            str(plugin_root / "scripts/audit_disposition.py"),
+            "--workspace-dir",
+            str(valid_disposition_workspace),
+            "--result",
+            "completed_with_confirmed_bundles",
+        ], plugin_root)
+        for source_type, reason_code in (
+            ("scanner", "scanner_only"),
+            ("dependency", "dependency_only"),
+            ("static", "static_only"),
+            ("llm", "llm_only"),
+        ):
+            source_only_workspace = make_disposition_fixture(
+                f"security-research-disposition-{source_type}",
+                items=[
+                    disposition_item(
+                        item_id=f"confirmed:{source_type}",
+                        state="confirmed",
+                        source_type=source_type,
+                        docker_status="reproduced",
+                        reason_code=reason_code,
+                        confirmed_bundle_path=valid_bundle_rel,
+                    )
+                ],
+                copy_valid_bundle=True,
+            )
+            run_expect_fail([
+                sys.executable,
+                str(plugin_root / "scripts/audit_disposition.py"),
+                "--workspace-dir",
+                str(source_only_workspace),
+                "--result",
+                "completed_with_confirmed_bundles",
+            ], plugin_root, f"source_type={source_type} cannot be confirmed")
+        not_reproduced_workspace = make_disposition_fixture(
+            "security-research-disposition-not-reproduced",
+            items=[
+                disposition_item(
+                    item_id="confirmed:not-reproduced",
+                    state="confirmed",
+                    source_type="hybrid",
+                    docker_status="failed",
+                    reason_code="not_reproducible",
+                    confirmed_bundle_path=valid_bundle_rel,
+                )
+            ],
+            copy_valid_bundle=True,
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/audit_disposition.py"),
+            "--workspace-dir",
+            str(not_reproduced_workspace),
+            "--result",
+            "completed_with_confirmed_bundles",
+        ], plugin_root, "requires docker_status=reproduced")
+        non_confirmed_points_to_confirmed = make_disposition_fixture(
+            "security-research-disposition-non-confirmed-path",
+            items=[
+                disposition_item(
+                    item_id="candidate:bad-path",
+                    state="candidate",
+                    source_type="manual",
+                    docker_status="not_started",
+                    reason_code="insufficient_evidence",
+                    confirmed_bundle_path=valid_bundle_rel,
+                )
+            ],
+            copy_valid_bundle=True,
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/audit_disposition.py"),
+            "--workspace-dir",
+            str(non_confirmed_points_to_confirmed),
+            "--result",
+            "completed_with_confirmed_bundles",
+        ], plugin_root, "non-confirmed items must not point into confirmed/")
+        for docker_status, reason_code in (
+            ("blocked", "blocked_by_docker"),
+            ("timed_out", "timed_out"),
+            ("dirty_state", "dirty_docker"),
+        ):
+            blocking_workspace = make_disposition_fixture(
+                f"security-research-disposition-{docker_status}",
+                items=[
+                    disposition_item(
+                        item_id=f"candidate:{docker_status}",
+                        state="candidate",
+                        source_type="runtime",
+                        docker_status=docker_status,
+                        reason_code=reason_code,
+                    )
+                ],
+                copy_valid_bundle=False,
+            )
+            run_expect_fail([
+                sys.executable,
+                str(plugin_root / "scripts/audit_disposition.py"),
+                "--workspace-dir",
+                str(blocking_workspace),
+                "--result",
+                "completed_no_confirmed_findings",
+            ], plugin_root, "blocks completed_no_confirmed_findings")
+
         def write_integrity_fixture(
             fixture_workspace: Path,
             *,
             events: list[dict],
             status: dict,
             docker_status: dict,
+            ledger: dict | None = None,
         ) -> None:
             fixture_workspace.mkdir(parents=True, exist_ok=True)
             (fixture_workspace / "docker").mkdir(parents=True, exist_ok=True)
@@ -2837,6 +4390,11 @@ def main() -> None:
                 json.dumps(docker_status, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
                 encoding="utf-8",
             )
+            if ledger is not None:
+                (fixture_workspace / "audit-disposition.json").write_text(
+                    json.dumps(ledger, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                    encoding="utf-8",
+                )
 
         bad_integrity_workspace = repo_dir / "security-research-integrity-bad"
         write_integrity_fixture(
@@ -2916,6 +4474,12 @@ def main() -> None:
                 "clean": True,
                 "strict": True,
                 "workspace": good_integrity_workspace.name,
+            },
+            ledger={
+                "schema_version": 1,
+                "generated_at": "2026-05-06T00:00:01Z",
+                "workspace": good_integrity_workspace.name,
+                "items": [],
             },
         )
         run([
@@ -3112,6 +4676,97 @@ def main() -> None:
             "finalization creates stable workspace SUMMARY.md",
         )
 
+        legacy_clean_workspace = repo_dir / "security-research-legacy-clean-no-ledger"
+        legacy_clean_workspace.mkdir(parents=True, exist_ok=True)
+        (legacy_clean_workspace / "confirmed").mkdir()
+        (legacy_clean_workspace / "docker").mkdir()
+        (legacy_clean_workspace / "asr-config.json").write_text(
+            json.dumps({
+                "workspace_root": legacy_clean_workspace.name,
+                "workspace_created_at": "2026-05-06T00:00:00Z",
+                "confirmed_output_dir": f"{legacy_clean_workspace.name}/confirmed",
+            }, indent=2),
+            encoding="utf-8",
+        )
+        (legacy_clean_workspace / "docker/docker-cleanliness-status.json").write_text(
+            json.dumps({"schema_version": 1, "clean": True, "strict": True}, indent=2),
+            encoding="utf-8",
+        )
+        if (legacy_clean_workspace / "audit-disposition.json").exists():
+            raise SystemExit("FAILED: legacy clean fixture unexpectedly started with audit-disposition.json")
+        run_with_env([
+            sys.executable,
+            str(plugin_root / "scripts/finalize_audit_workspace.py"),
+            "--workspace-dir",
+            str(legacy_clean_workspace),
+            "--result",
+            "completed_no_confirmed_findings",
+        ], plugin_root, SKIP_DOCKER_ENV)
+        if not (legacy_clean_workspace / "audit-disposition.json").exists():
+            raise SystemExit("FAILED: legacy clean no-confirmed finalization did not write audit-disposition.json")
+        run([
+            sys.executable,
+            str(plugin_root / "scripts/assert_finalized_workspace.py"),
+            "--workspace-dir",
+            str(legacy_clean_workspace),
+        ], plugin_root)
+
+        stale_docker_status_workspace = repo_dir / "security-research-stale-docker-status"
+        stale_docker_status_workspace.mkdir(parents=True, exist_ok=True)
+        (stale_docker_status_workspace / "confirmed").mkdir()
+        (stale_docker_status_workspace / "docker").mkdir()
+        (stale_docker_status_workspace / "bin").mkdir()
+        (stale_docker_status_workspace / "asr-config.json").write_text(
+            json.dumps({
+                "workspace_root": stale_docker_status_workspace.name,
+                "workspace_created_at": "2026-05-06T00:00:00Z",
+                "confirmed_output_dir": f"{stale_docker_status_workspace.name}/confirmed",
+            }, indent=2),
+            encoding="utf-8",
+        )
+        for filename, heading in (
+            ("candidate-findings.md", "# Candidate Findings\n\n"),
+            ("unverified-leads.md", "# Unverified Leads\n\n"),
+            ("false-positives.md", "# False Positives\n\n"),
+            ("attack-surface.md", "# Attack Surface Handoff\n\n"),
+        ):
+            (stale_docker_status_workspace / filename).write_text(heading, encoding="utf-8")
+        (stale_docker_status_workspace / "docker/docker-resource-baseline.json").write_text(
+            json.dumps({
+                "schema_version": 1,
+                "captured_at": "2026-05-06T00:00:00Z",
+                "docker_available": True,
+                "images": [],
+                "volumes": [],
+                "networks": [],
+                "containers": [],
+                "build_cache": [],
+            }, indent=2),
+            encoding="utf-8",
+        )
+        stale_status_path = stale_docker_status_workspace / "docker/docker-cleanliness-status.json"
+        stale_status_path.write_text(
+            json.dumps({"schema_version": 1, "clean": True, "strict": True, "checked_at": "2026-05-06T00:00:01Z"}, indent=2),
+            encoding="utf-8",
+        )
+        fake_manage = stale_docker_status_workspace / "bin/manage-docker-resources.py"
+        fake_manage.write_text(
+            "#!/usr/bin/env python3\n"
+            "import sys\n"
+            "print('simulated Docker helper failure without status refresh', file=sys.stderr)\n"
+            "raise SystemExit(1)\n",
+            encoding="utf-8",
+        )
+        fake_manage.chmod(0o755)
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/finalize_audit_workspace.py"),
+            "--workspace-dir",
+            str(stale_docker_status_workspace),
+            "--result",
+            "completed_no_confirmed_findings",
+        ], plugin_root, "did not refresh docker-cleanliness-status.json")
+
         # Test 1: Finalization with valid bundles succeeds
         # Remove partial/bad bundles first so only valid ones remain
         for bad in (
@@ -3163,6 +4818,11 @@ def main() -> None:
             raise SystemExit("FAILED: finalization did not write finalization_started event")
         if "bundle_validation_outcome" not in finalized_events:
             raise SystemExit("FAILED: finalization did not write bundle_validation_outcome event")
+        if "audit_disposition_outcome" not in finalized_events:
+            raise SystemExit("FAILED: finalization did not write audit_disposition_outcome event")
+        finalized_ledger = json.loads((workspace / "audit-disposition.json").read_text(encoding="utf-8"))
+        if not finalized_ledger.get("items"):
+            raise SystemExit("FAILED: finalization did not write audit-disposition.json items for confirmed bundles")
         run([
             sys.executable,
             str(workspace / "bin/assert-finalized-workspace.py"),
@@ -3213,6 +4873,9 @@ def main() -> None:
             "completed_no_confirmed_findings",
             "no-finding finalization updates generated SUMMARY.md",
         )
+        no_finding_ledger = json.loads((workspace / "audit-disposition.json").read_text(encoding="utf-8"))
+        if any(item.get("state") == "confirmed" for item in no_finding_ledger.get("items", [])):
+            raise SystemExit("FAILED: refreshed no-finding audit-disposition.json kept stale confirmed items")
         run([
             sys.executable,
             str(workspace / "bin/assert-finalized-workspace.py"),
@@ -3343,6 +5006,7 @@ def main() -> None:
         isolated_finalizer = isolated_finalizer_dir / "finalize_audit_workspace.py"
         shutil.copy2(plugin_root / "scripts/finalize_audit_workspace.py", isolated_finalizer)
         shutil.copy2(plugin_root / "scripts/blocked_verification.py", isolated_finalizer_dir / "blocked_verification.py")
+        shutil.copy2(plugin_root / "scripts/audit_disposition.py", isolated_finalizer_dir / "audit_disposition.py")
         workspace_writer = workspace / "bin/write-audit-event.py"
         hidden_workspace_writer = workspace / "bin/write-audit-event.py.hidden-for-selftest"
         workspace_writer.rename(hidden_workspace_writer)
@@ -3366,7 +5030,7 @@ def main() -> None:
 
         claude_home = Path(tempdir) / "claude-home"
         claude_home.mkdir(parents=True, exist_ok=True)
-        run([
+        default_sync_output = run_capture([
             "bash",
             str(plugin_root / "scripts/sync_to_claude_skill.sh"),
             "--claude-skills-dir",
@@ -3374,6 +5038,25 @@ def main() -> None:
             "--keep-backups",
             "2",
         ], plugin_root)
+        if "Prompt template sync:" not in default_sync_output or "skipped" not in default_sync_output:
+            raise SystemExit("FAILED: sync_to_claude_skill.sh should skip external prompt template sync by default")
+        if "Prompt template synced from canonical source:" in default_sync_output:
+            raise SystemExit("FAILED: sync_to_claude_skill.sh wrote an external prompt template by default")
+        prompt_template_output = Path(tempdir) / "prompt-template.md"
+        run([
+            "bash",
+            str(plugin_root / "scripts/sync_to_claude_skill.sh"),
+            "--claude-skills-dir",
+            str(claude_home / "skills"),
+            "--keep-backups",
+            "2",
+            "--prompt-template-output",
+            str(prompt_template_output),
+        ], plugin_root)
+        if prompt_template_output.read_text(encoding="utf-8") != (
+            plugin_root / "assets/references/claude-code-invocation-template.md"
+        ).read_text(encoding="utf-8"):
+            raise SystemExit("FAILED: sync_to_claude_skill.sh did not honor --prompt-template-output")
         installed_skill = claude_home / "skills" / "zhulong"
         if not (installed_skill / "SKILL.md").exists():
             raise SystemExit("FAILED: Claude skill sync did not create SKILL.md")
@@ -3385,6 +5068,8 @@ def main() -> None:
             raise SystemExit("FAILED: Claude skill sync did not copy run_initial_probes.sh")
         if not (installed_skill / "scripts/run_verification_case.sh").exists():
             raise SystemExit("FAILED: Claude skill sync did not copy run_verification_case.sh")
+        if not (installed_skill / "scripts/check_sandbox_preflight.py").exists():
+            raise SystemExit("FAILED: Claude skill sync did not copy check_sandbox_preflight.py")
         if not (installed_skill / "scripts/render_handoff_summary.py").exists():
             raise SystemExit("FAILED: Claude skill sync did not copy render_handoff_summary.py")
         if not (installed_skill / "scripts/asr_start.sh").exists():
@@ -3395,6 +5080,8 @@ def main() -> None:
             raise SystemExit("FAILED: Claude skill sync did not copy validate_workspace_state.py")
         if not (installed_skill / "scripts/assert_finalized_workspace.py").exists():
             raise SystemExit("FAILED: Claude skill sync did not copy assert_finalized_workspace.py")
+        if not (installed_skill / "scripts/audit_disposition.py").exists():
+            raise SystemExit("FAILED: Claude skill sync did not copy audit_disposition.py")
         if not (installed_skill / "scripts/blocked_verification.py").exists():
             raise SystemExit("FAILED: Claude skill sync did not copy blocked_verification.py")
         if not (installed_skill / "assets/tool-registry.json").exists():
@@ -3417,8 +5104,28 @@ def main() -> None:
         )
         require_text(
             installed_skill / "SKILL.md",
+            "攻击者条件",
+            "installed Claude skill confirmed quality-gate attacker label",
+        )
+        require_text(
+            installed_skill / "SKILL.md",
+            "Security Impact",
+            "installed Claude skill confirmed quality-gate impact label",
+        )
+        require_text(
+            installed_skill / "SKILL.md",
+            "outside_security_boundary",
+            "installed Claude skill false-positive boundary reason code",
+        )
+        require_text(
+            installed_skill / "SKILL.md",
             "severity-escalation pass",
             "installed Claude skill severity escalation contract",
+        )
+        require_text(
+            installed_skill / "SKILL.md",
+            "rejected_unsafe_sandbox",
+            "installed Claude skill sandbox preflight rejected label",
         )
         require_text(
             installed_skill / "SKILL.md",

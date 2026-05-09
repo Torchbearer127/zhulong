@@ -1,14 +1,15 @@
 {
-  "name": "zhulong-plugin",
-  "version": "0.1.0",
-  "description": "Zhulong (烛龙): Docker-first autonomous security audit plugin with dynamic toolchain planning and deterministic vulnerability report generation.",
+  "name": "zhulong",
+  "version": "0.2.0",
+  "description": "Zhulong (烛龙): Docker-first security-focused code audit workflow with dynamic toolchain planning, confirmed-only vulnerability bundles, and final workspace validation.",
+  "publisher": "Torchbearer127",
   "author": {
     "name": "Torchbearer127",
-    "email": "[TODO: maintainer@example.com]",
-    "url": "[TODO: https://github.com/maintainer]"
+    "email": "torchbearer127@qq.com",
+    "url": "https://github.com/Torchbearer127"
   },
-  "homepage": "[TODO: https://github.com/maintainer/zhulong-plugin]",
-  "repository": "[TODO: https://github.com/maintainer/zhulong-plugin]",
+  "homepage": "https://github.com/Torchbearer127/zhulong",
+  "repository": "https://github.com/Torchbearer127/zhulong",
   "license": "MIT",
   "keywords": [
     "security",
@@ -18,9 +19,9 @@
     "audit"
   ],
   "skills": "./skills/",
-  "hooks": "",
-  "mcpServers": "",
-  "apps": "",
+  "hooks": [],
+  "mcpServers": [],
+  "apps": [],
   "interface": {
     "displayName": "Zhulong (烛龙)",
     "shortDescription": "Docker-first security auditing with deterministic reporting.",
@@ -32,13 +33,13 @@
       "Write",
       "Automation"
     ],
-    "websiteURL": "[TODO: https://github.com/maintainer/zhulong-plugin]",
-    "privacyPolicyURL": "[TODO: https://github.com/maintainer/zhulong-plugin#privacy]",
-    "termsOfServiceURL": "[TODO: https://github.com/maintainer/zhulong-plugin#terms]",
+    "websiteURL": "https://github.com/Torchbearer127/zhulong",
+    "privacyPolicyURL": "https://github.com/Torchbearer127/zhulong/blob/main/SECURITY.md",
+    "termsOfServiceURL": "https://github.com/Torchbearer127/zhulong/blob/main/DISCLAIMER.md",
     "defaultPrompt": [
       "Use the zhulong workflow to audit this repository and verify real vulnerabilities only inside Docker.",
       "Plan the best toolchain for this repo, run the Docker-only verification workflow, and generate stable confirmed vulnerability bundles.",
-      "Check the local security tooling stack, choose the best available scanners, and validate the final report bundles."
+      "Check the local security tooling stack, classify scanner output as candidates only, and validate the final report bundles."
     ],
     "brandColor": "#A31F34",
     "composerIcon": "",
