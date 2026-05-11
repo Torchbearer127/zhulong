@@ -109,12 +109,26 @@ The validator also checks for common contradiction patterns, including:
 - title or wording claiming no-auth reachability while CVSS or reproduction
   evidence requires privileges
 - unconditional success banners in PoC scripts without concrete success oracles
+- fail-open success-oracle lines such as `grep ... || echo ...`,
+  `grep ... || true`, `jq ... || true`, `curl ... || true`, or
+  `docker logs ... | grep ... || echo ...` before final confirmation banners
 - stale or malformed recording step labels
+- bundle-root recording helper shell syntax and executable bit
+- attachment Docker Compose consistency, including missing relative `env_file`
+  entries, missing relative bind-mount sources, and forbidden absolute host paths
 - long natural-language output in the wrong report language
 - optional target/command consistency fields when structured evidence is present
 
 These checks are intentionally conservative. They are meant to reduce false
 positives without changing the confirmed bundle contract.
+
+Reviewer-facing recording helpers should derive their own bundle directory,
+refer to `attachments/` relative to that directory, and either bootstrap the
+Docker environment from bundle-local attachments or fail early with the exact
+bundle-local command the reviewer must run first. They should check required
+containers before `docker exec`, run readiness checks when practical, and print
+captured command errors instead of hiding critical failures with naked
+`2>/dev/null`.
 
 ## Example Finding Shape
 

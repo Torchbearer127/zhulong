@@ -245,8 +245,8 @@ SHELL_CONFIRMATION_PHRASE_PATTERNS = [
 SHELL_CONFIRMATION_PRINT_PATTERNS = [
     re.compile(pattern, re.IGNORECASE)
     for pattern in (
-        r"\b(?:echo|printf|highlight_success|highlight_danger)\b[^\n'\"]*['\"]\s*(?:VULNERABILITY CONFIRMED|ATTACK SUCCESS)\b",
-        r"\b(?:echo|printf|highlight_success|highlight_danger)\b[^\n'\"]*['\"]\s*(?:漏洞已确认|攻击成功)",
+        r"\b(?:echo|printf|highlight_success|highlight_danger|print_banner)\b.*(?:VULNERABILITY CONFIRMED|ATTACK SUCCESS)\b",
+        r"\b(?:echo|printf|highlight_success|highlight_danger|print_banner)\b.*(?:漏洞已确认|攻击成功)",
     )
 ]
 SHELL_SUCCESS_ORACLE_PATTERNS = [
@@ -267,6 +267,13 @@ SHELL_SUCCESS_ORACLE_PATTERNS = [
         r"\bexit\s+1\b",
     )
 ]
+SHELL_FAIL_OPEN_ORACLE_COMMAND_PATTERN = re.compile(
+    r"\b(?:grep|jq|curl|docker\s+logs|test)\b|\[\[|\[\s",
+    re.IGNORECASE,
+)
+SHELL_FAIL_OPEN_SOFTENER_PATTERN = re.compile(r"\|\|\s*(?:echo|printf|true|:)\b", re.IGNORECASE)
+SHELL_FAIL_CLOSED_SOFTENER_PATTERN = re.compile(r"\|\|.*\b(?:exit|return)\s+[1-9][0-9]*\b", re.IGNORECASE)
+COMPOSE_FILE_PATTERN = re.compile(r"^(?:docker-compose.*|compose.*)\.ya?ml$", re.IGNORECASE)
 TECHNICAL_TEXT_PATTERNS = [
     re.compile(pattern, re.IGNORECASE)
     for pattern in (
@@ -1351,6 +1358,34 @@ def validate_recording_step_labels(script_path: Path, text: str) -> None:
             )
 
 
+def shell_syntax_command(script_path: Path) -> list[str]:
+    first_line = ""
+    try:
+        first_line = script_path.read_text(encoding="utf-8", errors="ignore").splitlines()[0]
+    except IndexError:
+        first_line = ""
+    lowered = first_line.lower()
+    if "bash" in lowered and shutil.which("bash"):
+        return ["bash", "-n", str(script_path)]
+    if re.search(r"\b(?:sh|dash)\b", lowered) and shutil.which("sh"):
+        return ["sh", "-n", str(script_path)]
+    if "zsh" in lowered and shutil.which("zsh"):
+        return ["zsh", "-n", str(script_path)]
+    if shutil.which("bash"):
+        return ["bash", "-n", str(script_path)]
+    if shutil.which("sh"):
+        return ["sh", "-n", str(script_path)]
+    fail("cannot perform shell syntax check because neither bash nor sh is available")
+
+
+def validate_shell_syntax(script_path: Path) -> None:
+    command = shell_syntax_command(script_path)
+    proc = subprocess.run(command, capture_output=True, text=True)
+    if proc.returncode != 0:
+        output = ((proc.stdout or "") + (proc.stderr or "")).strip()
+        fail(f"shell syntax check failed for {script_path.name}: {output}")
+
+
 def line_prints_final_confirmation(line: str) -> bool:
     if not any(pattern.search(line) for pattern in SHELL_CONFIRMATION_PHRASE_PATTERNS):
         return False
@@ -1362,7 +1397,57 @@ def has_preceding_success_oracle(lines: list[str], index: int) -> bool:
     return any(pattern.search(window) for pattern in SHELL_SUCCESS_ORACLE_PATTERNS)
 
 
+def logical_shell_lines(text: str) -> list[str]:
+    logical: list[str] = []
+    current = ""
+    for raw in text.splitlines():
+        stripped = raw.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if current:
+            current = f"{current} {stripped}"
+        else:
+            current = stripped
+        if current.endswith("\\"):
+            current = current[:-1].rstrip()
+            continue
+        logical.append(current)
+        current = ""
+    if current:
+        logical.append(current)
+    return logical
+
+
+def line_softens_success_oracle_failure(line: str) -> bool:
+    if not SHELL_FAIL_OPEN_ORACLE_COMMAND_PATTERN.search(line):
+        return False
+    if not SHELL_FAIL_OPEN_SOFTENER_PATTERN.search(line):
+        return False
+    return not SHELL_FAIL_CLOSED_SOFTENER_PATTERN.search(line)
+
+
+def validate_fail_open_success_oracles(script_path: Path, text: str) -> None:
+    lines = logical_shell_lines(text)
+    confirmation_indexes = [
+        index for index, line in enumerate(lines)
+        if line_prints_final_confirmation(line)
+    ]
+    if not confirmation_indexes:
+        return
+    first_confirmation = min(confirmation_indexes)
+    for index, line in enumerate(lines[: first_confirmation + 1]):
+        if not line_softens_success_oracle_failure(line):
+            continue
+        preview = line if len(line) <= 180 else line[:177] + "..."
+        fail(
+            f"{script_path.name} softens a success-oracle failure before final confirmation: {preview!r}. "
+            "Do not use `|| echo`, `|| printf`, or `|| true` for grep/jq/curl/docker-log success checks "
+            "before printing VULNERABILITY CONFIRMED, ATTACK SUCCESS, 漏洞已确认, or 攻击成功; fail closed with exit 1."
+        )
+
+
 def validate_shell_success_oracles(script_path: Path, text: str) -> None:
+    validate_fail_open_success_oracles(script_path, text)
     lines = text.splitlines()
     for index, line in enumerate(lines):
         if not line_prints_final_confirmation(line):
@@ -1385,6 +1470,7 @@ def validate_bundle_root_scripts(bundle_dir: Path, note_text: str) -> list[str]:
     )
     for script_path in script_paths:
         text = script_path.read_text(encoding="utf-8")
+        validate_shell_syntax(script_path)
         validate_no_absolute_paths(text)
         validate_recording_step_labels(script_path, text)
         validate_shell_success_oracles(script_path, text)
@@ -1428,8 +1514,320 @@ def validate_attachment_shell_scripts(attachments_dir: Path) -> None:
         if not is_shell_script(path):
             continue
         text = path.read_text(encoding="utf-8", errors="ignore")
+        validate_shell_syntax(path)
         validate_no_absolute_paths(text)
         validate_shell_success_oracles(path, text)
+
+
+def yaml_indent(line: str) -> int:
+    return len(line) - len(line.lstrip(" "))
+
+
+def strip_inline_yaml_comment(value: str) -> str:
+    text = value.strip()
+    if not text:
+        return ""
+    quote: str | None = None
+    escaped = False
+    for index, char in enumerate(text):
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\":
+            escaped = True
+            continue
+        if quote:
+            if char == quote:
+                quote = None
+            continue
+        if char in {"'", '"'}:
+            quote = char
+            continue
+        if char == "#":
+            if index == 0 or text[index - 1].isspace():
+                return text[:index].strip()
+    return text
+
+
+def unquote_yaml_scalar(value: str) -> str:
+    text = strip_inline_yaml_comment(value).strip()
+    if not text:
+        return ""
+    if (text.startswith("'") and text.endswith("'")) or (text.startswith('"') and text.endswith('"')):
+        return text[1:-1]
+    return text
+
+
+def split_inline_yaml_list(value: str) -> list[str]:
+    text = strip_inline_yaml_comment(value).strip()
+    if not (text.startswith("[") and text.endswith("]")):
+        return []
+    inner = text[1:-1].strip()
+    if not inner:
+        return []
+    items: list[str] = []
+    current = ""
+    quote: str | None = None
+    escaped = False
+    for char in inner:
+        if escaped:
+            current += char
+            escaped = False
+            continue
+        if char == "\\":
+            current += char
+            escaped = True
+            continue
+        if quote:
+            current += char
+            if char == quote:
+                quote = None
+            continue
+        if char in {"'", '"'}:
+            current += char
+            quote = char
+            continue
+        if char == ",":
+            items.append(unquote_yaml_scalar(current))
+            current = ""
+            continue
+        current += char
+    if current.strip():
+        items.append(unquote_yaml_scalar(current))
+    return [item for item in items if item]
+
+
+def service_key_indent(lines: list[str]) -> tuple[int | None, int | None]:
+    services_indent = None
+    service_indent = None
+    for raw in lines:
+        stripped = strip_inline_yaml_comment(raw).strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        indent = yaml_indent(raw)
+        if stripped == "services:":
+            services_indent = indent
+            continue
+        if services_indent is not None and indent > services_indent and re.match(r"^[A-Za-z0-9_.-]+:\s*$", stripped):
+            service_indent = indent
+            break
+    return services_indent, service_indent
+
+
+def line_is_under_service(raw: str, services_indent: int | None, service_indent: int | None) -> bool:
+    if services_indent is None or service_indent is None:
+        return True
+    indent = yaml_indent(raw)
+    return indent > service_indent
+
+
+def collect_env_file_entries(lines: list[str]) -> list[tuple[int, str]]:
+    services_indent, service_indent = service_key_indent(lines)
+    entries: list[tuple[int, str]] = []
+    index = 0
+    while index < len(lines):
+        raw = lines[index]
+        stripped = strip_inline_yaml_comment(raw).strip()
+        indent = yaml_indent(raw)
+        match = re.match(r"^env_file\s*:\s*(.*)$", stripped)
+        if not match or not line_is_under_service(raw, services_indent, service_indent):
+            index += 1
+            continue
+        value = match.group(1).strip()
+        if value:
+            inline_items = split_inline_yaml_list(value)
+            if inline_items:
+                entries.extend((index + 1, item) for item in inline_items)
+            elif value.startswith("{") and "path:" in value:
+                path_match = re.search(r"path\s*:\s*([^,}]+)", value)
+                if path_match:
+                    entries.append((index + 1, unquote_yaml_scalar(path_match.group(1))))
+            else:
+                entries.append((index + 1, unquote_yaml_scalar(value)))
+            index += 1
+            continue
+        block_indent = indent
+        index += 1
+        while index < len(lines):
+            nested_raw = lines[index]
+            nested = strip_inline_yaml_comment(nested_raw).strip()
+            nested_indent = yaml_indent(nested_raw)
+            if nested and nested_indent <= block_indent:
+                break
+            list_match = re.match(r"^-\s*(.*)$", nested)
+            if list_match:
+                item_value = list_match.group(1).strip()
+                if item_value.startswith("{") and "path:" in item_value:
+                    path_match = re.search(r"path\s*:\s*([^,}]+)", item_value)
+                    if path_match:
+                        entries.append((index + 1, unquote_yaml_scalar(path_match.group(1))))
+                elif item_value.startswith("path:"):
+                    entries.append((index + 1, unquote_yaml_scalar(item_value.split(":", 1)[1])))
+                elif item_value:
+                    entries.append((index + 1, unquote_yaml_scalar(item_value)))
+            elif nested.startswith("path:"):
+                entries.append((index + 1, unquote_yaml_scalar(nested.split(":", 1)[1])))
+            index += 1
+    return entries
+
+
+def collect_volume_entries(lines: list[str]) -> list[tuple[int, str, str]]:
+    services_indent, service_indent = service_key_indent(lines)
+    entries: list[tuple[int, str, str]] = []
+    index = 0
+    while index < len(lines):
+        raw = lines[index]
+        stripped = strip_inline_yaml_comment(raw).strip()
+        indent = yaml_indent(raw)
+        if stripped != "volumes:" or not line_is_under_service(raw, services_indent, service_indent):
+            index += 1
+            continue
+        block_indent = indent
+        index += 1
+        while index < len(lines):
+            nested_raw = lines[index]
+            nested = strip_inline_yaml_comment(nested_raw).strip()
+            nested_indent = yaml_indent(nested_raw)
+            if nested and nested_indent <= block_indent:
+                break
+            list_match = re.match(r"^-\s*(.*)$", nested)
+            if not list_match:
+                index += 1
+                continue
+            item_start = index
+            item_value = list_match.group(1).strip()
+            if item_value and not re.match(r"^[A-Za-z_][A-Za-z0-9_-]*\s*:", item_value):
+                entries.append((item_start + 1, "short", unquote_yaml_scalar(item_value)))
+                index += 1
+                continue
+            item_type = ""
+            item_source = ""
+            if item_value.startswith("{"):
+                type_match = re.search(r"type\s*:\s*([^,}]+)", item_value)
+                source_match = re.search(r"(?:source|src)\s*:\s*([^,}]+)", item_value)
+                item_type = unquote_yaml_scalar(type_match.group(1)) if type_match else ""
+                item_source = unquote_yaml_scalar(source_match.group(1)) if source_match else ""
+            elif ":" in item_value:
+                key, value = item_value.split(":", 1)
+                if key.strip() == "type":
+                    item_type = unquote_yaml_scalar(value)
+                elif key.strip() in {"source", "src"}:
+                    item_source = unquote_yaml_scalar(value)
+            index += 1
+            while index < len(lines):
+                child_raw = lines[index]
+                child = strip_inline_yaml_comment(child_raw).strip()
+                child_indent = yaml_indent(child_raw)
+                if child and child_indent <= nested_indent:
+                    break
+                if child.startswith("- "):
+                    break
+                if ":" in child:
+                    key, value = child.split(":", 1)
+                    key = key.strip()
+                    if key == "type":
+                        item_type = unquote_yaml_scalar(value)
+                    elif key in {"source", "src"}:
+                        item_source = unquote_yaml_scalar(value)
+                index += 1
+            if item_source:
+                entries.append((item_start + 1, item_type or "long", item_source))
+    return entries
+
+
+def is_absolute_host_path(value: str) -> bool:
+    return Path(value).is_absolute() or value.startswith("~") or bool(re.match(r"^[A-Za-z]:[\\/]", value))
+
+
+def is_pathish_volume_source(value: str, kind: str) -> bool:
+    if kind == "bind":
+        return True
+    return (
+        value in {".", ".."}
+        or value.startswith("./")
+        or value.startswith("../")
+        or value.startswith("/")
+        or value.startswith("~")
+        or "\\" in value
+        or "/" in value
+    )
+
+
+def short_volume_source(spec: str) -> str:
+    text = spec.strip()
+    if not text or text.startswith(":"):
+        return ""
+    if re.match(r"^[A-Za-z]:[\\/]", text):
+        second_colon = text.find(":", 2)
+        return text if second_colon == -1 else text[:second_colon]
+    return text.split(":", 1)[0] if ":" in text else ""
+
+
+def validate_compose_local_path(compose_file: Path, bundle_dir: Path, value: str, label: str, *, must_be_file: bool = False) -> None:
+    token = unquote_yaml_scalar(value)
+    if not token:
+        return
+    if "$" in token:
+        fail(f"{compose_file.name} {label} must use a static bundle-local path, got variable reference: {token}")
+    if is_absolute_host_path(token):
+        fail(f"{compose_file.name} {label} must not use an absolute host path: {token}")
+    resolved = (compose_file.parent / token).resolve()
+    try:
+        resolved.relative_to(bundle_dir.resolve())
+    except ValueError:
+        fail(f"{compose_file.name} {label} escapes the confirmed bundle: {token}")
+    if not resolved.exists():
+        fail(f"{compose_file.name} {label} does not exist relative to the compose file: {token}")
+    if must_be_file and not resolved.is_file():
+        fail(f"{compose_file.name} {label} must point to a file: {token}")
+
+
+def validate_compose_static_paths(compose_file: Path, bundle_dir: Path) -> None:
+    lines = compose_file.read_text(encoding="utf-8", errors="ignore").splitlines()
+    env_entries = collect_env_file_entries(lines)
+    for line_number, env_path in env_entries:
+        validate_compose_local_path(compose_file, bundle_dir, env_path, f"env_file on line {line_number}", must_be_file=True)
+
+    for line_number, kind, value in collect_volume_entries(lines):
+        source = short_volume_source(value) if kind == "short" else value
+        if not source:
+            continue
+        if kind == "short" and not is_pathish_volume_source(source, kind):
+            continue
+        if kind not in {"short", "bind"} and not is_pathish_volume_source(source, kind):
+            continue
+        validate_compose_local_path(compose_file, bundle_dir, source, f"volume source on line {line_number}")
+
+
+def docker_compose_available() -> bool:
+    docker = shutil.which("docker")
+    if not docker:
+        return False
+    proc = subprocess.run([docker, "compose", "version"], capture_output=True, text=True, timeout=15)
+    return proc.returncode == 0
+
+
+def validate_docker_compose_config(compose_file: Path) -> None:
+    if not docker_compose_available():
+        warn(f"Docker Compose config check skipped for {compose_file.name} because `docker compose` is unavailable.")
+        return
+    proc = subprocess.run(
+        ["docker", "compose", "-f", str(compose_file), "config"],
+        cwd=compose_file.parent,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if proc.returncode != 0:
+        output = ((proc.stdout or "") + (proc.stderr or "")).strip()
+        fail(f"Docker Compose static config check failed for {compose_file.name}: {output}")
+
+
+def validate_attachment_compose_files(attachments_dir: Path, bundle_dir: Path) -> None:
+    for compose_file in sorted(path for path in attachments_dir.rglob("*") if path.is_file() and COMPOSE_FILE_PATTERN.match(path.name)):
+        validate_no_absolute_paths(compose_file.read_text(encoding="utf-8", errors="ignore"))
+        validate_compose_static_paths(compose_file, bundle_dir)
+        validate_docker_compose_config(compose_file)
 
 
 def split_markdown_paragraphs(text: str) -> list[str]:
@@ -1752,6 +2150,7 @@ def main() -> None:
     if not any(path.is_file() for path in attachments_dir.rglob("*")):
         fail("attachments/ must contain at least one evidence, PoC, Docker, or supporting file")
     validate_attachment_shell_scripts(attachments_dir)
+    validate_attachment_compose_files(attachments_dir, bundle_dir)
     validate_structured_material_consistency(
         bundle_dir,
         selected_finding,

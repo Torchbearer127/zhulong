@@ -937,6 +937,9 @@ def build_generated_recording_shell(
             "snippet_truncated": "代码片段较长，当前仅展示前 24 行关键内容。",
             "evidence_summary_title": "证据汇总",
             "evidence_summary_result": "[结论] 请结合以上证据给出审核结论。",
+            "container_missing": "必需的 Docker 容器未运行：",
+            "compose_prereq": "请先启动 bundle-local 复现环境：",
+            "compose_missing": "未在 attachments/ 下找到 bundle-local Compose 文件。请先启动补充说明中记录的 Docker 环境。",
         },
         "en-US": {
             "banner": f"{project_name} {vuln_type} recording helper",
@@ -965,6 +968,9 @@ def build_generated_recording_shell(
             "snippet_truncated": "The snippet is longer; only the first 24 key lines are shown here.",
             "evidence_summary_title": "Evidence Summary",
             "evidence_summary_result": "[Conclusion] Keep this evidence summary on screen before stopping the recording.",
+            "container_missing": "Required Docker container is not running:",
+            "compose_prereq": "Start the bundle-local environment first:",
+            "compose_missing": "No bundle-local Compose file was found under attachments/. Start the documented Docker environment first.",
         },
     }[language]
 
@@ -977,6 +983,18 @@ def build_generated_recording_shell(
         if evidence_lines
         else strings["focus_oracle_default"]
     )
+    generated_commands: list[str] = []
+    for step in steps:
+        generated_commands.extend(
+            rewrite_command_for_bundle(command, path_map)
+            for command in ensure_list(step.get("commands") or step.get("command"))
+        )
+    required_containers: list[str] = []
+    for command in generated_commands:
+        for match in re.finditer(r"\bdocker\s+exec\s+(?:-[A-Za-z0-9_=:-]+\s+)*([A-Za-z0-9_.-]+)", command):
+            container = match.group(1)
+            if container and container not in required_containers:
+                required_containers.append(container)
 
     script_lines: list[str] = [
         "#!/bin/sh",
@@ -988,6 +1006,7 @@ def build_generated_recording_shell(
         'PAUSE_SHORT="${REVIEWER_PAUSE_SHORT:-2}"',
         'PAUSE_LONG="${REVIEWER_PAUSE_LONG:-4}"',
         'SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"',
+        'ATTACH_DIR="$SCRIPT_DIR/attachments"',
         'cd "$SCRIPT_DIR"',
         "",
         "if [ -t 1 ]; then",
@@ -1056,6 +1075,28 @@ def build_generated_recording_shell(
         "    docker info >/dev/null 2>&1",
         "}",
         "",
+        "first_bundle_compose_file() {",
+        "    if [ -d \"$ATTACH_DIR\" ]; then",
+        "        find \"$ATTACH_DIR\" -maxdepth 1 \\( -name 'docker-compose*.yml' -o -name 'docker-compose*.yaml' -o -name 'compose*.yml' -o -name 'compose*.yaml' \\) -print -quit",
+        "    fi",
+        "}",
+        "",
+        "require_container_running() {",
+        "    name=\"$1\"",
+        "    if docker ps --format '{{.Names}}' | grep -Fx \"$name\" >/dev/null; then",
+        "        return 0",
+        "    fi",
+        "    compose_file=\"$(first_bundle_compose_file)\"",
+        f"    printf '%s %s\\n' {shell_quote(strings['container_missing'])} \"$name\" >&2",
+        "    if [ -n \"$compose_file\" ]; then",
+        f"        printf '%s\\n' {shell_quote(strings['compose_prereq'])} >&2",
+        "        printf '  docker compose -f %s up -d\\n' \"$compose_file\" >&2",
+        "    else",
+        f"        printf '%s\\n' {shell_quote(strings['compose_missing'])} >&2",
+        "    fi",
+        "    exit 1",
+        "}",
+        "",
         "show_code_hint() {",
         f"    announce_step {shell_quote(strings['code_hint_label'])} {shell_quote(strings['code_hint_step'])}",
     ]
@@ -1104,6 +1145,8 @@ def build_generated_recording_shell(
         "run_flow() {",
         "    show_code_hint",
     ])
+    for container in required_containers:
+        script_lines.append(f"    require_container_running {shell_quote(container)}")
 
     total_steps = len(steps)
     for idx, step in enumerate(steps, start=1):

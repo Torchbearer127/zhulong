@@ -498,6 +498,11 @@ When the `Documents` skill is used on a confirmed-vulnerability report:
 
 Each confirmed vulnerability bundle should also include one bundle-root reproduction helper shell script for macOS and Linux, such as `run-<slug>-recording.sh`, that reproduces the shortest confirmed Docker case with one command.
 That script should keep human-readable text aligned with the selected output language, include visible step markers, pause briefly at key checkpoints, and use ANSI color highlighting for dangerous lines or success evidence when stdout is interactive.
+It must derive `SCRIPT_DIR` from the script path, derive `ATTACH_DIR="$SCRIPT_DIR/attachments"`, and either self-bootstrap from bundle-local attachments or fail early with the exact bundle-local command the reviewer must run first.
+Before any `docker exec`, it should check that the target container exists and is running; before exploit traffic, it should run practical health/readiness checks.
+Do not hide critical command errors with naked `2>/dev/null`; capture stderr/stdout and print enough context to diagnose failures.
+Do not depend on pre-existing database state such as a first API token unless the helper explicitly creates or checks that state.
+Success oracles must fail closed: a missing `grep`/`jq`/`curl`/Docker-log oracle must `exit 1` before any final `VULNERABILITY CONFIRMED`, `ATTACK SUCCESS`, `漏洞已确认`, or `攻击成功` banner can print.
 The same bundle should also contain a finding-specific attachment index markdown and a finding-specific reproduction supplement markdown, not generic names such as `attachments.md` or `reproduction.md`.
 The default reviewer-facing script skeleton should also make visual focus explicit:
 

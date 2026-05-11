@@ -82,11 +82,20 @@ bash <audit-workspace>/bin/check_omc_runtime.sh --json
 
 - 标题或正文声称“无需认证 (No-auth)”，但 CVSS 评分或复现证据显示需要权限。
 - PoC 脚本在没有明确成功判据 (Success Oracle) 的情况下直接输出成功结论。
+- 在最终确认横幅之前使用 `grep ... || echo ...`、`grep ... || true`、
+  `jq ... || true`、`curl ... || true` 或
+  `docker logs ... | grep ... || echo ...` 这类 fail-open 成功判据。
 - 复现录屏脚本的步骤标签 (Step Label) 过期或格式异常。
+- bundle 根录制脚本的 shell 静态语法和可执行位。
+- 附件 Docker Compose 的静态自洽性，包括缺失相对 `env_file`、缺失相对 bind mount 源文件，以及最终包中不允许出现的绝对宿主机路径。
 - 中文 (zh-CN) 报告中无故出现大段英文自然语言。
 - 在存在结构化证据字段时，校验目标与命令一致性。
 
 这些检查刻意保持保守，目标是降低误报，并确保已确认漏洞包的契约稳定性。
+
+面向审核/录屏的根脚本应从脚本自身位置推导 bundle 根目录，使用相对该目录的
+`attachments/`，并且要么从 bundle-local 附件自举 Docker 环境，要么在最前面清晰失败并告诉审核员应先运行哪条 bundle-local 命令。
+脚本在 `docker exec` 前应检查目标容器是否存在且运行；触发漏洞前应尽量做健康/就绪检查；关键 Docker、curl 或 token 生成命令失败时应输出捕获到的错误上下文，而不是裸用 `2>/dev/null` 吞掉原因。
 
 ## 示例审计发现形态
 

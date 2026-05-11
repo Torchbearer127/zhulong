@@ -3221,7 +3221,7 @@ def main() -> None:
         (repo_dir / "docker").mkdir(parents=True, exist_ok=True)
         (repo_dir / "poc").mkdir(parents=True, exist_ok=True)
         (repo_dir / "docker" / "docker-compose.attacker.yml").write_text(
-            "services:\\n  attacker:\\n    image: alpine:3.20\\n",
+            "services:\n  attacker:\n    image: alpine:3.20\n",
             encoding="utf-8",
         )
         (repo_dir / "poc" / "path_traversal.py").write_text(
@@ -3547,6 +3547,172 @@ def main() -> None:
             "zh-CN",
         ], plugin_root)
         shutil.rmtree(good_conditional_poc)
+
+        bad_root_syntax = copy_standard_bundle("root_script_syntax_error")
+        bad_root_syntax_script = bad_root_syntax / "run-selftest-jwt-recording.sh"
+        bad_root_syntax_script.write_text(
+            bad_root_syntax_script.read_text(encoding="utf-8") + "\nif then\n",
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_root_syntax),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "shell syntax check failed")
+        shutil.rmtree(bad_root_syntax)
+
+        bad_grep_echo_oracle = copy_standard_bundle("fail_open_grep_echo_oracle")
+        bad_grep_echo_script = bad_grep_echo_oracle / "run-selftest-jwt-recording.sh"
+        bad_grep_echo_script.write_text(
+            bad_grep_echo_script.read_text(encoding="utf-8")
+            + "\nprintf 'missing\\n' | grep --color=always '认证绕过成功' || echo '未检测到成功判据'\n"
+            + "echo -e \"${G}═══ 漏洞已确认：gothinkster/node-express-realworld-example-app 硬编码 JWT 密钥导致身份认证绕过 ═══${N}\"\n",
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_grep_echo_oracle),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "softens a success-oracle failure")
+        shutil.rmtree(bad_grep_echo_oracle)
+
+        bad_grep_true_oracle = copy_standard_bundle("fail_open_grep_true_oracle")
+        bad_grep_true_script = bad_grep_true_oracle / "run-selftest-jwt-recording.sh"
+        bad_grep_true_script.write_text(
+            bad_grep_true_script.read_text(encoding="utf-8")
+            + "\nprintf 'missing\\n' | grep -q '认证绕过成功' || true\n"
+            + "printf '%s\\n' \"${G}VULNERABILITY CONFIRMED: gothinkster/node-express-realworld-example-app hardcoded JWT secret${N}\"\n",
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_grep_true_oracle),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "softens a success-oracle failure")
+        shutil.rmtree(bad_grep_true_oracle)
+
+        bad_wrapper_confirmation = copy_standard_bundle("fail_open_wrapper_confirmation")
+        bad_wrapper_script = bad_wrapper_confirmation / "run-selftest-jwt-recording.sh"
+        bad_wrapper_script.write_text(
+            bad_wrapper_script.read_text(encoding="utf-8")
+            + "\nprintf 'missing\\n' | grep -q '认证绕过成功' || echo '未检测到成功判据'\n"
+            + "highlight_success \"${G}═══ 漏洞已确认：gothinkster/node-express-realworld-example-app 硬编码 JWT 密钥导致身份认证绕过 ═══${N}\"\n"
+            + "print_banner \"${G}VULNERABILITY CONFIRMED: hardcoded JWT secret${N}\"\n",
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_wrapper_confirmation),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "softens a success-oracle failure")
+        shutil.rmtree(bad_wrapper_confirmation)
+
+        good_fail_closed_oracle = copy_standard_bundle("fail_closed_oracle")
+        good_fail_closed_script = good_fail_closed_oracle / "run-selftest-jwt-recording.sh"
+        good_fail_closed_script.write_text(
+            good_fail_closed_script.read_text(encoding="utf-8")
+            + "\nif ! printf '认证绕过成功\\n' | grep -q '认证绕过成功'; then\n"
+            + "  echo '未检测到成功判据，不能确认漏洞。'\n"
+            + "  exit 1\n"
+            + "fi\n"
+            + "echo '漏洞已确认：gothinkster/node-express-realworld-example-app 硬编码 JWT 密钥导致身份认证绕过'\n",
+            encoding="utf-8",
+        )
+        run([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(good_fail_closed_oracle),
+            "--language",
+            "zh-CN",
+        ], plugin_root)
+        shutil.rmtree(good_fail_closed_oracle)
+
+        bad_missing_compose_env = copy_standard_bundle("compose_missing_env_file")
+        bad_missing_compose_env_file = bad_missing_compose_env / "attachments/docker-compose.zhulong.yml"
+        bad_missing_compose_env_file.write_text(
+            "services:\n"
+            "  app:\n"
+            "    image: alpine:3.20\n"
+            "    env_file: .env\n"
+            "    command: ['sh', '-c', 'sleep 1']\n",
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_missing_compose_env),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "env_file")
+        shutil.rmtree(bad_missing_compose_env)
+
+        bad_missing_compose_bind = copy_standard_bundle("compose_missing_bind_source")
+        (bad_missing_compose_bind / "attachments/.env").write_text("SELFTEST=1\n", encoding="utf-8")
+        (bad_missing_compose_bind / "attachments/docker-compose.zhulong.yml").write_text(
+            "services:\n"
+            "  app:\n"
+            "    image: alpine:3.20\n"
+            "    env_file:\n"
+            "      - .env\n"
+            "    volumes:\n"
+            "      - ./missing-listener.py:/scripts/listener.py:ro\n"
+            "    command: ['sh', '-c', 'sleep 1']\n",
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_missing_compose_bind),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "volume source")
+        shutil.rmtree(bad_missing_compose_bind)
+
+        good_compose_bundle = copy_standard_bundle("compose_existing_env_bind_and_named_volume")
+        (good_compose_bundle / "attachments/.env").write_text("SELFTEST=1\n", encoding="utf-8")
+        (good_compose_bundle / "attachments/listen.py").write_text("print('ready')\n", encoding="utf-8")
+        (good_compose_bundle / "attachments/docker-compose.zhulong.yml").write_text(
+            "services:\n"
+            "  app:\n"
+            "    image: alpine:3.20\n"
+            "    env_file:\n"
+            "      - .env\n"
+            "    volumes:\n"
+            "      - ./listen.py:/scripts/listen.py:ro\n"
+            "      - named-cache:/cache\n"
+            "      - type: bind\n"
+            "        source: ./listen.py\n"
+            "        target: /scripts/listen-copy.py\n"
+            "        read_only: true\n"
+            "    command: ['sh', '-c', 'sleep 1']\n"
+            "volumes:\n"
+            "  named-cache: {}\n",
+            encoding="utf-8",
+        )
+        run([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(good_compose_bundle),
+            "--language",
+            "zh-CN",
+        ], plugin_root)
+        shutil.rmtree(good_compose_bundle)
 
         bad_english_docx = copy_standard_bundle("untranslated_english_docx")
         rewrite_docx_paragraphs(

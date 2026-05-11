@@ -195,6 +195,13 @@ Use `attachments/` for final delivery files. `evidence/`, `poc/`, and `docker/` 
 Final bundles must not contain runtime state or source-control/cache directories such as `.omc/`, `.git/`, `node_modules/`, `.venv/`, or `__pycache__/`.
 
 For confirmed vulnerabilities, include one bundle-root reproduction helper script such as `run-<slug>-recording.sh` or `run-<slug>-repro.sh`.
+The helper must be executable, pass a static shell syntax check, and use only Docker/Docker Compose reproduction paths.
+It must derive `SCRIPT_DIR` and `ATTACH_DIR="$SCRIPT_DIR/attachments"` from the script location, then either start the reproduction environment from bundle-local attachments or fail early with a clear command such as `docker compose -f "$ATTACH_DIR/docker-compose.zhulong.yml" up -d`.
+If it calls `docker exec`, check the target container first and print a diagnostic when it is missing.
+Avoid naked `2>/dev/null` on critical Docker, curl, or token-generation commands; capture and print errors with context.
+Do not rely on pre-existing database state such as `ApiToken.objects.first()` unless the helper explicitly creates or validates that state.
+Every final confirmation banner must be guarded by a fail-closed success oracle: `grep`, `jq`, HTTP status checks, JSON field checks, or equivalent assertions must `exit 1` on failure before printing `VULNERABILITY CONFIRMED`, `ATTACK SUCCESS`, `漏洞已确认`, or `攻击成功`.
+Docker Compose files shipped under `attachments/` must be self-consistent: relative `env_file` entries and relative bind-mount sources must exist relative to the Compose file, named volumes are allowed, and absolute host paths are not allowed in final bundles.
 
 ## Verification Evidence JSON
 
@@ -343,6 +350,7 @@ Additional generator rules:
 - Mark a finding as confirmed only when `docker_verified` is `true`. If Docker verification is incomplete, do not generate a confirmed `.docx`.
 - If a confirmed vulnerability ships a one-command reproduction helper, declare it in `bundle_root_artifacts` so the renderer copies it to the bundle root and the validator can check it.
 - If you do not already have a polished helper shell script, you may set `bundle_root_artifacts[].generator` to `reviewer-recording-shell`. The renderer will generate a Docker-only reviewer-facing script skeleton from `reproduction` and `code_context`, including localized step markers, short pauses, and ANSI color highlighting.
+- Generated or handwritten helpers should self-bootstrap from bundle-local attachments when practical. If they intentionally require a prerequisite environment start, they must fail early with the exact bundle-local command and must not silently assume containers or database rows already exist.
 - If reviewer feedback later requires wording fixes or stronger explanation inside the `.docx`, edit the generated bundle-root report with Claude Code's built-in `Documents` skill and then re-run bundle validation.
 - If a generated helper script should expose extra mode aliases such as `record-dos` or `quick-dos`, add `bundle_root_artifacts[].generator_options.modes`, for example `["record", "quick", "record-dos", "quick-dos"]`.
 - In the `cvss` block, use a mainstream vector string beginning with `CVSS:4.0/` or `CVSS:3.1/`. Do not emit `CVSS:2.0`.
