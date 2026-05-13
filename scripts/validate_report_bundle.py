@@ -290,6 +290,68 @@ TECHNICAL_TEXT_PATTERNS = [
     )
 ]
 STRUCTURED_TARGET_FIELDS = ("attack_target", "ssrf_target", "target_url")
+ZH_REAL_WORLD_HEADINGS = {
+    "实际场景中的危害与利用方式",
+    "实际利用场景",
+    "真实利用链",
+    "攻击路径与影响外显",
+}
+EN_REAL_WORLD_HEADINGS = {
+    "Real-World Exploitability",
+    "Practical Exploitation Path",
+    "Real-World Impact",
+    "Attack Path and Observable Impact",
+    "Practical Impact and Exploitation Path",
+}
+ZH_EXPLOITABILITY_MARKERS = {
+    "attacker": ("攻击者", "用户", "可控", "控制", "污染", "提交", "访问", "认证", "权限", "输入", "参数"),
+    "server": ("服务端", "服务器", "后端", "运行", "启用", "配置", "默认", "部署", "依赖", "日志", "错误", "调试"),
+    "observable": ("日志", "错误", "响应", "返回", "输出", "回显", "可见", "外显", "存储", "记录", "回调", "流量", "观察", "证据"),
+    "boundary": ("已验证", "验证", "Docker", "PoC", "证明", "确认", "边界", "限定", "不声称", "未验证", "不扩大", "仅"),
+}
+EN_EXPLOITABILITY_MARKERS = {
+    "attacker": ("attacker", "user", "control", "influence", "poison", "submit", "access", "authenticated", "privilege", "input"),
+    "server": ("server", "runtime", "configuration", "default", "deploy", "dependency", "feature", "debug", "logging", "enabled"),
+    "observable": ("log", "error", "response", "output", "observable", "visible", "stored", "record", "callback", "traffic", "evidence"),
+    "boundary": ("verified", "docker", "poc", "confirmed", "proven", "boundary", "limited", "not claim", "not verified", "stronger"),
+}
+EXPLOITABILITY_DISPLAY = {
+    "zh-CN": {
+        "attacker": "攻击者条件/可控输入",
+        "server": "服务端可达条件",
+        "observable": "影响外显或安全相关可见通道",
+        "boundary": "已验证影响边界/未声称影响",
+    },
+    "en-US": {
+        "attacker": "attacker condition / controllable input",
+        "server": "server-side reachability condition",
+        "observable": "observable or security-relevant impact channel",
+        "boundary": "verified impact boundary / non-claimed impact",
+    },
+}
+STRONG_ATTACKER_CONTROL_PATTERNS = [
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"arbitrary code execution",
+        r"malicious\s+JS",
+        r"恶意\s*JS",
+        r"攻击者已能执行",
+        r"直接执行(?:恶意|攻击者|JS|Python|PHP|可执行|本地源文件)",
+        r"写入可执行文件",
+        r"attacker controls? a local source file",
+        r"attacker-controlled local source file",
+    )
+]
+PACKAGE_MANAGER_INSTALL_PATTERN = re.compile(r"\b(?:npm|yarn|pnpm)\s+(?:install|i|ci|add)\b", re.IGNORECASE)
+INSTALL_LIFECYCLE_SAFE_PATTERN = re.compile(
+    r"--ignore-scripts|--offline|--prefer-offline|file:|\.tgz\b|attachments/|vendor/",
+    re.IGNORECASE,
+)
+SCRIPT_PARENT_TRAVERSAL_PATTERN = re.compile(
+    r"(?P<token>(?:\$\{?(?:SCRIPT_DIR|BUNDLE_ROOT|ATTACH_DIR|PWD)\}?/)?(?:\.\./)+(?:[A-Za-z0-9_.${}/-]+)?)"
+)
+POC_LABEL_PATTERN = re.compile(r"\bP(?:o)?C[-\s]*(\d+)\b", re.IGNORECASE)
+VIDEO_SUFFIXES = {".mp4", ".mov", ".webm", ".mkv"}
 
 
 def parse_args() -> argparse.Namespace:
@@ -693,6 +755,141 @@ def validate_quality_gate(lines: list[str], language: str) -> None:
         validate_quality_text_meaningful(extracted[kind], language, kind)
 
     validate_quality_impact_wording(extracted["impact"], language)
+
+
+def real_world_heading_aliases(language: str) -> set[str]:
+    return ZH_REAL_WORLD_HEADINGS if language == "zh-CN" else EN_REAL_WORLD_HEADINGS
+
+
+def line_contains_heading_alias(line: str, aliases: set[str]) -> bool:
+    stripped = re.sub(r"^[#>\-\s\d.、)）]+", "", str(line).strip())
+    lowered = stripped.lower()
+    return any(alias.lower() in lowered for alias in aliases)
+
+
+def exploitability_stop_headings(language: str) -> set[str]:
+    common = {
+        "关键代码上下文",
+        "验证环境关键文件",
+        "补充材料说明",
+        "结论",
+        "Attachment Usage",
+        "Bundled Materials",
+        "Conclusion",
+        "Key Code Context",
+        "Key Verification Environment Files",
+    }
+    return (ZH_HEADINGS | common) if language == "zh-CN" else (EN_HEADINGS | common)
+
+
+def extract_real_world_sections(lines: list[str], language: str) -> list[str]:
+    aliases = real_world_heading_aliases(language)
+    stops = exploitability_stop_headings(language)
+    sections: list[str] = []
+    for index, line in enumerate(lines):
+        if not line_contains_heading_alias(line, aliases):
+            continue
+        collected: list[str] = []
+        for follow in lines[index + 1:]:
+            stripped = follow.strip()
+            if not stripped:
+                continue
+            markdown_heading = re.match(r"^#{1,4}\s+", stripped)
+            if stripped in stops or (markdown_heading and not line_contains_heading_alias(stripped, aliases)):
+                break
+            collected.append(stripped)
+        sections.append("\n".join(collected).strip())
+    return sections
+
+
+def exploitability_markers(language: str) -> dict[str, tuple[str, ...]]:
+    return ZH_EXPLOITABILITY_MARKERS if language == "zh-CN" else EN_EXPLOITABILITY_MARKERS
+
+
+def exploitability_section_placeholder_only(text: str, language: str) -> bool:
+    normalized = normalize_token(text)
+    if not normalized or len(normalized) < 24:
+        return True
+    placeholders = ZH_QUALITY_PLACEHOLDERS if language == "zh-CN" else EN_QUALITY_PLACEHOLDERS
+    placeholder_tokens = {normalize_token(item) for item in placeholders}
+    return normalized in placeholder_tokens
+
+
+def exploitability_missing_kinds(text: str, language: str) -> list[str]:
+    lowered = text.lower()
+    missing: list[str] = []
+    for kind, markers in exploitability_markers(language).items():
+        if not any(marker.lower() in lowered for marker in markers):
+            missing.append(kind)
+    return missing
+
+
+def is_concrete_exploitability_text(text: str, language: str) -> bool:
+    if exploitability_section_placeholder_only(text, language):
+        return False
+    return not exploitability_missing_kinds(text, language)
+
+
+def legacy_exploitability_search_text(lines: list[str], supplement_text: str, language: str) -> str:
+    if language == "zh-CN":
+        headings = ZH_HEADINGS | {"关键代码上下文", "验证环境关键文件"}
+        analysis = section_text(lines, "漏洞分析", headings)
+        reproduction = section_text(lines, "漏洞复现", headings)
+    else:
+        headings = EN_HEADINGS | {"Key Code Context", "Key Verification Environment Files"}
+        analysis = section_text(lines, "Vulnerability Analysis", headings)
+        reproduction = section_text(lines, "Reproduction", headings)
+    return "\n".join(part for part in (analysis, reproduction, supplement_text) if part).strip()
+
+
+def validate_real_world_exploitability(lines: list[str], supplement_text: str, language: str) -> str:
+    sections = extract_real_world_sections(lines, language)
+    sections.extend(extract_real_world_sections(supplement_text.splitlines(), language))
+    for section in sections:
+        if is_concrete_exploitability_text(section, language):
+            return section
+
+    if sections:
+        display = EXPLOITABILITY_DISPLAY[language]
+        missing = exploitability_missing_kinds("\n".join(sections), language)
+        missing_text = ", ".join(display[kind] for kind in missing) if missing else "concrete non-placeholder text"
+        fail(
+            "real-world exploitability section is too thin or placeholder-only; "
+            f"add reviewer-facing detail for: {missing_text}"
+        )
+
+    legacy_text = legacy_exploitability_search_text(lines, supplement_text, language)
+    if is_concrete_exploitability_text(legacy_text, language):
+        warn(
+            "real-world exploitability explanation was accepted from existing analysis/reproduction wording; "
+            "prefer a dedicated Real-World Exploitability section in future bundles"
+        )
+        return legacy_text
+
+    display = EXPLOITABILITY_DISPLAY[language]
+    missing = exploitability_missing_kinds(legacy_text, language)
+    missing_text = ", ".join(display[kind] for kind in missing) if missing else "concrete non-placeholder text"
+    fail(
+        "missing real-world exploitability explanation; add a concise section explaining "
+        f"{missing_text}"
+    )
+
+
+def validate_poc_attacker_capability_boundary(material_text: str, exploitability_text: str, language: str) -> None:
+    matches = sorted({match.group(0) for pattern in STRONG_ATTACKER_CONTROL_PATTERNS for match in pattern.finditer(material_text)})
+    if not matches:
+        return
+    lowered = exploitability_text.lower()
+    boundary_markers = (
+        ("边界", "限定", "不声称", "未验证", "不扩大", "更强")
+        if language == "zh-CN"
+        else ("boundary", "limited", "not claim", "not verified", "stronger", "unrelated capability")
+    )
+    if not any(marker.lower() in lowered for marker in boundary_markers):
+        fail(
+            "strong-attacker-control PoC wording appears without an explicit target-component boundary explanation: "
+            + ", ".join(matches[:5])
+        )
 
 
 def severity_cn_from_any(value: object) -> str:
@@ -1461,6 +1658,83 @@ def validate_shell_success_oracles(script_path: Path, text: str) -> None:
         )
 
 
+def resolve_script_parent_traversal_token(script_path: Path, bundle_dir: Path, token: str) -> Path:
+    cleaned = token.strip().strip("'\"`);,")
+    base = script_path.parent
+    suffix = cleaned
+    var_bases = {
+        "$SCRIPT_DIR/": script_path.parent,
+        "${SCRIPT_DIR}/": script_path.parent,
+        "$BUNDLE_ROOT/": bundle_dir,
+        "${BUNDLE_ROOT}/": bundle_dir,
+        "$ATTACH_DIR/": bundle_dir / "attachments",
+        "${ATTACH_DIR}/": bundle_dir / "attachments",
+        "$PWD/": script_path.parent,
+        "${PWD}/": script_path.parent,
+    }
+    for prefix, candidate_base in var_bases.items():
+        if cleaned.startswith(prefix):
+            base = candidate_base
+            suffix = cleaned[len(prefix):]
+            break
+    return (base / suffix).resolve()
+
+
+def line_is_display_only_shell(line: str) -> bool:
+    stripped = line.strip()
+    return bool(
+        re.match(r"^(?:echo|printf|highlight_success|highlight_danger|highlight_note|focus_line|print_banner)\b", stripped)
+    )
+
+
+def line_can_depend_on_filesystem_path(line: str) -> bool:
+    stripped = line.strip()
+    if re.search(r"\b(?:cd|pushd|source|mkdir|cp|mv|rsync|tar|chmod|chown|ln|test|find)\b", stripped):
+        return True
+    if re.search(r"\b(?:bash|sh|zsh|python3?|node|ruby|php)\s+", stripped):
+        return True
+    if re.search(r"\bdocker\b.*(?:-v|--volume|--mount)", stripped):
+        return True
+    if re.search(r"\b(?:BUNDLE_ROOT|REPO_ROOT|PROJECT_ROOT|SOURCE_ROOT|TARGET_ROOT|WORKSPACE_ROOT)\s*=", stripped):
+        return True
+    return False
+
+
+def validate_script_bundle_portability(script_path: Path, bundle_dir: Path, text: str) -> None:
+    bundle_root = bundle_dir.resolve()
+    for line in logical_shell_lines(text):
+        if line_is_display_only_shell(line):
+            continue
+        if not line_can_depend_on_filesystem_path(line):
+            continue
+        for match in SCRIPT_PARENT_TRAVERSAL_PATTERN.finditer(line):
+            token = match.group("token")
+            if not token:
+                continue
+            resolved = resolve_script_parent_traversal_token(script_path, bundle_dir, token)
+            try:
+                resolved.relative_to(bundle_root)
+            except ValueError:
+                rel = script_path.relative_to(bundle_dir).as_posix()
+                fail(
+                    f"{rel} depends on a parent path outside the confirmed bundle: {token}. "
+                    "Final bundle scripts must use SCRIPT_DIR, BUNDLE_ROOT, or ATTACH_DIR paths that stay within the bundle."
+                )
+
+    for line in logical_shell_lines(text):
+        if line_is_display_only_shell(line):
+            continue
+        if not PACKAGE_MANAGER_INSTALL_PATTERN.search(line):
+            continue
+        if INSTALL_LIFECYCLE_SAFE_PATTERN.search(line):
+            continue
+        rel = script_path.relative_to(bundle_dir).as_posix()
+        warn(
+            f"{rel} runs a package manager install command without --ignore-scripts, offline/local fixture flags, "
+            "or an obvious vendored dependency path; document why network/lifecycle-script noise is unavoidable"
+        )
+
+
 def validate_bundle_root_scripts(bundle_dir: Path, note_text: str) -> list[str]:
     script_paths = sorted(
         [
@@ -1472,6 +1746,7 @@ def validate_bundle_root_scripts(bundle_dir: Path, note_text: str) -> list[str]:
         text = script_path.read_text(encoding="utf-8")
         validate_shell_syntax(script_path)
         validate_no_absolute_paths(text)
+        validate_script_bundle_portability(script_path, bundle_dir, text)
         validate_recording_step_labels(script_path, text)
         validate_shell_success_oracles(script_path, text)
         if script_path.name not in note_text:
@@ -1509,13 +1784,14 @@ def is_shell_script(path: Path) -> bool:
     return bool(re.search(r"^#!.*\b(?:sh|bash|dash|zsh)\b", first))
 
 
-def validate_attachment_shell_scripts(attachments_dir: Path) -> None:
+def validate_attachment_shell_scripts(attachments_dir: Path, bundle_dir: Path) -> None:
     for path in sorted(item for item in attachments_dir.rglob("*") if item.is_file()):
         if not is_shell_script(path):
             continue
         text = path.read_text(encoding="utf-8", errors="ignore")
         validate_shell_syntax(path)
         validate_no_absolute_paths(text)
+        validate_script_bundle_portability(path, bundle_dir, text)
         validate_shell_success_oracles(path, text)
 
 
@@ -2010,6 +2286,63 @@ def validate_success_evidence(text: str, language: str, *, label: str = "report"
         fail(f"{label} is missing a clear success oracle proving reproduction or exploitation succeeded")
 
 
+def extract_poc_labels(text: str) -> set[int]:
+    labels: set[int] = set()
+    for match in POC_LABEL_PATTERN.finditer(text or ""):
+        try:
+            labels.add(int(match.group(1)))
+        except ValueError:
+            continue
+    return labels
+
+
+def warn_poc_label_consistency(
+    bundle_dir: Path,
+    docx_text_value: str,
+    note_text: str,
+    supplement_text: str,
+    evidence: dict[str, object],
+    root_scripts: list[str],
+) -> None:
+    evidence_text = json.dumps(evidence, ensure_ascii=False, sort_keys=True)
+    reviewer_labels = extract_poc_labels("\n".join([docx_text_value, note_text, supplement_text, evidence_text]))
+    if not reviewer_labels:
+        return
+    script_texts = []
+    for script_name in root_scripts:
+        script_path = bundle_dir / script_name
+        if script_path.exists():
+            script_texts.append(script_path.read_text(encoding="utf-8", errors="ignore"))
+    script_labels = extract_poc_labels("\n".join(script_texts))
+    highest_reviewer = max(reviewer_labels)
+    highest_script = max(script_labels) if script_labels else 0
+    if highest_reviewer > highest_script:
+        warn(
+            f"root recording script appears to miss the highest PoC label: reviewer-facing materials mention "
+            f"PoC-{highest_reviewer}, but root scripts only mention up to "
+            f"{'PoC-' + str(highest_script) if highest_script else 'no PoC labels'}"
+        )
+
+
+def warn_recording_video_staleness(bundle_dir: Path, material_paths: list[Path]) -> None:
+    videos = sorted(
+        path for path in bundle_dir.rglob("*")
+        if path.is_file() and path.suffix.lower() in VIDEO_SUFFIXES
+    )
+    if not videos:
+        return
+    newest_material = max(
+        (path.stat().st_mtime for path in material_paths if path.exists() and path.is_file()),
+        default=0.0,
+    )
+    for video in videos:
+        if newest_material > video.stat().st_mtime + 1:
+            warn(
+                "recording appears older than current reproduction script or report material: "
+                + video.relative_to(bundle_dir).as_posix()
+            )
+
+
 def run_command(command: list[str]) -> tuple[int, str]:
     proc = subprocess.run(command, capture_output=True, text=True)
     output = (proc.stdout or "") + (proc.stderr or "")
@@ -2094,6 +2427,8 @@ def main() -> None:
     supplement_path = find_single([p for p in markdown_paths if p.name == supplement_name], "reproduction supplement markdown")
     validate_required_headings(lines, language)
     validate_quality_gate(lines, language)
+    supplement_text = validate_reproduction_supplement(supplement_path, language)
+    exploitability_text = validate_real_world_exploitability(lines, supplement_text, language)
     validate_report_depth(lines, language)
     validate_bundle_identity(bundle_dir, lines, workspace_dir)
     findings_path = resolve_findings_path(bundle_dir)
@@ -2118,7 +2453,6 @@ def main() -> None:
     validate_relative_attachment_refs(combined_text, bundle_dir)
     validate_attachment_note(note_path, language)
     note_text = note_path.read_text(encoding="utf-8")
-    supplement_text = validate_reproduction_supplement(supplement_path, language)
     validate_no_untranslated_english_text(
         lines,
         [(path.name, path.read_text(encoding="utf-8")) for path in markdown_paths],
@@ -2149,8 +2483,45 @@ def main() -> None:
         fail("attachments exists but is not a directory")
     if not any(path.is_file() for path in attachments_dir.rglob("*")):
         fail("attachments/ must contain at least one evidence, PoC, Docker, or supporting file")
-    validate_attachment_shell_scripts(attachments_dir)
+    validate_attachment_shell_scripts(attachments_dir, bundle_dir)
     validate_attachment_compose_files(attachments_dir, bundle_dir)
+    attachment_script_texts = [
+        path.read_text(encoding="utf-8", errors="ignore")
+        for path in sorted(attachments_dir.rglob("*"))
+        if path.is_file() and is_shell_script(path)
+    ]
+    root_script_paths = [bundle_dir / script_name for script_name in root_scripts]
+    root_script_texts = [
+        path.read_text(encoding="utf-8", errors="ignore")
+        for path in root_script_paths
+        if path.exists()
+    ]
+    validate_poc_attacker_capability_boundary(
+        "\n".join(
+            [
+                combined_text,
+                note_text,
+                supplement_text,
+                json.dumps(verification_evidence, ensure_ascii=False, sort_keys=True),
+                *root_script_texts,
+                *attachment_script_texts,
+            ]
+        ),
+        exploitability_text,
+        language,
+    )
+    warn_poc_label_consistency(
+        bundle_dir,
+        combined_text,
+        note_text,
+        supplement_text,
+        verification_evidence,
+        root_scripts,
+    )
+    warn_recording_video_staleness(
+        bundle_dir,
+        [docx_path, note_path, supplement_path, bundle_dir / "verification-evidence.json", *root_script_paths],
+    )
     validate_structured_material_consistency(
         bundle_dir,
         selected_finding,

@@ -31,7 +31,7 @@ policies:
 | --- | --- | --- | --- |
 | Docker containers, images, networks, volumes, BuildKit cache | `docker/docker-cleanup-plan.json`, `docker/docker-cleanliness-status.json`, `handoff-summary.md` | Generate a cleanup plan first; dry-run by default; only remove resources proven to belong to the current audit. | After human review, the user may authorize the agent to clean exact resources with `--apply`. |
 | OMC stale sockets | `runtime/runtime-hygiene-status.json`, `handoff-summary.md` | Remove only stale `claude-swarm-*` sockets when no live swarm socket exists. | Run `--cleanup-stale`, then re-check. |
-| Suspect `claude --teammate-mode tmux` PIDs | `runtime/runtime-hygiene-status.json`, `handoff-summary.md` | Review-only; Zhulong does not send `TERM`, `KILL`, or `kill -9`. | Inspect `pid/ppid/pgid/sess/tty/stat/command`; if a PID is confirmed stale, handle it manually outside Zhulong. |
+| Suspect `claude --teammate-mode tmux` PIDs | `runtime/runtime-hygiene-status.json`, `handoff-summary.md` | Review-only; Zhulong does not send termination signals or force-kill commands. | Inspect `pid/ppid/pgid/sess/tty/stat/command`; if a PID is confirmed stale, handle it manually outside Zhulong. |
 
 The recommended Docker cleanup flow is to inspect the plan first:
 
@@ -85,7 +85,7 @@ bash <audit-workspace>/bin/check_omc_runtime.sh --json
 ```
 
 If suspect teammate PIDs are reported, Zhulong only shows review metadata. Even
-with `--cleanup-suspect-pid <pid>` or `--apply`, current Zhulong does not signal
+when PID review or cleanup flags are supplied, current Zhulong does not signal
 teammate PIDs. If the user confirms that a PID is stale, terminate it manually
 outside Zhulong or explicitly authorize an agent to use normal system process
 tools with full awareness of the risk. Do not merge PID cleanup into Docker
@@ -103,6 +103,8 @@ Confirmed reports must state:
 - attacker condition
 - server condition
 - concrete security impact
+- real-world exploitability: attacker path, server-side reachability, observable
+  impact channel, and the verified-vs-not-claimed impact boundary
 
 The validator also checks for common contradiction patterns, including:
 
@@ -118,6 +120,13 @@ The validator also checks for common contradiction patterns, including:
   entries, missing relative bind-mount sources, and forbidden absolute host paths
 - long natural-language output in the wrong report language
 - optional target/command consistency fields when structured evidence is present
+- root/attachment scripts that escape the downloaded bundle through deep
+  `../../..` traversal or parent-repository mounts
+- PoC label drift between report materials and the root recording helper
+- stale recording videos that are older than the current report, supplement,
+  evidence JSON, or root reproduction script
+- package manager install commands that may trigger lifecycle-script or network
+  noise in the shortest reviewer path
 
 These checks are intentionally conservative. They are meant to reduce false
 positives without changing the confirmed bundle contract.
@@ -128,7 +137,9 @@ Docker environment from bundle-local attachments or fail early with the exact
 bundle-local command the reviewer must run first. They should check required
 containers before `docker exec`, run readiness checks when practical, and print
 captured command errors instead of hiding critical failures with naked
-`2>/dev/null`.
+`2>/dev/null`. Harmless `../` paths are acceptable inside nested attachment
+directories only when they still resolve inside the per-vulnerability bundle;
+scripts must not depend on the submitter's full local repository layout.
 
 ## Example Finding Shape
 
@@ -140,6 +151,10 @@ Evidence: Docker reproduction observed attacker-controlled callback
 Attacker condition: authenticated low-privilege user with import permission
 Server condition: default import endpoint enabled, outbound network reachable
 Security impact: confidentiality risk through internal service probing or metadata access
+Real-world exploitability: the authenticated attacker controls the import URL;
+the default server-side deny list allows private ranges; the effect is visible
+as stored response content or callback traffic; Docker evidence verifies SSRF
+reachability but does not claim code execution.
 Bundle: confirmed/<vulnerability-slug>/
 ```
 

@@ -3396,11 +3396,23 @@ def main() -> None:
         for label in ("攻击者条件", "服务端条件", "安全影响"):
             if label not in standard_text:
                 raise SystemExit(f"FAILED: zh-CN confirmed report is missing quality-gate label: {label}")
+        if "实际场景中的危害与利用方式" not in standard_text:
+            raise SystemExit("FAILED: zh-CN confirmed report is missing real-world exploitability section")
         en_docx = next(en_bundle.glob("*.docx"))
         en_text = "\n".join(docx_text(en_docx))
         for label in ("Attacker Condition", "Server Condition", "Security Impact"):
             if label not in en_text:
                 raise SystemExit(f"FAILED: en-US confirmed report is missing quality-gate label: {label}")
+        if "Real-World Exploitability" not in en_text:
+            raise SystemExit("FAILED: en-US confirmed report is missing real-world exploitability section")
+        run([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(en_bundle),
+            "--language",
+            "en-US",
+        ], plugin_root)
         standard_script = standard_bundle / "run-selftest-jwt-recording.sh"
         standard_script_text = standard_script.read_text(encoding="utf-8")
         if "announce_step '代码'" not in standard_script_text or re.search(
@@ -3776,6 +3788,315 @@ def main() -> None:
             rewrite_docx_paragraphs(next(bad_bundle.glob("*.docx")), replacer)
             return bad_bundle
 
+        def remove_docx_real_world_section(docx_path: Path, *, language: str) -> None:
+            stop_prefixes = ("位置：", "Location:")
+            headings = (
+                ("实际场景中的危害与利用方式",)
+                if language == "zh-CN"
+                else ("Real-World Exploitability",)
+            )
+            removing = False
+
+            def replacer(text: str):
+                nonlocal removing
+                if any(heading in text for heading in headings):
+                    removing = True
+                    return None
+                if removing and text.startswith(stop_prefixes):
+                    removing = False
+                    return text
+                if removing:
+                    return None
+                return text
+
+            rewrite_docx_paragraphs(docx_path, replacer)
+
+        def remove_markdown_real_world_section(path: Path, *, language: str) -> None:
+            text = path.read_text(encoding="utf-8")
+            heading_fragment = "实际场景中的危害与利用方式" if language == "zh-CN" else "Practical Impact and Exploitation Path"
+            kept: list[str] = []
+            skipping = False
+            for line in text.splitlines():
+                if line.startswith("## ") and heading_fragment in line:
+                    skipping = True
+                    continue
+                if skipping and line.startswith("## "):
+                    skipping = False
+                if not skipping:
+                    kept.append(line)
+            path.write_text("\n".join(kept) + "\n", encoding="utf-8")
+
+        def weaken_markdown_success_evidence(path: Path, *, language: str) -> None:
+            text = path.read_text(encoding="utf-8")
+            evidence_heading = "关键成功证据" if language == "zh-CN" else "Key Success Evidence"
+            replacement = "- 技术触发完成。" if language == "zh-CN" else "- Technical trigger completed."
+            kept: list[str] = []
+            in_evidence = False
+            inserted = False
+            for line in text.splitlines():
+                if line.startswith("## ") and evidence_heading in line:
+                    in_evidence = True
+                    inserted = False
+                    kept.append(line)
+                    continue
+                if in_evidence and line.startswith("## "):
+                    if not inserted:
+                        kept.append(replacement)
+                    in_evidence = False
+                if in_evidence:
+                    if not inserted and line.strip():
+                        kept.append(replacement)
+                        inserted = True
+                    continue
+                kept.append(line)
+            if in_evidence and not inserted:
+                kept.append(replacement)
+            path.write_text("\n".join(kept) + "\n", encoding="utf-8")
+
+        def weaken_real_world_fallback_docx(docx_path: Path) -> None:
+            protected_prefixes = (
+                "漏洞描述",
+                "影响版本",
+                "漏洞危险性评估",
+                "漏洞分析",
+                "漏洞复现",
+                "最终判定：",
+                "攻击者条件",
+                "服务端条件",
+                "安全影响",
+            )
+            weak_markers = ("返回", "响应", "输出", "证据", "Docker", "验证", "确认", "成功", "记录")
+
+            rewrite_docx_paragraphs(
+                docx_path,
+                lambda text: (
+                    "攻击者条件：攻击者能够访问测试入口。"
+                    if text.startswith("攻击者条件")
+                    else "服务端条件：服务端运行测试组件。"
+                    if text.startswith("服务端条件")
+                    else "安全影响：存在机密性影响。"
+                    if text.startswith("安全影响")
+                    else None
+                    if text.startswith("结果证据：") or text.startswith("实际结果：")
+                    else "技术触发完成。"
+                    if any(marker in text for marker in weak_markers) and not text.startswith(protected_prefixes)
+                    else text
+                ),
+            )
+
+        def weaken_en_real_world_fallback_docx(docx_path: Path) -> None:
+            protected_prefixes = (
+                "Vulnerability Description",
+                "Affected Versions",
+                "Risk Assessment",
+                "Vulnerability Analysis",
+                "Reproduction",
+                "Final Verdict:",
+                "Attacker Condition",
+                "Server Condition",
+                "Security Impact",
+            )
+            weak_markers = ("response", "output", "evidence", "docker", "verified", "confirmed", "success", "record")
+
+            rewrite_docx_paragraphs(
+                docx_path,
+                lambda text: (
+                    "Attacker Condition: attacker can reach the test entry point."
+                    if text.startswith("Attacker Condition")
+                    else "Server Condition: server runs the tested component."
+                    if text.startswith("Server Condition")
+                    else "Security Impact: confidentiality impact exists."
+                    if text.startswith("Security Impact")
+                    else None
+                    if text.startswith("Evidence:") or text.startswith("Observed result:")
+                    else "Technical trigger completed."
+                    if any(marker in text.lower() for marker in weak_markers) and not text.startswith(protected_prefixes)
+                    else text
+                ),
+            )
+
+        bad_missing_real_world = copy_standard_bundle("missing_real_world_exploitability")
+        remove_docx_real_world_section(next(bad_missing_real_world.glob("*.docx")), language="zh-CN")
+        bad_missing_real_world_supplement = next(bad_missing_real_world.glob("*_补充复现说明.md"))
+        remove_markdown_real_world_section(bad_missing_real_world_supplement, language="zh-CN")
+        weaken_markdown_success_evidence(bad_missing_real_world_supplement, language="zh-CN")
+        weaken_real_world_fallback_docx(next(bad_missing_real_world.glob("*.docx")))
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_missing_real_world),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "VALIDATION FAILED")
+
+        bad_en_missing_real_world = en_bundle.parent / f"{en_bundle.name}_missing_real_world_exploitability"
+        if bad_en_missing_real_world.exists():
+            shutil.rmtree(bad_en_missing_real_world)
+        shutil.copytree(en_bundle, bad_en_missing_real_world)
+        remove_docx_real_world_section(next(bad_en_missing_real_world.glob("*.docx")), language="en-US")
+        bad_en_missing_real_world_supplement = next(bad_en_missing_real_world.glob("*_reproduction_note.md"))
+        remove_markdown_real_world_section(bad_en_missing_real_world_supplement, language="en-US")
+        weaken_markdown_success_evidence(bad_en_missing_real_world_supplement, language="en-US")
+        weaken_en_real_world_fallback_docx(next(bad_en_missing_real_world.glob("*.docx")))
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_en_missing_real_world),
+            "--language",
+            "en-US",
+        ], plugin_root, "VALIDATION FAILED")
+
+        bad_placeholder_real_world = copy_standard_bundle("placeholder_real_world_exploitability")
+        rewrite_docx_paragraphs(
+            next(bad_placeholder_real_world.glob("*.docx")),
+            lambda text: (
+                "实际场景中的危害与利用方式"
+                if "实际场景中的危害与利用方式" in text
+                else "待补充"
+                if text.startswith("攻击者路径") or text.startswith("服务端可达条件") or text.startswith("影响外显通道") or text.startswith("已验证影响边界")
+                else text
+            ),
+        )
+        remove_markdown_real_world_section(next(bad_placeholder_real_world.glob("*_补充复现说明.md")), language="zh-CN")
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_placeholder_real_world),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "real-world exploitability section is too thin")
+
+        bad_strong_boundary = copy_standard_bundle("strong_attacker_boundary_missing")
+        remove_docx_real_world_section(next(bad_strong_boundary.glob("*.docx")), language="zh-CN")
+        remove_markdown_real_world_section(next(bad_strong_boundary.glob("*_补充复现说明.md")), language="zh-CN")
+        poc_boundary_script = bad_strong_boundary / "attachments/strong-boundary.sh"
+        poc_boundary_script.write_text(
+            "#!/bin/sh\n"
+            "set -eu\n"
+            "# PoC uses malicious JS and directly executes it to reach the component.\n"
+            "printf 'ok {\"ok\":true}\\n' | grep -q 'ok'\n"
+            "echo 'VULNERABILITY CONFIRMED'\n",
+            encoding="utf-8",
+        )
+        poc_boundary_script.chmod(0o755)
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_strong_boundary),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "strong-attacker-control PoC wording")
+
+        good_strong_boundary = copy_standard_bundle("strong_attacker_boundary_explained")
+        good_boundary_script = good_strong_boundary / "attachments/strong-boundary.sh"
+        good_boundary_script.write_text(
+            "#!/bin/sh\n"
+            "set -eu\n"
+            "# PoC mentions malicious JS, but the report explains the component boundary.\n"
+            "printf 'ok {\"ok\":true}\\n' | grep -q 'ok'\n"
+            "echo 'VULNERABILITY CONFIRMED'\n",
+            encoding="utf-8",
+        )
+        good_boundary_script.chmod(0o755)
+        run([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(good_strong_boundary),
+            "--language",
+            "zh-CN",
+        ], plugin_root)
+
+        bad_bundle_escape = copy_standard_bundle("bundle_escape_root_script")
+        escape_script = bad_bundle_escape / "run-selftest-jwt-recording.sh"
+        escape_script.write_text(
+            escape_script.read_text(encoding="utf-8")
+            + "\nREPO_ROOT=\"$(cd \"$SCRIPT_DIR/../../../../..\" && pwd)\"\n"
+            + "printf '%s\\n' \"$REPO_ROOT\" >/dev/null\n",
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_bundle_escape),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "depends on a parent path outside the confirmed bundle")
+
+        good_nested_parent_path = copy_standard_bundle("nested_parent_path_inside_bundle")
+        nested_script = good_nested_parent_path / "attachments/nested/inside-bundle.sh"
+        nested_script.parent.mkdir(parents=True, exist_ok=True)
+        nested_script.write_text(
+            "#!/bin/sh\n"
+            "set -eu\n"
+            "SCRIPT_DIR=\"$(CDPATH= cd -- \"$(dirname -- \"$0\")\" && pwd)\"\n"
+            "BUNDLE_LOCAL=\"$(cd \"$SCRIPT_DIR/..\" && pwd)\"\n"
+            "test -d \"$BUNDLE_LOCAL\"\n",
+            encoding="utf-8",
+        )
+        nested_script.chmod(0o755)
+        run([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(good_nested_parent_path),
+            "--language",
+            "zh-CN",
+        ], plugin_root)
+
+        npm_warning_bundle = copy_standard_bundle("package_manager_install_warning")
+        npm_script = npm_warning_bundle / "attachments/npm-install-warning.sh"
+        npm_script.write_text("#!/bin/sh\nset -eu\nnpm install left-pad\n", encoding="utf-8")
+        npm_script.chmod(0o755)
+        npm_warning_output = run_capture([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(npm_warning_bundle),
+            "--language",
+            "zh-CN",
+        ], plugin_root)
+        if "package manager install command" not in npm_warning_output:
+            raise SystemExit("FAILED: package manager install warning fixture did not emit a warning")
+
+        poc_label_warning_bundle = copy_standard_bundle("poc_label_warning")
+        poc_label_supplement = next(poc_label_warning_bundle.glob("*_补充复现说明.md"))
+        poc_label_supplement.write_text(
+            poc_label_supplement.read_text(encoding="utf-8")
+            + "\n补充：PoC-4 展示了最高编号复现路径，但根录屏脚本尚未覆盖该标签。\n",
+            encoding="utf-8",
+        )
+        poc_label_output = run_capture([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(poc_label_warning_bundle),
+            "--language",
+            "zh-CN",
+        ], plugin_root)
+        if "root recording script appears to miss the highest PoC label" not in poc_label_output:
+            raise SystemExit("FAILED: PoC label drift fixture did not emit a warning")
+
+        stale_video_bundle = copy_standard_bundle("stale_video_warning")
+        stale_video = stale_video_bundle / "复现视频.mp4"
+        stale_video.write_bytes(b"placeholder video bytes")
+        os.utime(stale_video, (1, 1))
+        stale_output = run_capture([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(stale_video_bundle),
+            "--language",
+            "zh-CN",
+        ], plugin_root)
+        if "recording appears older than current reproduction script or report material" not in stale_output:
+            raise SystemExit("FAILED: stale recording video fixture did not emit a warning")
+
         bad_missing_attacker = quality_gate_bad_bundle(
             "missing_attacker_condition",
             lambda text: None if text.startswith("攻击者条件") or text.startswith("入口/可控输入") else text,
@@ -3846,6 +4167,16 @@ def main() -> None:
             bad_missing_impact,
             bad_placeholder_attacker,
             bad_weak_impact,
+            bad_missing_real_world,
+            bad_placeholder_real_world,
+            bad_strong_boundary,
+            good_strong_boundary,
+            bad_en_missing_real_world,
+            bad_bundle_escape,
+            good_nested_parent_path,
+            npm_warning_bundle,
+            poc_label_warning_bundle,
+            stale_video_bundle,
         ):
             shutil.rmtree(bad_quality_bundle)
         legacy_marker_fixture = workspace / "legacy-english-analysis-markers-finding.json"

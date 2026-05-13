@@ -21,7 +21,7 @@
 | --- | --- | --- | --- |
 | Docker 容器、镜像、网络、卷、BuildKit cache | `docker/docker-cleanup-plan.json`、`docker/docker-cleanliness-status.json`、`handoff-summary.md` | 先生成清理计划；默认试运行；只自动处理能证明属于当前审计的资源。 | 人工审核计划后，可授权 Agent 使用精确参数和 `--apply` 清理。 |
 | OMC 滞留 Socket | `runtime/runtime-hygiene-status.json`、`handoff-summary.md` | 只清理确认为滞留且无活跃 swarm socket 的 `claude-swarm-*` Socket。 | 可以运行 `--cleanup-stale` 后重新检查。 |
-| 可疑 `claude --teammate-mode tmux` PID | `runtime/runtime-hygiene-status.json`、`handoff-summary.md` | 只读复核；烛龙不会发送 `TERM`、`KILL` 或 `kill -9`。 | 用户可根据 `pid/ppid/pgid/sess/tty/stat/command` 等信息自行判断；如确认过期，应在烛龙之外手动处理。 |
+| 可疑 `claude --teammate-mode tmux` PID | `runtime/runtime-hygiene-status.json`、`handoff-summary.md` | 只读复核；烛龙不会发送终止信号或强制结束命令。 | 用户可根据 `pid/ppid/pgid/sess/tty/stat/command` 等信息自行判断；如确认过期，应在烛龙之外手动处理。 |
 
 Docker 清理推荐流程是先查看计划，再决定是否授权清理：
 
@@ -66,7 +66,7 @@ bash <audit-workspace>/bin/check_omc_runtime.sh --cleanup-stale --json
 bash <audit-workspace>/bin/check_omc_runtime.sh --json
 ```
 
-如果报告可疑 teammate PID，烛龙只会展示复核信息，不会杀进程。即使传入 `--cleanup-suspect-pid <pid>` 或 `--apply`，当前烛龙也不会对 teammate PID 发送信号。用户如果确认某个 PID 确实过期，应在烛龙之外手动处理，或在明确了解风险后授权 Agent 使用系统级进程工具处理；不要把 PID 清理并入 Docker 清理，也不要使用大范围进程清理。
+如果报告可疑 teammate PID，烛龙只会展示复核信息，不会杀进程。即使启用 PID 复核或清理相关选项，当前烛龙也不会对 teammate PID 发送信号。用户如果确认某个 PID 确实过期，应在烛龙之外手动处理，或在明确了解风险后授权 Agent 使用系统级进程工具处理；不要把 PID 清理并入 Docker 清理，也不要使用大范围进程清理。
 
 更多细节见 [`../assets/references/docker-resource-hygiene.md`](../assets/references/docker-resource-hygiene.md) 和 [`../assets/references/omc-runtime-stability.md`](../assets/references/omc-runtime-stability.md)。
 
@@ -77,6 +77,7 @@ bash <audit-workspace>/bin/check_omc_runtime.sh --json
 - 攻击者条件
 - 服务端条件
 - 具体安全影响
+- 实际场景中的危害与利用方式：攻击者路径、服务端可达条件、影响外显通道，以及已验证影响和未声称影响的边界
 
 校验器 (Validator) 还会检测常见的逻辑矛盾，例如：
 
@@ -90,12 +91,17 @@ bash <audit-workspace>/bin/check_omc_runtime.sh --json
 - 附件 Docker Compose 的静态自洽性，包括缺失相对 `env_file`、缺失相对 bind mount 源文件，以及最终包中不允许出现的绝对宿主机路径。
 - 中文 (zh-CN) 报告中无故出现大段英文自然语言。
 - 在存在结构化证据字段时，校验目标与命令一致性。
+- 根脚本或附件脚本通过深层 `../../..` 逃出下载后的 bundle，或挂载提交者本机父级仓库。
+- 报告、补充说明、证据 JSON 与根录屏脚本之间的 PoC 标签漂移。
+- 录屏视频早于当前报告、补充说明、证据 JSON 或根复现脚本。
+- 最短审核复现路径中可能触发生命周期脚本或联网噪音的 `npm install` / `yarn install` / `pnpm install`。
 
 这些检查刻意保持保守，目标是降低误报，并确保已确认漏洞包的契约稳定性。
 
 面向审核/录屏的根脚本应从脚本自身位置推导 bundle 根目录，使用相对该目录的
 `attachments/`，并且要么从 bundle-local 附件自举 Docker 环境，要么在最前面清晰失败并告诉审核员应先运行哪条 bundle-local 命令。
 脚本在 `docker exec` 前应检查目标容器是否存在且运行；触发漏洞前应尽量做健康/就绪检查；关键 Docker、curl 或 token 生成命令失败时应输出捕获到的错误上下文，而不是裸用 `2>/dev/null` 吞掉原因。
+嵌套附件目录内的无害 `../` 可以存在，但必须仍解析到单个漏洞 bundle 内；脚本不能依赖提交者完整本机仓库布局。
 
 ## 示例审计发现形态
 
@@ -107,6 +113,7 @@ bash <audit-workspace>/bin/check_omc_runtime.sh --json
 攻击者条件：具备导入权限的低权限认证用户
 服务端条件：默认导入接口启用，且服务端可访问内网/外网
 安全影响：机密性风险，可探测内网服务或访问元数据 (Metadata)
+实际场景中的危害与利用方式：具备导入权限的攻击者控制 URL；默认拒绝列表未覆盖私有网段；影响通过存储的响应内容或回连流量外显；Docker 证据验证 SSRF 可达性，但不声称代码执行。
 漏洞包路径：confirmed/<vulnerability-slug>/
 ```
 

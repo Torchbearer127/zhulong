@@ -127,6 +127,25 @@ Prefer this structure:
 
 Then add a dedicated `关键代码上下文` subsection in prose or structured notes.
 
+Add a dedicated real-world exploitability section in the report body, using a
+heading such as `实际场景中的危害与利用方式` or `Real-World
+Exploitability`. This section may be short, but it must concretely state:
+
+- who the attacker is and how they can influence the relevant input or metadata
+- what server-side configuration, runtime condition, feature flag, dependency
+  usage, debug/logging behavior, or deployment assumption makes the path
+  reachable
+- how the internal effect becomes visible or security-relevant, such as logs,
+  error reporting, debug pages, response data, stored state, callback traffic,
+  or operator-visible artifacts
+- which impact is actually verified by Docker/PoC evidence and which stronger
+  impact is not claimed
+
+If a PoC writes or directly executes attacker-controlled code, assumes attacker
+control of a local source file, or points metadata directly at a secret file,
+explain why the PoC is still testing the target component boundary rather than
+assuming a stronger unrelated capability.
+
 ### 6. 漏洞复现
 
 This section must be detailed enough for another engineer to repeat the setup and verification.
@@ -248,6 +267,13 @@ Script requirements:
 - use ANSI color highlighting for dangerous lines and final success evidence when stdout is interactive, with a plain-text fallback when color is unavailable
 - fail fast with a readable message when Docker is unavailable
 - use only bundle-relative or project-relative paths; never embed operator-local absolute paths
+- never depend on deep parent traversal such as `../../../../..` to find the
+  submitter's full repository; final scripts must work after a reviewer
+  downloads only the per-vulnerability bundle
+- avoid `npm install`, `yarn install`, or `pnpm install` in the shortest
+  reviewer path unless lifecycle scripts are disabled with `--ignore-scripts`,
+  dependencies are vendored/local/offline, or the supplement explains why
+  network installation is unavoidable
 
 The note file should explain:
 
@@ -278,6 +304,12 @@ Recommended sections:
 The `关键成功证据` / `Key Success Evidence` section must include direct success oracles copied from the actual verification output, not only generic prose.
 
 If the review claim is stronger than "technical trigger", the supplement should also explain why the observed oracle supports that stronger claim, while staying conservative and not overstating unproven impact.
+
+Keep PoC labels aligned across the DOCX, supplement, attachment note,
+`verification-evidence.json`, and root recording helper. If the materials refer
+to `PoC-4`, the root helper should also cover or mention `PoC-4`. If a video was
+recorded before the current report, supplement, evidence JSON, or root helper
+was updated, treat it as stale and record a new video before final submission.
 
 ## Evidence Rules
 

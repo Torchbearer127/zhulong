@@ -45,6 +45,11 @@ L10N = {
         "attacker_condition": "攻击者条件",
         "server_condition": "服务端条件",
         "security_impact": "安全影响",
+        "real_world_exploitability": "实际场景中的危害与利用方式",
+        "attacker_path": "攻击者路径",
+        "server_reachability": "服务端可达条件",
+        "observable_impact": "影响外显通道",
+        "verified_boundary": "已验证影响边界",
         "reproduction": "漏洞复现",
         "final_verdict": "最终判定：",
         "code_context": "关键代码上下文",
@@ -67,8 +72,9 @@ L10N = {
         "supplement_env": "## 二、复现环境",
         "supplement_shortest_path": "## 三、建议的最短复现路径",
         "supplement_evidence": "## 四、关键成功证据",
-        "supplement_bundle": "## 五、补充材料说明",
-        "supplement_conclusion": "## 六、结论",
+        "supplement_real_world": "## 五、实际场景中的危害与利用方式",
+        "supplement_bundle": "## 六、补充材料说明",
+        "supplement_conclusion": "## 七、结论",
         "supplement_docker_only": "本次补充材料默认以 Docker 或 Docker Compose 方式完成验证，不应回退到宿主机直接执行攻击流量。",
         "supplement_shortest_with_script": "建议优先使用打包目录根部的最小复现脚本：`{script}`",
         "supplement_shortest_without_script": "若未提供 bundle 根复现脚本，请按报告中的 Docker 复现步骤逐条执行。",
@@ -106,6 +112,11 @@ L10N = {
         "attacker_condition": "Attacker Condition",
         "server_condition": "Server Condition",
         "security_impact": "Security Impact",
+        "real_world_exploitability": "Real-World Exploitability",
+        "attacker_path": "Attacker path",
+        "server_reachability": "Server-side reachability",
+        "observable_impact": "Observable impact channel",
+        "verified_boundary": "Verified impact boundary",
         "reproduction": "Reproduction",
         "final_verdict": "Final Verdict:",
         "code_context": "Key Code Context",
@@ -128,8 +139,9 @@ L10N = {
         "supplement_env": "## 2. Verification Environment",
         "supplement_shortest_path": "## 3. Recommended Shortest Reproduction Path",
         "supplement_evidence": "## 4. Key Success Evidence",
-        "supplement_bundle": "## 5. Bundled Materials",
-        "supplement_conclusion": "## 6. Conclusion",
+        "supplement_real_world": "## 5. Practical Impact and Exploitation Path",
+        "supplement_bundle": "## 6. Bundled Materials",
+        "supplement_conclusion": "## 7. Conclusion",
         "supplement_docker_only": "This supplement is intended for Docker or Docker Compose based verification and must not fall back to direct host-side exploit traffic.",
         "supplement_shortest_with_script": "Prefer the bundle-root minimal reproduction helper script: `{script}`",
         "supplement_shortest_without_script": "If no bundle-root helper script is provided, follow the Docker reproduction steps in the report in the same order.",
@@ -1671,6 +1683,48 @@ def render_quality_gate_sections(doc: Document, finding: dict[str, Any], languag
         )
 
 
+def real_world_exploitability_lines(finding: dict[str, Any], language: str) -> list[str]:
+    explicit = (
+        localized_list(finding, "real_world_exploitability", language)
+        or localized_list(finding, "practical_exploitation_path", language)
+        or localized_list(finding, "exploitability_boundary", language)
+    )
+    if explicit:
+        return explicit
+
+    attacker = quality_condition_text(finding, "attacker", language)
+    server = quality_condition_text(finding, "server", language)
+    impact = quality_condition_text(finding, "impact", language)
+    evidence = collect_balanced_reproduction_evidence_lines(finding, language, limit=2)
+    observable = evidence[0] if evidence else (
+        "报告中的成功判据应通过响应、日志、错误输出、存储记录或操作员可见证据外显。"
+        if language == "zh-CN"
+        else "The success oracle should become visible through a response, log, error output, stored record, or operator-visible artifact."
+    )
+    if language == "zh-CN":
+        boundary = (
+            "Docker PoC 已验证的影响边界为上述成功判据能够证明的效果；"
+            "报告不声称未由 Docker 输出、响应、日志或证据文件证明的更强影响。"
+        )
+    else:
+        boundary = (
+            "The verified impact boundary is limited to the effect proven by the Docker PoC success oracle; "
+            "the report does not claim stronger impact that is not proven by Docker output, responses, logs, or evidence files."
+        )
+    return [
+        format_kv(language, tr(language, "attacker_path"), attacker),
+        format_kv(language, tr(language, "server_reachability"), server),
+        format_kv(language, tr(language, "observable_impact"), f"{impact}；{observable}" if language == "zh-CN" else f"{impact}; {observable}"),
+        format_kv(language, tr(language, "verified_boundary"), boundary),
+    ]
+
+
+def render_real_world_exploitability(doc: Document, finding: dict[str, Any], language: str) -> None:
+    doc.add_heading(tr(language, "real_world_exploitability"), level=2)
+    for line in real_world_exploitability_lines(finding, language):
+        doc.add_paragraph(line, style="List Bullet")
+
+
 def render_environment_files(doc: Document, finding: dict[str, Any], language: str) -> None:
     items = finding.get("environment_files")
     if not isinstance(items, list) or not items:
@@ -1859,6 +1913,9 @@ def write_reproduction_supplement(
     else:
         lines.append(tr(language, "supplement_evidence_missing"))
 
+    lines.extend(["", tr(language, "supplement_real_world"), ""])
+    lines.extend(f"- {line}" for line in real_world_exploitability_lines(finding, language))
+
     lines.extend(["", tr(language, "supplement_bundle"), ""])
     if scripts:
         lines.append(tr(language, "supplement_bundle_scripts"))
@@ -1942,6 +1999,7 @@ def write_attachment_notes(
 def render_analysis(doc: Document, finding: dict[str, Any], language: str) -> None:
     doc.add_heading(tr(language, "analysis"), level=1)
     render_quality_gate_sections(doc, finding, language)
+    render_real_world_exploitability(doc, finding, language)
     analysis_items = localized_list(finding, "analysis", language)
     if analysis_items:
         for item in analysis_items:

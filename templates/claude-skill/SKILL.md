@@ -470,6 +470,18 @@ configuration or default runtime condition is required, and the confirmed CIA or
 equivalent security impact. Do not use placeholder-only text, and do not claim a
 security impact that the Docker evidence does not prove.
 
+Confirmed reports must include a reviewer-readable real-world exploitability
+section, such as `实际场景中的危害与利用方式` or `Real-World
+Exploitability`. Keep it concise, but make it answer four concrete questions:
+who the attacker is and how they influence input or metadata, what server-side
+configuration/runtime behavior makes the path reachable, how the internal
+effect becomes visible or security-relevant (logs, error reporting, responses,
+stored artifacts, callbacks, or operator-visible evidence), and which impact is
+verified versus not claimed. If a PoC assumes strong attacker control, such as
+directly writing a malicious JS/Python/PHP file or controlling a local source
+file, explicitly explain why the PoC demonstrates the target component boundary
+rather than a stronger unrelated capability.
+
 The `Reproduction` section must include setup, exact Docker commands, expected result, observed result, and direct success evidence. If those details are missing from `findings.json`, enrich the finding before rendering instead of producing a shallow report.
 
 Keep bundle identity strict:
@@ -499,6 +511,13 @@ When the `Documents` skill is used on a confirmed-vulnerability report:
 Each confirmed vulnerability bundle should also include one bundle-root reproduction helper shell script for macOS and Linux, such as `run-<slug>-recording.sh`, that reproduces the shortest confirmed Docker case with one command.
 That script should keep human-readable text aligned with the selected output language, include visible step markers, pause briefly at key checkpoints, and use ANSI color highlighting for dangerous lines or success evidence when stdout is interactive.
 It must derive `SCRIPT_DIR` from the script path, derive `ATTACH_DIR="$SCRIPT_DIR/attachments"`, and either self-bootstrap from bundle-local attachments or fail early with the exact bundle-local command the reviewer must run first.
+Do not make root scripts or attachment scripts climb back to the submitter's
+repository with deep `../../..` paths, parent-repository mounts, or package
+external paths. Harmless `../` inside nested attachment directories is fine only
+when it resolves inside the downloaded per-vulnerability bundle. Avoid
+`npm install`, `yarn install`, or `pnpm install` in the shortest reviewer path
+unless it uses `--ignore-scripts`, local/offline fixtures, or the supplement
+documents why network install is unavoidable.
 Before any `docker exec`, it should check that the target container exists and is running; before exploit traffic, it should run practical health/readiness checks.
 Do not hide critical command errors with naked `2>/dev/null`; capture stderr/stdout and print enough context to diagnose failures.
 Do not depend on pre-existing database state such as a first API token unless the helper explicitly creates or checks that state.
@@ -517,6 +536,9 @@ Reviewer-facing supplements should not stop at "technical trigger" when the clai
 - if the report claims denial of service, the materials should show the direct DoS oracle
 - if the report claims attack success, the materials should show the exact success oracle
 - if the reviewer is likely to ask about real-world harm or exploitation, include a short bundled supplement note that explains the practical impact and a typical exploitation path without overstating the claim
+- if report/supplement/evidence mention `PoC-4`, ensure the root recording
+  script also covers `PoC-4`; stale videos that predate revised report/script
+  material should be regenerated or clearly called out before submission
 
 The final CVSS and severity label should reflect the strongest verified oracle from the severity-escalation pass, not merely the first technical trigger that proved the bug exists.
 
