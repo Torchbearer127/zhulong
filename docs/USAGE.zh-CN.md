@@ -40,6 +40,18 @@ Please use the zhulong skill to perform an end-to-end security-focused code audi
 Output language: zh-CN.
 ```
 
+## 输出语言
+
+请在 Prompt 中使用明确的 Locale 风格取值：
+
+| 取值 | 适用场景 |
+| --- | --- |
+| `zh-CN` | 生成简体中文工作区摘要、已确认漏洞报告、复现说明和交接文件。 |
+| `en-US` | 生成英文工作区摘要、已确认漏洞报告、复现说明和交接文件。 |
+
+终端启动脚本也提供同样的选择：`--output-language` 和
+`--summary-language`。除非你有特殊需求，建议两者保持一致。
+
 ## 试运行 Prompt
 
 当你需要评估烛龙在真实项目上的表现，且不希望为了“强行产出漏洞”而导致误报时，可以使用：

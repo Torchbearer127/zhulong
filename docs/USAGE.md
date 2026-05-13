@@ -21,16 +21,16 @@ Use this when you want Zhulong to audit a repository through your local agent:
 Please use the zhulong skill to perform an end-to-end security-focused code audit on this repository:
 https://github.com/owner/repo
 
-Output language: zh-CN.
+Output language: en-US.
 ```
 
-For English output:
+For Simplified Chinese output:
 
 ```text
 Please use the zhulong skill to perform an end-to-end security-focused code audit on this repository:
 https://github.com/owner/repo
 
-Output language: en-US.
+Output language: zh-CN.
 ```
 
 For an existing local checkout:
@@ -39,8 +39,21 @@ For an existing local checkout:
 Please use the zhulong skill to perform an end-to-end security-focused code audit on this local repository:
 /path/to/repo
 
-Output language: zh-CN.
+Output language: en-US.
 ```
+
+## Output Language
+
+Use an explicit locale-style value in the prompt:
+
+| Value | Use when |
+| --- | --- |
+| `en-US` | You want English workspace summaries, confirmed vulnerability reports, reproduction notes, and handoff files. |
+| `zh-CN` | You want Simplified Chinese workspace summaries, confirmed vulnerability reports, reproduction notes, and handoff files. |
+
+The terminal launcher exposes the same choice through `--output-language` and
+`--summary-language`. Keep them the same unless you have a specific reason to
+separate final reports from short summaries.
 
 ## Trial-Run Prompt
 
@@ -51,7 +64,7 @@ audit run without pressure to produce a confirmed vulnerability:
 Please use the zhulong skill to perform an end-to-end trial security-focused code audit on this repository:
 https://github.com/owner/repo
 
-Output language: zh-CN.
+Output language: en-US.
 Preferences:
 - Treat this as a product validation run, not a quota-driven bug hunt.
 - Do not force a confirmed finding; "no confirmed vulnerabilities" is acceptable when Docker evidence does not support any candidate.

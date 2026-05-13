@@ -154,6 +154,10 @@ python3 ~/.claude/skills/zhulong/scripts/selftest_plugin.py
 
 > 这是发布候选验证和真实项目测试推荐使用的路径。
 
+### 输出语言选择
+
+使用 `Output language: zh-CN` 生成简体中文报告；使用 `Output language: en-US` 生成英文报告。该设置会影响审计工作区摘要、已确认漏洞报告、复现说明和交接文件等主要交付内容。
+
 ### 方式二：手动脚本启动
 
 如果你希望不依赖 Agent 技能发现机制，直接从终端启动：

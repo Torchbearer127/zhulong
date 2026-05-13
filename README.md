@@ -178,10 +178,17 @@ Then use a short prompt in your supported local agent:
 > audit on this repository:
 > `https://github.com/owner/repo`
 >
-> Output language: zh-CN.
+> Output language: en-US.
 
 > This is the recommended path for release-candidate validation and real
 > project testing.
+
+### Output Language
+
+Use `Output language: en-US` for English reports and `Output language: zh-CN`
+for Simplified Chinese reports. The selected language applies to the generated
+workspace summaries, confirmed vulnerability reports, reproduction notes, and
+reviewer-facing handoff files.
 
 ### Method 2: Manual Script Start
 
