@@ -311,6 +311,43 @@ to `PoC-4`, the root helper should also cover or mention `PoC-4`. If a video was
 recorded before the current report, supplement, evidence JSON, or root helper
 was updated, treat it as stale and record a new video before final submission.
 
+## Reviewer Evidence Addendum and Index
+
+For reviewer-sensitive bundles, add a concise bundle-root
+`reviewer-evidence-and-impact.md`. This is recommended when the confirmed
+finding involves a library/package vulnerability, fixture-based reproduction, a
+custom minimal Docker fixture, strong attacker-capability assumptions, multiple
+PoC variants, non-obvious success oracles, or reviewer-facing impact spread
+across DOCX, scripts, JSON, logs, screenshots, or video.
+
+The addendum should answer:
+
+- what attacker capability and input boundary are assumed
+- what server, deployment, or runtime preconditions are needed
+- what impact is verified and what stronger impact is explicitly not claimed
+- which success-oracle tokens matter
+- which files or scripts contain each oracle
+- the shortest command a reviewer can run from the bundle root
+- whether the replay uses the full upstream app, vendored source, a local
+  tarball, or a minimal fixture
+
+When the evidence map is non-trivial, also include
+`attachments/reviewer-evidence-index.json`. This file is a reviewer map, not a
+cryptographic hash manifest. Use bundle-relative artifact paths only, ensure
+each referenced path exists in the submitted bundle, keep the replay command
+bundle-root local, list success-oracle tokens, and make sure every listed token
+appears in a reasonable source such as a root replay script, evidence log,
+reproduction supplement, reviewer addendum, or `verification-evidence.json`.
+
+For minimal fixtures and vendored subsets, explain the source provenance: which
+upstream file or vulnerable pattern is preserved, why the fixture is sufficient
+to reproduce the boundary, where the original/vendored source is attached, and
+which impacts are not claimed. For library/package findings, explain the public
+API/function boundary, attacker-controlled argument/key/filename/metadata/config
+field, consuming-application pattern needed for reachability, local library
+effect versus application-level impact, and non-claims such as no direct network
+endpoint exposed by the library itself.
+
 ## Evidence Rules
 
 - Mention Docker explicitly when describing verification.

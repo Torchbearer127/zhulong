@@ -95,6 +95,10 @@ bash <audit-workspace>/bin/check_omc_runtime.sh --json
 - 报告、补充说明、证据 JSON 与根录屏脚本之间的 PoC 标签漂移。
 - 录屏视频早于当前报告、补充说明、证据 JSON 或根复现脚本。
 - 最短审核复现路径中可能触发生命周期脚本或联网噪音的 `npm install` / `yarn install` / `pnpm install`。
+- 可选 `reviewer-evidence-and-impact.md` 仅为占位，或缺少攻击者边界、影响说明、成功判据和最短复现命令。
+- 可选 `attachments/reviewer-evidence-index.json` JSON 无效、引用缺失附件、引用 bundle 外路径、复现命令不是 bundle 根目录本地命令，或列出的成功判据无法在脚本/证据/补充说明/审核补充/`verification-evidence.json` 中找到。
+- fixture 或 vendored source 复现缺少 source-grounded provenance，或库/包漏洞缺少 consuming application boundary。
+- severity / claim 矛盾，例如 High CVSS 与正文 Medium 冲突、webshell/HTTP 命令执行声明缺少对应 oracle，或容器逃逸/宿主机 RCE/匿名公开触发声明缺少明确非声明边界。
 
 这些检查刻意保持保守，目标是降低误报，并确保已确认漏洞包的契约稳定性。
 

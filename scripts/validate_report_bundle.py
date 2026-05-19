@@ -352,6 +352,162 @@ SCRIPT_PARENT_TRAVERSAL_PATTERN = re.compile(
 )
 POC_LABEL_PATTERN = re.compile(r"\bP(?:o)?C[-\s]*(\d+)\b", re.IGNORECASE)
 VIDEO_SUFFIXES = {".mp4", ".mov", ".webm", ".mkv"}
+TEXT_EVIDENCE_SUFFIXES = {
+    ".bash",
+    ".cjs",
+    ".conf",
+    ".env",
+    ".ini",
+    ".js",
+    ".json",
+    ".log",
+    ".mjs",
+    ".md",
+    ".php",
+    ".py",
+    ".rb",
+    ".sh",
+    ".txt",
+    ".yaml",
+    ".yml",
+}
+REVIEWER_EVIDENCE_ADDENDUM = "reviewer-evidence-and-impact.md"
+REVIEWER_EVIDENCE_INDEX = Path("attachments/reviewer-evidence-index.json")
+REVIEWER_INDEX_ARTIFACT_KEYS = {
+    "artifact",
+    "artifacts",
+    "artifact_file",
+    "artifact_files",
+    "artifact_path",
+    "artifact_paths",
+    "build_context",
+    "evidence_file",
+    "evidence_files",
+    "evidence_output",
+    "evidence_outputs",
+    "file",
+    "files",
+    "fixture_file",
+    "fixture_files",
+    "media",
+    "poc_file",
+    "poc_files",
+    "source_evidence",
+    "source_file",
+    "source_files",
+    "vendor_fixture",
+    "video_evidence",
+    "video_file",
+    "video_files",
+}
+REVIEWER_INDEX_ORACLE_KEYS = {
+    "oracle_token",
+    "oracle_tokens",
+    "success_oracle",
+    "success_oracles",
+    "success_token",
+    "success_tokens",
+}
+REVIEWER_COMMAND_KEYS = (
+    "bundle_root_command",
+    "replay_command",
+    "reviewer_command",
+    "shortest_replay_command",
+)
+REVIEWER_ADDENDUM_MARKERS = {
+    "boundary": (
+        "attacker",
+        "capability",
+        "boundary",
+        "precondition",
+        "condition",
+        "not claim",
+        "not verified",
+        "攻击者",
+        "前提",
+        "条件",
+        "边界",
+        "不声称",
+        "未验证",
+        "不主张",
+    ),
+    "impact": ("impact", "harm", "verified", "影响", "危害", "已验证", "实测"),
+    "oracle": ("oracle", "success token", "evidence", "成功判据", "证据", "token"),
+    "replay": ("./run-", "docker", "replay command", "复现命令", "最短复现", "审核方最短"),
+}
+REVIEWER_PLACEHOLDER_PATTERNS = [
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"\bTODO\b",
+        r"\bTBD\b",
+        r"\bplaceholder\b",
+        r"待补充",
+        r"请补充",
+        r"占位",
+        r"暂无",
+    )
+]
+SUBMITTER_LOCAL_IMAGE_PATTERNS = [
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"\bselftest:local(?:[-_.A-Za-z0-9]*)?\b",
+        r"\b[A-Za-z0-9_.-]*selftest[A-Za-z0-9_.-]*:local(?:[-_.A-Za-z0-9]*)?\b",
+        r"\b[A-Za-z0-9_.-]+:local(?:[-_.A-Za-z0-9]*)\b",
+        r"\b[A-Za-z0-9_.-]+:latest-local(?:[-_.A-Za-z0-9]*)?\b",
+    )
+]
+REMOTE_LATEST_IMAGE_PATTERN = re.compile(
+    r"\b(?:docker\s+(?:run|pull|build|compose)|image:)\b[^\n`'\"]*:[Ll]atest\b",
+    re.IGNORECASE,
+)
+FIXTURE_HINT_PATTERNS = [
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"\bminimal\s+fixture\b",
+        r"\bfixture[- ]based\b",
+        r"\bvendored?\b",
+        r"\bvendor/",
+        r"attachments/vendor",
+        r"attachments/fixture",
+        r"uses_bundle_local_fixture",
+        r"uses_bundle_local_vendor",
+        r"最小\s*fixture",
+        r"内置\s*fixture",
+    )
+]
+LIBRARY_HINT_PATTERNS = [
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"\blibrary vulnerability\b",
+        r"\blibrary/package\b",
+        r"\bpublic API\b",
+        r"\bconsumer application\b",
+        r"\bpackage vulnerability\b",
+        r"\bprototype pollution\b",
+        r"\bObject\.prototype\b",
+        r"\bQ\.(?:set|get|post|invoke)\b",
+        r"库漏洞",
+        r"库本身",
+        r"上层应用",
+        r"消费方",
+        r"原型链污染",
+        r"全局\s*Object\.prototype",
+    )
+]
+NONCLAIM_MARKERS = (
+    "not claim",
+    "not claimed",
+    "not verified",
+    "does not claim",
+    "no direct",
+    "未验证",
+    "不声称",
+    "不主张",
+    "不作为",
+    "不应",
+    "不是",
+    "没有在本包中验证",
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -1344,6 +1500,571 @@ def validate_no_placeholder_text(text: str, language: str, label: str) -> None:
     for placeholder in PLACEHOLDER_REPORT_TEXT.get(language, []):
         if placeholder in text:
             fail(f"{label} contains placeholder text that must be resolved before validation: {placeholder}")
+
+
+def collect_json_strings(value: object) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        strings: list[str] = []
+        for nested in value.values():
+            strings.extend(collect_json_strings(nested))
+        return strings
+    if isinstance(value, list):
+        strings = []
+        for nested in value:
+            strings.extend(collect_json_strings(nested))
+        return strings
+    return []
+
+
+def addendum_placeholder_only(text: str) -> bool:
+    body = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
+    body = re.sub(r"^[#>\-\s\d.、)）]+", "", body, flags=re.MULTILINE).strip()
+    normalized = normalize_token(body)
+    if len(normalized) < 80:
+        return True
+    meaningful_lines = [
+        line.strip()
+        for line in body.splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+    if not meaningful_lines:
+        return True
+    placeholder_lines = sum(
+        1 for line in meaningful_lines
+        if any(pattern.search(line) for pattern in REVIEWER_PLACEHOLDER_PATTERNS)
+    )
+    return placeholder_lines == len(meaningful_lines)
+
+
+def validate_reviewer_evidence_addendum(bundle_dir: Path, language: str) -> str:
+    path = bundle_dir / REVIEWER_EVIDENCE_ADDENDUM
+    if not path.exists():
+        return ""
+    text = path.read_text(encoding="utf-8")
+    validate_no_absolute_paths(text)
+    validate_relative_attachment_refs(text, bundle_dir)
+    validate_no_placeholder_text(text, language, "reviewer evidence addendum")
+    if addendum_placeholder_only(text):
+        fail("reviewer-evidence-and-impact.md is placeholder-only; add attacker boundary, evidence, oracles, and replay detail")
+
+    lowered = text.lower()
+    missing = [
+        group
+        for group, markers in REVIEWER_ADDENDUM_MARKERS.items()
+        if not any(marker.lower() in lowered for marker in markers)
+    ]
+    if missing:
+        fail(
+            "reviewer-evidence-and-impact.md is missing useful reviewer evidence wording for: "
+            + ", ".join(missing)
+        )
+    return text
+
+
+def reviewer_index_artifact_key(key: str) -> bool:
+    normalized = key.strip().lower()
+    if normalized in REVIEWER_INDEX_ARTIFACT_KEYS:
+        return True
+    return normalized.endswith(("_artifact", "_artifacts", "_file", "_files", "_path", "_paths"))
+
+
+def collect_reviewer_index_artifact_paths(value: object, key: str = "") -> list[tuple[str, str]]:
+    paths: list[tuple[str, str]] = []
+    if isinstance(value, dict):
+        for child_key, child_value in value.items():
+            if reviewer_index_artifact_key(str(child_key)):
+                for item in collect_json_strings(child_value):
+                    if item.strip():
+                        paths.append((str(child_key), item.strip()))
+            else:
+                paths.extend(collect_reviewer_index_artifact_paths(child_value, str(child_key)))
+    elif isinstance(value, list):
+        for item in value:
+            paths.extend(collect_reviewer_index_artifact_paths(item, key))
+    return paths
+
+
+def collect_reviewer_index_oracles(value: object, key: str = "") -> list[str]:
+    tokens: list[str] = []
+    if isinstance(value, dict):
+        for child_key, child_value in value.items():
+            normalized = str(child_key).strip().lower()
+            if normalized in REVIEWER_INDEX_ORACLE_KEYS:
+                tokens.extend(item.strip() for item in collect_json_strings(child_value) if item.strip())
+            else:
+                tokens.extend(collect_reviewer_index_oracles(child_value, normalized))
+    elif isinstance(value, list):
+        for item in value:
+            tokens.extend(collect_reviewer_index_oracles(item, key))
+    return tokens
+
+
+def collect_reviewer_command(data: dict[str, object]) -> str:
+    for key in REVIEWER_COMMAND_KEYS:
+        value = str(data.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def validate_reviewer_index_artifact_path(bundle_dir: Path, raw: str, label: str) -> None:
+    if not raw:
+        fail(f"reviewer evidence index {label} must not be empty")
+    if "oss-vulnerability-research" in raw:
+        fail(f"reviewer evidence index {label} contains submitter repository path text: {raw}")
+    if re.search(r"/tmp/[A-Za-z0-9_.-]+-audit\b", raw):
+        fail(f"reviewer evidence index {label} contains submitter-local audit path: {raw}")
+    for pattern in ABSOLUTE_PATH_PATTERNS:
+        if pattern.search(raw):
+            fail(f"reviewer evidence index {label} must be bundle-relative, got operator-local path: {raw}")
+    if "://" in raw:
+        fail(f"reviewer evidence index {label} must reference a bundle-local file, not a URL: {raw}")
+    if re.match(r"^[A-Za-z]:[\\/]", raw):
+        fail(f"reviewer evidence index {label} must not use a Windows absolute path: {raw}")
+    path = Path(raw)
+    if path.is_absolute() or raw.startswith("~"):
+        fail(f"reviewer evidence index {label} must be bundle-relative, got absolute path: {raw}")
+    if ".." in path.parts:
+        fail(f"reviewer evidence index {label} must stay inside the bundle and not use '..': {raw}")
+    resolved = (bundle_dir / path).resolve()
+    try:
+        resolved.relative_to(bundle_dir.resolve())
+    except ValueError:
+        fail(f"reviewer evidence index {label} escapes the bundle root: {raw}")
+    if not resolved.exists():
+        fail(f"reviewer evidence index referenced artifact path does not exist: {raw}")
+
+
+def validate_reviewer_command(bundle_dir: Path, command: str) -> None:
+    if not command:
+        fail("attachments/reviewer-evidence-index.json must include a bundle-root reviewer replay command")
+    if "oss-vulnerability-research" in command or re.search(r"/tmp/[A-Za-z0-9_.-]+-audit\b", command):
+        fail("reviewer evidence index replay command must not require the submitter repository or audit workspace")
+    for pattern in ABSOLUTE_PATH_PATTERNS:
+        if pattern.search(command):
+            fail(f"reviewer evidence index replay command must be bundle-root local, got: {command}")
+    if re.search(r"(^|[;&|]\s*)cd\s+\.\.", command) or "../" in command:
+        fail(f"reviewer evidence index replay command must not climb to a parent repository: {command}")
+    script_refs = re.findall(r"(?:^|\s)(?:bash\s+|sh\s+|zsh\s+)?(\./[A-Za-z0-9_.\-/]+\.sh)\b", command)
+    if not script_refs:
+        fail("reviewer evidence index replay command must call a bundle-root ./run-*.sh helper")
+    for ref in script_refs:
+        script = (bundle_dir / ref[2:]).resolve()
+        try:
+            script.relative_to(bundle_dir.resolve())
+        except ValueError:
+            fail(f"reviewer evidence index replay command script escapes bundle: {ref}")
+        if not script.exists():
+            fail(f"reviewer evidence index replay command references a missing script: {ref}")
+
+
+def read_text_source(path: Path) -> str:
+    try:
+        if path.stat().st_size > 1_500_000:
+            return ""
+        return path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return ""
+
+
+def reviewer_oracle_source_corpus(
+    bundle_dir: Path,
+    excluded: set[Path],
+    docx_text_value: str,
+    note_text: str,
+    supplement_text: str,
+    addendum_text: str,
+    evidence: dict[str, object],
+) -> str:
+    parts = [
+        docx_text_value,
+        note_text,
+        supplement_text,
+        addendum_text,
+        json.dumps(evidence, ensure_ascii=False, sort_keys=True),
+    ]
+    for path in sorted(bundle_dir.rglob("*")):
+        if not path.is_file() or path.resolve() in excluded:
+            continue
+        if path.suffix.lower() not in TEXT_EVIDENCE_SUFFIXES:
+            continue
+        parts.append(read_text_source(path))
+    return "\n".join(part for part in parts if part)
+
+
+def validate_reviewer_evidence_index(
+    bundle_dir: Path,
+    evidence: dict[str, object],
+    docx_text_value: str,
+    note_text: str,
+    supplement_text: str,
+    addendum_text: str,
+) -> tuple[str, dict[str, object] | None]:
+    path = bundle_dir / REVIEWER_EVIDENCE_INDEX
+    if not path.exists():
+        return "", None
+    raw_text = path.read_text(encoding="utf-8")
+    validate_no_absolute_paths(raw_text)
+    if "oss-vulnerability-research" in raw_text:
+        fail("attachments/reviewer-evidence-index.json must not contain submitter repository path text")
+    if re.search(r"/tmp/[A-Za-z0-9_.-]+-audit\b", raw_text):
+        fail("attachments/reviewer-evidence-index.json must not contain submitter-local audit paths")
+    for pattern in SUBMITTER_LOCAL_IMAGE_PATTERNS:
+        match = pattern.search(raw_text)
+        if match:
+            fail(f"attachments/reviewer-evidence-index.json references a submitter-local image name: {match.group(0)}")
+    try:
+        data = json.loads(raw_text)
+    except json.JSONDecodeError as exc:
+        fail(f"attachments/reviewer-evidence-index.json is invalid JSON: {exc}")
+    if not isinstance(data, dict):
+        fail("attachments/reviewer-evidence-index.json must contain a JSON object")
+
+    artifact_paths = collect_reviewer_index_artifact_paths(data)
+    if not artifact_paths:
+        fail("attachments/reviewer-evidence-index.json must map evidence artifacts to bundle-local paths")
+    for label, raw in artifact_paths:
+        validate_reviewer_index_artifact_path(bundle_dir, raw, label)
+
+    command = collect_reviewer_command(data)
+    validate_reviewer_command(bundle_dir, command)
+
+    oracle_tokens = sorted(set(collect_reviewer_index_oracles(data)))
+    if str(evidence.get("oracle_token") or "").strip() and not oracle_tokens:
+        fail("attachments/reviewer-evidence-index.json must list success oracle tokens")
+    corpus = reviewer_oracle_source_corpus(
+        bundle_dir,
+        {path.resolve()},
+        docx_text_value,
+        note_text,
+        supplement_text,
+        addendum_text,
+        evidence,
+    )
+    corpus_lower = corpus.lower()
+    for token in oracle_tokens:
+        if token not in corpus and token.lower() not in corpus_lower:
+            suffix = re.sub(r"^[A-Za-z][A-Za-z _-]{1,40}:\s*", "", token).strip()
+            if suffix and len(suffix) >= 8 and (suffix in corpus or suffix.lower() in corpus_lower):
+                warn(
+                    "reviewer evidence index oracle token was accepted by matching its concrete value "
+                    f"without the display label: {token}"
+                )
+                continue
+            fail(
+                "reviewer evidence index success oracle token is not present in scripts, evidence, "
+                f"supplements, addendum, or verification-evidence.json: {token}"
+            )
+
+    for label, raw in artifact_paths:
+        if "video" not in label.lower() and Path(raw).suffix.lower() not in VIDEO_SUFFIXES:
+            continue
+        if Path(raw).suffix.lower() not in VIDEO_SUFFIXES:
+            fail(f"reviewer evidence index video reference must point to a media file: {raw}")
+
+    return raw_text, data
+
+
+def material_has_pattern(patterns: list[re.Pattern[str]], text: str) -> bool:
+    return any(pattern.search(text) for pattern in patterns)
+
+
+def validate_no_submitter_local_images(text: str) -> None:
+    for pattern in SUBMITTER_LOCAL_IMAGE_PATTERNS:
+        match = pattern.search(text)
+        if match:
+            fail(
+                "final reviewer materials reference a submitter-local Docker image name; "
+                f"use a bundle-local fixture or public pinned/base image instead: {match.group(0)}"
+            )
+
+
+def warn_remote_latest_without_fixture_rationale(text: str) -> None:
+    if not REMOTE_LATEST_IMAGE_PATTERN.search(text):
+        return
+    lowered = text.lower()
+    fallback_markers = (
+        "bundle-local",
+        "attachments/fixture",
+        "uses_bundle_local_fixture",
+        "requires_librespeed_latest\": false",
+        "requires latest: false",
+        "不依赖旧",
+        "不依赖不可拉取",
+        "内置 fixture",
+        "本目录内置",
+    )
+    if any(marker.lower() in lowered for marker in fallback_markers):
+        return
+    warn(
+        "reviewer replay appears to reference a remote :latest image without an obvious bundle-local fallback "
+        "or fixture rationale"
+    )
+
+
+def has_fixture_provenance(text: str) -> bool:
+    lowered = text.lower()
+    context_blocks = [
+        block
+        for block in split_markdown_paragraphs(text) + text.splitlines()
+        if material_has_pattern(FIXTURE_HINT_PATTERNS, block)
+    ]
+    context = "\n".join(context_blocks).lower()
+    structured_index_provenance = (
+        "source_evidence" in lowered
+        and ("fixture_files" in lowered or "vendor_fixture" in lowered or "uses_bundle_local_vendor" in lowered)
+    )
+    source_grounded = any(
+        marker in context
+        for marker in (
+            "source file",
+            "vulnerable source",
+            "vulnerable pattern",
+            "source-grounded",
+            "preserve",
+            "vendored",
+            "attachments/vendor",
+            "original source",
+            "源码",
+            "原始源码",
+            "危险源码",
+            "漏洞模式",
+            "保留",
+            "sed",
+            "entrypoint",
+        )
+    ) or structured_index_provenance
+    sufficient = any(
+        marker in context
+        for marker in (
+            "sufficient",
+            "reproduce the vulnerability boundary",
+            "minimal fixture",
+            "fixture",
+            "vendored",
+            "attachments/vendor",
+            "足以",
+            "复现边界",
+            "最小复现",
+            "内置文件",
+            "只依赖",
+        )
+    ) or structured_index_provenance
+    nonclaim = any(marker in lowered for marker in NONCLAIM_MARKERS)
+    return source_grounded and sufficient and nonclaim
+
+
+def missing_library_boundary_kinds(text: str) -> list[str]:
+    lowered = text.lower()
+    checks = {
+        "public API/function boundary": (
+            "public api",
+            " api",
+            "function",
+            "method",
+            "q.set",
+            "q.get",
+            "q.post",
+            "q.invoke",
+            "函数",
+            "方法",
+            "api",
+            "调用",
+        ),
+        "attacker-controlled argument": (
+            "attacker-controlled",
+            "attacker controlled",
+            "attacker controls",
+            "key",
+            "name",
+            "argument",
+            "filename",
+            "metadata",
+            "source map",
+            "config",
+            "攻击者可控",
+            "字段名",
+            "属性名",
+            "参数",
+            "元数据",
+        ),
+        "consumer application pattern": (
+            "consumer",
+            "consuming application",
+            "application-level",
+            "upper-layer",
+            "调用方",
+            "消费方",
+            "上层应用",
+            "业务应用",
+            "桥接",
+        ),
+        "library-local versus application-level boundary": (
+            "library-local",
+            "application-level",
+            "library itself",
+            "does not expose",
+            "no direct network",
+            "object.prototype",
+            "global",
+            "local",
+            "库本身",
+            "不提供网络入口",
+            "目标对象",
+            "全局",
+            "局部",
+            "不声称",
+        ),
+    }
+    return [
+        label
+        for label, markers in checks.items()
+        if not any(marker in lowered for marker in markers)
+    ]
+
+
+def validate_reviewer_story_gates(text: str) -> None:
+    validate_no_submitter_local_images(text)
+    warn_remote_latest_without_fixture_rationale(text)
+    if material_has_pattern(FIXTURE_HINT_PATTERNS, text) and not has_fixture_provenance(text):
+        fail(
+            "fixture-based or vendored-source replay needs a source-grounded provenance explanation: "
+            "state what source/pattern is preserved, why the fixture is sufficient, and what stronger impact is not claimed"
+        )
+    if material_has_pattern(LIBRARY_HINT_PATTERNS, text):
+        missing = missing_library_boundary_kinds(text)
+        if missing:
+            fail(
+                "library/package report is missing consumer application boundary wording for: "
+                + ", ".join(missing)
+            )
+
+
+def has_nonclaim_context(text: str, start: int, end: int) -> bool:
+    window = text[max(0, start - 120): min(len(text), end + 120)].lower()
+    return any(marker.lower() in window for marker in NONCLAIM_MARKERS)
+
+
+def claim_matches_without_nonclaim(text: str, patterns: tuple[str, ...]) -> list[str]:
+    matches: list[str] = []
+    for pattern_text in patterns:
+        pattern = re.compile(pattern_text, re.IGNORECASE)
+        for match in pattern.finditer(text):
+            if not has_nonclaim_context(text, match.start(), match.end()):
+                matches.append(match.group(0))
+    return matches
+
+
+def validate_claim_oracle_consistency(text: str) -> None:
+    lowered = text.lower()
+    webshell_claims = claim_matches_without_nonclaim(
+        text,
+        (
+            r"\bwebshell\b",
+            r"\bHTTP\s+(?:command execution|RCE)\b",
+            r"HTTP\s*webshell",
+            r"webshell\s*命令执行",
+            r"HTTP\s*命令执行",
+        ),
+    )
+    if webshell_claims and not any(
+        marker.lower() in lowered
+        for marker in (
+            "webshell_confirmed",
+            "code_execution_confirmed",
+            "uid=",
+            "www-data",
+            "whoami",
+            "id output",
+            "id 输出",
+            "命令输出",
+        )
+    ):
+        fail(
+            "report claims webshell or HTTP command execution, but reviewer materials do not show a matching oracle"
+        )
+
+    dos_claims = claim_matches_without_nonclaim(
+        text,
+        (
+            r"已验证[^。\n]{0,40}(?:拒绝服务|DoS)",
+            r"(?:拒绝服务|DoS)[^。\n]{0,40}(?:已确认|攻击成功|成功触发)",
+            r"\bDoS_CONFIRMED\b",
+            r"\bdenial of service confirmed\b",
+            r"\bcauses denial of service\b",
+        ),
+    )
+    if dos_claims and not any(
+        marker.lower() in lowered
+        for marker in ("dos_confirmed", "crash", "崩溃", "oom", "timeout", "resource exhausted", "拒绝服务成功")
+    ):
+        fail("report claims confirmed DoS, but reviewer materials do not show a direct DoS oracle")
+
+    broad_claims = claim_matches_without_nonclaim(
+        text,
+        (
+            r"container escape",
+            r"容器逃逸",
+            r"host\s+RCE",
+            r"宿主机[^。\n]{0,30}(?:代码执行|命令执行|RCE)",
+            r"unauthenticated public exploitability",
+            r"无需认证[^。\n]{0,30}直接触发",
+            r"匿名[^。\n]{0,30}直接触发",
+        ),
+    )
+    if broad_claims:
+        fail(
+            "report claims container escape, host RCE, or unauthenticated public exploitability without an explicit non-claim boundary"
+        )
+
+
+def explicit_body_severity_labels(lines: list[str], language: str) -> list[str]:
+    labels: list[str] = []
+    patterns = (
+        (
+            r"(?:等级判定|风险等级|严重性|漏洞危险性|危险等级|最终评级)\s*[:：]\s*(严重|高危|中危|低危|Critical|High|Medium|Low)",
+            r"(?:Severity|Risk rating|Final rating|Base severity)\s*[:：]\s*(Critical|High|Medium|Low|严重|高危|中危|低危)",
+        )
+        if language == "zh-CN"
+        else (
+            r"(?:Severity|Risk rating|Final rating|Base severity)\s*[:：]\s*(Critical|High|Medium|Low|严重|高危|中危|低危)",
+            r"(?:等级判定|风险等级|严重性|最终评级)\s*[:：]\s*(严重|高危|中危|低危|Critical|High|Medium|Low)",
+        )
+    )
+    for line in lines:
+        for pattern in patterns:
+            match = re.search(pattern, line, re.IGNORECASE)
+            if match:
+                labels.append(match.group(1))
+    return labels
+
+
+def validate_report_body_severity_consistency(
+    bundle_dir: Path,
+    docx_path: Path,
+    lines: list[str],
+    finding: dict[str, object],
+    language: str,
+) -> None:
+    cvss = finding.get("cvss")
+    score_text = str(cvss.get("score") or "").strip() if isinstance(cvss, dict) else str(
+        finding.get("cvss4_score") or finding.get("cvss_score") or ""
+    ).strip()
+    if not score_text:
+        return
+    expected = severity_label_from_score(score_text, language)
+    expected_norm = normalize_token(expected)
+    if not expected_norm:
+        return
+    for label in explicit_body_severity_labels(lines, language):
+        normalized = severity_en_from_any(label) if language == "en-US" else severity_cn_from_any(label)
+        if normalize_token(normalized) != expected_norm:
+            fail(
+                "report body severity does not match the severity implied by CVSS: "
+                f"score={score_text}, expected={expected}, body={label}, bundle={bundle_dir.name}, docx={docx_path.name}"
+            )
 
 
 def validate_bundle_cleanliness(bundle_dir: Path) -> None:
@@ -2440,6 +3161,7 @@ def main() -> None:
         project_name, title_tokens, selected_finding = load_bundle_identity(findings_path, bundle_dir.name, workspace_dir)
         validate_finding_vulnerability_name(selected_finding)
         validate_severity_consistency(bundle_dir, docx_path, selected_finding, language)
+        validate_report_body_severity_consistency(bundle_dir, docx_path, lines, selected_finding, language)
         validate_title_auth_cvss_consistency(bundle_dir, docx_path, lines, selected_finding)
     verification_evidence = validate_verification_evidence(bundle_dir, selected_finding)
     if selected_finding is not None:
@@ -2451,6 +3173,7 @@ def main() -> None:
     validate_no_absolute_paths(combined_text)
     validate_no_placeholder_text(combined_text, language, "report docx")
     validate_relative_attachment_refs(combined_text, bundle_dir)
+    reviewer_addendum_text = validate_reviewer_evidence_addendum(bundle_dir, language)
     validate_attachment_note(note_path, language)
     note_text = note_path.read_text(encoding="utf-8")
     validate_no_untranslated_english_text(
@@ -2496,12 +3219,36 @@ def main() -> None:
         for path in root_script_paths
         if path.exists()
     ]
+    reviewer_index_text, _reviewer_index = validate_reviewer_evidence_index(
+        bundle_dir,
+        verification_evidence,
+        combined_text,
+        note_text,
+        supplement_text,
+        reviewer_addendum_text,
+    )
+    reviewer_story_text = "\n".join(
+        [
+            combined_text,
+            note_text,
+            supplement_text,
+            reviewer_addendum_text,
+            reviewer_index_text,
+            json.dumps(verification_evidence, ensure_ascii=False, sort_keys=True),
+            *root_script_texts,
+            *attachment_script_texts,
+        ]
+    )
+    validate_reviewer_story_gates(reviewer_story_text)
+    validate_claim_oracle_consistency(reviewer_story_text)
     validate_poc_attacker_capability_boundary(
         "\n".join(
             [
                 combined_text,
                 note_text,
                 supplement_text,
+                reviewer_addendum_text,
+                reviewer_index_text,
                 json.dumps(verification_evidence, ensure_ascii=False, sort_keys=True),
                 *root_script_texts,
                 *attachment_script_texts,

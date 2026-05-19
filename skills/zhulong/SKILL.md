@@ -540,6 +540,31 @@ Reviewer-facing supplements should not stop at "technical trigger" when the clai
   script also covers `PoC-4`; stale videos that predate revised report/script
   material should be regenerated or clearly called out before submission
 
+For reviewer-sensitive confirmed bundles, also add `reviewer-evidence-and-impact.md`
+in the bundle root. Use it when the bundle involves a library/package,
+fixture-based replay, a custom minimal Docker fixture, strong attacker-capability
+assumptions, multiple PoC variants, non-obvious success oracles, or an impact
+explanation spread across DOCX, scripts, JSON, logs, screenshots, or video. Keep
+it concise and cover attacker capability/input boundary, runtime or deployment
+preconditions, verified impact, explicitly non-claimed impact, success oracle
+tokens, oracle-to-artifact mapping, the shortest bundle-local replay command,
+and whether the replay uses the full upstream app, vendored source, a local
+tarball, or a minimal fixture.
+
+When useful, add `attachments/reviewer-evidence-index.json` as a structured
+reviewer map. It is an index, not a hash manifest. Keep every artifact path
+bundle-relative, make the replay command runnable from the bundle root, list the
+success-oracle tokens, and ensure each token appears in a script, evidence log,
+supplement, reviewer addendum, or `verification-evidence.json`.
+
+Fixture and library boundaries must be explicit:
+
+- minimal fixtures should explain which upstream source file or vulnerable
+  pattern they preserve, why the fixture is sufficient for the vulnerability
+  boundary, where the original/vendored source is attached, and which stronger
+  impacts are not claimed
+- library/package reports should explain the public API/function boundary, attacker-controlled argument/key/filename/metadata/config field, consumer application pattern needed for reachability, local library effect versus application-level impact, and non-claims such as no direct network endpoint exposed by the library itself
+
 The final CVSS and severity label should reflect the strongest verified oracle from the severity-escalation pass, not merely the first technical trigger that proved the bug exists.
 
 Final summaries must explicitly distinguish confirmed vulnerabilities, false positives / non-security defects, and unverified leads. If Docker confirmation did not complete, say that no vulnerability was confirmed for that lead, identify the missing evidence, and give the safe Docker-only resume step.

@@ -4097,6 +4097,270 @@ def main() -> None:
         if "recording appears older than current reproduction script or report material" not in stale_output:
             raise SystemExit("FAILED: stale recording video fixture did not emit a warning")
 
+        def standard_reviewer_paths(bundle: Path) -> tuple[str, str]:
+            poc_matches = sorted((bundle / "attachments").rglob("jwt-forge-poc.py"))
+            evidence_matches = sorted((bundle / "attachments").rglob("forged-token-response.json"))
+            if not poc_matches or not evidence_matches:
+                raise SystemExit("FAILED: standard bundle is missing expected reviewer evidence selftest attachments")
+            return (
+                poc_matches[0].relative_to(bundle).as_posix(),
+                evidence_matches[0].relative_to(bundle).as_posix(),
+            )
+
+        def write_useful_reviewer_addendum(bundle: Path, *, extra: str = "") -> None:
+            _poc_rel, evidence_rel = standard_reviewer_paths(bundle)
+            (bundle / "reviewer-evidence-and-impact.md").write_text(
+                "# 审核证据与影响说明\n\n"
+                "## 攻击者能力与边界\n\n"
+                "攻击者需要能够向已确认的 Docker 复现入口提交伪造 JWT；服务端条件是默认密钥配置生效。"
+                "本包只声称 Docker 成功判据证明的认证绕过影响，不声称未验证的主机执行或容器逃逸。\n\n"
+                "## 审核方最短复现\n\n"
+                "在 bundle 根目录运行 `REVIEWER_PAUSE_SHORT=0 REVIEWER_PAUSE_LONG=0 ./run-selftest-jwt-recording.sh quick docker`。\n\n"
+                "## 成功判据与证据映射\n\n"
+                "- 成功判据：`认证绕过成功`\n"
+                f"- 证据文件：`{evidence_rel}`\n\n"
+                "## 已验证影响\n\n"
+                "已验证影响是完整性与认证边界绕过，审核材料中的证据和 replay command 均为 bundle-local。\n"
+                + (f"\n{extra}\n" if extra else ""),
+                encoding="utf-8",
+            )
+
+        def write_standard_reviewer_index(
+            bundle: Path,
+            *,
+            oracle: str = "认证绕过成功",
+            artifact_paths: list[str] | None = None,
+            command: str = "REVIEWER_PAUSE_SHORT=0 REVIEWER_PAUSE_LONG=0 ./run-selftest-jwt-recording.sh quick docker",
+            extra: dict | None = None,
+        ) -> None:
+            poc_rel, evidence_rel = standard_reviewer_paths(bundle)
+            data = {
+                "schema_version": 1,
+                "finding_slug": bundle.name,
+                "bundle_root_command": command,
+                "poc_files": [poc_rel],
+                "evidence_outputs": artifact_paths if artifact_paths is not None else [evidence_rel],
+                "success_oracles": [oracle],
+                "real_world_exploitability_summary": "攻击者控制伪造 JWT，默认密钥配置让认证绕过在 Docker 中可达。",
+                "boundaries": ["不声称容器逃逸或宿主机执行。"],
+            }
+            if extra:
+                data.update(extra)
+            index_path = bundle / "attachments/reviewer-evidence-index.json"
+            index_path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+        good_reviewer_index = copy_standard_bundle("reviewer_index_valid")
+        write_useful_reviewer_addendum(good_reviewer_index)
+        write_standard_reviewer_index(good_reviewer_index)
+        run([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(good_reviewer_index),
+            "--language",
+            "zh-CN",
+        ], plugin_root)
+
+        bad_index_missing_artifact = copy_standard_bundle("reviewer_index_missing_artifact")
+        write_useful_reviewer_addendum(bad_index_missing_artifact)
+        write_standard_reviewer_index(
+            bad_index_missing_artifact,
+            artifact_paths=["attachments/evidence/does-not-exist.log"],
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_index_missing_artifact),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "referenced artifact path does not exist")
+
+        bad_index_outside_path = copy_standard_bundle("reviewer_index_outside_path")
+        write_useful_reviewer_addendum(bad_index_outside_path)
+        write_standard_reviewer_index(bad_index_outside_path, artifact_paths=["../outside.log"])
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_index_outside_path),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "must stay inside the bundle")
+
+        bad_index_local_path = copy_standard_bundle("reviewer_index_local_path")
+        write_useful_reviewer_addendum(bad_index_local_path)
+        submitter_local_path = "/" + "Users/" + "torchbearer/tmp/evidence.log"
+        write_standard_reviewer_index(bad_index_local_path, artifact_paths=[submitter_local_path])
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_index_local_path),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "absolute/operator-local")
+
+        bad_index_missing_oracle_source = copy_standard_bundle("reviewer_index_missing_oracle_source")
+        write_useful_reviewer_addendum(bad_index_missing_oracle_source)
+        write_standard_reviewer_index(bad_index_missing_oracle_source, oracle="NEVER_OBSERVED_REVIEWER_ORACLE")
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_index_missing_oracle_source),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "success oracle token is not present")
+
+        bad_placeholder_addendum = copy_standard_bundle("reviewer_addendum_placeholder")
+        (bad_placeholder_addendum / "reviewer-evidence-and-impact.md").write_text(
+            "# 审核证据\n\nTODO\n",
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_placeholder_addendum),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "placeholder-only")
+
+        bad_fixture_without_provenance = copy_standard_bundle("fixture_without_provenance")
+        fixture_supplement = next(bad_fixture_without_provenance.glob("*_补充复现说明.md"))
+        fixture_supplement.write_text(
+            fixture_supplement.read_text(encoding="utf-8")
+            + "\n补充：本包使用 minimal fixture replay。\n",
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_fixture_without_provenance),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "source-grounded provenance")
+
+        good_fixture_provenance = copy_standard_bundle("fixture_with_provenance")
+        write_useful_reviewer_addendum(
+            good_fixture_provenance,
+            extra=(
+                "## fixture provenance\n\n"
+                "本包使用最小 fixture，但它保留原始源码中的危险模式和 Docker 复现边界；"
+                "该 fixture 足以复现认证绕过边界。未验证、不声称容器逃逸、宿主机 RCE 或更强影响。"
+            ),
+        )
+        run([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(good_fixture_provenance),
+            "--language",
+            "zh-CN",
+        ], plugin_root)
+
+        bad_library_boundary = copy_standard_bundle("library_boundary_missing")
+        library_supplement = next(bad_library_boundary.glob("*_补充复现说明.md"))
+        library_supplement.write_text(
+            library_supplement.read_text(encoding="utf-8")
+            + "\n补充：这是一个库漏洞，public API 接收攻击者可控 key。\n",
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_library_boundary),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "consumer application boundary")
+
+        good_q_style_boundary = copy_standard_bundle("q_style_library_boundary")
+        write_useful_reviewer_addendum(
+            good_q_style_boundary,
+            extra=(
+                "## library consumer boundary\n\n"
+                "这是 q-style library/package 漏洞：public API `Q.set` 接收攻击者可控 key/name 参数。"
+                "消费方或上层应用需要把用户字段名桥接到该 API，库本身不提供网络入口。"
+                "单步路径是目标对象局部 prototype chain hijack；全局 `Object.prototype` 污染只在额外 consumer pattern 中成立，"
+                "本包不声称无上层应用桥接即可远程触发。"
+            ),
+        )
+        run([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(good_q_style_boundary),
+            "--language",
+            "zh-CN",
+        ], plugin_root)
+
+        good_speedtest_style_fixture = copy_standard_bundle("speedtest_style_fixture")
+        speedtest_evidence_dir = good_speedtest_style_fixture / "attachments/evidence"
+        speedtest_evidence_dir.mkdir(parents=True, exist_ok=True)
+        (speedtest_evidence_dir / "webshell-oracle.txt").write_text(
+            "WEBSHELL_CONFIRMED\nuid=82(www-data)\n",
+            encoding="utf-8",
+        )
+        write_useful_reviewer_addendum(
+            good_speedtest_style_fixture,
+            extra=(
+                "## Speedtest-style source-grounded fixture\n\n"
+                "本包使用最小 fixture，保留原始源码中的 sed/entrypoint 危险模式；fixture 足以复现代码注入边界。"
+                "成功判据包括 `WEBSHELL_CONFIRMED` 与 `uid=82(www-data)`，对应 `attachments/evidence/webshell-oracle.txt`。"
+                "未验证、不声称容器逃逸、宿主机执行或匿名公开入口。"
+            ),
+        )
+        write_standard_reviewer_index(
+            good_speedtest_style_fixture,
+            oracle="WEBSHELL_CONFIRMED",
+            artifact_paths=["attachments/evidence/webshell-oracle.txt"],
+            extra={"fixture_files": ["attachments/evidence/webshell-oracle.txt"]},
+        )
+        run([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(good_speedtest_style_fixture),
+            "--language",
+            "zh-CN",
+        ], plugin_root)
+
+        bad_severity_mismatch = copy_standard_bundle("severity_body_mismatch")
+        mutate_bundle_finding(bad_severity_mismatch, lambda _finding: None)
+        from docx import Document
+        severity_docx_path = next(bad_severity_mismatch.glob("*.docx"))
+        severity_doc = Document(severity_docx_path)
+        severity_doc.add_paragraph("等级判定：中危")
+        severity_doc.save(severity_docx_path)
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_severity_mismatch),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "report body severity does not match")
+
+        bad_claim_overreach = copy_standard_bundle("webshell_claim_without_oracle")
+        write_useful_reviewer_addendum(
+            bad_claim_overreach,
+            extra=(
+                "## 过强声明夹具\n\n"
+                "本段故意声称已验证 HTTP webshell 命令执行，但成功判据仍只有 `认证绕过成功`，用于确认 validator 会拒绝 claim/oracle 不一致。"
+            ),
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_claim_overreach),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "webshell or HTTP command execution")
+
         bad_missing_attacker = quality_gate_bad_bundle(
             "missing_attacker_condition",
             lambda text: None if text.startswith("攻击者条件") or text.startswith("入口/可控输入") else text,
@@ -4177,6 +4441,19 @@ def main() -> None:
             npm_warning_bundle,
             poc_label_warning_bundle,
             stale_video_bundle,
+            good_reviewer_index,
+            bad_index_missing_artifact,
+            bad_index_outside_path,
+            bad_index_local_path,
+            bad_index_missing_oracle_source,
+            bad_placeholder_addendum,
+            bad_fixture_without_provenance,
+            good_fixture_provenance,
+            bad_library_boundary,
+            good_q_style_boundary,
+            good_speedtest_style_fixture,
+            bad_severity_mismatch,
+            bad_claim_overreach,
         ):
             shutil.rmtree(bad_quality_bundle)
         legacy_marker_fixture = workspace / "legacy-english-analysis-markers-finding.json"
@@ -5618,6 +5895,16 @@ def main() -> None:
             installed_skill / "SKILL.md",
             "severity-escalation pass",
             "installed Claude skill severity escalation contract",
+        )
+        require_text(
+            installed_skill / "SKILL.md",
+            "reviewer-evidence-and-impact.md",
+            "installed Claude skill reviewer evidence addendum guidance",
+        )
+        require_text(
+            installed_skill / "SKILL.md",
+            "consumer application pattern",
+            "installed Claude skill library consumer boundary guidance",
         )
         require_text(
             installed_skill / "SKILL.md",

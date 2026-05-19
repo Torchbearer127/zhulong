@@ -80,7 +80,14 @@ For each Node.js library finding, the report should include:
 - controllable input shape and any required caller-controlled options
 - exact source-to-sink path and sink behavior
 - distinction between library-local behavior and practical consumer impact
+- the consuming-application pattern that makes the library behavior reachable,
+  including the attacker-controlled argument/key/filename/metadata/config field
+  and non-claims such as no direct network endpoint exposed by the package itself
 - Docker reproduction command and direct success oracle
+- reviewer evidence mapping when the bundle has multiple PoCs, a vendored
+  fixture, or non-obvious success tokens; prefer
+  `reviewer-evidence-and-impact.md` plus
+  `attachments/reviewer-evidence-index.json`
 - conservative severity rationale that does not overclaim application impact
 
 Do not generate DOCX reports from playbook hypotheses alone. Confirmed

@@ -127,6 +127,17 @@ The validator also checks for common contradiction patterns, including:
   evidence JSON, or root reproduction script
 - package manager install commands that may trigger lifecycle-script or network
   noise in the shortest reviewer path
+- optional `reviewer-evidence-and-impact.md` files that are placeholder-only or
+  missing attacker boundary, impact, success-oracle, and replay-command wording
+- optional `attachments/reviewer-evidence-index.json` files with invalid JSON,
+  missing artifacts, package-external paths, non-bundle-local replay commands,
+  or success-oracle tokens that do not appear in reviewer sources
+- fixture-based or vendored-source replay without source-grounded provenance,
+  and library/package reports that omit the consuming-application boundary
+- severity and claim contradictions, such as High CVSS with Medium report
+  wording, webshell/HTTP command-execution claims without matching oracles, or
+  container-escape/host-RCE/public-unauthenticated claims without an explicit
+  non-claim boundary
 
 These checks are intentionally conservative. They are meant to reduce false
 positives without changing the confirmed bundle contract.
