@@ -27,8 +27,10 @@ The report must be portable across machines and reviewers.
 - Vulnerable source-code locations should stay project-root-relative.
 - Files shipped inside the per-vulnerability submission folder should be referenced with paths relative to that folder, for example `attachments/<audit-workspace>/docker/test-buffer-overread.js`.
 - Do not use the operator's absolute local paths such as `/Users/...`.
+- Do not embed submitter workspaces, template paths, `file://` URLs, external source checkouts, or parent-repository paths such as `oss-vulnerability-research`, `/pkg/index.js`, or `/pkg/security-research...` in confirmed deliverables.
 - Embed key reproduction file content when that content is necessary to reproduce the result.
 - Output one separate attachment-directory note file in the same per-vulnerability submission folder as the `.docx`, rather than placing attachment instructions inside the Word document.
+- Public issue text and public workflow notes must stay sanitized: describe the defect class, not unpublished project names, package names, vulnerability titles, bundle paths, attachment filenames, PoC commands, or payloads.
 
 ## Language
 
@@ -216,6 +218,10 @@ Final bundles must not contain runtime state or source-control/cache directories
 For confirmed vulnerabilities, include one bundle-root reproduction helper script such as `run-<slug>-recording.sh` or `run-<slug>-repro.sh`.
 The helper must be executable, pass a static shell syntax check, and use only Docker/Docker Compose reproduction paths.
 It must derive `SCRIPT_DIR` and `ATTACH_DIR="$SCRIPT_DIR/attachments"` from the script location, then either start the reproduction environment from bundle-local attachments or fail early with a clear command such as `docker compose -f "$ATTACH_DIR/docker-compose.zhulong.yml" up -d`.
+The helper must be standalone-copy friendly: Docker mounts, file reads, PoC commands, and evidence paths stay under the delivered bundle after the folder is copied to a clean temporary directory.
+If the helper includes reviewer pauses, it must honor `REVIEWER_PAUSE_SHORT` and `REVIEWER_PAUSE_LONG`; reviewer automation should be able to run `REVIEWER_PAUSE_SHORT=0 REVIEWER_PAUSE_LONG=0 ./run-*.sh quick docker` without fixed sleeps.
+The helper must not recursively invoke itself from the proof path; call the underlying Docker/Docker Compose proof command directly.
+For time-based availability or performance proofs, store exact timings in fresh logs and use thresholds, ranges, order-of-magnitude wording, or latest-log references in reviewer-facing DOCX/Markdown/JSON summaries.
 If it calls `docker exec`, check the target container first and print a diagnostic when it is missing.
 Avoid naked `2>/dev/null` on critical Docker, curl, or token-generation commands; capture and print errors with context.
 Do not rely on pre-existing database state such as `ApiToken.objects.first()` unless the helper explicitly creates or validates that state.

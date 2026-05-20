@@ -34,9 +34,90 @@ EN_HEADINGS = {
 ABSOLUTE_PATH_PATTERNS = [
     re.compile(r"/Users/[^/\s]+"),
     re.compile(r"/home/[^/\s]+"),
-    re.compile(r"[A-Za-z]:\\\\"),
+    re.compile(r"(?<![A-Za-z])[A-Za-z]:[\\/]"),
     re.compile(r"file://"),
 ]
+NON_STANDALONE_PATH_PATTERNS = [
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"/Users/[^\s`'\"<>]+",
+        r"/home/[^\s`'\"<>]+",
+        r"(?<![A-Za-z])[A-Za-z]:[\\/][^\s`'\"<>]*",
+        r"file://[^\s`'\"<>]+",
+        r"\boss-vulnerability-research\b",
+        r"\bsecurity-research-(?:YYYYMMDD-HHMMSS|\d{8}-\d{6})\b",
+        r"/pkg/security-research(?:-[A-Za-z0-9_.-]+)?",
+        r"/pkg/index\.js\b",
+        r"<(?:local-absolute-path|external-source-checkout|audit-workspace|repo-root)>",
+        r"/path/to/(?:repo|workspace|bundle|checkout|source)",
+    )
+]
+ROOT_SCRIPT_LOCATOR_PATTERN = re.compile(
+    r"\b(?:SCRIPT_DIR|BUNDLE_ROOT|BUNDLE_DIR)\b|"
+    r"\b[A-Za-z_][A-Za-z0-9_]*=.*(?:dirname\s+--?\s+\"\$0\"|dirname\s+\"\$0\"|\$\{BASH_SOURCE\[0\]\})"
+)
+QUICK_MODE_CASE_PATTERN = re.compile(r"^\s*(?:quick[^\s)]*|\*\|quick)\)\s*$")
+FIXED_PAUSE_ASSIGNMENT_PATTERN = re.compile(r"^\s*PAUSE_(?:SHORT|LONG)\s*=\s*['\"]?[0-9]+(?:\.[0-9]+)?['\"]?\s*(?:#.*)?$")
+FIXED_SLEEP_PATTERN = re.compile(r"(?<![A-Za-z0-9_-])sleep\s+['\"]?[0-9]+(?:\.[0-9]+)?['\"]?(?:\s|;|$)")
+FIXED_PAUSE_STEP_PATTERN = re.compile(r"(?<![A-Za-z0-9_-])pause_step\s+['\"]?[0-9]+(?:\.[0-9]+)?['\"]?(?:\s|;|$)")
+SCRIPT_SELF_CALL_PATTERNS = [
+    re.compile(pattern)
+    for pattern in (
+        r"\./\$\(\s*basename\s+['\"]?\$0['\"]?\s*\)",
+        r"\./\$\(\s*basename\s+['\"]?\$\{0\}['\"]?\s*\)",
+        r"\b(?:bash|sh|zsh)\s+['\"]?\$0['\"]?",
+        r"\b(?:bash|sh|zsh)\s+['\"]?\$\{0\}['\"]?",
+        r"\bexec\s+['\"]?\$0['\"]?",
+        r"\bexec\s+['\"]?\$\{0\}['\"]?",
+        r"\beval\s+['\"]?\$0['\"]?",
+        r"\beval\s+['\"]?\$\{0\}['\"]?",
+        r"['\"]?\$SCRIPT_DIR/\$\(\s*basename\s+['\"]?\$0['\"]?\s*\)['\"]?",
+        r"['\"]?\$\{SCRIPT_DIR\}/\$\(\s*basename\s+['\"]?\$0['\"]?\s*\)['\"]?",
+        r"\$\{0##\*/\}",
+    )
+]
+TIME_PROOF_TRIGGER_PATTERN = re.compile(
+    r"\b(?:DoS|denial of service|availability|performance|latency|timeout|CPU|resource exhaustion|"
+    r"耗时|用时|秒|毫秒|拒绝服务|可用性|性能|延迟|超时|资源耗尽|CPU)\b",
+    re.IGNORECASE,
+)
+EXACT_TIMING_PATTERN = re.compile(
+    r"\b\d+(?:\.\d+)?\s*(?:ms|millisecond(?:s)?|s|sec(?:ond)?(?:s)?|毫秒|秒)\b",
+    re.IGNORECASE,
+)
+TIMING_STABILITY_MARKERS = (
+    ">=",
+    "<=",
+    "at least",
+    "at most",
+    "no more than",
+    "not less than",
+    "range",
+    "threshold",
+    "order-of-magnitude",
+    "seconds-level",
+    "latest log",
+    "current log",
+    "fresh log",
+    "approximately",
+    "about",
+    "around",
+    "between",
+    "至少",
+    "不低于",
+    "不少于",
+    "不超过",
+    "阈值",
+    "范围",
+    "区间",
+    "数量级",
+    "秒级",
+    "最新日志",
+    "当前日志",
+    "新日志",
+    "约",
+    "左右",
+)
 GENERIC_DOCX_FILENAMES = {"report.docx", "vulnerability-report.docx", "漏洞报告.docx"}
 GENERIC_NOTE_FILENAMES = {"attachments.md", "attachment-index.md", "附件目录说明.md"}
 GENERIC_SUPPLEMENT_FILENAMES = {"reproduction.md", "reproduction_note.md", "补充复现说明.md"}
@@ -1496,6 +1577,16 @@ def validate_no_absolute_paths(text: str) -> None:
             fail(f"found absolute/operator-local path reference: {match.group(0)}")
 
 
+def validate_no_non_standalone_paths(text: str, label: str) -> None:
+    for pattern in NON_STANDALONE_PATH_PATTERNS:
+        match = pattern.search(text)
+        if match:
+            fail(
+                f"{label} contains submitter-local or non-standalone path text: "
+                f"{match.group(0)}"
+            )
+
+
 def validate_no_placeholder_text(text: str, language: str, label: str) -> None:
     for placeholder in PLACEHOLDER_REPORT_TEXT.get(language, []):
         if placeholder in text:
@@ -2020,6 +2111,26 @@ def validate_claim_oracle_consistency(text: str) -> None:
         )
 
 
+def validate_time_based_proof_drift(text: str) -> None:
+    for match in EXACT_TIMING_PATTERN.finditer(text):
+        start = max(0, match.start() - 220)
+        end = min(len(text), match.end() + 220)
+        context = text[start:end]
+        lowered = context.lower()
+        if not TIME_PROOF_TRIGGER_PATTERN.search(context):
+            continue
+        if any(marker.lower() in lowered for marker in TIMING_STABILITY_MARKERS):
+            continue
+        preview = re.sub(r"\s+", " ", context).strip()
+        if len(preview) > 180:
+            preview = preview[:177] + "..."
+        fail(
+            "time-based proof summaries must not present stale exact timings as stable facts; "
+            "store exact values in fresh logs and use thresholds/ranges or latest-log references. "
+            f"Found exact timing {match.group(0)!r} near: {preview!r}"
+        )
+
+
 def explicit_body_severity_labels(lines: list[str], language: str) -> list[str]:
     labels: list[str] = []
     patterns = (
@@ -2423,6 +2534,7 @@ def line_can_depend_on_filesystem_path(line: str) -> bool:
 
 def validate_script_bundle_portability(script_path: Path, bundle_dir: Path, text: str) -> None:
     bundle_root = bundle_dir.resolve()
+    validate_no_non_standalone_paths(text, f"shell script {script_path.relative_to(bundle_dir).as_posix()}")
     for line in logical_shell_lines(text):
         if line_is_display_only_shell(line):
             continue
@@ -2456,6 +2568,62 @@ def validate_script_bundle_portability(script_path: Path, bundle_dir: Path, text
         )
 
 
+def validate_root_script_bundle_contract(script_path: Path, bundle_dir: Path, text: str) -> None:
+    rel = script_path.relative_to(bundle_dir).as_posix()
+    if not ROOT_SCRIPT_LOCATOR_PATTERN.search(text):
+        fail(
+            f"{rel} must derive its bundle root from the script path with SCRIPT_DIR, BUNDLE_ROOT, "
+            "or an equivalent dirname \"$0\" locator"
+        )
+    if re.search(r"\b(?:REPO_ROOT|PROJECT_ROOT|SOURCE_ROOT|WORKSPACE_ROOT)\s*=", text):
+        fail(
+            f"{rel} defines a parent/source workspace root. Reviewer replay helpers must stay inside "
+            "the delivered bundle root."
+        )
+
+
+def validate_root_script_pause_contract(script_path: Path, bundle_dir: Path, text: str) -> None:
+    rel = script_path.relative_to(bundle_dir).as_posix()
+    if ("REVIEWER_PAUSE_SHORT" not in text) or ("REVIEWER_PAUSE_LONG" not in text):
+        fail(
+            f"{rel} must honor REVIEWER_PAUSE_SHORT and REVIEWER_PAUSE_LONG so reviewers can disable pauses"
+        )
+
+    in_quick_case = False
+    for line in logical_shell_lines(text):
+        stripped = line.strip()
+        if QUICK_MODE_CASE_PATTERN.match(stripped):
+            in_quick_case = True
+            continue
+        if in_quick_case and stripped == ";;":
+            in_quick_case = False
+            continue
+        if in_quick_case and FIXED_PAUSE_ASSIGNMENT_PATTERN.match(stripped):
+            fail(
+                f"{rel} quick mode overwrites reviewer pause settings with a fixed value: {stripped}"
+            )
+        if FIXED_SLEEP_PATTERN.search(stripped) or FIXED_PAUSE_STEP_PATTERN.search(stripped):
+            if stripped.startswith("sleep \"$1\"") or stripped.startswith("sleep \"${1}\""):
+                continue
+            fail(
+                f"{rel} contains a fixed reviewer pause that cannot be disabled with REVIEWER_PAUSE_SHORT=0 "
+                f"REVIEWER_PAUSE_LONG=0: {stripped}"
+            )
+
+
+def validate_root_script_no_self_recursion(script_path: Path, bundle_dir: Path, text: str) -> None:
+    rel = script_path.relative_to(bundle_dir).as_posix()
+    for line in logical_shell_lines(text):
+        if line_is_display_only_shell(line):
+            continue
+        for pattern in SCRIPT_SELF_CALL_PATTERNS:
+            match = pattern.search(line)
+            if match:
+                fail(
+                    f"{rel} appears to recursively invoke itself from the proof flow: {match.group(0)}"
+                )
+
+
 def validate_bundle_root_scripts(bundle_dir: Path, note_text: str) -> list[str]:
     script_paths = sorted(
         [
@@ -2468,6 +2636,9 @@ def validate_bundle_root_scripts(bundle_dir: Path, note_text: str) -> list[str]:
         validate_shell_syntax(script_path)
         validate_no_absolute_paths(text)
         validate_script_bundle_portability(script_path, bundle_dir, text)
+        validate_root_script_bundle_contract(script_path, bundle_dir, text)
+        validate_root_script_pause_contract(script_path, bundle_dir, text)
+        validate_root_script_no_self_recursion(script_path, bundle_dir, text)
         validate_recording_step_labels(script_path, text)
         validate_shell_success_oracles(script_path, text)
         if script_path.name not in note_text:
@@ -3171,6 +3342,7 @@ def main() -> None:
     if "CVSS 2.0" in combined_text:
         fail("CVSS 2.0 is not allowed; use CVSS 4.0 by default or CVSS 3.1 when required")
     validate_no_absolute_paths(combined_text)
+    validate_no_non_standalone_paths(combined_text, "report docx")
     validate_no_placeholder_text(combined_text, language, "report docx")
     validate_relative_attachment_refs(combined_text, bundle_dir)
     reviewer_addendum_text = validate_reviewer_evidence_addendum(bundle_dir, language)
@@ -3183,6 +3355,8 @@ def main() -> None:
     )
     validate_no_placeholder_text(note_text, language, "attachment note")
     validate_no_placeholder_text(supplement_text, language, "reproduction supplement")
+    validate_no_non_standalone_paths(note_text, "attachment note")
+    validate_no_non_standalone_paths(supplement_text, "reproduction supplement")
     root_scripts = validate_bundle_root_scripts(bundle_dir, note_text)
     if project_name:
         validate_material_identity(supplement_text, f"reproduction supplement {supplement_path.name}", project_name, title_tokens)
@@ -3239,8 +3413,20 @@ def main() -> None:
             *attachment_script_texts,
         ]
     )
+    reviewer_summary_text = "\n".join(
+        [
+            combined_text,
+            note_text,
+            supplement_text,
+            reviewer_addendum_text,
+            reviewer_index_text,
+            json.dumps(verification_evidence, ensure_ascii=False, sort_keys=True),
+        ]
+    )
+    validate_no_non_standalone_paths(reviewer_story_text, "reviewer-facing bundle material")
     validate_reviewer_story_gates(reviewer_story_text)
     validate_claim_oracle_consistency(reviewer_story_text)
+    validate_time_based_proof_drift(reviewer_summary_text)
     validate_poc_attacker_capability_boundary(
         "\n".join(
             [

@@ -167,6 +167,24 @@ default contract even when the user does not restate them:
   `.docx`, one finding-specific attachment index markdown, one finding-specific
   reproduction supplement markdown, `verification-evidence.json`, `attachments/`,
   and one reviewer-friendly bundle-root reproduction helper script.
+- Confirmed bundles must not embed submitter-local absolute paths, `file://`
+  URLs, parent workspace names, template paths, external checkout paths, or
+  package-root shortcuts such as `/pkg/index.js`; keep reviewer-facing paths
+  relative to the delivered bundle.
+- Bundle-root replay helpers must derive their root from the script path
+  (`SCRIPT_DIR`, `BUNDLE_ROOT`, or equivalent), mount/read only bundle-local
+  files, honor `REVIEWER_PAUSE_SHORT` and `REVIEWER_PAUSE_LONG`, and support
+  quick automation with `REVIEWER_PAUSE_SHORT=0 REVIEWER_PAUSE_LONG=0 ./run-*.sh quick docker`.
+- Bundle-root replay helpers must not recursively call themselves from the proof
+  path. They should invoke the underlying Docker or Docker Compose proof command
+  directly.
+- For time-based availability or performance proofs, exact timing values belong
+  in fresh logs. DOCX, Markdown, JSON, and evidence summaries should use
+  thresholds, ranges, order-of-magnitude wording, or references to the latest
+  log instead of stale exact seconds.
+- Public issue text must be sanitized: do not disclose unpublished package names,
+  vulnerability titles, bundle paths, attachment filenames, PoC commands,
+  payloads, or local filesystem paths.
 - Validate every final bundle before finishing. A bare `findings.json`, generic
   filenames such as `report.docx` or `attachments.md`, final `evidence/`
   directories, runtime state, source-control directories, dependency trees, or

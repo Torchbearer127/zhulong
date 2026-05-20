@@ -4028,6 +4028,135 @@ def main() -> None:
             "zh-CN",
         ], plugin_root, "depends on a parent path outside the confirmed bundle")
 
+        bad_pkg_dependency = copy_standard_bundle("pkg_index_dependency")
+        pkg_script = bad_pkg_dependency / "run-selftest-jwt-recording.sh"
+        pkg_script.write_text(
+            pkg_script.read_text(encoding="utf-8")
+            + "\nprintf '%s\\n' 'unsafe external checkout path /pkg/index.js /pkg/security-research-YYYYMMDD-HHMMSS'\n",
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_pkg_dependency),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "non-standalone path text")
+
+        bad_workspace_marker = copy_standard_bundle("workspace_marker_leak")
+        workspace_supplement = next(bad_workspace_marker.glob("*_补充复现说明.md"))
+        workspace_supplement.write_text(
+            workspace_supplement.read_text(encoding="utf-8")
+            + "\n错误示例：材料仍提到 oss-vulnerability-research 和 security-research-YYYYMMDD-HHMMSS。\n",
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_workspace_marker),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "non-standalone path text")
+
+        bad_pause_overwrite = copy_standard_bundle("quick_pause_overwrite")
+        pause_script = bad_pause_overwrite / "run-selftest-jwt-recording.sh"
+        pause_script.write_text(
+            pause_script.read_text(encoding="utf-8")
+            .replace('PAUSE_SHORT="${REVIEWER_PAUSE_SHORT:-1}"', "PAUSE_SHORT=0")
+            .replace('PAUSE_LONG="${REVIEWER_PAUSE_LONG:-2}"', "PAUSE_LONG=0"),
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_pause_overwrite),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "quick mode overwrites reviewer pause settings")
+
+        bad_hardcoded_pause = copy_standard_bundle("hardcoded_pause")
+        hardcoded_pause_script = bad_hardcoded_pause / "run-selftest-jwt-recording.sh"
+        hardcoded_pause_script.write_text(
+            hardcoded_pause_script.read_text(encoding="utf-8")
+            .replace('pause_step "$PAUSE_SHORT"', "pause_step 1", 1),
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_hardcoded_pause),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "fixed reviewer pause")
+
+        bad_recursive_replay = copy_standard_bundle("recursive_replay")
+        recursive_script = bad_recursive_replay / "run-selftest-jwt-recording.sh"
+        recursive_script.write_text(
+            recursive_script.read_text(encoding="utf-8")
+            + "\n./$(basename \"$0\") quick docker\n",
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_recursive_replay),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "recursively invoke itself")
+
+        bad_exec_recursive_replay = copy_standard_bundle("exec_recursive_replay")
+        exec_recursive_script = bad_exec_recursive_replay / "run-selftest-jwt-recording.sh"
+        exec_recursive_script.write_text(
+            exec_recursive_script.read_text(encoding="utf-8")
+            + "\nexec \"$0\" quick docker\n",
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_exec_recursive_replay),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "recursively invoke itself")
+
+        bad_time_exact = copy_standard_bundle("stale_exact_timing_summary")
+        time_supplement = next(bad_time_exact.glob("*_补充复现说明.md"))
+        time_supplement.write_text(
+            time_supplement.read_text(encoding="utf-8")
+            + "\n补充：可用性 proof 的稳定结论是触发耗时 1.37 seconds。\n",
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_time_exact),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "stale exact timings")
+
+        good_time_range = copy_standard_bundle("time_range_summary")
+        time_range_supplement = next(good_time_range.glob("*_补充复现说明.md"))
+        time_range_supplement.write_text(
+            time_range_supplement.read_text(encoding="utf-8")
+            + "\n补充：可用性 proof 使用至少 1 秒阈值描述，并要求审核者查看最新日志中的精确数值。\n",
+            encoding="utf-8",
+        )
+        run([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(good_time_range),
+            "--language",
+            "zh-CN",
+        ], plugin_root)
+
         good_nested_parent_path = copy_standard_bundle("nested_parent_path_inside_bundle")
         nested_script = good_nested_parent_path / "attachments/nested/inside-bundle.sh"
         nested_script.parent.mkdir(parents=True, exist_ok=True)
@@ -4437,6 +4566,14 @@ def main() -> None:
             good_strong_boundary,
             bad_en_missing_real_world,
             bad_bundle_escape,
+            bad_pkg_dependency,
+            bad_workspace_marker,
+            bad_pause_overwrite,
+            bad_hardcoded_pause,
+            bad_recursive_replay,
+            bad_exec_recursive_replay,
+            bad_time_exact,
+            good_time_range,
             good_nested_parent_path,
             npm_warning_bundle,
             poc_label_warning_bundle,
@@ -4568,12 +4705,13 @@ def main() -> None:
             "zh-CN",
         ], cwd=plugin_root, capture_output=True, text=True)
         nested_output = (nested_proc.stdout or "") + (nested_proc.stderr or "")
-        if nested_proc.returncode != 0:
-            raise SystemExit(f"FAILED: nested attachment warning fixture should still validate\n{nested_output}")
-        if "WARN: nested workspace attachment paths detected" not in nested_output:
-            raise SystemExit("FAILED: validator did not warn about nested workspace attachment paths")
-        if "WARN: duplicate attachment basenames detected" not in nested_output:
-            raise SystemExit("FAILED: validator did not warn about duplicate attachment basenames")
+        if nested_proc.returncode == 0:
+            raise SystemExit("FAILED: nested timestamped workspace attachment fixture unexpectedly validated")
+        if "non-standalone path text" not in nested_output:
+            raise SystemExit(
+                "FAILED: nested timestamped workspace attachment fixture did not fail on the new path-redaction gate\n"
+                + nested_output
+            )
         shutil.rmtree(bad_runtime_scope)
         shutil.rmtree(nested_warning_bundle)
         events_before_bundle_validation = [

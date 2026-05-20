@@ -1148,7 +1148,7 @@ def build_generated_recording_shell(
         color_var = palette_vars[(idx - 1) % len(palette_vars)]
         label = f"{strings['evidence_hint']} {idx}"
         script_lines.append(f"    focus_line \"{color_var}\" {shell_quote(' ' + label + ' ')} {shell_quote(' ' + line + ' ')}")
-        script_lines.append("    pause_step 1")
+        script_lines.append("    pause_step \"$PAUSE_SHORT\"")
     script_lines.extend([
         f"    printf '%s%s%s%s\\n' \"$C_GREEN\" \"$C_BOLD\" {shell_quote(strings['evidence_summary_result'])} \"$C_RESET\"",
         "    printf '%s%s====================================================%s\\n' \"$C_GREEN\" \"$C_BOLD\" \"$C_RESET\"",
@@ -1209,8 +1209,8 @@ def build_generated_recording_shell(
         profile = generated_mode_profile(mode, language)
         script_lines.append(f"        {mode})")
         if mode.startswith("quick"):
-            script_lines.append("            PAUSE_SHORT=1")
-            script_lines.append("            PAUSE_LONG=2")
+            script_lines.append("            PAUSE_SHORT=\"${REVIEWER_PAUSE_SHORT:-1}\"")
+            script_lines.append("            PAUSE_LONG=\"${REVIEWER_PAUSE_LONG:-2}\"")
         script_lines.append(f"            print_banner {shell_quote(strings['banner'])}")
         script_lines.append(f"            printf '%s %s\\n' {shell_quote(strings['mode'])} \"$MODE\"")
         script_lines.append(f"            printf '%s docker\\n' {shell_quote(strings['runtime'])}")
