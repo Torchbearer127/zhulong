@@ -56,6 +56,46 @@ ROOT_SCRIPT_LOCATOR_PATTERN = re.compile(
     r"\b(?:SCRIPT_DIR|BUNDLE_ROOT|BUNDLE_DIR)\b|"
     r"\b[A-Za-z_][A-Za-z0-9_]*=.*(?:dirname\s+--?\s+\"\$0\"|dirname\s+\"\$0\"|\$\{BASH_SOURCE\[0\]\})"
 )
+ROOT_SCRIPT_TARGET_SOFTWARE_PATTERN = re.compile(
+    r"(?:目标软件|软件名称|Target\s+(?:Software|Product)|Software\s+Name|Product\s+Name|Package\s+Name)",
+    re.IGNORECASE,
+)
+ROOT_SCRIPT_TARGET_VERSION_PATTERN = re.compile(
+    r"(?:版本号|目标版本|影响版本|Target\s+Version|Affected\s+Version|Tested\s+Version|Package\s+Version|Version)",
+    re.IGNORECASE,
+)
+ROOT_SCRIPT_TARGET_HIGHLIGHT_PATTERN = re.compile(
+    r"(?:C_WHITE_ON_|C_BLACK_ON_|C_BOLD|focus_line|highlight_note|highlight_success|print_target_identity)"
+)
+ROOT_SCRIPT_TARGET_IDENTITY_CALL_PATTERN = re.compile(r"^\s*print_target_identity\s*(?:$|[;&])", re.MULTILINE)
+SHELL_FUNCTION_DEFINITION_PATTERNS = [
+    re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(\)\s*\{"),
+    re.compile(r"^\s*function\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:\(\))?\s*\{"),
+]
+LOCAL_HELPER_CALL_NAME_PATTERN = re.compile(
+    r"^(?:run|do|verify|assert|execute|replay|proof|show|print|require|wait|highlight|focus|announce|check|cleanup)_[A-Za-z0-9_]*$"
+)
+SHELL_COMMAND_ALLOWLIST = {
+    "if", "then", "else", "elif", "fi", "for", "while", "until", "case", "esac", "do", "done",
+    "return", "exit", "local", "readonly", "export", "source", ".", "eval", "exec", "set", "shift",
+    "trap", "test", "[", "[[", "{", "}", "break", "continue", "true", "false", "command", "builtin",
+    "type", "hash", "alias", "unalias", "printf", "echo", "cat", "grep", "egrep", "fgrep", "sed",
+    "awk", "jq", "curl", "python", "python3", "node", "npm", "npx", "yarn", "pnpm", "php", "ruby",
+    "bash", "sh", "zsh", "dash", "docker", "timeout", "sleep", "mkdir", "rm", "rmdir", "cp", "mv",
+    "chmod", "chown", "find", "xargs", "tee", "sort", "head", "tail", "wc", "cut", "tr", "date",
+    "id", "uname", "dirname", "basename", "cd", "pwd", "nl", "env", "printenv", "read", "kill",
+    "tar", "gzip", "gunzip", "openssl", "mktemp", "touch",
+}
+SHELL_COMMAND_PREFIX_WORDS = {"if", "then", "elif", "while", "until", "do", "!", "time", "command", "builtin", "env"}
+SHELL_ASSIGNMENT_PREFIX_PATTERN = re.compile(
+    r"^(?:[A-Za-z_][A-Za-z0-9_]*=(?:'[^']*'|\"[^\"]*\"|\\\S|\S)+\s+)+"
+)
+SHELL_SIMPLE_COMMAND_PATTERN = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*|\[\[?|\.)\b")
+SHELL_COMMAND_SUBSTITUTION_PATTERN = re.compile(r"\$\(\s*([A-Za-z_][A-Za-z0-9_]*)\b")
+ROOT_SCRIPT_PROOF_STEP_PREFIXES = (
+    "show_", "announce_", "require_", "verify_", "assert_", "execute_", "replay_", "proof_", "run_",
+)
+ROOT_SCRIPT_PROOF_STEP_COMMANDS = {"docker", "curl", "python", "python3", "node", "bash", "sh", "jq", "grep"}
 QUICK_MODE_CASE_PATTERN = re.compile(r"^\s*(?:quick[^\s)]*|\*\|quick)\)\s*$")
 FIXED_PAUSE_ASSIGNMENT_PATTERN = re.compile(r"^\s*PAUSE_(?:SHORT|LONG)\s*=\s*['\"]?[0-9]+(?:\.[0-9]+)?['\"]?\s*(?:#.*)?$")
 FIXED_SLEEP_PATTERN = re.compile(r"(?<![A-Za-z0-9_-])sleep\s+['\"]?[0-9]+(?:\.[0-9]+)?['\"]?(?:\s|;|$)")
@@ -2447,6 +2487,154 @@ def logical_shell_lines(text: str) -> list[str]:
     return logical
 
 
+def shell_code_lines(text: str) -> list[str]:
+    lines: list[str] = []
+    heredoc_delimiter = ""
+    for raw in text.splitlines():
+        stripped = raw.strip()
+        if heredoc_delimiter:
+            if stripped == heredoc_delimiter:
+                heredoc_delimiter = ""
+            continue
+        lines.append(raw)
+        match = re.search(r"<<-?\s*['\"]?([A-Za-z_][A-Za-z0-9_]*)['\"]?", raw)
+        if match:
+            heredoc_delimiter = match.group(1)
+    return lines
+
+
+def collect_shell_function_definitions(text: str) -> set[str]:
+    functions: set[str] = set()
+    for line in shell_code_lines(text):
+        for pattern in SHELL_FUNCTION_DEFINITION_PATTERNS:
+            match = pattern.match(line)
+            if match:
+                functions.add(match.group(1))
+                break
+    return functions
+
+
+def strip_shell_inline_comment(line: str) -> str:
+    in_single = False
+    in_double = False
+    escaped = False
+    for index, char in enumerate(line):
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\":
+            escaped = True
+            continue
+        if char == "'" and not in_double:
+            in_single = not in_single
+            continue
+        if char == '"' and not in_single:
+            in_double = not in_double
+            continue
+        if char == "#" and not in_single and not in_double:
+            return line[:index]
+    return line
+
+
+def function_definition_remainder(line: str) -> str:
+    for pattern in SHELL_FUNCTION_DEFINITION_PATTERNS:
+        match = pattern.match(line)
+        if match:
+            return line[match.end():].strip()
+    return line
+
+
+def shell_command_name_from_segment(segment: str) -> str:
+    text = segment.strip()
+    if not text:
+        return ""
+    if text.startswith("("):
+        text = text[1:].lstrip()
+    while True:
+        changed = False
+        for word in SHELL_COMMAND_PREFIX_WORDS:
+            if text == word or text.startswith(f"{word} "):
+                text = text[len(word):].lstrip()
+                changed = True
+                break
+        if changed:
+            continue
+        assignment_match = SHELL_ASSIGNMENT_PREFIX_PATTERN.match(text)
+        if assignment_match:
+            text = text[assignment_match.end():].lstrip()
+            continue
+        break
+    match = SHELL_SIMPLE_COMMAND_PATTERN.match(text)
+    return match.group(1) if match else ""
+
+
+def shell_command_names_from_line(line: str) -> list[str]:
+    stripped = strip_shell_inline_comment(line).strip()
+    if not stripped or stripped.startswith("#"):
+        return []
+    stripped = function_definition_remainder(stripped)
+    if not stripped:
+        return []
+    if stripped in {"}", ";;"} or stripped.endswith(")") and not stripped.startswith(("(", "$(")):
+        return []
+    commands: list[str] = []
+    for segment in re.split(r"\s*(?:&&|\|\||[;|])\s*", stripped):
+        name = shell_command_name_from_segment(segment)
+        if name:
+            commands.append(name)
+    commands.extend(match.group(1) for match in SHELL_COMMAND_SUBSTITUTION_PATTERN.finditer(stripped))
+    return commands
+
+
+def is_likely_local_helper_command(name: str) -> bool:
+    if not name or name in SHELL_COMMAND_ALLOWLIST:
+        return False
+    return bool(LOCAL_HELPER_CALL_NAME_PATTERN.match(name))
+
+
+def is_root_script_proof_step_command(name: str) -> bool:
+    return name in ROOT_SCRIPT_PROOF_STEP_COMMANDS or name.startswith(ROOT_SCRIPT_PROOF_STEP_PREFIXES)
+
+
+def extract_shell_function_body(text: str, function_name: str) -> list[str]:
+    body: list[str] = []
+    collecting = False
+    for line in shell_code_lines(text):
+        if not collecting:
+            for pattern in SHELL_FUNCTION_DEFINITION_PATTERNS:
+                match = pattern.match(line)
+                if match and match.group(1) == function_name:
+                    collecting = True
+                    remainder = line[match.end():].strip()
+                    if remainder:
+                        body.append(remainder)
+                    break
+            continue
+        if line.strip() == "}":
+            break
+        body.append(line)
+    return body
+
+
+def validate_root_script_helper_closure(script_path: Path, bundle_dir: Path, text: str) -> None:
+    rel = script_path.relative_to(bundle_dir).as_posix()
+    defined_helpers = collect_shell_function_definitions(text)
+    missing: list[str] = []
+    for line in shell_code_lines(text):
+        for name in shell_command_names_from_line(line):
+            if not is_likely_local_helper_command(name):
+                continue
+            if name in defined_helpers:
+                continue
+            if name not in missing:
+                missing.append(name)
+    if missing:
+        fail(
+            f"{rel} calls local helper(s) that are not defined in the same root script: "
+            f"{', '.join(sorted(missing))}. Bundle-root replay scripts must be helper-closed."
+        )
+
+
 def line_softens_success_oracle_failure(line: str) -> bool:
     if not SHELL_FAIL_OPEN_ORACLE_COMMAND_PATTERN.search(line):
         return False
@@ -2582,6 +2770,46 @@ def validate_root_script_bundle_contract(script_path: Path, bundle_dir: Path, te
         )
 
 
+def validate_root_script_target_identity(script_path: Path, bundle_dir: Path, text: str) -> None:
+    rel = script_path.relative_to(bundle_dir).as_posix()
+    if not ROOT_SCRIPT_TARGET_SOFTWARE_PATTERN.search(text):
+        fail(
+            f"{rel} must print a highlighted target software/package name at the beginning of reviewer replay"
+        )
+    if not ROOT_SCRIPT_TARGET_VERSION_PATTERN.search(text):
+        fail(
+            f"{rel} must print a highlighted target software/package version at the beginning of reviewer replay"
+        )
+    if not ROOT_SCRIPT_TARGET_HIGHLIGHT_PATTERN.search(text):
+        fail(
+            f"{rel} must highlight the target software/package name and version in reviewer replay output"
+        )
+    if not ROOT_SCRIPT_TARGET_IDENTITY_CALL_PATTERN.search(text):
+        fail(
+            f"{rel} must call print_target_identity before proof steps so the target software/package "
+            "name and version are shown at replay start"
+        )
+    flow_lines = extract_shell_function_body(text, "run_flow") or extract_shell_function_body(text, "main")
+    if flow_lines:
+        saw_identity_call = False
+        for line in flow_lines:
+            for name in shell_command_names_from_line(line):
+                if name == "print_target_identity":
+                    saw_identity_call = True
+                    continue
+                if saw_identity_call:
+                    continue
+                if is_root_script_proof_step_command(name):
+                    fail(
+                        f"{rel} must emit print_target_identity before proof steps in the replay flow; "
+                        f"found {name} first"
+                    )
+        if not saw_identity_call:
+            fail(
+                f"{rel} must call print_target_identity from the replay flow before proof steps"
+            )
+
+
 def validate_root_script_pause_contract(script_path: Path, bundle_dir: Path, text: str) -> None:
     rel = script_path.relative_to(bundle_dir).as_posix()
     if ("REVIEWER_PAUSE_SHORT" not in text) or ("REVIEWER_PAUSE_LONG" not in text):
@@ -2637,6 +2865,8 @@ def validate_bundle_root_scripts(bundle_dir: Path, note_text: str) -> list[str]:
         validate_no_absolute_paths(text)
         validate_script_bundle_portability(script_path, bundle_dir, text)
         validate_root_script_bundle_contract(script_path, bundle_dir, text)
+        validate_root_script_target_identity(script_path, bundle_dir, text)
+        validate_root_script_helper_closure(script_path, bundle_dir, text)
         validate_root_script_pause_contract(script_path, bundle_dir, text)
         validate_root_script_no_self_recursion(script_path, bundle_dir, text)
         validate_recording_step_labels(script_path, text)

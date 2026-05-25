@@ -3413,6 +3413,12 @@ def main() -> None:
             "--language",
             "en-US",
         ], plugin_root)
+        en_scripts = sorted(en_bundle.glob("run-*.sh"))
+        if en_scripts:
+            en_script_text = en_scripts[0].read_text(encoding="utf-8")
+            for expected in ("print_target_identity", "Target Software", "Target Version"):
+                if expected not in en_script_text:
+                    raise SystemExit(f"FAILED: generated en-US recording script is missing target identity marker: {expected}")
         standard_script = standard_bundle / "run-selftest-jwt-recording.sh"
         standard_script_text = standard_script.read_text(encoding="utf-8")
         if "announce_step '代码'" not in standard_script_text or re.search(
@@ -3420,6 +3426,9 @@ def main() -> None:
             standard_script_text,
         ):
             raise SystemExit("FAILED: generated zh-CN recording script must use [代码], not 0/N, for code hints")
+        for expected in ("print_target_identity", "目标软件", "版本号", "gothinkster/node-express-realworld-example-app", "default configuration"):
+            if expected not in standard_script_text:
+                raise SystemExit(f"FAILED: generated recording script is missing target identity marker: {expected}")
 
         def copy_standard_bundle(suffix: str) -> Path:
             copied = standard_bundle.parent / f"{standard_bundle.name}_{suffix}"
@@ -4060,6 +4069,73 @@ def main() -> None:
             "zh-CN",
         ], plugin_root, "non-standalone path text")
 
+        bad_missing_target_identity = copy_standard_bundle("missing_target_identity")
+        missing_target_script = bad_missing_target_identity / "run-selftest-jwt-recording.sh"
+        missing_target_script.write_text(
+            missing_target_script.read_text(encoding="utf-8")
+            .replace("print_target_identity() {", "print_identity_removed() {")
+            .replace("    print_target_identity\n    pause_step \"$PAUSE_SHORT\"\n", ""),
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_missing_target_identity),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "target software/package")
+
+        bad_late_target_identity = copy_standard_bundle("late_target_identity")
+        late_target_script = bad_late_target_identity / "run-selftest-jwt-recording.sh"
+        late_target_script.write_text(
+            late_target_script.read_text(encoding="utf-8")
+            .replace("    print_target_identity\n", "", 1)
+            .replace("    show_code_hint\n", "    show_code_hint\n    print_target_identity\n", 1),
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_late_target_identity),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "before proof steps")
+
+        bad_undefined_root_helper = copy_standard_bundle("undefined_root_helper")
+        undefined_helper_script = bad_undefined_root_helper / "run-selftest-jwt-recording.sh"
+        undefined_helper_script.write_text(
+            undefined_helper_script.read_text(encoding="utf-8")
+            .replace("    show_code_hint\n", "    run_docker_poc\n    show_code_hint\n", 1),
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_undefined_root_helper),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "not defined in the same root script")
+
+        good_helper_closed = copy_standard_bundle("helper_closed")
+        helper_closed_script = good_helper_closed / "run-selftest-jwt-recording.sh"
+        helper_closed_script.write_text(
+            helper_closed_script.read_text(encoding="utf-8")
+            + "\nverify_closed_helper() {\n    return 0\n}\n\nrun_closed_helper() {\n    verify_closed_helper\n}\n\nrun_closed_helper\n",
+            encoding="utf-8",
+        )
+        run([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(good_helper_closed),
+            "--language",
+            "zh-CN",
+        ], plugin_root)
+        shutil.rmtree(good_helper_closed)
+
         bad_pause_overwrite = copy_standard_bundle("quick_pause_overwrite")
         pause_script = bad_pause_overwrite / "run-selftest-jwt-recording.sh"
         pause_script.write_text(
@@ -4568,6 +4644,9 @@ def main() -> None:
             bad_bundle_escape,
             bad_pkg_dependency,
             bad_workspace_marker,
+            bad_missing_target_identity,
+            bad_late_target_identity,
+            bad_undefined_root_helper,
             bad_pause_overwrite,
             bad_hardcoded_pause,
             bad_recursive_replay,

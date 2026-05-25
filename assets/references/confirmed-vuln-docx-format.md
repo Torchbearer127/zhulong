@@ -219,8 +219,11 @@ For confirmed vulnerabilities, include one bundle-root reproduction helper scrip
 The helper must be executable, pass a static shell syntax check, and use only Docker/Docker Compose reproduction paths.
 It must derive `SCRIPT_DIR` and `ATTACH_DIR="$SCRIPT_DIR/attachments"` from the script location, then either start the reproduction environment from bundle-local attachments or fail early with a clear command such as `docker compose -f "$ATTACH_DIR/docker-compose.zhulong.yml" up -d`.
 The helper must be standalone-copy friendly: Docker mounts, file reads, PoC commands, and evidence paths stay under the delivered bundle after the folder is copied to a clean temporary directory.
+At the beginning of replay, before proof steps, the helper must print a highlighted target identity card containing the target software/package name and the tested or affected version.
+Bundle-root helpers must be helper-closed: helper-like calls such as `run_*`, `verify_*`, `assert_*`, `show_*`, `print_*`, or `require_*` must be defined in the same script unless they are normal shell/system commands.
 If the helper includes reviewer pauses, it must honor `REVIEWER_PAUSE_SHORT` and `REVIEWER_PAUSE_LONG`; reviewer automation should be able to run `REVIEWER_PAUSE_SHORT=0 REVIEWER_PAUSE_LONG=0 ./run-*.sh quick docker` without fixed sleeps.
 The helper must not recursively invoke itself from the proof path; call the underlying Docker/Docker Compose proof command directly.
+If a PoC uses a non-zero exit code as its expected "vulnerability confirmed" result, the root helper must normalize that expected result into script-level success evidence before printing final confirmation.
 For time-based availability or performance proofs, store exact timings in fresh logs and use thresholds, ranges, order-of-magnitude wording, or latest-log references in reviewer-facing DOCX/Markdown/JSON summaries.
 If it calls `docker exec`, check the target container first and print a diagnostic when it is missing.
 Avoid naked `2>/dev/null` on critical Docker, curl, or token-generation commands; capture and print errors with context.

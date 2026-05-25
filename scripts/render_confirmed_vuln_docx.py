@@ -852,6 +852,27 @@ def generator_modes_for_artifact(item: dict[str, Any]) -> list[str]:
     return modes or ["record", "quick"]
 
 
+def localized_target_version_for_script(finding: dict[str, Any], language: str) -> str:
+    impact = ensure_mapping(finding.get("impact"))
+    candidates = [
+        finding.get("version_affected"),
+        finding.get("affected_version"),
+        localized_string(finding, "affected_versions", language),
+        localized_string(impact, "affected_versions", language),
+        impact.get("version"),
+        finding.get("version"),
+    ]
+    for value in candidates:
+        text = str(value or "").strip()
+        if text:
+            return text
+    return (
+        "not specified in source finding; see report Affected Versions"
+        if language == "en-US"
+        else "源 finding 未指定；请查看报告影响版本"
+    )
+
+
 def generated_mode_profile(mode: str, language: str) -> dict[str, str]:
     profiles = {
         "zh-CN": {
@@ -906,6 +927,7 @@ def build_generated_recording_shell(
     finding: dict[str, Any], language: str, path_map: dict[str, str], artifact: dict[str, Any]
 ) -> str:
     project_name = str(finding.get("project_name", "target-project")).strip() or "target-project"
+    target_version = localized_target_version_for_script(finding, language)
     vuln_type = localized_vuln_type(finding, language)
     title = build_title(finding, language)
     raw_steps = finding.get("reproduction")
@@ -952,6 +974,8 @@ def build_generated_recording_shell(
             "container_missing": "必需的 Docker 容器未运行：",
             "compose_prereq": "请先启动 bundle-local 复现环境：",
             "compose_missing": "未在 attachments/ 下找到 bundle-local Compose 文件。请先启动补充说明中记录的 Docker 环境。",
+            "target_software_label": "目标软件",
+            "target_version_label": "版本号",
         },
         "en-US": {
             "banner": f"{project_name} {vuln_type} recording helper",
@@ -983,6 +1007,8 @@ def build_generated_recording_shell(
             "container_missing": "Required Docker container is not running:",
             "compose_prereq": "Start the bundle-local environment first:",
             "compose_missing": "No bundle-local Compose file was found under attachments/. Start the documented Docker environment first.",
+            "target_software_label": "Target Software",
+            "target_version_label": "Target Version",
         },
     }[language]
 
@@ -1083,6 +1109,11 @@ def build_generated_recording_shell(
         "    printf '%s%s%s\\n' \"$C_CYAN\" \"$1\" \"$C_RESET\"",
         "}",
         "",
+        "print_target_identity() {",
+        f"    focus_line \"$C_WHITE_ON_BLUE\" {shell_quote(' ' + strings['target_software_label'] + ' ')} {shell_quote(' ' + project_name + ' ')}",
+        f"    focus_line \"$C_BLACK_ON_YELLOW\" {shell_quote(' ' + strings['target_version_label'] + ' ')} {shell_quote(' ' + target_version + ' ')}",
+        "}",
+        "",
         "docker_ready() {",
         "    docker info >/dev/null 2>&1",
         "}",
@@ -1155,6 +1186,8 @@ def build_generated_recording_shell(
         "}",
         "",
         "run_flow() {",
+        "    print_target_identity",
+        "    pause_step \"$PAUSE_SHORT\"",
         "    show_code_hint",
     ])
     for container in required_containers:
