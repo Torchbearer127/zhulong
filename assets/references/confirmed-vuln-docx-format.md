@@ -220,6 +220,8 @@ The helper must be executable, pass a static shell syntax check, and use only Do
 It must derive `SCRIPT_DIR` and `ATTACH_DIR="$SCRIPT_DIR/attachments"` from the script location, then either start the reproduction environment from bundle-local attachments or fail early with a clear command such as `docker compose -f "$ATTACH_DIR/docker-compose.zhulong.yml" up -d`.
 The helper must be standalone-copy friendly: Docker mounts, file reads, PoC commands, and evidence paths stay under the delivered bundle after the folder is copied to a clean temporary directory.
 At the beginning of replay, before proof steps, the helper must print a highlighted target identity card containing the target software/package name and the tested or affected version.
+The helper is a reviewer-facing recording artifact: it must print concrete commands before execution, keep overrideable pauses, and end with a concise evidence summary/conclusion block.
+The helper must capture raw command stdout/stderr to at least one bundle-local `.log` file under `attachments/evidence/`, and that `.log` must be listed in `verification-evidence.json` or `attachments/reviewer-evidence-index.json`.
 Bundle-root helpers must be helper-closed: helper-like calls such as `run_*`, `verify_*`, `assert_*`, `show_*`, `print_*`, or `require_*` must be defined in the same script unless they are normal shell/system commands.
 If the helper includes reviewer pauses, it must honor `REVIEWER_PAUSE_SHORT` and `REVIEWER_PAUSE_LONG`; reviewer automation should be able to run `REVIEWER_PAUSE_SHORT=0 REVIEWER_PAUSE_LONG=0 ./run-*.sh quick docker` without fixed sleeps.
 The helper must not recursively invoke itself from the proof path; call the underlying Docker/Docker Compose proof command directly.
@@ -228,7 +230,7 @@ For time-based availability or performance proofs, store exact timings in fresh 
 If it calls `docker exec`, check the target container first and print a diagnostic when it is missing.
 Avoid naked `2>/dev/null` on critical Docker, curl, or token-generation commands; capture and print errors with context.
 Do not rely on pre-existing database state such as `ApiToken.objects.first()` unless the helper explicitly creates or validates that state.
-Every final confirmation banner must be guarded by a fail-closed success oracle: `grep`, `jq`, HTTP status checks, JSON field checks, or equivalent assertions must `exit 1` on failure before printing `VULNERABILITY CONFIRMED`, `ATTACK SUCCESS`, `漏洞已确认`, or `攻击成功`.
+Every final confirmation banner must be guarded by a programmatic, fail-closed success-marker check: `grep -q`, `grep -Fq`, `jq -e`, HTTP status checks, JSON field checks, or equivalent assertions must `exit 1` on failure before printing `VULNERABILITY CONFIRMED`, `ATTACK SUCCESS`, `漏洞已确认`, or `攻击成功`.
 Docker Compose files shipped under `attachments/` must be self-consistent: relative `env_file` entries and relative bind-mount sources must exist relative to the Compose file, named volumes are allowed, and absolute host paths are not allowed in final bundles.
 
 ## Verification Evidence JSON

@@ -3426,9 +3426,30 @@ def main() -> None:
             standard_script_text,
         ):
             raise SystemExit("FAILED: generated zh-CN recording script must use [代码], not 0/N, for code hints")
-        for expected in ("print_target_identity", "目标软件", "版本号", "gothinkster/node-express-realworld-example-app", "default configuration"):
+        for expected in (
+            "print_target_identity",
+            "目标软件",
+            "版本号",
+            "gothinkster/node-express-realworld-example-app",
+            "default configuration",
+            "REPLAY_LOG",
+            "replay-output.log",
+            "run_logged_command",
+            "verify_success_marker",
+            "SUCCESS_MARKER",
+            "> \"$command_output\" 2>&1",
+            "cat \"$command_output\" >> \"$REPLAY_LOG\"",
+            "grep -Fq -- \"$marker\" \"$REPLAY_LOG\"",
+            "show_evidence_summary",
+            "漏洞已确认",
+        ):
             if expected not in standard_script_text:
                 raise SystemExit(f"FAILED: generated recording script is missing target identity marker: {expected}")
+        standard_evidence = json.loads((standard_bundle / "verification-evidence.json").read_text(encoding="utf-8"))
+        if "attachments/evidence/replay-output.log" not in standard_evidence.get("evidence_files", []):
+            raise SystemExit("FAILED: generated verification evidence must register replay-output.log")
+        if not (standard_bundle / "attachments/evidence/replay-output.log").exists():
+            raise SystemExit("FAILED: generated confirmed bundle must include replay-output.log placeholder")
 
         def copy_standard_bundle(suffix: str) -> Path:
             copied = standard_bundle.parent / f"{standard_bundle.name}_{suffix}"
@@ -4136,6 +4157,96 @@ def main() -> None:
         ], plugin_root)
         shutil.rmtree(good_helper_closed)
 
+        bad_missing_replay_log = copy_standard_bundle("missing_replay_log")
+        missing_log_script = bad_missing_replay_log / "run-selftest-jwt-recording.sh"
+        missing_log_script.write_text(
+            missing_log_script.read_text(encoding="utf-8")
+            .replace('REPLAY_LOG="$EVIDENCE_DIR/replay-output.log"', 'REPLAY_TEXT="$EVIDENCE_DIR/replay-output.txt"')
+            .replace('> "$REPLAY_LOG"', '> "$REPLAY_TEXT"')
+            .replace('>> "$REPLAY_LOG"', '>> "$REPLAY_TEXT"'),
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_missing_replay_log),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "bundle-local .log replay evidence")
+
+        bad_unregistered_replay_log = copy_standard_bundle("unregistered_replay_log")
+        unregistered_evidence_path = bad_unregistered_replay_log / "verification-evidence.json"
+        unregistered_data = json.loads(unregistered_evidence_path.read_text(encoding="utf-8"))
+        unregistered_data["evidence_files"] = [
+            item for item in unregistered_data.get("evidence_files", [])
+            if item != "attachments/evidence/replay-output.log"
+        ]
+        unregistered_evidence_path.write_text(
+            json.dumps(unregistered_data, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_unregistered_replay_log),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "must be registered")
+
+        bad_final_without_marker_check = copy_standard_bundle("final_without_marker_check")
+        final_without_marker_script = bad_final_without_marker_check / "run-selftest-jwt-recording.sh"
+        final_without_marker_script.write_text(
+            final_without_marker_script.read_text(encoding="utf-8")
+            .replace("    verify_success_marker \"$SUCCESS_MARKER\"\n", ""),
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_final_without_marker_check),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "programmatic success-marker check")
+
+        bad_explanatory_marker_text = copy_standard_bundle("explanatory_marker_text")
+        explanatory_marker_script = bad_explanatory_marker_text / "run-selftest-jwt-recording.sh"
+        explanatory_marker_script.write_text(
+            explanatory_marker_script.read_text(encoding="utf-8")
+            .replace(
+                "    verify_success_marker \"$SUCCESS_MARKER\"\n",
+                "    printf '%s\\n' 'if output contains the success marker then the vulnerability is confirmed'\n",
+            ),
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_explanatory_marker_text),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "programmatic success-marker check")
+
+        bad_log_without_raw_output = copy_standard_bundle("replay_log_without_raw_output")
+        log_without_raw_script = bad_log_without_raw_output / "run-selftest-jwt-recording.sh"
+        log_without_raw_script.write_text(
+            log_without_raw_script.read_text(encoding="utf-8")
+            .replace(' > "$command_output" 2>&1', ' >/dev/null 2>/dev/null')
+            .replace('        cat "$command_output" >> "$REPLAY_LOG"\n', ''),
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_log_without_raw_output),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "raw command stdout/stderr")
+
         bad_pause_overwrite = copy_standard_bundle("quick_pause_overwrite")
         pause_script = bad_pause_overwrite / "run-selftest-jwt-recording.sh"
         pause_script.write_text(
@@ -4647,6 +4758,11 @@ def main() -> None:
             bad_missing_target_identity,
             bad_late_target_identity,
             bad_undefined_root_helper,
+            bad_missing_replay_log,
+            bad_unregistered_replay_log,
+            bad_final_without_marker_check,
+            bad_explanatory_marker_text,
+            bad_log_without_raw_output,
             bad_pause_overwrite,
             bad_hardcoded_pause,
             bad_recursive_replay,

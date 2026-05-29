@@ -175,6 +175,10 @@ default contract even when the user does not restate them:
   (`SCRIPT_DIR`, `BUNDLE_ROOT`, or equivalent), mount/read only bundle-local
   files, honor `REVIEWER_PAUSE_SHORT` and `REVIEWER_PAUSE_LONG`, and support
   quick automation with `REVIEWER_PAUSE_SHORT=0 REVIEWER_PAUSE_LONG=0 ./run-*.sh quick docker`.
+- Bundle-root replay helpers are reviewer-facing recording artifacts: they must
+  print concrete commands before execution, capture raw stdout/stderr into a
+  bundle-local `attachments/evidence/*.log`, and check a deterministic success
+  marker programmatically before final confirmation.
 - Bundle-root replay helpers must be helper-closed: helper-like calls such as
   `run_*`, `verify_*`, `assert_*`, `show_*`, `print_*`, or `require_*` must be
   defined in the same script unless they are normal shell/system commands.
@@ -532,6 +536,7 @@ When the `Documents` skill is used on a confirmed-vulnerability report:
 Each confirmed vulnerability bundle should also include one bundle-root reproduction helper shell script for macOS and Linux, such as `run-<slug>-recording.sh`, that reproduces the shortest confirmed Docker case with one command.
 That script should keep human-readable text aligned with the selected output language, include visible step markers, pause briefly at key checkpoints, and use ANSI color highlighting for dangerous lines or success evidence when stdout is interactive.
 At the beginning of replay, before proof steps, it must print a highlighted target identity card that names the target software/package and the tested or affected version.
+It must print each concrete command before execution, capture raw command stdout/stderr to a bundle-local `.log` file under `attachments/evidence/`, and list that `.log` in `verification-evidence.json` or `attachments/reviewer-evidence-index.json`.
 It must derive `SCRIPT_DIR` from the script path, derive `ATTACH_DIR="$SCRIPT_DIR/attachments"`, and either self-bootstrap from bundle-local attachments or fail early with the exact bundle-local command the reviewer must run first.
 Every helper-like function called by the proof flow must be defined in the same root script; do not call a missing local `run_*`, `verify_*`, `show_*`, `print_*`, or `require_*` helper.
 Do not make root scripts or attachment scripts climb back to the submitter's
@@ -544,7 +549,7 @@ documents why network install is unavoidable.
 Before any `docker exec`, it should check that the target container exists and is running; before exploit traffic, it should run practical health/readiness checks.
 Do not hide critical command errors with naked `2>/dev/null`; capture stderr/stdout and print enough context to diagnose failures.
 Do not depend on pre-existing database state such as a first API token unless the helper explicitly creates or checks that state.
-Success oracles must fail closed: a missing `grep`/`jq`/`curl`/Docker-log oracle must `exit 1` before any final `VULNERABILITY CONFIRMED`, `ATTACK SUCCESS`, `漏洞已确认`, or `攻击成功` banner can print.
+Success oracles must fail closed: a missing `grep -q`/`grep -Fq`/`jq -e`/HTTP-status/Docker-log marker must `exit 1` before any final `VULNERABILITY CONFIRMED`, `ATTACK SUCCESS`, `漏洞已确认`, or `攻击成功` banner can print. Explanatory text such as "if output contains X" is not enough.
 If a PoC intentionally exits non-zero when the vulnerability is confirmed, normalize that expected code in the root script into explicit success evidence before any final confirmation banner.
 The same bundle should also contain a finding-specific attachment index markdown and a finding-specific reproduction supplement markdown, not generic names such as `attachments.md` or `reproduction.md`.
 The default reviewer-facing script skeleton should also make visual focus explicit:

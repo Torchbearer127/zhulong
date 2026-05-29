@@ -32,6 +32,9 @@ LANGUAGE_ALIASES = {
 }
 
 
+REPLAY_LOG_RELATIVE_PATH = "attachments/evidence/replay-output.log"
+
+
 L10N = {
     "zh-CN": {
         "report_suffix": "漏洞报告.docx",
@@ -873,6 +876,27 @@ def localized_target_version_for_script(finding: dict[str, Any], language: str) 
     )
 
 
+def success_marker_for_script(finding: dict[str, Any], language: str, evidence_lines: list[str]) -> str:
+    verification = ensure_mapping(finding.get("verification_evidence"))
+    candidates = [
+        verification.get("oracle_token"),
+        finding.get("oracle_token"),
+        localized_string(finding, "oracle", language),
+        verification.get("observed_observation"),
+        finding.get("observed_observation"),
+        evidence_lines[0] if evidence_lines else "",
+    ]
+    for value in candidates:
+        text = str(value or "").strip()
+        if text:
+            return text
+    return (
+        "reviewer success marker from generated evidence"
+        if language == "en-US"
+        else "生成证据中的审核成功标记"
+    )
+
+
 def generated_mode_profile(mode: str, language: str) -> dict[str, str]:
     profiles = {
         "zh-CN": {
@@ -933,6 +957,7 @@ def build_generated_recording_shell(
     raw_steps = finding.get("reproduction")
     steps = [step for step in raw_steps if isinstance(step, dict)] if isinstance(raw_steps, list) else []
     evidence_lines = collect_balanced_reproduction_evidence_lines(finding, language, limit=4)
+    success_marker = success_marker_for_script(finding, language, evidence_lines)
     supported_modes = generator_modes_for_artifact(artifact)
     usage_modes = "|".join(supported_modes)
     code_items = finding.get("code_context")
@@ -976,6 +1001,10 @@ def build_generated_recording_shell(
             "compose_missing": "未在 attachments/ 下找到 bundle-local Compose 文件。请先启动补充说明中记录的 Docker 环境。",
             "target_software_label": "目标软件",
             "target_version_label": "版本号",
+            "success_marker_missing": "未在 replay log 中检测到确定性成功标记：",
+            "success_marker_seen": "确定性成功标记已验证：",
+            "command_failed": "命令执行失败，详见 replay log：",
+            "final_confirmed": "漏洞已确认：确定性成功标记已在 bundle-local replay log 中验证。",
         },
         "en-US": {
             "banner": f"{project_name} {vuln_type} recording helper",
@@ -1009,6 +1038,10 @@ def build_generated_recording_shell(
             "compose_missing": "No bundle-local Compose file was found under attachments/. Start the documented Docker environment first.",
             "target_software_label": "Target Software",
             "target_version_label": "Target Version",
+            "success_marker_missing": "Deterministic success marker was not found in replay log:",
+            "success_marker_seen": "Deterministic success marker verified:",
+            "command_failed": "Command failed; see replay log:",
+            "final_confirmed": "VULNERABILITY CONFIRMED: deterministic success marker verified in the bundle-local replay log.",
         },
     }[language]
 
@@ -1045,6 +1078,9 @@ def build_generated_recording_shell(
         'PAUSE_LONG="${REVIEWER_PAUSE_LONG:-4}"',
         'SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"',
         'ATTACH_DIR="$SCRIPT_DIR/attachments"',
+        'EVIDENCE_DIR="$ATTACH_DIR/evidence"',
+        'REPLAY_LOG="$EVIDENCE_DIR/replay-output.log"',
+        f"SUCCESS_MARKER={shell_quote(success_marker)}",
         'cd "$SCRIPT_DIR"',
         "",
         "if [ -t 1 ]; then",
@@ -1079,6 +1115,47 @@ def build_generated_recording_shell(
         "    sleep \"$1\"",
         "}",
         "",
+        "init_replay_log() {",
+        "    mkdir -p \"$EVIDENCE_DIR\"",
+        "    printf '%s\\n' \"Zhulong reviewer replay log\" > \"$REPLAY_LOG\"",
+        "    printf '%s\\n' \"Generated at: $(date -u '+%Y-%m-%dT%H:%M:%SZ')\" >> \"$REPLAY_LOG\"",
+        "}",
+        "",
+        "log_line() {",
+        "    printf '%s\\n' \"$1\" >> \"$REPLAY_LOG\"",
+        "}",
+        "",
+        "run_logged_command() {",
+        "    command_text=\"$1\"",
+        "    command_output=\"$EVIDENCE_DIR/replay-command-output.$$\"",
+        f"    printf '%s%s %s%s\\n' \"$C_CYAN\" {shell_quote(strings['run_command'])} \"$command_text\" \"$C_RESET\"",
+        "    log_line \"\"",
+        "    log_line \"[command] $command_text\"",
+        "    if sh -c \"$command_text\" > \"$command_output\" 2>&1; then",
+        "        cat \"$command_output\"",
+        "        cat \"$command_output\" >> \"$REPLAY_LOG\"",
+        "        rm -f \"$command_output\"",
+        "        return 0",
+        "    fi",
+        "    status=\"$?\"",
+        "    cat \"$command_output\" >&2 || true",
+        "    cat \"$command_output\" >> \"$REPLAY_LOG\" || true",
+        "    rm -f \"$command_output\"",
+        f"    printf '%s %s\\n' {shell_quote(strings['command_failed'])} \"$REPLAY_LOG\" >&2",
+        "    exit \"$status\"",
+        "}",
+        "",
+        "verify_success_marker() {",
+        "    marker=\"$1\"",
+        "    if grep -Fq -- \"$marker\" \"$REPLAY_LOG\"; then",
+        f"        highlight_success {shell_quote(strings['success_marker_seen'])}' '\"$marker\"",
+        "        return 0",
+        "    fi",
+        f"    printf '%s %s\\n' {shell_quote(strings['success_marker_missing'])} \"$marker\" >&2",
+        "    log_line \"[missing-success-marker] $marker\"",
+        "    exit 1",
+        "}",
+        "",
         "print_banner() {",
         "    printf '\\n%s%s============================================================%s\\n' \"$C_CYAN\" \"$C_BOLD\" \"$C_RESET\"",
         "    printf '%s%s%s\\n' \"$C_CYAN\" \"$1\" \"$C_RESET\"",
@@ -1099,6 +1176,7 @@ def build_generated_recording_shell(
         "",
         "highlight_success() {",
         "    printf '%s%s%s\\n' \"$C_GREEN\" \"$1\" \"$C_RESET\"",
+        "    log_line \"$1\"",
         "}",
         "",
         "highlight_danger() {",
@@ -1112,6 +1190,8 @@ def build_generated_recording_shell(
         "print_target_identity() {",
         f"    focus_line \"$C_WHITE_ON_BLUE\" {shell_quote(' ' + strings['target_software_label'] + ' ')} {shell_quote(' ' + project_name + ' ')}",
         f"    focus_line \"$C_BLACK_ON_YELLOW\" {shell_quote(' ' + strings['target_version_label'] + ' ')} {shell_quote(' ' + target_version + ' ')}",
+        f"    log_line {shell_quote(strings['target_software_label'] + ': ' + project_name)}",
+        f"    log_line {shell_quote(strings['target_version_label'] + ': ' + target_version)}",
         "}",
         "",
         "docker_ready() {",
@@ -1186,6 +1266,7 @@ def build_generated_recording_shell(
         "}",
         "",
         "run_flow() {",
+        "    init_replay_log",
         "    print_target_identity",
         "    pause_step \"$PAUSE_SHORT\"",
         "    show_code_hint",
@@ -1205,9 +1286,8 @@ def build_generated_recording_shell(
         if step_details:
             script_lines.append("    pause_step \"$PAUSE_SHORT\"")
         for command in commands:
-            script_lines.append(f"    printf '%s%s %s%s\\n' \"$C_CYAN\" {shell_quote(strings['run_command'])} {shell_quote(command)} \"$C_RESET\"")
             script_lines.append("    pause_step \"$PAUSE_SHORT\"")
-            script_lines.append(f"    {command}")
+            script_lines.append(f"    run_logged_command {shell_quote(command)}")
             script_lines.append("    pause_step \"$PAUSE_SHORT\"")
         for line in evidence:
             script_lines.append(f"    highlight_success {shell_quote(strings['evidence_hint'] + ' ' + line)}")
@@ -1219,6 +1299,13 @@ def build_generated_recording_shell(
         for line in evidence_lines:
             script_lines.append(f"    highlight_danger {shell_quote(line)}")
         script_lines.append("    pause_step \"$PAUSE_SHORT\"")
+        script_lines.append("    verify_success_marker \"$SUCCESS_MARKER\"")
+        script_lines.append(f"    highlight_success {shell_quote(strings['final_confirmed'])}")
+        script_lines.append("    show_evidence_summary")
+        script_lines.append("    pause_step \"$PAUSE_LONG\"")
+    else:
+        script_lines.append("    verify_success_marker \"$SUCCESS_MARKER\"")
+        script_lines.append(f"    highlight_success {shell_quote(strings['final_confirmed'])}")
         script_lines.append("    show_evidence_summary")
         script_lines.append("    pause_step \"$PAUSE_LONG\"")
     script_lines.extend([
@@ -1354,6 +1441,7 @@ def write_verification_evidence(
     bundle_finding: dict[str, Any],
     path_map: dict[str, str],
     language: str,
+    bundle_root_artifacts: list[dict[str, str]] | None = None,
 ) -> None:
     provided = ensure_mapping(finding.get("verification_evidence"))
     slug = first_nonempty(provided.get("finding_slug"), finding.get("slug"), bundle_finding.get("slug"), output_path.parent.name)
@@ -1374,6 +1462,23 @@ def write_verification_evidence(
     for rel in collect_bundled_attachment_paths(path_map):
         if rel not in evidence_files:
             evidence_files.append(rel)
+    has_generated_replay_script = any(
+        str(item.get("bundle_path") or "").startswith("run-")
+        and str(item.get("bundle_path") or "").endswith(".sh")
+        and str(item.get("original_path") or "").startswith(("generated:", "生成产物："))
+        for item in (bundle_root_artifacts or [])
+    )
+    if has_generated_replay_script:
+        replay_log_path = output_path.parent / REPLAY_LOG_RELATIVE_PATH
+        replay_log_path.parent.mkdir(parents=True, exist_ok=True)
+        if not replay_log_path.exists():
+            replay_log_path.write_text(
+                "Zhulong reviewer replay log placeholder.\n"
+                "Run the bundle-root replay script to refresh this file with live reviewer output.\n",
+                encoding="utf-8",
+            )
+        if REPLAY_LOG_RELATIVE_PATH not in evidence_files:
+            evidence_files.append(REPLAY_LOG_RELATIVE_PATH)
 
     poc_path = bundled_path_for_value(provided.get("poc_path"), path_map) or infer_poc_path(finding, path_map)
     if not poc_path:
@@ -2452,7 +2557,7 @@ def render_finding(
     validate_generated_docx(output_path)
     write_attachment_notes(output_path, finding, path_map, project_root, language, bundle_root_artifacts)
     write_reproduction_supplement(output_path, bundle_finding, language, path_map, bundle_root_artifacts)
-    write_verification_evidence(output_path, finding, bundle_finding, path_map, language)
+    write_verification_evidence(output_path, finding, bundle_finding, path_map, language, bundle_root_artifacts)
 
 
 def parse_args() -> argparse.Namespace:

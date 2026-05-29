@@ -68,6 +68,42 @@ ROOT_SCRIPT_TARGET_HIGHLIGHT_PATTERN = re.compile(
     r"(?:C_WHITE_ON_|C_BLACK_ON_|C_BOLD|focus_line|highlight_note|highlight_success|print_target_identity)"
 )
 ROOT_SCRIPT_TARGET_IDENTITY_CALL_PATTERN = re.compile(r"^\s*print_target_identity\s*(?:$|[;&])", re.MULTILINE)
+ROOT_SCRIPT_REPLAY_LOG_WRITE_PATTERN = re.compile(
+    r"(?:>\s*\"?\$REPLAY_LOG\"?|>>\s*\"?\$REPLAY_LOG\"?|\btee\s+(?:-a\s+)?\"?\$REPLAY_LOG\"?)"
+)
+ROOT_SCRIPT_REPLAY_RAW_OUTPUT_PATTERN = re.compile(
+    r"(?:2>&1[\s\S]{0,300}(?:>>\s*\"?\$REPLAY_LOG\"?|\btee\s+-a\s+\"?\$REPLAY_LOG\"?)|"
+    r"\bcat\s+\"?\$?[A-Za-z_][A-Za-z0-9_]*\"?\s*>>\s*\"?\$REPLAY_LOG\"?[\s\S]{0,300}2>&1|"
+    r"\bcat\s+\"?\$?[A-Za-z_][A-Za-z0-9_]*\"?\s*>>\s*\"?\$REPLAY_LOG\"?)",
+    re.MULTILINE,
+)
+ROOT_SCRIPT_PROGRAMMATIC_SUCCESS_CHECK_PATTERNS = [
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"\bgrep\s+-[A-Za-z]*q[A-Za-z]*\b",
+        r"\bgrep\s+-[A-Za-z]*[FE][A-Za-z]*q[A-Za-z]*\b",
+        r"\bjq\s+-e\b",
+        r"\btest\s+",
+        r"\[\[",
+        r"\[\s+",
+        r"^\s*case\s+",
+    )
+]
+ROOT_SCRIPT_SUCCESS_HELPER_CALL_PATTERN = re.compile(
+    r"\b(?:verify|assert|check)_[A-Za-z0-9_]*(?:success|marker|oracle)[A-Za-z0-9_]*\b",
+    re.IGNORECASE,
+)
+ROOT_SCRIPT_REPLAY_LOG_PATH_PATTERNS = [
+    re.compile(r"attachments/evidence/[A-Za-z0-9_.-]+\.log"),
+    re.compile(r"\$ATTACH_DIR/evidence/([A-Za-z0-9_.-]+\.log)"),
+    re.compile(r"\$\{ATTACH_DIR\}/evidence/([A-Za-z0-9_.-]+\.log)"),
+    re.compile(r"\$EVIDENCE_DIR/([A-Za-z0-9_.-]+\.log)"),
+    re.compile(r"\$\{EVIDENCE_DIR\}/([A-Za-z0-9_.-]+\.log)"),
+]
+REPLAY_LOG_VARIABLE_PATTERN = re.compile(
+    r"^\s*REPLAY_LOG\s*=\s*['\"]?(?P<value>[^'\"\n]+\.log)['\"]?",
+    re.MULTILINE,
+)
 SHELL_FUNCTION_DEFINITION_PATTERNS = [
     re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(\)\s*\{"),
     re.compile(r"^\s*function\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:\(\))?\s*\{"),
@@ -384,7 +420,7 @@ SHELL_SUCCESS_ORACLE_PATTERNS = [
         r"\bstatus_code\b",
         r"\bresponse[_-]?(?:body|json|content)?\b",
         r"\bjson\b",
-        r"\b(?:require|assert|check|verify)[A-Za-z0-9_ -]*(?:success|oracle|status|response|json|ok)\b",
+        r"\b(?:require|assert|check|verify)[A-Za-z0-9_ -]*(?:success|marker|oracle|status|response|json|ok)\b",
         r"\bexit\s+1\b",
     )
 ]
@@ -1898,6 +1934,52 @@ def validate_reviewer_evidence_index(
     return raw_text, data
 
 
+def registered_replay_log_paths(
+    evidence: dict[str, object],
+    reviewer_index: dict[str, object] | None,
+) -> set[str]:
+    paths = {
+        str(item).strip()
+        for item in (evidence.get("evidence_files") if isinstance(evidence.get("evidence_files"), list) else [])
+        if str(item).strip().endswith(".log")
+    }
+    if reviewer_index:
+        for _label, raw in collect_reviewer_index_artifact_paths(reviewer_index):
+            text = str(raw or "").strip()
+            if text.endswith(".log"):
+                paths.add(text)
+    return {Path(path).as_posix() for path in paths}
+
+
+def validate_replay_log_evidence_registration(
+    bundle_dir: Path,
+    root_script_paths: list[Path],
+    evidence: dict[str, object],
+    reviewer_index: dict[str, object] | None,
+) -> None:
+    declared_logs: set[str] = set()
+    for script_path in root_script_paths:
+        text = script_path.read_text(encoding="utf-8", errors="ignore")
+        declared_logs.update(collect_root_script_replay_log_paths(text))
+    if not declared_logs:
+        fail("bundle-root replay scripts must declare at least one bundle-local .log evidence output")
+
+    registered_logs = registered_replay_log_paths(evidence, reviewer_index)
+    if not registered_logs:
+        fail(
+            "bundle replay .log evidence must be registered in verification-evidence.json evidence_files "
+            "or attachments/reviewer-evidence-index.json"
+        )
+    missing = sorted(declared_logs - registered_logs)
+    if missing:
+        fail(
+            "bundle-root replay script .log output is not registered as reviewer evidence: "
+            + ", ".join(missing)
+        )
+    for rel in sorted(registered_logs):
+        validate_bundle_relative_file(rel, bundle_dir, f"registered replay log {rel}")
+
+
 def material_has_pattern(patterns: list[re.Pattern[str]], text: str) -> bool:
     return any(pattern.search(text) for pattern in patterns)
 
@@ -2649,18 +2731,16 @@ def validate_fail_open_success_oracles(script_path: Path, text: str) -> None:
         index for index, line in enumerate(lines)
         if line_prints_final_confirmation(line)
     ]
-    if not confirmation_indexes:
-        return
-    first_confirmation = min(confirmation_indexes)
-    for index, line in enumerate(lines[: first_confirmation + 1]):
-        if not line_softens_success_oracle_failure(line):
-            continue
-        preview = line if len(line) <= 180 else line[:177] + "..."
-        fail(
-            f"{script_path.name} softens a success-oracle failure before final confirmation: {preview!r}. "
-            "Do not use `|| echo`, `|| printf`, or `|| true` for grep/jq/curl/docker-log success checks "
-            "before printing VULNERABILITY CONFIRMED, ATTACK SUCCESS, 漏洞已确认, or 攻击成功; fail closed with exit 1."
-        )
+    for confirmation_index in confirmation_indexes:
+        for index, line in enumerate(lines[: confirmation_index + 1]):
+            if not line_softens_success_oracle_failure(line):
+                continue
+            preview = line if len(line) <= 180 else line[:177] + "..."
+            fail(
+                f"{script_path.name} softens a success-oracle failure before final confirmation: {preview!r}. "
+                "Do not use `|| echo`, `|| printf`, or `|| true` for grep/jq/curl/docker-log success checks "
+                "before printing VULNERABILITY CONFIRMED, ATTACK SUCCESS, 漏洞已确认, or 攻击成功; fail closed with exit 1."
+            )
 
 
 def validate_shell_success_oracles(script_path: Path, text: str) -> None:
@@ -2675,6 +2755,74 @@ def validate_shell_success_oracles(script_path: Path, text: str) -> None:
             f"{script_path.relative_to(script_path.parent)} prints a final vulnerability confirmation without a "
             "nearby or preceding concrete success oracle. Add a jq -e/grep -q/test/if/case/status/JSON/content "
             "assertion before printing VULNERABILITY CONFIRMED, ATTACK SUCCESS, 漏洞已确认, or 攻击成功."
+        )
+
+
+def line_has_programmatic_success_marker_check(line: str) -> bool:
+    if line_is_display_only_shell(line):
+        return False
+    return any(pattern.search(line) for pattern in ROOT_SCRIPT_PROGRAMMATIC_SUCCESS_CHECK_PATTERNS)
+
+
+def function_body_has_programmatic_success_marker_check(text: str, function_name: str) -> bool:
+    return any(
+        line_has_programmatic_success_marker_check(line)
+        for line in extract_shell_function_body(text, function_name)
+    )
+
+
+def shell_lines_with_function_scope(text: str) -> list[tuple[str, str]]:
+    scoped: list[tuple[str, str]] = []
+    current_function = ""
+    for line in shell_code_lines(text):
+        started_function = ""
+        for pattern in SHELL_FUNCTION_DEFINITION_PATTERNS:
+            match = pattern.match(line)
+            if match:
+                started_function = match.group(1)
+                break
+        if started_function:
+            current_function = started_function
+            scoped.append((line, current_function))
+            continue
+        scoped.append((line, current_function))
+        if current_function and line.strip() == "}":
+            current_function = ""
+    return scoped
+
+
+def has_preceding_static_success_marker_check(
+    text: str,
+    scoped_lines: list[tuple[str, str]],
+    index: int,
+) -> bool:
+    confirmation_scope = scoped_lines[index][1]
+    for line, scope in scoped_lines[: index + 1]:
+        if scope != confirmation_scope:
+            continue
+        if line_has_programmatic_success_marker_check(line):
+            return True
+        if line_is_display_only_shell(line):
+            continue
+        for match in ROOT_SCRIPT_SUCCESS_HELPER_CALL_PATTERN.finditer(line):
+            helper_name = match.group(0)
+            if function_body_has_programmatic_success_marker_check(text, helper_name):
+                return True
+    return False
+
+
+def validate_root_script_static_success_marker(script_path: Path, bundle_dir: Path, text: str) -> None:
+    rel = script_path.relative_to(bundle_dir).as_posix()
+    scoped_lines = shell_lines_with_function_scope(text)
+    for index, (line, _scope) in enumerate(scoped_lines):
+        if not line_prints_final_confirmation(line):
+            continue
+        if has_preceding_static_success_marker_check(text, scoped_lines, index):
+            continue
+        fail(
+            f"{rel} prints final confirmation without a preceding programmatic success-marker check. "
+            "Use grep -q/grep -Fq/jq -e/test/case or a closed verify_success_marker-style helper before "
+            "printing VULNERABILITY CONFIRMED, ATTACK SUCCESS, 漏洞已确认, or 攻击成功."
         )
 
 
@@ -2810,6 +2958,72 @@ def validate_root_script_target_identity(script_path: Path, bundle_dir: Path, te
             )
 
 
+def normalize_replay_log_path(raw: str) -> str:
+    value = str(raw or "").strip().strip("'\"")
+    value = value.replace("${ATTACH_DIR}", "attachments")
+    value = value.replace("$ATTACH_DIR", "attachments")
+    value = value.replace("${EVIDENCE_DIR}", "attachments/evidence")
+    value = value.replace("$EVIDENCE_DIR", "attachments/evidence")
+    if value.startswith("./"):
+        value = value[2:]
+    return Path(value).as_posix()
+
+
+def collect_root_script_replay_log_paths(text: str) -> set[str]:
+    paths: set[str] = set()
+    for pattern in ROOT_SCRIPT_REPLAY_LOG_PATH_PATTERNS:
+        for match in pattern.finditer(text):
+            if match.groups():
+                paths.add(f"attachments/evidence/{match.group(1)}")
+            else:
+                paths.add(normalize_replay_log_path(match.group(0)))
+    for match in REPLAY_LOG_VARIABLE_PATTERN.finditer(text):
+        normalized = normalize_replay_log_path(match.group("value"))
+        if normalized.endswith(".log"):
+            paths.add(normalized)
+    return {
+        path for path in paths
+        if path.startswith("attachments/") and path.endswith(".log")
+    }
+
+
+def root_script_captures_raw_command_output(text: str) -> bool:
+    for helper_name in collect_shell_function_definitions(text):
+        if not re.match(r"^(?:run|execute|replay|proof)_", helper_name):
+            continue
+        body = "\n".join(extract_shell_function_body(text, helper_name))
+        if "REPLAY_LOG" not in body or "2>&1" not in body:
+            continue
+        if re.search(r"\bcat\s+\"?\$?[A-Za-z_][A-Za-z0-9_]*\"?\s*>>\s*\"?\$REPLAY_LOG\"?", body):
+            return True
+        if re.search(r"\btee\s+-a\s+\"?\$REPLAY_LOG\"?", body):
+            return True
+        if re.search(r">\s*\"?\$REPLAY_LOG\"?\s+2>&1|2>&1\s*>\s*\"?\$REPLAY_LOG\"?", body):
+            return True
+    return bool(
+        re.search(r"2>&1\s*\|\s*tee\s+-a\s+\"?\$REPLAY_LOG\"?", text)
+        or re.search(r">\s*\"?\$REPLAY_LOG\"?\s+2>&1|2>&1\s*>\s*\"?\$REPLAY_LOG\"?", text)
+    )
+
+
+def validate_root_script_replay_log_contract(script_path: Path, bundle_dir: Path, text: str) -> None:
+    rel = script_path.relative_to(bundle_dir).as_posix()
+    log_paths = collect_root_script_replay_log_paths(text)
+    if not log_paths:
+        fail(
+            f"{rel} must write a bundle-local .log replay evidence file under attachments/evidence/"
+        )
+    if not ROOT_SCRIPT_REPLAY_LOG_WRITE_PATTERN.search(text):
+        fail(
+            f"{rel} must write reviewer replay output to its bundle-local .log evidence file"
+        )
+    if not root_script_captures_raw_command_output(text):
+        fail(
+            f"{rel} must capture raw command stdout/stderr into its bundle-local replay .log, "
+            "not only write explanatory replay-log headings"
+        )
+
+
 def validate_root_script_pause_contract(script_path: Path, bundle_dir: Path, text: str) -> None:
     rel = script_path.relative_to(bundle_dir).as_posix()
     if ("REVIEWER_PAUSE_SHORT" not in text) or ("REVIEWER_PAUSE_LONG" not in text):
@@ -2866,11 +3080,13 @@ def validate_bundle_root_scripts(bundle_dir: Path, note_text: str) -> list[str]:
         validate_script_bundle_portability(script_path, bundle_dir, text)
         validate_root_script_bundle_contract(script_path, bundle_dir, text)
         validate_root_script_target_identity(script_path, bundle_dir, text)
+        validate_root_script_replay_log_contract(script_path, bundle_dir, text)
         validate_root_script_helper_closure(script_path, bundle_dir, text)
         validate_root_script_pause_contract(script_path, bundle_dir, text)
         validate_root_script_no_self_recursion(script_path, bundle_dir, text)
         validate_recording_step_labels(script_path, text)
         validate_shell_success_oracles(script_path, text)
+        validate_root_script_static_success_marker(script_path, bundle_dir, text)
         if script_path.name not in note_text:
             fail(f"bundle root script is missing from attachment note: {script_path.name}")
         if not os.access(script_path, os.X_OK):
@@ -3630,6 +3846,12 @@ def main() -> None:
         note_text,
         supplement_text,
         reviewer_addendum_text,
+    )
+    validate_replay_log_evidence_registration(
+        bundle_dir,
+        root_script_paths,
+        verification_evidence,
+        _reviewer_index,
     )
     reviewer_story_text = "\n".join(
         [
