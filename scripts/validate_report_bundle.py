@@ -461,28 +461,32 @@ EN_REAL_WORLD_HEADINGS = {
     "Practical Impact and Exploitation Path",
 }
 ZH_EXPLOITABILITY_MARKERS = {
+    "scenario": ("场景", "真实", "实际", "部署", "业务", "应用", "系统", "服务", "消费", "上游"),
     "attacker": ("攻击者", "用户", "可控", "控制", "污染", "提交", "访问", "认证", "权限", "输入", "参数"),
-    "server": ("服务端", "服务器", "后端", "运行", "启用", "配置", "默认", "部署", "依赖", "日志", "错误", "调试"),
-    "observable": ("日志", "错误", "响应", "返回", "输出", "回显", "可见", "外显", "存储", "记录", "回调", "流量", "观察", "证据"),
+    "call_chain": ("调用链", "触发链", "链路", "路径", "进入", "到达", "流向", "函数", "组件", "接口", "Sink", "汇聚点"),
+    "direct_impact": ("直接危害", "直接影响", "业务后果", "危害", "后果", "响应", "输出", "回调", "流量", "不可用", "泄露", "绕过", "DIRECT_IMPACT"),
     "boundary": ("已验证", "验证", "Docker", "PoC", "证明", "确认", "边界", "限定", "不声称", "未验证", "不扩大", "仅"),
 }
 EN_EXPLOITABILITY_MARKERS = {
+    "scenario": ("scenario", "real-world", "practical", "deployment", "business", "application", "service", "consumer", "upstream"),
     "attacker": ("attacker", "user", "control", "influence", "poison", "submit", "access", "authenticated", "privilege", "input"),
-    "server": ("server", "runtime", "configuration", "default", "deploy", "dependency", "feature", "debug", "logging", "enabled"),
-    "observable": ("log", "error", "response", "output", "observable", "visible", "stored", "record", "callback", "traffic", "evidence"),
+    "call_chain": ("call chain", "trigger path", "path", "reaches", "flows", "function", "component", "api", "endpoint", "sink"),
+    "direct_impact": ("direct impact", "direct consequence", "business consequence", "impact", "response", "output", "callback", "traffic", "unavailable", "exposure", "bypass", "DIRECT_IMPACT"),
     "boundary": ("verified", "docker", "poc", "confirmed", "proven", "boundary", "limited", "not claim", "not verified", "stronger"),
 }
 EXPLOITABILITY_DISPLAY = {
     "zh-CN": {
+        "scenario": "真实使用/业务场景",
         "attacker": "攻击者条件/可控输入",
-        "server": "服务端可达条件",
-        "observable": "影响外显或安全相关可见通道",
+        "call_chain": "攻击者输入到受影响代码的触发链",
+        "direct_impact": "直接危害/业务后果证据",
         "boundary": "已验证影响边界/未声称影响",
     },
     "en-US": {
+        "scenario": "real-world/business scenario",
         "attacker": "attacker condition / controllable input",
-        "server": "server-side reachability condition",
-        "observable": "observable or security-relevant impact channel",
+        "call_chain": "attacker input to affected-code trigger path",
+        "direct_impact": "direct impact / business consequence evidence",
         "boundary": "verified impact boundary / non-claimed impact",
     },
 }
@@ -528,6 +532,37 @@ TEXT_EVIDENCE_SUFFIXES = {
     ".yaml",
     ".yml",
 }
+DIRECT_IMPACT_ORACLE_PATTERN = re.compile(
+    r"\bDIRECT_(?:[A-Z0-9_]+_)?IMPACT_CONFIRMED\b|"
+    r"\bDIRECT_AVAILABILITY_IMPACT_CONFIRMED\b|"
+    r"\b(?:DoS|DOS|SSRF|RCE|AUTH|SESSION|POLLUTION|CODE_INJECTION|PATH_TRAVERSAL)_CONFIRMED\b|"
+    r"直接危害标记已写入|Direct-impact marker recorded|"
+    r"callback received|SSRF callback|session forged|authentication bypass confirmed|code execution confirmed|"
+    r"拒绝服务成功|收到回调|回调已触发|认证绕过成功|会话伪造成功|代码执行成功",
+    re.IGNORECASE,
+)
+DISPLAYED_REPLAY_COMMAND_PATTERN = re.compile(
+    r"\b(?:docker\s+(?:run|compose|exec|logs|build|cp)|"
+    r"(?:python3?|node|php|bash|sh)\s+(?:attachments/|\./|\$\{?(?:SCRIPT_DIR|ATTACH_DIR|BUNDLE_ROOT)\}?/))",
+    re.IGNORECASE,
+)
+EXECUTED_REPLAY_COMMAND_PATTERN = re.compile(
+    r"^\s*(?!.*\b(?:function|record|show|print|echo|printf)\b)"
+    r"(?:run_logged_command\b|"
+    r"(?:docker\s+(?:run|compose|exec|logs|build|cp)|"
+    r"(?:python3?|node|php|bash|sh)\s+(?:attachments/|\./|\$\{?(?:SCRIPT_DIR|ATTACH_DIR|BUNDLE_ROOT)\}?/)))",
+    re.IGNORECASE,
+)
+LOCAL_HELPER_REFERENCE_PATTERNS = [
+    re.compile(
+        r"\b(?:bash|sh|python3?|node|php)\s+(?P<path>['\"]?\./[A-Za-z0-9_.-]+(?:\.(?:sh|bash|py|js|mjs|cjs|php))?)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"(?<![A-Za-z0-9_/.-])(?P<path>\./[A-Za-z0-9_.-]+(?:\.(?:sh|bash|py|js|mjs|cjs|php))?)",
+        re.IGNORECASE,
+    ),
+]
 REVIEWER_EVIDENCE_ADDENDUM = "reviewer-evidence-and-impact.md"
 REVIEWER_EVIDENCE_INDEX = Path("attachments/reviewer-evidence-index.json")
 REVIEWER_INDEX_ARTIFACT_KEYS = {
@@ -1185,6 +1220,17 @@ def validate_real_world_exploitability(lines: list[str], supplement_text: str, l
     fail(
         "missing real-world exploitability explanation; add a concise section explaining "
         f"{missing_text}"
+    )
+
+
+def validate_direct_impact_evidence(material_text: str, exploitability_text: str, language: str) -> None:
+    _ = exploitability_text
+    if DIRECT_IMPACT_ORACLE_PATTERN.search(material_text):
+        return
+    display = EXPLOITABILITY_DISPLAY[language]["direct_impact"]
+    fail(
+        "missing direct-impact replay evidence; add a deterministic DIRECT_IMPACT_CONFIRMED-style marker "
+        f"or an equivalent programmatic oracle that proves {display}"
     )
 
 
@@ -3024,6 +3070,40 @@ def validate_root_script_replay_log_contract(script_path: Path, bundle_dir: Path
         )
 
 
+def line_defines_shell_function(line: str) -> bool:
+    return any(pattern.match(line.strip()) for pattern in SHELL_FUNCTION_DEFINITION_PATTERNS)
+
+
+def root_script_has_executed_replay_command(text: str) -> bool:
+    for line in logical_shell_lines(text):
+        stripped = line.strip()
+        if line_is_display_only_shell(stripped) or line_defines_shell_function(stripped):
+            continue
+        if re.search(r"\brun_logged_command\s+['\"]", stripped):
+            return True
+        if EXECUTED_REPLAY_COMMAND_PATTERN.search(stripped):
+            return True
+    return False
+
+
+def validate_root_script_displayed_command_execution(script_path: Path, bundle_dir: Path, text: str) -> None:
+    displayed = [
+        line.strip()
+        for line in logical_shell_lines(text)
+        if line_is_display_only_shell(line) and DISPLAYED_REPLAY_COMMAND_PATTERN.search(line)
+    ]
+    if not displayed:
+        return
+    if root_script_has_executed_replay_command(text):
+        return
+    preview = displayed[0] if len(displayed[0]) <= 160 else displayed[0][:157] + "..."
+    fail(
+        f"{script_path.relative_to(bundle_dir).as_posix()} displays a PoC/Docker command without an actual "
+        f"bundle-local execution path: {preview!r}. Replay scripts must run the proof command, capture raw output, "
+        "and fail closed when execution fails."
+    )
+
+
 def validate_root_script_pause_contract(script_path: Path, bundle_dir: Path, text: str) -> None:
     rel = script_path.relative_to(bundle_dir).as_posix()
     if ("REVIEWER_PAUSE_SHORT" not in text) or ("REVIEWER_PAUSE_LONG" not in text):
@@ -3066,6 +3146,36 @@ def validate_root_script_no_self_recursion(script_path: Path, bundle_dir: Path, 
                 )
 
 
+def extract_local_helper_references(text: str) -> list[str]:
+    refs: list[str] = []
+    for pattern in LOCAL_HELPER_REFERENCE_PATTERNS:
+        for match in pattern.finditer(text):
+            raw = match.group("path")
+            if not raw:
+                continue
+            cleaned = raw.strip().strip("'\"`),;:")
+            if cleaned and cleaned not in refs:
+                refs.append(cleaned)
+    return refs
+
+
+def validate_local_helper_references(bundle_dir: Path, material_text: str) -> None:
+    for ref in extract_local_helper_references(material_text):
+        candidate = (bundle_dir / ref[2:]).resolve()
+        try:
+            candidate.relative_to(bundle_dir.resolve())
+        except ValueError:
+            fail(
+                f"reviewer-facing material references helper outside the confirmed bundle: {ref}. "
+                "Confirmed bundles must be self-contained for replay."
+            )
+        if not candidate.exists():
+            fail(
+                f"reviewer-facing material references a missing local helper: {ref}. "
+                "Include the helper in the bundle or replace the instruction with the bundle-root run-*.sh script."
+            )
+
+
 def validate_bundle_root_scripts(bundle_dir: Path, note_text: str) -> list[str]:
     script_paths = sorted(
         [
@@ -3081,6 +3191,7 @@ def validate_bundle_root_scripts(bundle_dir: Path, note_text: str) -> list[str]:
         validate_root_script_bundle_contract(script_path, bundle_dir, text)
         validate_root_script_target_identity(script_path, bundle_dir, text)
         validate_root_script_replay_log_contract(script_path, bundle_dir, text)
+        validate_root_script_displayed_command_execution(script_path, bundle_dir, text)
         validate_root_script_helper_closure(script_path, bundle_dir, text)
         validate_root_script_pause_contract(script_path, bundle_dir, text)
         validate_root_script_no_self_recursion(script_path, bundle_dir, text)
@@ -3877,8 +3988,21 @@ def main() -> None:
     )
     validate_no_non_standalone_paths(reviewer_story_text, "reviewer-facing bundle material")
     validate_reviewer_story_gates(reviewer_story_text)
+    validate_direct_impact_evidence(
+        "\n".join(
+            [
+                reviewer_index_text,
+                json.dumps(verification_evidence, ensure_ascii=False, sort_keys=True),
+                *root_script_texts,
+                *attachment_script_texts,
+            ]
+        ),
+        exploitability_text,
+        language,
+    )
     validate_claim_oracle_consistency(reviewer_story_text)
     validate_time_based_proof_drift(reviewer_summary_text)
+    validate_local_helper_references(bundle_dir, "\n".join([supplement_text, reviewer_index_text]))
     validate_poc_attacker_capability_boundary(
         "\n".join(
             [

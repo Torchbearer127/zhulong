@@ -497,12 +497,11 @@ security impact that the Docker evidence does not prove.
 
 Confirmed reports must include a reviewer-readable real-world exploitability
 section, such as `实际场景中的危害与利用方式` or `Real-World
-Exploitability`. Keep it concise, but make it answer four concrete questions:
-who the attacker is and how they influence input or metadata, what server-side
-configuration/runtime behavior makes the path reachable, how the internal
-effect becomes visible or security-relevant (logs, error reporting, responses,
-stored artifacts, callbacks, or operator-visible evidence), and which impact is
-verified versus not claimed. If a PoC assumes strong attacker control, such as
+Exploitability`. Keep it concise, but make it answer five concrete questions:
+what real deployment or consumer scenario is affected, who the attacker is and
+how they influence input or metadata, what call/trigger chain carries that input
+to the affected code, what direct business or security consequence is proven,
+and which impact is verified versus not claimed. If a PoC assumes strong attacker control, such as
 directly writing a malicious JS/Python/PHP file or controlling a local source
 file, explicitly explain why the PoC demonstrates the target component boundary
 rather than a stronger unrelated capability.
@@ -537,8 +536,11 @@ Each confirmed vulnerability bundle should also include one bundle-root reproduc
 That script should keep human-readable text aligned with the selected output language, include visible step markers, pause briefly at key checkpoints, and use ANSI color highlighting for dangerous lines or success evidence when stdout is interactive.
 At the beginning of replay, before proof steps, it must print a highlighted target identity card that names the target software/package and the tested or affected version.
 It must print each concrete command before execution, capture raw command stdout/stderr to a bundle-local `.log` file under `attachments/evidence/`, and list that `.log` in `verification-evidence.json` or `attachments/reviewer-evidence-index.json`.
+It must record a direct-impact marker such as `DIRECT_IMPACT_CONFIRMED`, `DIRECT_AVAILABILITY_IMPACT_CONFIRMED`, or an equivalent deterministic oracle in reviewer-facing replay evidence before final confirmation.
 It must derive `SCRIPT_DIR` from the script path, derive `ATTACH_DIR="$SCRIPT_DIR/attachments"`, and either self-bootstrap from bundle-local attachments or fail early with the exact bundle-local command the reviewer must run first.
 Every helper-like function called by the proof flow must be defined in the same root script; do not call a missing local `run_*`, `verify_*`, `show_*`, `print_*`, or `require_*` helper.
+Do not merely print a PoC/Docker command for the reviewer to run later; the bundle-root replay helper must execute the proof command itself, capture raw output, and fail closed if the command fails.
+Do not reference `./helper.sh`, `./poc.py`, or similar local helper files in the supplement or evidence index unless those files are included in the delivered bundle.
 Do not make root scripts or attachment scripts climb back to the submitter's
 repository with deep `../../..` paths, parent-repository mounts, or package
 external paths. Harmless `../` inside nested attachment directories is fine only
@@ -564,7 +566,7 @@ Reviewer-facing supplements should not stop at "technical trigger" when the clai
 
 - if the report claims denial of service, the materials should show the direct DoS oracle
 - if the report claims attack success, the materials should show the exact success oracle
-- if the reviewer is likely to ask about real-world harm or exploitation, include a short bundled supplement note that explains the practical impact and a typical exploitation path without overstating the claim
+- if the reviewer is likely to ask about real-world harm or exploitation, include a short bundled supplement note that explains the practical scenario, attacker-controlled input, trigger/call chain, direct impact, and impact boundary without overstating the claim
 - if report/supplement/evidence mention `PoC-4`, ensure the root recording
   script also covers `PoC-4`; stale videos that predate revised report/script
   material should be regenerated or clearly called out before submission

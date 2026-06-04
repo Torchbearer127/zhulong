@@ -1010,7 +1010,7 @@ def main() -> None:
     )
     require_text(
         plugin_root / "templates/claude-skill/SKILL.md",
-        "practical impact and a typical exploitation path",
+        "practical scenario, attacker-controlled input, trigger/call chain, direct impact, and impact boundary",
         "Claude skill template reviewer-proof contract",
     )
     require_text(
@@ -3437,6 +3437,9 @@ def main() -> None:
             "run_logged_command",
             "verify_success_marker",
             "SUCCESS_MARKER",
+            "DIRECT_IMPACT_MARKER",
+            "DIRECT_IMPACT_CONFIRMED",
+            "record_direct_impact_marker",
             "> \"$command_output\" 2>&1",
             "cat \"$command_output\" >> \"$REPLAY_LOG\"",
             "grep -Fq -- \"$marker\" \"$REPLAY_LOG\"",
@@ -3985,7 +3988,16 @@ def main() -> None:
                 "实际场景中的危害与利用方式"
                 if "实际场景中的危害与利用方式" in text
                 else "待补充"
-                if text.startswith("攻击者路径") or text.startswith("服务端可达条件") or text.startswith("影响外显通道") or text.startswith("已验证影响边界")
+                if (
+                    text.startswith("实际使用场景")
+                    or text.startswith("攻击者路径")
+                    or text.startswith("触发调用链")
+                    or text.startswith("直接危害证明")
+                    or text.startswith("影响边界")
+                    or text.startswith("服务端可达条件")
+                    or text.startswith("影响外显通道")
+                    or text.startswith("已验证影响边界")
+                )
                 else text
             ),
         )
@@ -4246,6 +4258,80 @@ def main() -> None:
             "--language",
             "zh-CN",
         ], plugin_root, "raw command stdout/stderr")
+
+        bad_missing_direct_impact = copy_standard_bundle("missing_direct_impact")
+        missing_direct_script = bad_missing_direct_impact / "run-selftest-jwt-recording.sh"
+        missing_direct_script.write_text(
+            re.sub(
+                r"\nrecord_direct_impact_marker\(\) \{\n(?:    .+\n)+\}\n",
+                "\n",
+                missing_direct_script.read_text(encoding="utf-8"),
+            )
+            .replace("DIRECT_IMPACT_MARKER='DIRECT_IMPACT_CONFIRMED'\n", "")
+            .replace("    record_direct_impact_marker \"$DIRECT_IMPACT_MARKER\"\n", "")
+            .replace("_CONFIRMED", "_CHECKED")
+            .replace("认证绕过成功", "认证检查完成")
+            .replace("会话伪造成功", "会话检查完成")
+            .replace("direct impact is supported by the DIRECT_IMPACT_CONFIRMED-equivalent marker ", "direct impact is supported by the replay marker "),
+            encoding="utf-8",
+        )
+        for text_path in [
+            path for path in bad_missing_direct_impact.rglob("*")
+            if path.is_file() and path.suffix in {".json", ".log", ".md", ".sh", ".txt"}
+        ]:
+            text_path.write_text(
+                text_path.read_text(encoding="utf-8")
+                .replace("DIRECT_IMPACT_CONFIRMED", "replay success marker")
+                .replace("DIRECT_AVAILABILITY_IMPACT_CONFIRMED", "replay availability marker")
+                .replace("_CONFIRMED", "_CHECKED")
+                .replace("认证绕过成功", "认证检查完成")
+                .replace("会话伪造成功", "会话检查完成"),
+                encoding="utf-8",
+            )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_missing_direct_impact),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "direct-impact replay evidence")
+
+        bad_displayed_command_only = copy_standard_bundle("displayed_command_only")
+        displayed_only_script = bad_displayed_command_only / "run-selftest-jwt-recording.sh"
+        displayed_only_script.write_text(
+            re.sub(
+                r"^(\s*)run_logged_command\s+(.+)$",
+                r"\1printf '%s\n' \2",
+                displayed_only_script.read_text(encoding="utf-8"),
+                flags=re.MULTILINE,
+            ),
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_displayed_command_only),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "without an actual bundle-local execution path")
+
+        bad_missing_helper_reference = copy_standard_bundle("missing_helper_reference")
+        missing_helper_note = next(bad_missing_helper_reference.glob("*_补充复现说明.md"))
+        missing_helper_note.write_text(
+            missing_helper_note.read_text(encoding="utf-8")
+            + "\n\n补充检查：如需复核，请执行 `bash ./missing-helper.sh`。\n",
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_missing_helper_reference),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "missing local helper")
 
         bad_pause_overwrite = copy_standard_bundle("quick_pause_overwrite")
         pause_script = bad_pause_overwrite / "run-selftest-jwt-recording.sh"
@@ -4763,6 +4849,9 @@ def main() -> None:
             bad_final_without_marker_check,
             bad_explanatory_marker_text,
             bad_log_without_raw_output,
+            bad_missing_direct_impact,
+            bad_displayed_command_only,
+            bad_missing_helper_reference,
             bad_pause_overwrite,
             bad_hardcoded_pause,
             bad_recursive_replay,

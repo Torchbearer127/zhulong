@@ -77,7 +77,7 @@ bash <audit-workspace>/bin/check_omc_runtime.sh --json
 - 攻击者条件
 - 服务端条件
 - 具体安全影响
-- 实际场景中的危害与利用方式：攻击者路径、服务端可达条件、影响外显通道，以及已验证影响和未声称影响的边界
+- 实际场景中的危害与利用方式：真实使用场景、攻击者可控输入、触发调用链、直接业务或安全后果，以及已验证影响和未声称影响的边界
 
 校验器 (Validator) 还会检测常见的逻辑矛盾，例如：
 
@@ -95,6 +95,9 @@ bash <audit-workspace>/bin/check_omc_runtime.sh --json
 - 报告、补充说明、证据 JSON 与根录屏脚本之间的 PoC 标签漂移。
 - 录屏视频早于当前报告、补充说明、证据 JSON 或根复现脚本。
 - 最短审核复现路径中可能触发生命周期脚本或联网噪音的 `npm install` / `yarn install` / `pnpm install`。
+- 复现脚本只展示 PoC/Docker 命令却没有实际执行路径。
+- 补充复现说明或证据索引引用了 bundle 中不存在的本地 helper 脚本。
+- 缺少 direct-impact replay 证据，例如 `DIRECT_IMPACT_CONFIRMED`、`DIRECT_AVAILABILITY_IMPACT_CONFIRMED` 或等价的程序化危害判据。
 - 可选 `reviewer-evidence-and-impact.md` 仅为占位，或缺少攻击者边界、影响说明、成功判据和最短复现命令。
 - 可选 `attachments/reviewer-evidence-index.json` JSON 无效、引用缺失附件、引用 bundle 外路径、复现命令不是 bundle 根目录本地命令，或列出的成功判据无法在脚本/证据/补充说明/审核补充/`verification-evidence.json` 中找到。
 - fixture 或 vendored source 复现缺少 source-grounded provenance，或库/包漏洞缺少 consuming application boundary。
@@ -117,7 +120,7 @@ bash <audit-workspace>/bin/check_omc_runtime.sh --json
 攻击者条件：具备导入权限的低权限认证用户
 服务端条件：默认导入接口启用，且服务端可访问内网/外网
 安全影响：机密性风险，可探测内网服务或访问元数据 (Metadata)
-实际场景中的危害与利用方式：具备导入权限的攻击者控制 URL；默认拒绝列表未覆盖私有网段；影响通过存储的响应内容或回连流量外显；Docker 证据验证 SSRF 可达性，但不声称代码执行。
+实际场景中的危害与利用方式：真实部署中导入功能会处理用户提交的 URL；具备导入权限的攻击者控制该 URL；请求链路到达服务端 URL Fetch 逻辑；直接危害由回连请求或存储响应内容证明；Docker 证据验证 SSRF 可达性，但不声称代码执行。
 漏洞包路径：confirmed/<vulnerability-slug>/
 ```
 

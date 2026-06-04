@@ -103,8 +103,9 @@ Confirmed reports must state:
 - attacker condition
 - server condition
 - concrete security impact
-- real-world exploitability: attacker path, server-side reachability, observable
-  impact channel, and the verified-vs-not-claimed impact boundary
+- real-world exploitability: practical scenario, attacker-controlled input,
+  trigger/call chain, direct business or security consequence, and the
+  verified-vs-not-claimed impact boundary
 
 The validator also checks for common contradiction patterns, including:
 
@@ -127,6 +128,11 @@ The validator also checks for common contradiction patterns, including:
   evidence JSON, or root reproduction script
 - package manager install commands that may trigger lifecycle-script or network
   noise in the shortest reviewer path
+- replay helpers that display PoC/Docker commands but never execute them
+- reproduction supplements or evidence indexes that reference missing
+  bundle-local helper scripts
+- missing direct-impact replay evidence, such as `DIRECT_IMPACT_CONFIRMED`,
+  `DIRECT_AVAILABILITY_IMPACT_CONFIRMED`, or an equivalent programmatic oracle
 - optional `reviewer-evidence-and-impact.md` files that are placeholder-only or
   missing attacker boundary, impact, success-oracle, and replay-command wording
 - optional `attachments/reviewer-evidence-index.json` files with invalid JSON,

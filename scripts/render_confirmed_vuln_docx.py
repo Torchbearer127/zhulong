@@ -49,10 +49,11 @@ L10N = {
         "server_condition": "服务端条件",
         "security_impact": "安全影响",
         "real_world_exploitability": "实际场景中的危害与利用方式",
+        "practical_scenario": "实际使用场景",
         "attacker_path": "攻击者路径",
-        "server_reachability": "服务端可达条件",
-        "observable_impact": "影响外显通道",
-        "verified_boundary": "已验证影响边界",
+        "trigger_chain": "触发调用链",
+        "direct_impact": "直接危害证明",
+        "verified_boundary": "影响边界",
         "reproduction": "漏洞复现",
         "final_verdict": "最终判定：",
         "code_context": "关键代码上下文",
@@ -116,10 +117,11 @@ L10N = {
         "server_condition": "Server Condition",
         "security_impact": "Security Impact",
         "real_world_exploitability": "Real-World Exploitability",
+        "practical_scenario": "Practical scenario",
         "attacker_path": "Attacker path",
-        "server_reachability": "Server-side reachability",
-        "observable_impact": "Observable impact channel",
-        "verified_boundary": "Verified impact boundary",
+        "trigger_chain": "Trigger / call chain",
+        "direct_impact": "Direct impact proof",
+        "verified_boundary": "Impact boundary",
         "reproduction": "Reproduction",
         "final_verdict": "Final Verdict:",
         "code_context": "Key Code Context",
@@ -897,6 +899,27 @@ def success_marker_for_script(finding: dict[str, Any], language: str, evidence_l
     )
 
 
+def direct_impact_marker_for_script(finding: dict[str, Any], evidence_lines: list[str]) -> str:
+    material = " ".join(
+        str(value or "")
+        for value in (
+            finding.get("title"),
+            finding.get("title_zh"),
+            finding.get("title_en"),
+            finding.get("vuln_type"),
+            finding.get("vuln_type_zh"),
+            finding.get("vuln_type_en"),
+            finding.get("security_impact"),
+            finding.get("security_impact_zh"),
+            finding.get("security_impact_en"),
+            " ".join(evidence_lines),
+        )
+    ).lower()
+    if re.search(r"\b(?:dos|denial of service|availability|timeout|crash|oom)\b|拒绝服务|不可用|超时|崩溃", material):
+        return "DIRECT_AVAILABILITY_IMPACT_CONFIRMED"
+    return "DIRECT_IMPACT_CONFIRMED"
+
+
 def generated_mode_profile(mode: str, language: str) -> dict[str, str]:
     profiles = {
         "zh-CN": {
@@ -958,6 +981,7 @@ def build_generated_recording_shell(
     steps = [step for step in raw_steps if isinstance(step, dict)] if isinstance(raw_steps, list) else []
     evidence_lines = collect_balanced_reproduction_evidence_lines(finding, language, limit=4)
     success_marker = success_marker_for_script(finding, language, evidence_lines)
+    direct_impact_marker = direct_impact_marker_for_script(finding, evidence_lines)
     supported_modes = generator_modes_for_artifact(artifact)
     usage_modes = "|".join(supported_modes)
     code_items = finding.get("code_context")
@@ -1003,6 +1027,7 @@ def build_generated_recording_shell(
             "target_version_label": "版本号",
             "success_marker_missing": "未在 replay log 中检测到确定性成功标记：",
             "success_marker_seen": "确定性成功标记已验证：",
+            "direct_impact_marker_seen": "直接危害标记已写入 replay log：",
             "command_failed": "命令执行失败，详见 replay log：",
             "final_confirmed": "漏洞已确认：确定性成功标记已在 bundle-local replay log 中验证。",
         },
@@ -1040,6 +1065,7 @@ def build_generated_recording_shell(
             "target_version_label": "Target Version",
             "success_marker_missing": "Deterministic success marker was not found in replay log:",
             "success_marker_seen": "Deterministic success marker verified:",
+            "direct_impact_marker_seen": "Direct-impact marker recorded in replay log:",
             "command_failed": "Command failed; see replay log:",
             "final_confirmed": "VULNERABILITY CONFIRMED: deterministic success marker verified in the bundle-local replay log.",
         },
@@ -1081,6 +1107,7 @@ def build_generated_recording_shell(
         'EVIDENCE_DIR="$ATTACH_DIR/evidence"',
         'REPLAY_LOG="$EVIDENCE_DIR/replay-output.log"',
         f"SUCCESS_MARKER={shell_quote(success_marker)}",
+        f"DIRECT_IMPACT_MARKER={shell_quote(direct_impact_marker)}",
         'cd "$SCRIPT_DIR"',
         "",
         "if [ -t 1 ]; then",
@@ -1154,6 +1181,12 @@ def build_generated_recording_shell(
         f"    printf '%s %s\\n' {shell_quote(strings['success_marker_missing'])} \"$marker\" >&2",
         "    log_line \"[missing-success-marker] $marker\"",
         "    exit 1",
+        "}",
+        "",
+        "record_direct_impact_marker() {",
+        "    marker=\"$1\"",
+        f"    highlight_success {shell_quote(strings['direct_impact_marker_seen'])}' '\"$marker\"",
+        "    log_line \"$marker\"",
         "}",
         "",
         "print_banner() {",
@@ -1300,11 +1333,13 @@ def build_generated_recording_shell(
             script_lines.append(f"    highlight_danger {shell_quote(line)}")
         script_lines.append("    pause_step \"$PAUSE_SHORT\"")
         script_lines.append("    verify_success_marker \"$SUCCESS_MARKER\"")
+        script_lines.append("    record_direct_impact_marker \"$DIRECT_IMPACT_MARKER\"")
         script_lines.append(f"    highlight_success {shell_quote(strings['final_confirmed'])}")
         script_lines.append("    show_evidence_summary")
         script_lines.append("    pause_step \"$PAUSE_LONG\"")
     else:
         script_lines.append("    verify_success_marker \"$SUCCESS_MARKER\"")
+        script_lines.append("    record_direct_impact_marker \"$DIRECT_IMPACT_MARKER\"")
         script_lines.append(f"    highlight_success {shell_quote(strings['final_confirmed'])}")
         script_lines.append("    show_evidence_summary")
         script_lines.append("    pause_step \"$PAUSE_LONG\"")
@@ -1833,6 +1868,15 @@ def real_world_exploitability_lines(finding: dict[str, Any], language: str) -> l
     attacker = quality_condition_text(finding, "attacker", language)
     server = quality_condition_text(finding, "server", language)
     impact = quality_condition_text(finding, "impact", language)
+    project_name = str(finding.get("project_name", "target project")).strip() or "target project"
+    component = (
+        localized_string(finding, "component", language)
+        or localized_string(finding, "package", language)
+        or localized_vuln_type(finding, language)
+    )
+    code_items = finding.get("code_context")
+    first_code = code_items[0] if isinstance(code_items, list) and code_items and isinstance(code_items[0], dict) else {}
+    code_location = ensure_relpath(first_code.get("location"))
     evidence = collect_balanced_reproduction_evidence_lines(finding, language, limit=2)
     observable = evidence[0] if evidence else (
         "报告中的成功判据应通过响应、日志、错误输出、存储记录或操作员可见证据外显。"
@@ -1840,19 +1884,41 @@ def real_world_exploitability_lines(finding: dict[str, Any], language: str) -> l
         else "The success oracle should become visible through a response, log, error output, stored record, or operator-visible artifact."
     )
     if language == "zh-CN":
+        scenario = (
+            f"在真实部署中，{project_name} 的 {component} 处理来自用户、客户端、集成服务或上游系统的数据；"
+            f"当服务端满足以下条件时，问题具备可触发场景：{server}"
+        )
+        trigger_chain = (
+            f"攻击者可控输入进入受影响功能后到达 {code_location or component}，"
+            "并触发 Docker 复现中记录的脆弱路径。"
+        )
+        direct_impact = f"{impact}；直接危害由 replay log 中的 DIRECT_IMPACT_CONFIRMED 等价标记和以下成功判据支撑：{observable}"
         boundary = (
             "Docker PoC 已验证的影响边界为上述成功判据能够证明的效果；"
             "报告不声称未由 Docker 输出、响应、日志或证据文件证明的更强影响。"
         )
     else:
+        scenario = (
+            f"In a real deployment, {project_name}'s {component} processes data from users, clients, "
+            f"integrations, or upstream systems; the issue is reachable when the server-side condition holds: {server}"
+        )
+        trigger_chain = (
+            f"Attacker-controlled input reaches {code_location or component} and triggers the fragile path "
+            "recorded by the Docker reproduction."
+        )
+        direct_impact = (
+            f"{impact}; the direct impact is supported by the DIRECT_IMPACT_CONFIRMED-equivalent marker "
+            f"in the replay log and by this success oracle: {observable}"
+        )
         boundary = (
             "The verified impact boundary is limited to the effect proven by the Docker PoC success oracle; "
             "the report does not claim stronger impact that is not proven by Docker output, responses, logs, or evidence files."
         )
     return [
+        format_kv(language, tr(language, "practical_scenario"), scenario),
         format_kv(language, tr(language, "attacker_path"), attacker),
-        format_kv(language, tr(language, "server_reachability"), server),
-        format_kv(language, tr(language, "observable_impact"), f"{impact}；{observable}" if language == "zh-CN" else f"{impact}; {observable}"),
+        format_kv(language, tr(language, "trigger_chain"), trigger_chain),
+        format_kv(language, tr(language, "direct_impact"), direct_impact),
         format_kv(language, tr(language, "verified_boundary"), boundary),
     ]
 
