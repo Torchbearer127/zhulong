@@ -878,6 +878,26 @@ def localized_target_version_for_script(finding: dict[str, Any], language: str) 
     )
 
 
+def localized_component_for_script(finding: dict[str, Any], language: str) -> str:
+    impact = ensure_mapping(finding.get("impact"))
+    return first_nonempty(
+        localized_string(finding, "component", language),
+        localized_string(impact, "component", language),
+        finding.get("component"),
+        impact.get("component"),
+    )
+
+
+def localized_repo_url_for_script(finding: dict[str, Any]) -> str:
+    impact = ensure_mapping(finding.get("impact"))
+    return first_nonempty(
+        finding.get("repo_url"),
+        finding.get("repository_url"),
+        impact.get("repo_url"),
+        impact.get("repository_url"),
+    )
+
+
 def success_marker_for_script(finding: dict[str, Any], language: str, evidence_lines: list[str]) -> str:
     verification = ensure_mapping(finding.get("verification_evidence"))
     candidates = [
@@ -975,6 +995,8 @@ def build_generated_recording_shell(
 ) -> str:
     project_name = str(finding.get("project_name", "target-project")).strip() or "target-project"
     target_version = localized_target_version_for_script(finding, language)
+    target_component = localized_component_for_script(finding, language)
+    target_repo_url = localized_repo_url_for_script(finding)
     vuln_type = localized_vuln_type(finding, language)
     title = build_title(finding, language)
     raw_steps = finding.get("reproduction")
@@ -1023,8 +1045,11 @@ def build_generated_recording_shell(
             "container_missing": "必需的 Docker 容器未运行：",
             "compose_prereq": "请先启动 bundle-local 复现环境：",
             "compose_missing": "未在 attachments/ 下找到 bundle-local Compose 文件。请先启动补充说明中记录的 Docker 环境。",
-            "target_software_label": "目标软件",
-            "target_version_label": "版本号",
+            "target_identity_label": "软件名称和版本号",
+            "target_software_label": "测试软件名称",
+            "target_version_label": "测试版本/分支",
+            "target_component_label": "影响组件",
+            "target_repo_label": "仓库链接",
             "success_marker_missing": "未在 replay log 中检测到确定性成功标记：",
             "success_marker_seen": "确定性成功标记已验证：",
             "direct_impact_marker_seen": "直接危害标记已写入 replay log：",
@@ -1061,8 +1086,11 @@ def build_generated_recording_shell(
             "container_missing": "Required Docker container is not running:",
             "compose_prereq": "Start the bundle-local environment first:",
             "compose_missing": "No bundle-local Compose file was found under attachments/. Start the documented Docker environment first.",
-            "target_software_label": "Target Software",
-            "target_version_label": "Target Version",
+            "target_identity_label": "Software and Version",
+            "target_software_label": "Tested Software",
+            "target_version_label": "Tested Version / Branch",
+            "target_component_label": "Affected Component",
+            "target_repo_label": "Repository URL",
             "success_marker_missing": "Deterministic success marker was not found in replay log:",
             "success_marker_seen": "Deterministic success marker verified:",
             "direct_impact_marker_seen": "Direct-impact marker recorded in replay log:",
@@ -1221,10 +1249,32 @@ def build_generated_recording_shell(
         "}",
         "",
         "print_target_identity() {",
+        f"    focus_line \"$C_WHITE_ON_MAGENTA\" {shell_quote(' ' + strings['target_identity_label'] + ' ')} {shell_quote(' ' + project_name + '; ' + strings['target_version_label'] + ': ' + target_version + ' ')}",
         f"    focus_line \"$C_WHITE_ON_BLUE\" {shell_quote(' ' + strings['target_software_label'] + ' ')} {shell_quote(' ' + project_name + ' ')}",
         f"    focus_line \"$C_BLACK_ON_YELLOW\" {shell_quote(' ' + strings['target_version_label'] + ' ')} {shell_quote(' ' + target_version + ' ')}",
+        *(
+            [f"    focus_line \"$C_WHITE_ON_BLUE\" {shell_quote(' ' + strings['target_component_label'] + ' ')} {shell_quote(' ' + target_component + ' ')}"]
+            if target_component
+            else []
+        ),
+        *(
+            [f"    focus_line \"$C_CYAN\" {shell_quote(' ' + strings['target_repo_label'] + ' ')} {shell_quote(' ' + target_repo_url + ' ')}"]
+            if target_repo_url
+            else []
+        ),
+        f"    log_line {shell_quote(strings['target_identity_label'] + ': ' + project_name + '; ' + strings['target_version_label'] + ': ' + target_version)}",
         f"    log_line {shell_quote(strings['target_software_label'] + ': ' + project_name)}",
         f"    log_line {shell_quote(strings['target_version_label'] + ': ' + target_version)}",
+        *(
+            [f"    log_line {shell_quote(strings['target_component_label'] + ': ' + target_component)}"]
+            if target_component
+            else []
+        ),
+        *(
+            [f"    log_line {shell_quote(strings['target_repo_label'] + ': ' + target_repo_url)}"]
+            if target_repo_url
+            else []
+        ),
         "}",
         "",
         "docker_ready() {",

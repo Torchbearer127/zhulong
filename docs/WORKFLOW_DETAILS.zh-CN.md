@@ -96,6 +96,7 @@ bash <audit-workspace>/bin/check_omc_runtime.sh --json
 - 录屏视频早于当前报告、补充说明、证据 JSON 或根复现脚本。
 - 最短审核复现路径中可能触发生命周期脚本或联网噪音的 `npm install` / `yarn install` / `pnpm install`。
 - 复现脚本只展示 PoC/Docker 命令却没有实际执行路径。
+- 复现脚本没有把 `测试软件名称` 与 `测试版本/分支` 作为独立开场字段展示，或缺少开场身份屏/最终证据汇总屏停顿。
 - 补充复现说明或证据索引引用了 bundle 中不存在的本地 helper 脚本。
 - 缺少 direct-impact replay 证据，例如 `DIRECT_IMPACT_CONFIRMED`、`DIRECT_AVAILABILITY_IMPACT_CONFIRMED` 或等价的程序化危害判据。
 - 可选 `reviewer-evidence-and-impact.md` 仅为占位，或缺少攻击者边界、影响说明、成功判据和最短复现命令。

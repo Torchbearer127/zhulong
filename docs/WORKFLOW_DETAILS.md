@@ -129,6 +129,9 @@ The validator also checks for common contradiction patterns, including:
 - package manager install commands that may trigger lifecycle-script or network
   noise in the shortest reviewer path
 - replay helpers that display PoC/Docker commands but never execute them
+- replay helpers that do not show `Tested Software` and
+  `Tested Version / Branch` as separate opening-screen fields, or that skip the
+  opening/final reviewer pauses needed for screen recording
 - reproduction supplements or evidence indexes that reference missing
   bundle-local helper scripts
 - missing direct-impact replay evidence, such as `DIRECT_IMPACT_CONFIRMED`,

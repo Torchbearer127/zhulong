@@ -57,11 +57,23 @@ ROOT_SCRIPT_LOCATOR_PATTERN = re.compile(
     r"\b[A-Za-z_][A-Za-z0-9_]*=.*(?:dirname\s+--?\s+\"\$0\"|dirname\s+\"\$0\"|\$\{BASH_SOURCE\[0\]\})"
 )
 ROOT_SCRIPT_TARGET_SOFTWARE_PATTERN = re.compile(
-    r"(?:目标软件|软件名称|Target\s+(?:Software|Product)|Software\s+Name|Product\s+Name|Package\s+Name)",
+    r"(?:目标软件|软件名称|测试软件名称|Target\s+(?:Software|Product)|Tested\s+(?:Software|Package|Product)|Software\s+Name|Product\s+Name|Package\s+Name)",
     re.IGNORECASE,
 )
 ROOT_SCRIPT_TARGET_VERSION_PATTERN = re.compile(
     r"(?:版本号|目标版本|影响版本|Target\s+Version|Affected\s+Version|Tested\s+Version|Package\s+Version|Version)",
+    re.IGNORECASE,
+)
+ROOT_SCRIPT_TESTED_SOFTWARE_FIELD_PATTERN = re.compile(
+    r"(?:测试软件名称|Tested\s+(?:Software|Package|Product))",
+    re.IGNORECASE,
+)
+ROOT_SCRIPT_TESTED_VERSION_FIELD_PATTERN = re.compile(
+    r"(?:测试版本/分支|测试版本|测试分支|Tested\s+Version\s*/\s*Branch|Tested\s+(?:Version|Branch|Commit))",
+    re.IGNORECASE,
+)
+ROOT_SCRIPT_SOFTWARE_VERSION_COMBINED_PATTERN = re.compile(
+    r"(?:软件名称和版本号|Software\s+and\s+Version)",
     re.IGNORECASE,
 )
 ROOT_SCRIPT_TARGET_HIGHLIGHT_PATTERN = re.compile(
@@ -2966,6 +2978,21 @@ def validate_root_script_bundle_contract(script_path: Path, bundle_dir: Path, te
 
 def validate_root_script_target_identity(script_path: Path, bundle_dir: Path, text: str) -> None:
     rel = script_path.relative_to(bundle_dir).as_posix()
+    if not ROOT_SCRIPT_SOFTWARE_VERSION_COMBINED_PATTERN.search(text):
+        fail(
+            f"{rel} must print a reviewer-facing software/version identity line such as "
+            "`软件名称和版本号` or `Software and Version` at replay start"
+        )
+    if not ROOT_SCRIPT_TESTED_SOFTWARE_FIELD_PATTERN.search(text):
+        fail(
+            f"{rel} must print tested software/package name as an independent field "
+            "(`测试软件名称` / `Tested Software`) at replay start"
+        )
+    if not ROOT_SCRIPT_TESTED_VERSION_FIELD_PATTERN.search(text):
+        fail(
+            f"{rel} must print tested version, branch, commit, or date as an independent field "
+            "(`测试版本/分支` / `Tested Version / Branch`) at replay start"
+        )
     if not ROOT_SCRIPT_TARGET_SOFTWARE_PATTERN.search(text):
         fail(
             f"{rel} must print a highlighted target software/package name at the beginning of reviewer replay"
@@ -2986,10 +3013,12 @@ def validate_root_script_target_identity(script_path: Path, bundle_dir: Path, te
     flow_lines = extract_shell_function_body(text, "run_flow") or extract_shell_function_body(text, "main")
     if flow_lines:
         saw_identity_call = False
-        for line in flow_lines:
+        identity_index = -1
+        for line_index, line in enumerate(flow_lines):
             for name in shell_command_names_from_line(line):
                 if name == "print_target_identity":
                     saw_identity_call = True
+                    identity_index = line_index
                     continue
                 if saw_identity_call:
                     continue
@@ -3002,6 +3031,26 @@ def validate_root_script_target_identity(script_path: Path, bundle_dir: Path, te
             fail(
                 f"{rel} must call print_target_identity from the replay flow before proof steps"
             )
+        if identity_index >= 0:
+            following = "\n".join(flow_lines[identity_index + 1: identity_index + 5])
+            if not re.search(r"\bpause_step\s+\"?\$PAUSE_(?:SHORT|LONG)\"?", following):
+                fail(
+                    f"{rel} must pause on the opening tested software/version identity screen before continuing"
+                )
+
+
+def validate_root_script_final_summary_pause(script_path: Path, bundle_dir: Path, text: str) -> None:
+    rel = script_path.relative_to(bundle_dir).as_posix()
+    flow_lines = extract_shell_function_body(text, "run_flow") or extract_shell_function_body(text, "main")
+    for index, line in enumerate(flow_lines):
+        if "show_evidence_summary" not in line:
+            continue
+        following = "\n".join(flow_lines[index + 1: index + 5])
+        if re.search(r"\bpause_step\s+\"?\$PAUSE_(?:SHORT|LONG)\"?", following):
+            return
+    fail(
+        f"{rel} must pause on the final evidence summary/conclusion screen before exiting reviewer replay"
+    )
 
 
 def normalize_replay_log_path(raw: str) -> str:
@@ -3190,6 +3239,7 @@ def validate_bundle_root_scripts(bundle_dir: Path, note_text: str) -> list[str]:
         validate_script_bundle_portability(script_path, bundle_dir, text)
         validate_root_script_bundle_contract(script_path, bundle_dir, text)
         validate_root_script_target_identity(script_path, bundle_dir, text)
+        validate_root_script_final_summary_pause(script_path, bundle_dir, text)
         validate_root_script_replay_log_contract(script_path, bundle_dir, text)
         validate_root_script_displayed_command_execution(script_path, bundle_dir, text)
         validate_root_script_helper_closure(script_path, bundle_dir, text)

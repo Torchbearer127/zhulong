@@ -3416,7 +3416,7 @@ def main() -> None:
         en_scripts = sorted(en_bundle.glob("run-*.sh"))
         if en_scripts:
             en_script_text = en_scripts[0].read_text(encoding="utf-8")
-            for expected in ("print_target_identity", "Target Software", "Target Version"):
+            for expected in ("print_target_identity", "Software and Version", "Tested Software", "Tested Version / Branch"):
                 if expected not in en_script_text:
                     raise SystemExit(f"FAILED: generated en-US recording script is missing target identity marker: {expected}")
         standard_script = standard_bundle / "run-selftest-jwt-recording.sh"
@@ -3428,8 +3428,9 @@ def main() -> None:
             raise SystemExit("FAILED: generated zh-CN recording script must use [代码], not 0/N, for code hints")
         for expected in (
             "print_target_identity",
-            "目标软件",
-            "版本号",
+            "软件名称和版本号",
+            "测试软件名称",
+            "测试版本/分支",
             "gothinkster/node-express-realworld-example-app",
             "default configuration",
             "REPLAY_LOG",
@@ -4119,6 +4120,40 @@ def main() -> None:
             "zh-CN",
         ], plugin_root, "target software/package")
 
+        bad_legacy_target_identity = copy_standard_bundle("legacy_target_identity_labels")
+        legacy_target_script = bad_legacy_target_identity / "run-selftest-jwt-recording.sh"
+        legacy_target_script.write_text(
+            legacy_target_script.read_text(encoding="utf-8")
+            .replace("软件名称和版本号", "目标信息")
+            .replace("测试软件名称", "目标软件")
+            .replace("测试版本/分支", "版本号"),
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_legacy_target_identity),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "reviewer-facing software/version identity line")
+
+        bad_no_opening_identity_pause = copy_standard_bundle("no_opening_identity_pause")
+        no_opening_pause_script = bad_no_opening_identity_pause / "run-selftest-jwt-recording.sh"
+        no_opening_pause_script.write_text(
+            no_opening_pause_script.read_text(encoding="utf-8")
+            .replace("    print_target_identity\n    pause_step \"$PAUSE_SHORT\"\n", "    print_target_identity\n", 1),
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_no_opening_identity_pause),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "opening tested software/version identity screen")
+
         bad_late_target_identity = copy_standard_bundle("late_target_identity")
         late_target_script = bad_late_target_identity / "run-selftest-jwt-recording.sh"
         late_target_script.write_text(
@@ -4135,6 +4170,22 @@ def main() -> None:
             "--language",
             "zh-CN",
         ], plugin_root, "before proof steps")
+
+        bad_no_final_summary_pause = copy_standard_bundle("no_final_summary_pause")
+        no_final_pause_script = bad_no_final_summary_pause / "run-selftest-jwt-recording.sh"
+        no_final_pause_script.write_text(
+            no_final_pause_script.read_text(encoding="utf-8")
+            .replace("    show_evidence_summary\n    pause_step \"$PAUSE_LONG\"\n", "    show_evidence_summary\n"),
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_no_final_summary_pause),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "final evidence summary")
 
         bad_undefined_root_helper = copy_standard_bundle("undefined_root_helper")
         undefined_helper_script = bad_undefined_root_helper / "run-selftest-jwt-recording.sh"
@@ -4842,7 +4893,10 @@ def main() -> None:
             bad_pkg_dependency,
             bad_workspace_marker,
             bad_missing_target_identity,
+            bad_legacy_target_identity,
+            bad_no_opening_identity_pause,
             bad_late_target_identity,
+            bad_no_final_summary_pause,
             bad_undefined_root_helper,
             bad_missing_replay_log,
             bad_unregistered_replay_log,
