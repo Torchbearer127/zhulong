@@ -209,11 +209,9 @@ confirmed/<vulnerability-slug>/
 └── 📂 attachments/
 ```
 
-只有当 Docker 或 Docker Compose 中的运行时证据存在，并且烛龙的报告证据包自动检查通过时，一个发现才算完成态的已确认交付物。
+只有当 Docker 或 Docker Compose 中的运行时证据存在，并且烛龙的报告证据包自动检查通过时，一个发现才算完成态的已确认交付物；同类扩展只是针对既有 confirmed bundle 的可选候选生成环节，候选仍需独立 Docker 复现。
 
-同类扩展只是针对既有 confirmed bundle 的可选候选生成环节，候选仍需独立 Docker 复现；完整复审机制和边界见 [`docs/WORKFLOW_DETAILS.zh-CN.md`](docs/WORKFLOW_DETAILS.zh-CN.md)。
-
-人机协同细节、报告质量门禁、验证命令、示例审计发现形态和限制请阅读 [`docs/WORKFLOW_DETAILS.zh-CN.md`](docs/WORKFLOW_DETAILS.zh-CN.md)。
+人机协同细节、报告质量门禁、验证命令、示例审计发现形态、同类扩展复审规则和限制请阅读 [`docs/WORKFLOW_DETAILS.zh-CN.md`](docs/WORKFLOW_DETAILS.zh-CN.md)。
 
 ---
 

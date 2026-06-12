@@ -248,14 +248,13 @@ confirmed/<vulnerability-slug>/
 ```
 
 A finding is not considered confirmed until runtime evidence exists from Docker
-or Docker Compose and Zhulong's automated report-package checks pass.
-
-Seeded variant expansion is an optional candidate-generation pass for an
-existing confirmed bundle; see [`docs/WORKFLOW_DETAILS.md`](docs/WORKFLOW_DETAILS.md)
-for the full review contract and guardrails.
+or Docker Compose and Zhulong's automated report-package checks pass; seeded
+variant expansion is only an optional candidate-generation pass for an existing
+confirmed bundle, and variants still require independent Docker reproduction.
 
 For collaboration details, report quality checks, validation commands, example
-finding shape, and limitations, see [`docs/WORKFLOW_DETAILS.md`](docs/WORKFLOW_DETAILS.md).
+finding shapes, seeded-variant review rules, and limitations, see
+[`docs/WORKFLOW_DETAILS.md`](docs/WORKFLOW_DETAILS.md).
 
 ---
 
