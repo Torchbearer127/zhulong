@@ -35,9 +35,9 @@ with Docker reproduction before confirmation.</strong></p>
   after Docker or Docker Compose evidence supports them.
 - 🎯 **Confirmed-only deliverables:** Scanner alerts, dependency hints, static
   findings, and LLM guesses stay quarantined until evidence is strong enough.
-- 🌱 **Seeded variant discovery:** Confirmed vulnerabilities can be converted
-  into auditable seed cards and same-repository variant candidates, but every
-  variant still needs its own Docker reproduction before confirmation.
+- 🌱 **Variant discovery:** Use confirmed vulnerabilities to flag likely
+  same-class issues in the same repository, but each lead only counts after its
+  own Docker reproduction.
 - 🔌 **Lightweight and modular:** No required backend, dashboard, database,
   vector store, or RAG platform; Zhulong runs through local agent modules and
   scripts.
@@ -492,6 +492,7 @@ Completed:
 - [x] Evidence packages for confirmed vulnerabilities, including report, reproduction notes, evidence JSON, logs/screenshots, and run script.
 - [x] Machine-readable issue decision log and handoff summaries for human-agent collaboration.
 - [x] Safety checks for unsafe verification containers, Docker residue, and review-only OMC multi-agent worker process handling.
+- [x] Same-repository variant discovery from confirmed vulnerabilities, with every lead still requiring its own Docker reproduction.
 
 Planned:
 
