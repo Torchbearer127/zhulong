@@ -414,6 +414,7 @@ python3 scripts/validate_all_report_bundles.py --confirmed-dir <confirmed-dir>
 - [x] 机器可读的线索判断记录，以及便于人机协同接续的交接摘要。
 - [x] 针对危险验证容器、Docker 残留和 OMC 多 Agent worker 进程的安全检查与只读复核边界。
 - [x] 基于已确认漏洞提示同仓库里的同类漏洞线索，并要求每条线索独立完成 Docker 复现。
+- [x] 面向审核录屏的 replay 脚本会展示代码上下文、漏洞分析、实际危害边界和最终证据汇总。
 
 后续计划：
 

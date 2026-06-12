@@ -136,6 +136,15 @@ The validator also checks for common contradiction patterns, including:
   bundle-local helper scripts
 - missing direct-impact replay evidence, such as `DIRECT_IMPACT_CONFIRMED`,
   `DIRECT_AVAILABILITY_IMPACT_CONFIRMED`, or an equivalent programmatic oracle
+- raw Python/JSON-like dict/list/object text leaking into DOCX reviewer prose
+- mutable-only runtime identity such as `latest`, floating image tags, `main`,
+  `master`, or vague "current version" wording without a stable version, commit,
+  digest, or tested date
+- direct-impact marker drift between DOCX, supplement, replay helper,
+  `verification-evidence.json`, reviewer evidence index, and registered replay
+  `.log` files
+- readiness or health checks in root replay helpers that target an unrelated
+  host/path instead of the runtime path exercised by proof commands
 - optional `reviewer-evidence-and-impact.md` files that are placeholder-only or
   missing attacker boundary, impact, success-oracle, and replay-command wording
 - optional `attachments/reviewer-evidence-index.json` files with invalid JSON,

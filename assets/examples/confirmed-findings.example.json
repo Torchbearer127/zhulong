@@ -85,13 +85,17 @@
         "location": "src/routes/download.js:42-46",
         "summary": "这里从请求中读取 file 参数，并直接参与后续路径拼接。",
         "summary_en": "This block reads the file parameter from the request and feeds it directly into later path construction.",
-        "snippet": "const file = req.query.file;\nconst resolvedPath = path.join(BASE_DIR, file);"
+        "snippet": "const file = req.query.file;\nconst resolvedPath = path.join(BASE_DIR, file);",
+        "explanation": "攻击者可控输入来自 req.query.file，并沿 /download 路由传播到 path.join；相邻代码没有在该位置完成规范化后的目录边界校验，因此后续 sink 仍会接收可逃逸路径。Docker 已验证影响边界为容器内文件读取，不声称代码执行或写入影响。",
+        "explanation_en": "The attacker-controlled source is req.query.file, which propagates through the /download route into path.join. Adjacent code does not perform normalized directory-boundary validation here, so the later sink still receives an escaping path. Docker verification proves container-local file read impact and does not claim code execution or write impact."
       },
       {
         "location": "src/routes/download.js:47-55",
         "summary": "这里没有验证 resolvedPath 是否仍位于 BASE_DIR 目录内，而是直接调用 sendFile 返回文件。",
         "summary_en": "This block does not verify that resolvedPath still stays within BASE_DIR and instead returns the file directly with sendFile.",
-        "snippet": "return res.sendFile(resolvedPath);"
+        "snippet": "return res.sendFile(resolvedPath);",
+        "explanation": "危险操作是 res.sendFile(resolvedPath)：攻击者输入已经传播到 resolvedPath，缺失的 guard 是 sendFile 前的 path.resolve 前缀校验或文件标识白名单；现有检查不足以阻断 ../ 逃逸。已验证危害限定为敏感文件内容泄露。",
+        "explanation_en": "The dangerous operation is res.sendFile(resolvedPath): attacker input has propagated into resolvedPath, and the missing guard is a path.resolve prefix check or file-identifier allowlist immediately before sendFile. Existing checks are insufficient to block ../ escape. The verified impact boundary is sensitive file disclosure."
       }
     ],
     "reproduction": [

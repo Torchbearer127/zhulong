@@ -99,6 +99,10 @@ bash <audit-workspace>/bin/check_omc_runtime.sh --json
 - 复现脚本没有把 `测试软件名称` 与 `测试版本/分支` 作为独立开场字段展示，或缺少开场身份屏/最终证据汇总屏停顿。
 - 补充复现说明或证据索引引用了 bundle 中不存在的本地 helper 脚本。
 - 缺少 direct-impact replay 证据，例如 `DIRECT_IMPACT_CONFIRMED`、`DIRECT_AVAILABILITY_IMPACT_CONFIRMED` 或等价的程序化危害判据。
+- DOCX 面向审核人的正文中泄漏 Python/JSON 风格的 dict/list/object 中间结构，而不是正常报告 prose。
+- 运行时/版本身份只使用 `latest`、浮动镜像 tag、`main`、`master` 或含糊的“current version/当前版本”，且没有稳定版本号、commit、digest 或测试日期。
+- DOCX、补充说明、replay helper、`verification-evidence.json`、reviewer evidence index 与已注册 replay `.log` 中的 direct-impact marker 不一致。
+- 根 replay helper 的 readiness/health 检查指向与 PoC/proof 命令无关的 host/path。
 - 可选 `reviewer-evidence-and-impact.md` 仅为占位，或缺少攻击者边界、影响说明、成功判据和最短复现命令。
 - 可选 `attachments/reviewer-evidence-index.json` JSON 无效、引用缺失附件、引用 bundle 外路径、复现命令不是 bundle 根目录本地命令，或列出的成功判据无法在脚本/证据/补充说明/审核补充/`verification-evidence.json` 中找到。
 - fixture 或 vendored source 复现缺少 source-grounded provenance，或库/包漏洞缺少 consuming application boundary。
@@ -117,6 +121,8 @@ bash <audit-workspace>/bin/check_omc_runtime.sh --json
 
 本流程设有多条硬性约束边界：
 
+- P6.1 确立同类漏洞扩展的流程边界。P6.2 定义 Variant Seed Card 字段，但不实现自动种子提取或候选发现。
+- P6.4 增加 `scripts/find_variant_candidates.py`，这是一个离线 helper，只读取最终 Variant Seed Card，并在同一目标仓库内对候选进行排序；它仅使用本地 Python 文件系统遍历，不调用扫描器、`rg`、`grep`、`git`、网络 API、LLM、Docker、PoC、DOCX 渲染或确认漏洞包生成。
 - 种子卡与候选列表仅作为辅助研判资料，无法替代 `verification-evidence.json`、findings JSON、DOCX 报告、补充复现说明、附件索引、replay 日志、Docker 核验材料以及确认漏洞包的校验结果。
 - 同类候选漏洞禁止在补充说明、确认漏洞包、审阅备注、最终摘要里标注为已确认漏洞。候选漏洞只有完成独立 Docker 或 Docker Compose 环境复现，且通过确认漏洞包校验流程后，才可升级判定为已确认同类漏洞。
 - 候选漏洞检索工具仅支持在单一目标仓库内运行。若种子卡配置的检索范围不属于当前仓库、工作区路径匹配异常，或是确认漏洞包路径无法解析至当前工作区的 `confirmed/` 目录，工具必须直接报错终止运行。

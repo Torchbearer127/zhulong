@@ -5,6 +5,7 @@ import argparse
 import json
 import re
 import shutil
+import sys
 import zipfile
 from pathlib import Path
 from typing import Any, Iterable
@@ -102,7 +103,6 @@ L10N = {
         "cvss31_vector": "CVSS 3.1 向量",
         "base_score": "基础评分",
         "severity": "等级判定",
-        "code_context_item": "{idx}. 代码上下文",
     },
     "en-US": {
         "report_suffix": "_report.docx",
@@ -170,7 +170,6 @@ L10N = {
         "cvss31_vector": "CVSS 3.1 Vector",
         "base_score": "Base Score",
         "severity": "Severity",
-        "code_context_item": "{idx}. Code Context",
     },
 }
 
@@ -278,6 +277,10 @@ def ensure_relpath(value: Any) -> str:
     if not text:
         return ""
     if text.startswith("/"):
+        print(
+            f"WARN: absolute path in report input was reduced to basename: {text}",
+            file=sys.stderr,
+        )
         return Path(text).name
     return text
 
@@ -1013,6 +1016,9 @@ def build_generated_recording_shell(
     )
     code_summary = localized_string(first_code, "summary", language)
     code_snippet = str(first_code.get("snippet") or "").strip()
+    code_explanation = localized_string(first_code, "explanation", language)
+    analysis_items = [localize_analysis_marker(item, language) for item in localized_list(finding, "analysis", language)]
+    real_world_items = real_world_exploitability_lines(finding, language)
 
     strings = {
         "zh-CN": {
@@ -1023,8 +1029,22 @@ def build_generated_recording_shell(
             "docker_unavailable": "Docker daemon 未启动，请先启动 Docker/OrbStack。",
             "code_hint_step": "展示关键代码提示",
             "code_hint_label": "代码",
+            "code_context_screen_title": "代码上下文屏",
+            "analysis_screen_label": "分析",
+            "analysis_screen_title": "代码级漏洞分析屏",
+            "real_world_screen_label": "场景",
+            "real_world_screen_title": "真实利用与影响边界屏",
             "code_hint_title": "关键代码位置：",
             "code_hint_summary": "代码摘要：",
+            "code_hint_explanation": "代码解释：",
+            "analysis_input": "攻击者可控输入/前提",
+            "analysis_path": "传播/触发路径",
+            "analysis_sink": "危险点/sink",
+            "analysis_guard": "缺失 guard / validation",
+            "analysis_adjacent": "相邻校验为何不足",
+            "analysis_boundary": "已验证影响边界",
+            "analysis_unavailable": "结构化代码级分析不足，请以 DOCX 报告中的关键代码上下文为准；bundle 校验会拒绝过薄报告。",
+            "real_world_unavailable": "真实场景说明不足，请以报告中的实际场景危害与利用方式为准；bundle 校验会拒绝过薄材料。",
             "step": "步骤",
             "details": "步骤说明：",
             "run_command": "执行命令：",
@@ -1064,8 +1084,22 @@ def build_generated_recording_shell(
             "docker_unavailable": "Docker daemon is not running. Please start Docker first.",
             "code_hint_step": "Show key code hint",
             "code_hint_label": "Code",
+            "code_context_screen_title": "Code Context Screen",
+            "analysis_screen_label": "Analysis",
+            "analysis_screen_title": "Code-Level Vulnerability Analysis Screen",
+            "real_world_screen_label": "Scenario",
+            "real_world_screen_title": "Real-World Exploitability and Impact Boundary Screen",
             "code_hint_title": "Key code location:",
             "code_hint_summary": "Code summary:",
+            "code_hint_explanation": "Code explanation:",
+            "analysis_input": "Attacker-controlled input / precondition",
+            "analysis_path": "Propagation / trigger path",
+            "analysis_sink": "Dangerous sink / operation",
+            "analysis_guard": "Missing guard / validation",
+            "analysis_adjacent": "Why adjacent checks are insufficient",
+            "analysis_boundary": "Verified impact boundary",
+            "analysis_unavailable": "Structured code-level analysis is incomplete; use the Key Code Context in the DOCX report. Bundle validation rejects thin reports.",
+            "real_world_unavailable": "Real-world exploitation context is incomplete; use the report's Real-World Exploitability section. Bundle validation rejects thin materials.",
             "step": "Step",
             "details": "Step details:",
             "run_command": "Run command:",
@@ -1108,6 +1142,34 @@ def build_generated_recording_shell(
         if evidence_lines
         else strings["focus_oracle_default"]
     )
+
+    def concise_lines(values: Iterable[str], *, limit: int = 5, max_chars: int = 180) -> list[str]:
+        lines: list[str] = []
+        for value in values:
+            for raw_line in str(value).splitlines():
+                text = raw_line.strip()
+                if not text:
+                    continue
+                if len(text) > max_chars:
+                    text = text[: max_chars - 3].rstrip() + "..."
+                lines.append(text)
+                if len(lines) >= limit:
+                    return lines
+        return lines
+
+    analysis_lookup = {
+        "input": quality_condition_text(finding, "attacker", language),
+        "path": first_analysis_value(finding, language, ("触发路径：", "Trigger path:")),
+        "sink": first_analysis_value(finding, language, ("危险函数/危险操作：", "Dangerous operation:")),
+        "guard": first_analysis_value(finding, language, ("根因：", "Root cause:")),
+        "adjacent": first_analysis_value(finding, language, ("现有校验为何失效：", "Why existing checks fail:")),
+        "boundary": quality_condition_text(finding, "impact", language),
+    }
+    if code_explanation and not analysis_lookup["boundary"]:
+        analysis_lookup["boundary"] = code_explanation
+    analysis_detail_lines = concise_lines(analysis_items + ([code_explanation] if code_explanation else []), limit=4)
+    real_world_lines = concise_lines(real_world_items, limit=5)
+
     generated_commands: list[str] = []
     for step in steps:
         generated_commands.extend(
@@ -1305,6 +1367,7 @@ def build_generated_recording_shell(
         "",
         "show_code_hint() {",
         f"    announce_step {shell_quote(strings['code_hint_label'])} {shell_quote(strings['code_hint_step'])}",
+        f"    printf '%s%s%s%s\\n' \"$C_WHITE_ON_BLUE\" \"$C_BOLD\" {shell_quote(strings['code_context_screen_title'])} \"$C_RESET\"",
     ]
     if code_snippet:
         script_lines.append(
@@ -1320,6 +1383,8 @@ def build_generated_recording_shell(
         script_lines.append(f"    printf '%s%s %s%s\\n' \"$C_GREEN\" {shell_quote(strings['code_hint_title'])} {shell_quote(code_location)} \"$C_RESET\"")
         if code_summary:
             script_lines.append(f"    printf '%s%s %s%s\\n' \"$C_GREEN\" {shell_quote(strings['code_hint_summary'])} {shell_quote(code_summary)} \"$C_RESET\"")
+        if code_explanation:
+            script_lines.append(f"    printf '%s%s %s%s\\n' \"$C_GREEN\" {shell_quote(strings['code_hint_explanation'])} {shell_quote(code_explanation)} \"$C_RESET\"")
         script_lines.append(f"    printf '%s%s%s%s\\n' \"$C_BLACK_ON_YELLOW\" \"$C_BOLD\" {shell_quote(strings['snippet_focus'])} \"$C_RESET\"")
         script_lines.append("    print_separator")
         script_lines.append("    cat <<'CODE_SNIPPET_EOF' | nl -ba | sed -n '1,24p'")
@@ -1330,6 +1395,41 @@ def build_generated_recording_shell(
             script_lines.append(f"    highlight_note {shell_quote(strings['snippet_truncated'])}")
     else:
         script_lines.append(f"    printf '%s\\n' {shell_quote(strings['code_unavailable'])}")
+    script_lines.extend([
+        "    pause_step \"$PAUSE_LONG\"",
+        "}",
+        "",
+        "show_vulnerability_analysis() {",
+        f"    announce_step {shell_quote(strings['analysis_screen_label'])} {shell_quote(strings['analysis_screen_title'])}",
+    ])
+    analysis_rows = [
+        (strings["analysis_input"], analysis_lookup["input"]),
+        (strings["analysis_path"], analysis_lookup["path"]),
+        (strings["analysis_sink"], analysis_lookup["sink"]),
+        (strings["analysis_guard"], analysis_lookup["guard"]),
+        (strings["analysis_adjacent"], analysis_lookup["adjacent"]),
+        (strings["analysis_boundary"], analysis_lookup["boundary"]),
+    ]
+    if any(value for _label, value in analysis_rows):
+        for label, value in analysis_rows:
+            if value:
+                script_lines.append(f"    focus_line \"$C_WHITE_ON_BLUE\" {shell_quote(' ' + label + ' ')} {shell_quote(' ' + value + ' ')}")
+    else:
+        script_lines.append(f"    printf '%s\\n' {shell_quote(strings['analysis_unavailable'])}")
+    for line in analysis_detail_lines:
+        script_lines.append(f"    highlight_note {shell_quote(line)}")
+    script_lines.extend([
+        "    pause_step \"$PAUSE_LONG\"",
+        "}",
+        "",
+        "show_real_world_context() {",
+        f"    announce_step {shell_quote(strings['real_world_screen_label'])} {shell_quote(strings['real_world_screen_title'])}",
+    ])
+    if real_world_lines:
+        for line in real_world_lines:
+            script_lines.append(f"    highlight_note {shell_quote(line)}")
+    else:
+        script_lines.append(f"    printf '%s\\n' {shell_quote(strings['real_world_unavailable'])}")
     script_lines.extend([
         "    pause_step \"$PAUSE_LONG\"",
         "}",
@@ -1353,6 +1453,8 @@ def build_generated_recording_shell(
         "    print_target_identity",
         "    pause_step \"$PAUSE_SHORT\"",
         "    show_code_hint",
+        "    show_vulnerability_analysis",
+        "    show_real_world_context",
     ])
     for container in required_containers:
         script_lines.append(f"    require_container_running {shell_quote(container)}")
@@ -1529,6 +1631,8 @@ def write_verification_evidence(
     bundle_root_artifacts: list[dict[str, str]] | None = None,
 ) -> None:
     provided = ensure_mapping(finding.get("verification_evidence"))
+    evidence_lines_for_marker = collect_reproduction_evidence_lines(finding, language)
+    direct_impact_marker = direct_impact_marker_for_script(finding, evidence_lines_for_marker)
     slug = first_nonempty(provided.get("finding_slug"), finding.get("slug"), bundle_finding.get("slug"), output_path.parent.name)
     status = first_nonempty(provided.get("verification_status"), finding.get("verification_status"), "confirmed_in_docker")
     if status != "confirmed_in_docker":
@@ -1559,7 +1663,8 @@ def write_verification_evidence(
         if not replay_log_path.exists():
             replay_log_path.write_text(
                 "Zhulong reviewer replay log placeholder.\n"
-                "Run the bundle-root replay script to refresh this file with live reviewer output.\n",
+                "Run the bundle-root replay script to refresh this file with live reviewer output.\n"
+                f"Replay contract direct-impact marker: {direct_impact_marker}\n",
                 encoding="utf-8",
             )
         if REPLAY_LOG_RELATIVE_PATH not in evidence_files:
@@ -1629,6 +1734,7 @@ def write_verification_evidence(
         "expected_observation": expected,
         "observed_observation": observed,
         "oracle_token": oracle_token,
+        "direct_impact_marker": direct_impact_marker,
         "evidence_files": evidence_files,
         "severity_escalation_attempted": bool(
             provided.get("severity_escalation_attempted", finding.get("severity_escalation_attempted", True))
@@ -1728,16 +1834,17 @@ def render_code_context(doc: Document, finding: dict[str, Any], language: str) -
     items = finding.get("code_context")
     if not isinstance(items, list) or not items:
         return
+    renderable_items = [item for item in items if isinstance(item, dict)]
+    if not renderable_items:
+        return
     doc.add_heading(tr(language, "code_context"), level=2)
-    for idx, item in enumerate(items, start=1):
-        if not isinstance(item, dict):
-            continue
+    for idx, item in enumerate(renderable_items, start=1):
         location = ensure_relpath(item.get("location"))
         summary = localized_string(item, "summary", language)
         snippet = str(item.get("snippet", "")).strip()
         explanation = localized_string(item, "explanation", language)
-        heading = f"{idx}. {location}" if location else tr(language, "code_context_item", idx=idx)
-        doc.add_paragraph(heading, style="List Bullet")
+        if location:
+            doc.add_paragraph(f"{idx}. {location}", style="List Bullet")
         if summary:
             doc.add_paragraph(summary)
         if snippet:
@@ -1928,6 +2035,7 @@ def real_world_exploitability_lines(finding: dict[str, Any], language: str) -> l
     first_code = code_items[0] if isinstance(code_items, list) and code_items and isinstance(code_items[0], dict) else {}
     code_location = ensure_relpath(first_code.get("location"))
     evidence = collect_balanced_reproduction_evidence_lines(finding, language, limit=2)
+    direct_impact_marker = direct_impact_marker_for_script(finding, evidence)
     observable = evidence[0] if evidence else (
         "报告中的成功判据应通过响应、日志、错误输出、存储记录或操作员可见证据外显。"
         if language == "zh-CN"
@@ -1942,7 +2050,7 @@ def real_world_exploitability_lines(finding: dict[str, Any], language: str) -> l
             f"攻击者可控输入进入受影响功能后到达 {code_location or component}，"
             "并触发 Docker 复现中记录的脆弱路径。"
         )
-        direct_impact = f"{impact}；直接危害由 replay log 中的 DIRECT_IMPACT_CONFIRMED 等价标记和以下成功判据支撑：{observable}"
+        direct_impact = f"{impact}；直接危害由 replay log 中的 {direct_impact_marker} 标记和以下成功判据支撑：{observable}"
         boundary = (
             "Docker PoC 已验证的影响边界为上述成功判据能够证明的效果；"
             "报告不声称未由 Docker 输出、响应、日志或证据文件证明的更强影响。"
@@ -1957,7 +2065,7 @@ def real_world_exploitability_lines(finding: dict[str, Any], language: str) -> l
             "recorded by the Docker reproduction."
         )
         direct_impact = (
-            f"{impact}; the direct impact is supported by the DIRECT_IMPACT_CONFIRMED-equivalent marker "
+            f"{impact}; the direct impact is supported by the {direct_impact_marker} marker "
             f"in the replay log and by this success oracle: {observable}"
         )
         boundary = (

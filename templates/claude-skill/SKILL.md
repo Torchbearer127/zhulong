@@ -539,6 +539,15 @@ Do not produce thin DOCX reports. The `Vulnerability Analysis` section must expl
 - the root cause
 - why existing checks, mitigations, or prior fixes do not block the issue
 
+The same section must include a dedicated `关键代码上下文` / `Key Code
+Context` subsection. It must contain at least one project-relative source path,
+line number or line range when available, real code-like snippet lines, and a
+code-level explanation tying the snippet to attacker-controlled input,
+propagation path, dangerous operation, missing guard or validation, why adjacent
+checks are insufficient or out of scope, and the verified impact boundary. Do
+not use placeholder-only entries such as `代码上下文 1`, `Key Code Context 1`,
+`待补充`, or `TODO`.
+
 Confirmed reports must also include the three quality-gate labels in the report
 language: `攻击者条件` / `Attacker Condition`, `服务端条件` /
 `Server Condition`, and `安全影响` / `Security Impact`. Keep these sections
@@ -590,6 +599,7 @@ At the beginning of replay, before proof steps, it must print a highlighted targ
 The opening identity card must include `测试软件名称` / `Tested Software` and `测试版本/分支` / `Tested Version / Branch` as separate fields, plus a short combined software/version line, so screen recordings make the tested target unambiguous.
 It must print each concrete command before execution, capture raw command stdout/stderr to a bundle-local `.log` file under `attachments/evidence/`, and list that `.log` in `verification-evidence.json` or `attachments/reviewer-evidence-index.json`.
 It must record a direct-impact marker such as `DIRECT_IMPACT_CONFIRMED`, `DIRECT_AVAILABILITY_IMPACT_CONFIRMED`, or an equivalent deterministic oracle in reviewer-facing replay evidence before final confirmation.
+Keep that direct-impact marker synchronized across the replay helper, DOCX/supplement prose, `verification-evidence.json`, reviewer evidence index, and registered replay `.log` files.
 It must derive `SCRIPT_DIR` from the script path, derive `ATTACH_DIR="$SCRIPT_DIR/attachments"`, and either self-bootstrap from bundle-local attachments or fail early with the exact bundle-local command the reviewer must run first.
 Every helper-like function called by the proof flow must be defined in the same root script; do not call a missing local `run_*`, `verify_*`, `show_*`, `print_*`, or `require_*` helper.
 Do not merely print a PoC/Docker command for the reviewer to run later; the bundle-root replay helper must execute the proof command itself, capture raw output, and fail closed if the command fails.
@@ -601,7 +611,7 @@ when it resolves inside the downloaded per-vulnerability bundle. Avoid
 `npm install`, `yarn install`, or `pnpm install` in the shortest reviewer path
 unless it uses `--ignore-scripts`, local/offline fixtures, or the supplement
 documents why network install is unavoidable.
-Before any `docker exec`, it should check that the target container exists and is running; before exploit traffic, it should run practical health/readiness checks.
+Before any `docker exec`, it should check that the target container exists and is running; before exploit traffic, it should run practical health/readiness checks that target the same runtime path used by proof commands.
 Do not hide critical command errors with naked `2>/dev/null`; capture stderr/stdout and print enough context to diagnose failures.
 Do not depend on pre-existing database state such as a first API token unless the helper explicitly creates or checks that state.
 Success oracles must fail closed: a missing `grep -q`/`grep -Fq`/`jq -e`/HTTP-status/Docker-log marker must `exit 1` before any final `VULNERABILITY CONFIRMED`, `ATTACK SUCCESS`, `漏洞已确认`, or `攻击成功` banner can print. Explanatory text such as "if output contains X" is not enough.
@@ -611,6 +621,12 @@ The default reviewer-facing script skeleton should also make visual focus explic
 
 - start with high-contrast review-focus cards such as key path, risk flow, and what evidence to watch for
 - show a short numbered key code excerpt instead of dumping an entire long file when a snippet is available
+- before executing proof commands, show separate screens for code context,
+  code-level vulnerability analysis, and realistic exploitability / verified
+  impact boundary
+- the analysis screen should name attacker-controlled input, propagation or
+  trigger path, dangerous sink, missing guard or validation, why adjacent checks
+  do not block the issue, and the verified impact boundary
 - keep short pauses even in quick mode so reviewers can read the critical lines
 - place those pauses at reviewer-relevant checkpoints, especially after the opening focus cards, after the code excerpt, around critical command/output transitions, and before the final evidence summary disappears
 - end with a dedicated evidence-summary block that replays the success oracle or DoS oracle in a stronger visual form before the script exits
@@ -634,6 +650,13 @@ preconditions, verified impact, explicitly non-claimed impact, success oracle
 tokens, oracle-to-artifact mapping, the shortest bundle-local replay command,
 and whether the replay uses the full upstream app, vendored source, a local
 tarball, or a minimal fixture.
+
+Reviewer-facing prose in DOCX/Markdown must not leak raw Python/JSON-like
+intermediate objects; render dict/list finding data as prose, bullets, code
+blocks, or machine-readable JSON files. Runtime identity should use stable
+tested versions, commits, digests, or tested dates; mutable labels such as
+`latest`, floating image tags, `main`, `master`, or vague "current version"
+wording are not enough for final confirmed-bundle claims.
 
 When useful, add `attachments/reviewer-evidence-index.json` as a structured
 reviewer map. It is an index, not a hash manifest. Keep every artifact path

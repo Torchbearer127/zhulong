@@ -493,6 +493,7 @@ Completed:
 - [x] Machine-readable issue decision log and handoff summaries for human-agent collaboration.
 - [x] Safety checks for unsafe verification containers, Docker residue, and review-only OMC multi-agent worker process handling.
 - [x] Same-repository variant discovery from confirmed vulnerabilities, with every lead still requiring its own Docker reproduction.
+- [x] Reviewer-facing replay helpers with code context, vulnerability analysis, practical impact, and final evidence summary screens.
 
 Planned:
 

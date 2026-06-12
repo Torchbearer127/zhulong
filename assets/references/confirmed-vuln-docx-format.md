@@ -128,6 +128,14 @@ Prefer this structure:
 - `现有校验为何失效：...`
 
 Then add a dedicated `关键代码上下文` subsection in prose or structured notes.
+This subsection is mandatory for confirmed reports and must contain real code
+context, not a placeholder heading. Include at least one project-relative source
+path, line number or line range when available, a code snippet, and a
+code-level explanation that ties the snippet to attacker-controlled input,
+propagation path, dangerous operation, missing guard or validation, why adjacent
+checks are insufficient or out of scope, and the verified impact boundary. If
+line numbers are genuinely unavailable, say so explicitly and provide enough
+location detail for a reviewer to find the code.
 
 Add a dedicated real-world exploitability section in the report body, using a
 heading such as `实际场景中的危害与利用方式` or `Real-World
@@ -220,7 +228,8 @@ The helper must be executable, pass a static shell syntax check, and use only Do
 It must derive `SCRIPT_DIR` and `ATTACH_DIR="$SCRIPT_DIR/attachments"` from the script location, then either start the reproduction environment from bundle-local attachments or fail early with a clear command such as `docker compose -f "$ATTACH_DIR/docker-compose.zhulong.yml" up -d`.
 The helper must be standalone-copy friendly: Docker mounts, file reads, PoC commands, and evidence paths stay under the delivered bundle after the folder is copied to a clean temporary directory.
 At the beginning of replay, before proof steps, the helper must print a highlighted target identity card containing the target software/package name and the tested or affected version.
-The helper is a reviewer-facing recording artifact: it must print concrete commands before execution, keep overrideable pauses, and end with a concise evidence summary/conclusion block.
+The helper is a reviewer-facing recording artifact: before proof commands it must show target identity, code context, code-level vulnerability analysis, and real-world exploitability / verified impact-boundary screens; it must print concrete commands before execution, keep overrideable pauses, and end with a concise evidence summary/conclusion block.
+The code-context screen should use bundled finding data such as `code_context` and must not depend on a parent repository checkout to show source snippets.
 The helper must capture raw command stdout/stderr to at least one bundle-local `.log` file under `attachments/evidence/`, and that `.log` must be listed in `verification-evidence.json` or `attachments/reviewer-evidence-index.json`.
 Bundle-root helpers must be helper-closed: helper-like calls such as `run_*`, `verify_*`, `assert_*`, `show_*`, `print_*`, or `require_*` must be defined in the same script unless they are normal shell/system commands.
 If the helper includes reviewer pauses, it must honor `REVIEWER_PAUSE_SHORT` and `REVIEWER_PAUSE_LONG`; reviewer automation should be able to run `REVIEWER_PAUSE_SHORT=0 REVIEWER_PAUSE_LONG=0 ./run-*.sh quick docker` without fixed sleeps.
@@ -251,6 +260,7 @@ Minimum schema:
   "expected_observation": "Expected success oracle.",
   "observed_observation": "Observed success oracle.",
   "oracle_token": "VULNERABILITY CONFIRMED",
+  "direct_impact_marker": "DIRECT_IMPACT_CONFIRMED",
   "evidence_files": [
     "attachments/poc/repro.py",
     "attachments/evidence/output.log"
@@ -272,6 +282,8 @@ Script requirements:
 - use portable shell syntax that works on macOS and Linux
 - use Docker / Docker Compose execution only; do not offer host fallback modes
 - support the shortest-path reproducible case, not a long forensic workflow
+- before proof commands, show reviewer-facing screens for target identity, code context, code-level vulnerability analysis, and real-world exploitability / verified impact boundary
+- derive code context from bundled finding data such as `code_context`; the helper must not require a parent repository checkout to show snippets
 - print clear step markers so the script is easy to screen-record
 - keep human-readable script text aligned with the selected output language; only code snippets, tool names, shell keywords, and exact success-oracle tokens may stay in English when needed
 - pause briefly around key review checkpoints so a reviewer can see code hints, build completion, and final success evidence without the terminal flashing past too fast
@@ -316,11 +328,22 @@ The `关键成功证据` / `Key Success Evidence` section must include direct su
 
 If the review claim is stronger than "technical trigger", the supplement should also explain why the observed oracle supports that stronger claim, while staying conservative and not overstating unproven impact.
 
-Keep PoC labels aligned across the DOCX, supplement, attachment note,
-`verification-evidence.json`, and root recording helper. If the materials refer
-to `PoC-4`, the root helper should also cover or mention `PoC-4`. If a video was
-recorded before the current report, supplement, evidence JSON, or root helper
-was updated, treat it as stale and record a new video before final submission.
+Keep PoC labels, success oracles, direct-impact markers, impact boundary, and
+runtime identity aligned across the DOCX, supplement, attachment note,
+`verification-evidence.json`, reviewer evidence index, registered replay logs,
+and root recording helper. If the materials refer to `PoC-4`, the root helper
+should also cover or mention `PoC-4`. If a video was recorded before the current
+report, supplement, evidence JSON, or root helper was updated, treat it as stale
+and record a new video before final submission.
+
+Reviewer-facing prose must not contain raw Python/JSON-like intermediate
+objects such as `{'key': ...}` or `[{...}]`; render structured finding data as
+normal paragraphs, bullets, code blocks, or machine-readable JSON files. Runtime
+identity must not rely only on mutable labels such as `latest`, floating image
+tags, `main`, `master`, or vague "current version" wording unless the same
+claim includes a stable tested package version, commit, digest, or tested date.
+If a root replay helper includes readiness or health checks, they must target
+the same runtime path exercised by the proof commands, not an unrelated service.
 
 ## Reviewer Evidence Addendum and Index
 

@@ -4310,6 +4310,18 @@ def main() -> None:
                 "根因：认证密钥存在硬编码回退值。",
                 "现有校验为何失效：启动流程没有强制要求安全 JWT_SECRET。",
             ],
+            "code_context": [
+                {
+                    "location": "src/app/routes/auth/auth.ts:18-26",
+                    "summary": "认证中间件在缺失 JWT_SECRET 时回退到公开字符串 superSecret。",
+                    "snippet": "const secret = process.env.JWT_SECRET || 'superSecret';\napp.use(jwt({ secret, algorithms: ['HS256'] }));",
+                    "explanation": (
+                        "攻击者可控输入是 Authorization 请求头中的自签名 JWT；该 token 通过认证中间件传播到 "
+                        "express-jwt 校验 sink。缺失 guard 是启动阶段没有强制校验 JWT_SECRET，也没有拒绝默认密钥；"
+                        "相邻的算法限制只限定 HS256，并不足以阻断公开密钥签名。Docker 已验证影响边界为身份认证绕过和未授权资料读取，不声称宿主机代码执行。"
+                    ),
+                }
+            ],
             "reproduction": [
                 {
                     "title": "1. 伪造 token 并访问受保护接口",
@@ -4443,6 +4455,14 @@ def main() -> None:
             "cat \"$command_output\" >> \"$REPLAY_LOG\"",
             "grep -Fq -- \"$marker\" \"$REPLAY_LOG\"",
             "show_evidence_summary",
+            "代码上下文屏",
+            "show_vulnerability_analysis",
+            "代码级漏洞分析屏",
+            "攻击者可控输入/前提",
+            "缺失 guard / validation",
+            "show_real_world_context",
+            "真实利用与影响边界屏",
+            "已验证影响边界",
             "漏洞已确认",
         ):
             if expected not in standard_script_text:
@@ -5030,6 +5050,47 @@ def main() -> None:
                 ),
             )
 
+        def remove_docx_section(docx_path: Path, heading: str, stop_headings: set[str]) -> None:
+            in_section = {"value": False}
+
+            def replacer(text: str):
+                if text == heading:
+                    in_section["value"] = True
+                    return None
+                if in_section["value"] and text in stop_headings:
+                    in_section["value"] = False
+                    return text
+                if in_section["value"]:
+                    return None
+                return text
+
+            rewrite_docx_paragraphs(docx_path, replacer)
+
+        def replace_docx_section_with_one_line(
+            docx_path: Path,
+            heading: str,
+            stop_headings: set[str],
+            replacement: str,
+        ) -> None:
+            state = {"in_section": False, "inserted": False}
+
+            def replacer(text: str):
+                if text == heading:
+                    state["in_section"] = True
+                    state["inserted"] = False
+                    return text
+                if state["in_section"] and text in stop_headings:
+                    state["in_section"] = False
+                    return text
+                if state["in_section"]:
+                    if not state["inserted"]:
+                        state["inserted"] = True
+                        return replacement
+                    return None
+                return text
+
+            rewrite_docx_paragraphs(docx_path, replacer)
+
         bad_missing_real_world = copy_standard_bundle("missing_real_world_exploitability")
         remove_docx_real_world_section(next(bad_missing_real_world.glob("*.docx")), language="zh-CN")
         bad_missing_real_world_supplement = next(bad_missing_real_world.glob("*_补充复现说明.md"))
@@ -5062,6 +5123,73 @@ def main() -> None:
             "--language",
             "en-US",
         ], plugin_root, "VALIDATION FAILED")
+
+        code_context_stop_headings = {"漏洞复现", "验证环境关键文件"}
+
+        bad_missing_code_context = copy_standard_bundle("missing_code_context")
+        remove_docx_section(next(bad_missing_code_context.glob("*.docx")), "关键代码上下文", code_context_stop_headings)
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_missing_code_context),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "missing or empty")
+
+        bad_prose_code_context = copy_standard_bundle("prose_only_code_context")
+        replace_docx_section_with_one_line(
+            next(bad_prose_code_context.glob("*.docx")),
+            "关键代码上下文",
+            code_context_stop_headings,
+            (
+                "路径 src/app/routes/auth/auth.ts 行 18 到 26。攻击者可控输入会沿认证中间件传播到危险校验 sink，"
+                "缺失 guard 是没有强制验证密钥配置；相邻校验不足以阻断公开密钥签名。Docker 已验证影响边界为认证绕过。"
+            ),
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_prose_code_context),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "actual code-like snippet")
+
+        bad_placeholder_code_context = copy_standard_bundle("placeholder_code_context")
+        replace_docx_section_with_one_line(
+            next(bad_placeholder_code_context.glob("*.docx")),
+            "关键代码上下文",
+            code_context_stop_headings,
+            "代码上下文 1",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_placeholder_code_context),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "placeholder-only code context")
+
+        bad_en_placeholder_code_context = en_bundle.parent / f"{en_bundle.name}_placeholder_code_context"
+        if bad_en_placeholder_code_context.exists():
+            shutil.rmtree(bad_en_placeholder_code_context)
+        shutil.copytree(en_bundle, bad_en_placeholder_code_context)
+        replace_docx_section_with_one_line(
+            next(bad_en_placeholder_code_context.glob("*.docx")),
+            "Key Code Context",
+            {"Reproduction", "Key Verification Environment Files"},
+            "Key Code Context 1",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_en_placeholder_code_context),
+            "--language",
+            "en-US",
+        ], plugin_root, "placeholder-only code context")
 
         bad_placeholder_real_world = copy_standard_bundle("placeholder_real_world_exploitability")
         rewrite_docx_paragraphs(
@@ -5252,6 +5380,73 @@ def main() -> None:
             "zh-CN",
         ], plugin_root, "before proof steps")
 
+        bad_no_replay_code_context = copy_standard_bundle("replay_no_code_context_screen")
+        no_replay_code_context_script = bad_no_replay_code_context / "run-selftest-jwt-recording.sh"
+        no_replay_code_context_script.write_text(
+            no_replay_code_context_script.read_text(encoding="utf-8")
+            .replace("show_code_hint() {", "show_code_hint_removed() {")
+            .replace("    show_code_hint\n", ""),
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_no_replay_code_context),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "code-context display")
+
+        bad_no_replay_analysis = copy_standard_bundle("replay_no_analysis_screen")
+        no_replay_analysis_script = bad_no_replay_analysis / "run-selftest-jwt-recording.sh"
+        no_replay_analysis_script.write_text(
+            no_replay_analysis_script.read_text(encoding="utf-8")
+            .replace("show_vulnerability_analysis() {", "show_vulnerability_analysis_removed() {")
+            .replace("    show_vulnerability_analysis\n", ""),
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_no_replay_analysis),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "code-level vulnerability analysis display")
+
+        bad_no_replay_real_world = copy_standard_bundle("replay_no_real_world_screen")
+        no_replay_real_world_script = bad_no_replay_real_world / "run-selftest-jwt-recording.sh"
+        no_replay_real_world_script.write_text(
+            no_replay_real_world_script.read_text(encoding="utf-8")
+            .replace("show_real_world_context() {", "show_real_world_context_removed() {")
+            .replace("    show_real_world_context\n", ""),
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_no_replay_real_world),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "real-world exploitability / impact-boundary display")
+
+        bad_no_replay_final_summary = copy_standard_bundle("replay_no_final_summary_screen")
+        no_replay_final_summary_script = bad_no_replay_final_summary / "run-selftest-jwt-recording.sh"
+        no_replay_final_summary_script.write_text(
+            no_replay_final_summary_script.read_text(encoding="utf-8")
+            .replace("    show_evidence_summary\n", ""),
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_no_replay_final_summary),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "final evidence summary after proof commands")
+
         bad_no_final_summary_pause = copy_standard_bundle("no_final_summary_pause")
         no_final_pause_script = bad_no_final_summary_pause / "run-selftest-jwt-recording.sh"
         no_final_pause_script.write_text(
@@ -5427,7 +5622,93 @@ def main() -> None:
             str(bad_missing_direct_impact),
             "--language",
             "zh-CN",
-        ], plugin_root, "direct-impact replay evidence")
+        ], plugin_root, "direct-impact marker in replay evidence")
+
+        bad_raw_structured_docx = copy_standard_bundle("raw_structured_docx")
+        rewrite_docx_paragraphs(
+            next(bad_raw_structured_docx.glob("*.docx")),
+            lambda text: (
+                "{'oracle_token': '认证绕过成功', 'impact': ['auth bypass'], 'confirmed': True}"
+                if text.startswith("成功判据：")
+                else text
+            ),
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_raw_structured_docx),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "raw serialized structured data")
+
+        bad_mutable_runtime_identity = copy_standard_bundle("mutable_runtime_identity")
+        mutable_supplement = next(bad_mutable_runtime_identity.glob("*_补充复现说明.md"))
+        mutable_supplement.write_text(
+            mutable_supplement.read_text(encoding="utf-8")
+            + "\n测试版本/分支：current version\n",
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_mutable_runtime_identity),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "mutable runtime/version identity")
+
+        bad_direct_marker_mismatch = copy_standard_bundle("direct_marker_mismatch")
+        marker_evidence_path = bad_direct_marker_mismatch / "verification-evidence.json"
+        marker_evidence = json.loads(marker_evidence_path.read_text(encoding="utf-8"))
+        marker_evidence["direct_impact_marker"] = "DIRECT_AVAILABILITY_IMPACT_CONFIRMED"
+        marker_evidence_path.write_text(
+            json.dumps(marker_evidence, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_direct_marker_mismatch),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "direct_impact_marker does not match")
+
+        bad_replay_log_marker_missing = copy_standard_bundle("replay_log_marker_missing")
+        replay_log_path = bad_replay_log_marker_missing / "attachments/evidence/replay-output.log"
+        replay_log_path.write_text(
+            "Zhulong reviewer replay log placeholder.\n"
+            "This fixture intentionally omits the deterministic direct marker.\n",
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_replay_log_marker_missing),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "does not contain the deterministic direct-impact marker")
+
+        bad_unrelated_readiness = copy_standard_bundle("unrelated_readiness")
+        unrelated_readiness_script = bad_unrelated_readiness / "run-selftest-jwt-recording.sh"
+        unrelated_readiness_script.write_text(
+            unrelated_readiness_script.read_text(encoding="utf-8").replace(
+                "    show_real_world_context\n",
+                "    show_real_world_context\n    curl -fsS http://unrelated.invalid/health >/dev/null\n",
+                1,
+            ),
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_unrelated_readiness),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "not used by proof commands")
 
         bad_displayed_command_only = copy_standard_bundle("displayed_command_only")
         displayed_only_script = bad_displayed_command_only / "run-selftest-jwt-recording.sh"
@@ -5982,6 +6263,10 @@ def main() -> None:
             bad_placeholder_attacker,
             bad_weak_impact,
             bad_missing_real_world,
+            bad_missing_code_context,
+            bad_prose_code_context,
+            bad_placeholder_code_context,
+            bad_en_placeholder_code_context,
             bad_placeholder_real_world,
             bad_strong_boundary,
             good_strong_boundary,
@@ -5993,6 +6278,10 @@ def main() -> None:
             bad_legacy_target_identity,
             bad_no_opening_identity_pause,
             bad_late_target_identity,
+            bad_no_replay_code_context,
+            bad_no_replay_analysis,
+            bad_no_replay_real_world,
+            bad_no_replay_final_summary,
             bad_no_final_summary_pause,
             bad_undefined_root_helper,
             bad_missing_replay_log,
@@ -6001,6 +6290,11 @@ def main() -> None:
             bad_explanatory_marker_text,
             bad_log_without_raw_output,
             bad_missing_direct_impact,
+            bad_raw_structured_docx,
+            bad_mutable_runtime_identity,
+            bad_direct_marker_mismatch,
+            bad_replay_log_marker_missing,
+            bad_unrelated_readiness,
             bad_displayed_command_only,
             bad_missing_helper_reference,
             bad_pause_overwrite,

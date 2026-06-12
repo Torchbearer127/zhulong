@@ -81,6 +81,30 @@ ROOT_SCRIPT_TARGET_HIGHLIGHT_PATTERN = re.compile(
     r"(?:C_WHITE_ON_|C_BLACK_ON_|C_BOLD|focus_line|highlight_note|highlight_success|print_target_identity)"
 )
 ROOT_SCRIPT_TARGET_IDENTITY_CALL_PATTERN = re.compile(r"^\s*print_target_identity\s*(?:$|[;&])", re.MULTILINE)
+ROOT_SCRIPT_CODE_CONTEXT_SCREEN_PATTERN = re.compile(
+    r"show_code_hint|代码上下文屏|Code Context Screen|关键代码位置|Key code location",
+    re.IGNORECASE,
+)
+ROOT_SCRIPT_ANALYSIS_SCREEN_PATTERN = re.compile(
+    r"show_vulnerability_analysis|代码级漏洞分析屏|Code-Level Vulnerability Analysis Screen|"
+    r"攻击者可控输入|Attacker-controlled input|Missing guard|缺失 guard|危险点/sink|Dangerous sink",
+    re.IGNORECASE,
+)
+ROOT_SCRIPT_REAL_WORLD_SCREEN_PATTERN = re.compile(
+    r"show_real_world_context|真实利用与影响边界屏|Real-World Exploitability and Impact Boundary Screen|"
+    r"真实部署|real-world|Impact Boundary|影响边界",
+    re.IGNORECASE,
+)
+ROOT_SCRIPT_FINAL_EVIDENCE_SCREEN_PATTERN = re.compile(
+    r"show_evidence_summary|证据汇总|Evidence Summary|DIRECT_IMPACT|直接危害标记|success marker",
+    re.IGNORECASE,
+)
+ROOT_SCRIPT_UNAVAILABLE_CONTEXT_PATTERN = re.compile(
+    r"analysis_unavailable|real_world_unavailable|"
+    r"结构化代码级分析不足|真实场景说明不足|"
+    r"Structured code-level analysis is incomplete|Real-world exploitation context is incomplete",
+    re.IGNORECASE,
+)
 ROOT_SCRIPT_REPLAY_LOG_WRITE_PATTERN = re.compile(
     r"(?:>\s*\"?\$REPLAY_LOG\"?|>>\s*\"?\$REPLAY_LOG\"?|\btee\s+(?:-a\s+)?\"?\$REPLAY_LOG\"?)"
 )
@@ -316,6 +340,62 @@ EN_QUALITY_PLACEHOLDERS = {
     "placeholder",
     "fillin",
     "notprovided",
+}
+SOURCE_PATH_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9_./~-])"
+    r"(?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+"
+    r"\.(?:js|jsx|ts|tsx|mjs|cjs|py|php|rb|go|java|kt|kts|cs|c|cc|cpp|h|hpp|hh|rs|swift|scala|sh|bash|zsh|ps1|"
+    r"yml|yaml|json|xml|html|vue|svelte|sql|ini|conf|toml|properties)"
+    r"(?::\d+(?:-\d+)?)?",
+    re.IGNORECASE,
+)
+LINE_LOCATION_PATTERN = re.compile(
+    r"(?:[:#]L?|\bline(?:s)?\s+|行(?:号)?[:：]?\s*)\d+(?:\s*[-–]\s*\d+)?",
+    re.IGNORECASE,
+)
+LINE_UNAVAILABLE_PATTERN = re.compile(
+    r"line numbers? (?:are )?unavailable|line number unavailable|"
+    r"行号不可用|无法提供行号|未提供行号",
+    re.IGNORECASE,
+)
+CODE_LIKE_KEYWORD_PATTERN = re.compile(
+    r"^\s*(?:const|let|var|function|return|if|else|for|while|class|def|import|from|export|await|async|try|catch|"
+    r"throw|raise|public|private|protected|final|func|package|use|require|module\.exports|\$[A-Za-z_]|[A-Za-z_][A-Za-z0-9_]*\s*[=:])\b"
+)
+CODE_LIKE_SYMBOL_PATTERN = re.compile(
+    r"=>|==|!=|<=|>=|\|\||&&|[{}();=]|\.[A-Za-z_][A-Za-z0-9_]*\s*\(|"
+    r"\b(?:require|fetch|axios|get|post|sendFile|readFileSync|writeFileSync|exec|eval|open|curl_exec|requests\.)\b",
+    re.IGNORECASE,
+)
+CODE_CONTEXT_PLACEHOLDER_PATTERNS = [
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"^\s*(?:\d+\.\s*)?代码上下文\s*\d+\s*$",
+        r"^\s*(?:\d+\.\s*)?Key\s+Code\s+Context\s*\d+\s*$",
+        r"\bTODO\b",
+        r"\bTBD\b",
+        r"待补充",
+        r"请补充",
+        r"占位",
+    )
+]
+CODE_CONTEXT_EXPLANATION_MARKERS = {
+    "zh-CN": {
+        "input/source": ("攻击者", "可控", "不可信", "输入", "请求", "参数", "入口", "前提"),
+        "propagation path": ("传播", "传递", "流向", "到达", "进入", "调用链", "触发路径", "路径"),
+        "sink/dangerous operation": ("危险", "汇聚点", "sink", "调用", "执行", "读取", "写入", "fetch", "require", "sendfile", "readfilesync"),
+        "missing guard/validation": ("缺失校验", "缺少校验", "未校验", "未验证", "没有校验", "validation", "guard", "deny"),
+        "adjacent checks/out of scope": ("现有校验", "相邻校验", "已有校验", "不足", "失效", "无法阻断", "范围外", "out of scope"),
+        "verified impact boundary": ("已验证", "边界", "不声称", "未声称", "docker", "poc", "影响", "危害"),
+    },
+    "en-US": {
+        "input/source": ("attacker", "controlled", "untrusted", "input", "request", "parameter", "source", "precondition"),
+        "propagation path": ("propagation", "propagate", "flow", "reaches", "passed", "call chain", "trigger path", "path"),
+        "sink/dangerous operation": ("sink", "dangerous", "operation", "exec", "read", "write", "fetch", "require", "sendfile", "readfilesync"),
+        "missing guard/validation": ("missing guard", "missing validation", "no validation", "not validate", "unchecked", "denylist", "allowlist"),
+        "adjacent checks/out of scope": ("adjacent check", "existing check", "insufficient", "does not block", "out of scope", "bypass"),
+        "verified impact boundary": ("verified", "impact boundary", "not claim", "not claimed", "docker", "poc", "impact", "boundary"),
+    },
 }
 ZH_IMPACT_PATTERNS = [
     re.compile(pattern, re.IGNORECASE)
@@ -685,6 +765,36 @@ DIRECT_IMPACT_ORACLE_PATTERN = re.compile(
     r"拒绝服务成功|收到回调|回调已触发|认证绕过成功|会话伪造成功|代码执行成功",
     re.IGNORECASE,
 )
+RAW_STRUCTURED_OBJECT_PATTERNS = [
+    re.compile(r"^\s*[\[{]\s*['\"][A-Za-z0-9_ .:/-]{2,}['\"]\s*:", re.DOTALL),
+    re.compile(r"^\s*[\[{].{0,500}\b(?:True|False|None)\b.{0,500}[\]}]\s*$", re.DOTALL),
+    re.compile(r"\b(?:OrderedDict|defaultdict|SimpleNamespace|Namespace)\s*\(", re.IGNORECASE),
+]
+RAW_STRUCTURED_KEY_VALUE_PATTERN = re.compile(r"['\"][A-Za-z0-9_ .:/-]{2,}['\"]\s*:")
+RAW_STRUCTURED_CODE_PREFIX_PATTERN = re.compile(
+    r"^\s*(?:const|let|var|return|if|else|for|while|function|def|class|import|export|"
+    r"echo|printf|cat|curl|docker|python3?|node|php|bash|sh)\b",
+    re.IGNORECASE,
+)
+MUTABLE_RUNTIME_IDENTITY_PATTERN = re.compile(
+    r"(?:测试版本/分支|测试版本|测试分支|影响版本|版本号|target\s+version|affected\s+version|"
+    r"tested\s+(?:version|branch|commit)|branch|tag|docker\s+image|image)[^\n。.;]{0,100}"
+    r"(?:\blatest\b|\bmain\b|\bmaster\b|\bcurrent\s+(?:version|branch|commit)\b|当前版本|当前分支|最新版本|主分支)"
+    r"|(?<![A-Za-z0-9_.-])[A-Za-z0-9][A-Za-z0-9_.\/-]+:latest\b",
+    re.IGNORECASE,
+)
+STABLE_RUNTIME_IDENTITY_ANCHOR_PATTERN = re.compile(
+    r"\b(?:v?\d+\.\d+(?:\.\d+)?(?:[-+][A-Za-z0-9_.-]+)?|[0-9a-f]{7,40}|"
+    r"sha256:[0-9a-f]{16,}|20\d{2}-\d{2}-\d{2}|default configuration|默认配置|"
+    r"pinned|固定|digest|commit|tagged release|release)\b",
+    re.IGNORECASE,
+)
+DIRECT_IMPACT_MARKER_TOKEN_PATTERN = re.compile(
+    r"\bDIRECT_(?:[A-Z0-9_]+_)?IMPACT_CONFIRMED\b|\bDIRECT_AVAILABILITY_IMPACT_CONFIRMED\b"
+)
+SHELL_ASSIGNMENT_PATTERN_TEMPLATE = r"^\s*{name}=(?:'([^']*)'|\"([^\"]*)\"|([^#\s]+))"
+URL_HOST_PATTERN = re.compile(r"https?://([^/\s'\"`$)]+)", re.IGNORECASE)
+READINESS_CHECK_LINE_PATTERN = re.compile(r"\b(?:readiness|ready|health|healthcheck|健康|就绪)\b", re.IGNORECASE)
 DISPLAYED_REPLAY_COMMAND_PATTERN = re.compile(
     r"\b(?:docker\s+(?:run|compose|exec|logs|build|cp)|"
     r"(?:python3?|node|php|bash|sh)\s+(?:attachments/|\./|\$\{?(?:SCRIPT_DIR|ATTACH_DIR|BUNDLE_ROOT)\}?/))",
@@ -1297,6 +1407,114 @@ def section_text(lines: list[str], heading: str, next_headings: set[str]) -> str
             end = index
             break
     return "\n".join(lines[start:end]).strip()
+
+
+def code_context_headings(language: str) -> tuple[str, set[str]]:
+    if language == "zh-CN":
+        return "关键代码上下文", ZH_HEADINGS | {"验证环境关键文件", "Key Verification Environment Files"}
+    return "Key Code Context", EN_HEADINGS | {"Key Verification Environment Files", "验证环境关键文件"}
+
+
+def is_code_like_line(line: str) -> bool:
+    stripped = line.strip()
+    if len(stripped) < 3:
+        return False
+    lowered = stripped.lower()
+    if lowered.startswith(("位置：", "location:", "summary:", "说明：", "explanation:")):
+        return False
+    if CODE_LIKE_KEYWORD_PATTERN.search(stripped):
+        return True
+    if CODE_LIKE_SYMBOL_PATTERN.search(stripped):
+        cjk_count = sum(1 for char in stripped if "\u4e00" <= char <= "\u9fff")
+        return cjk_count <= max(4, len(stripped) // 4)
+    return False
+
+
+def missing_code_context_explanation_kinds(text: str, language: str) -> list[str]:
+    lowered = text.lower()
+    missing: list[str] = []
+    for kind, markers in CODE_CONTEXT_EXPLANATION_MARKERS[language].items():
+        if not any(marker.lower() in lowered for marker in markers):
+            missing.append(kind)
+    return missing
+
+
+def validate_code_context_section(lines: list[str], language: str) -> None:
+    heading, stop_headings = code_context_headings(language)
+    section = section_text(lines, heading, stop_headings)
+    if not section:
+        fail(f"report {heading} section is missing or empty; include source path, line metadata, snippet, and code-level explanation")
+
+    for raw_line in section.splitlines():
+        if any(pattern.search(raw_line.strip()) for pattern in CODE_CONTEXT_PLACEHOLDER_PATTERNS):
+            fail(f"report {heading} section contains placeholder-only code context; replace it with real source snippets")
+
+    paths = SOURCE_PATH_PATTERN.findall(section)
+    if not paths:
+        fail(f"report {heading} section must include at least one project-relative source path")
+    if any(str(path).startswith(("/", "~")) or re.match(r"^[A-Za-z]:[\\/]", str(path)) for path in paths):
+        fail(f"report {heading} section must use project-relative source paths")
+
+    has_line_metadata = bool(LINE_LOCATION_PATTERN.search(section))
+    has_unavailable_line_with_detail = bool(LINE_UNAVAILABLE_PATTERN.search(section) and paths)
+    if not (has_line_metadata or has_unavailable_line_with_detail):
+        fail(f"report {heading} section must include a line number/range or explicitly explain why line numbers are unavailable")
+
+    code_lines = [line for line in section.splitlines() if is_code_like_line(line)]
+    if not code_lines:
+        fail(f"report {heading} section must include actual code-like snippet lines, not only prose")
+
+    missing = missing_code_context_explanation_kinds(section, language)
+    if missing:
+        fail(
+            f"report {heading} section is missing code-level explanation for: "
+            + ", ".join(missing)
+        )
+
+
+def line_looks_like_raw_structured_object(line: str) -> bool:
+    stripped = line.strip()
+    if not stripped:
+        return False
+    if RAW_STRUCTURED_CODE_PREFIX_PATTERN.search(stripped):
+        return False
+    if any(pattern.search(stripped) for pattern in RAW_STRUCTURED_OBJECT_PATTERNS):
+        return True
+    if RAW_STRUCTURED_KEY_VALUE_PATTERN.search(stripped):
+        hits = len(RAW_STRUCTURED_KEY_VALUE_PATTERN.findall(stripped))
+        starts_like_object = stripped.startswith(("{", "[", "- {", "- [", "• {", "• ["))
+        has_python_repr = bool(re.search(r"\b(?:True|False|None)\b|^\s*[\[{].*'", stripped))
+        if starts_like_object or (hits >= 2 and has_python_repr):
+            return True
+    return False
+
+
+def validate_no_raw_structured_objects(text: str, label: str) -> None:
+    for line_number, line in enumerate(text.splitlines(), start=1):
+        if line_looks_like_raw_structured_object(line):
+            preview = re.sub(r"\s+", " ", line.strip())
+            if len(preview) > 140:
+                preview = preview[:137] + "..."
+            fail(
+                f"{label} contains raw serialized structured data near line {line_number}; "
+                f"rewrite dict/list/object literals into reviewer-facing prose: {preview}"
+            )
+
+
+def validate_mutable_runtime_identity(text: str, label: str) -> None:
+    for match in MUTABLE_RUNTIME_IDENTITY_PATTERN.finditer(text):
+        start = max(0, match.start() - 120)
+        end = min(len(text), match.end() + 120)
+        context = text[start:end]
+        if STABLE_RUNTIME_IDENTITY_ANCHOR_PATTERN.search(context):
+            continue
+        preview = re.sub(r"\s+", " ", context).strip()
+        if len(preview) > 180:
+            preview = preview[:177] + "..."
+        fail(
+            f"{label} uses a mutable runtime/version identity without a stable commit, digest, "
+            f"release, date, or default-configuration anchor: {preview}"
+        )
 
 
 def validate_report_depth(lines: list[str], language: str) -> None:
@@ -2469,6 +2687,90 @@ def validate_replay_log_evidence_registration(
         validate_bundle_relative_file(rel, bundle_dir, f"registered replay log {rel}")
 
 
+def shell_assignment_value(text: str, name: str) -> str:
+    pattern = re.compile(SHELL_ASSIGNMENT_PATTERN_TEMPLATE.format(name=re.escape(name)), re.MULTILINE)
+    match = pattern.search(text)
+    if not match:
+        return ""
+    for group in match.groups():
+        if group is not None:
+            return group.strip()
+    return ""
+
+
+def collect_direct_impact_marker_tokens(text: str) -> set[str]:
+    tokens: set[str] = set()
+    for match in DIRECT_IMPACT_MARKER_TOKEN_PATTERN.finditer(text):
+        tail = text[match.end(): match.end() + 24].lower()
+        if tail.startswith("-equivalent") or tail.startswith(" equivalent") or tail.startswith(" 等价"):
+            continue
+        tokens.add(match.group(0))
+    return tokens
+
+
+def validate_marker_synchronization(
+    bundle_dir: Path,
+    root_script_paths: list[Path],
+    evidence: dict[str, object],
+    reviewer_index: dict[str, object] | None,
+    reviewer_story_text: str,
+) -> None:
+    script_direct_markers: set[str] = set()
+    script_success_markers: set[str] = set()
+    for script_path in root_script_paths:
+        text = script_path.read_text(encoding="utf-8", errors="ignore")
+        direct = shell_assignment_value(text, "DIRECT_IMPACT_MARKER")
+        success = shell_assignment_value(text, "SUCCESS_MARKER")
+        if direct:
+            script_direct_markers.add(direct)
+        if success:
+            script_success_markers.add(success)
+
+    evidence_direct = str(evidence.get("direct_impact_marker") or "").strip()
+    if evidence_direct:
+        if script_direct_markers and evidence_direct not in script_direct_markers:
+            fail(
+                "verification-evidence.json direct_impact_marker does not match bundle-root replay script "
+                f"DIRECT_IMPACT_MARKER: {evidence_direct}"
+            )
+        script_direct_markers.add(evidence_direct)
+
+    material_tokens = collect_direct_impact_marker_tokens(reviewer_story_text)
+    unexpected = sorted(token for token in material_tokens if script_direct_markers and token not in script_direct_markers)
+    if unexpected:
+        fail(
+            "direct-impact marker is inconsistent across reviewer artifacts; unexpected marker token(s): "
+            + ", ".join(unexpected)
+        )
+    if material_tokens and not script_direct_markers:
+        fail("reviewer artifacts mention a direct-impact marker but bundle-root replay scripts do not define DIRECT_IMPACT_MARKER")
+
+    registered_logs = registered_replay_log_paths(evidence, reviewer_index)
+    expected_direct_markers = script_direct_markers or material_tokens
+    if expected_direct_markers:
+        for rel in sorted(registered_logs):
+            path = bundle_dir / rel
+            if path.suffix.lower() != ".log" or not path.exists():
+                continue
+            text = read_text_source(path)
+            if not any(marker in text for marker in expected_direct_markers):
+                fail(
+                    f"registered replay log {rel} does not contain the deterministic direct-impact marker "
+                    "used by the replay script and reviewer evidence"
+                )
+
+    oracle_token = str(evidence.get("oracle_token") or "").strip()
+    if oracle_token and script_success_markers and oracle_token not in script_success_markers:
+        if not any(
+            marker.endswith(oracle_token) or oracle_token.endswith(marker)
+            for marker in script_success_markers
+            if len(marker) >= 8
+        ):
+            fail(
+                "verification-evidence.json oracle_token does not match the replay script SUCCESS_MARKER"
+            )
+
+
 def material_has_pattern(patterns: list[re.Pattern[str]], text: str) -> bool:
     return any(pattern.search(text) for pattern in patterns)
 
@@ -3536,6 +3838,138 @@ def validate_root_script_final_summary_pause(script_path: Path, bundle_dir: Path
     )
 
 
+def first_flow_call_index(flow_lines: list[str], names: set[str]) -> int:
+    for index, line in enumerate(flow_lines):
+        for name in shell_command_names_from_line(line):
+            if name in names:
+                return index
+    return -1
+
+
+def first_replay_proof_command_index(flow_lines: list[str]) -> int:
+    context_helpers = {
+        "print_target_identity",
+        "show_code_hint",
+        "show_vulnerability_analysis",
+        "show_real_world_context",
+        "show_evidence_summary",
+        "pause_step",
+        "announce_step",
+        "focus_line",
+        "highlight_note",
+        "highlight_success",
+        "highlight_danger",
+        "print_separator",
+    }
+    proof_helpers = {
+        "require_container_running",
+        "run_logged_command",
+        "verify_success_marker",
+        "record_direct_impact_marker",
+    }
+    for index, line in enumerate(flow_lines):
+        for name in shell_command_names_from_line(line):
+            if name in context_helpers:
+                continue
+            if name in proof_helpers or name in ROOT_SCRIPT_PROOF_STEP_COMMANDS:
+                return index
+    return -1
+
+
+def validate_root_script_reviewer_context(script_path: Path, bundle_dir: Path, text: str) -> None:
+    rel = script_path.relative_to(bundle_dir).as_posix()
+    required_patterns = [
+        ("code-context display", ROOT_SCRIPT_CODE_CONTEXT_SCREEN_PATTERN),
+        ("code-level vulnerability analysis display", ROOT_SCRIPT_ANALYSIS_SCREEN_PATTERN),
+        ("real-world exploitability / impact-boundary display", ROOT_SCRIPT_REAL_WORLD_SCREEN_PATTERN),
+        ("final evidence summary display", ROOT_SCRIPT_FINAL_EVIDENCE_SCREEN_PATTERN),
+    ]
+    for label, pattern in required_patterns:
+        if not pattern.search(text):
+            fail(f"{rel} is missing reviewer-facing {label} for recording context")
+    if ROOT_SCRIPT_UNAVAILABLE_CONTEXT_PATTERN.search(text):
+        warn(
+            f"{rel} contains unavailable fallback text in reviewer-facing context; "
+            "enrich code analysis and real-world impact fields before submission when possible"
+        )
+
+    defined_helpers = collect_shell_function_definitions(text)
+    required_helpers = {
+        "show_code_hint": "code-context display",
+        "show_vulnerability_analysis": "code-level vulnerability analysis display",
+        "show_real_world_context": "real-world exploitability / impact-boundary display",
+        "show_evidence_summary": "final evidence summary display",
+    }
+    for helper, label in required_helpers.items():
+        if helper not in defined_helpers:
+            fail(f"{rel} must define {helper} for reviewer-facing {label}")
+
+    flow_lines = extract_shell_function_body(text, "run_flow") or extract_shell_function_body(text, "main")
+    if not flow_lines:
+        fail(f"{rel} must expose a replay flow that shows reviewer context before proof commands")
+
+    code_index = first_flow_call_index(flow_lines, {"show_code_hint"})
+    analysis_index = first_flow_call_index(flow_lines, {"show_vulnerability_analysis"})
+    real_world_index = first_flow_call_index(flow_lines, {"show_real_world_context"})
+    summary_index = first_flow_call_index(flow_lines, {"show_evidence_summary"})
+    proof_index = first_replay_proof_command_index(flow_lines)
+    if code_index < 0:
+        fail(f"{rel} must show a code-context screen before proof commands")
+    if analysis_index < 0:
+        fail(f"{rel} must show a code-level vulnerability analysis screen before proof commands")
+    if real_world_index < 0:
+        fail(f"{rel} must show a realistic exploitability / impact-boundary screen before proof commands")
+    if proof_index >= 0:
+        if code_index > proof_index:
+            fail(f"{rel} must show the code-context screen before PoC/proof commands")
+        if analysis_index > proof_index:
+            fail(f"{rel} must show the code-level vulnerability analysis screen before PoC/proof commands")
+        if real_world_index > proof_index:
+            fail(f"{rel} must show the realistic exploitability / impact-boundary screen before PoC/proof commands")
+        if summary_index < 0 or summary_index < proof_index:
+            fail(f"{rel} must show the final evidence summary after proof commands")
+    if not re.search(r"record_direct_impact_marker\s+\"?\$DIRECT_IMPACT_MARKER\"?", text):
+        fail(f"{rel} must record a deterministic direct-impact marker in replay evidence")
+    direct_body = "\n".join(extract_shell_function_body(text, "record_direct_impact_marker"))
+    if "REPLAY_LOG" not in direct_body and "log_line" not in direct_body:
+        fail(f"{rel} direct-impact marker helper must write to the bundle-local replay log")
+
+
+def collect_url_hosts(text: str) -> set[str]:
+    hosts: set[str] = set()
+    for match in URL_HOST_PATTERN.finditer(text):
+        host = match.group(1).split("@")[-1].split(":")[0].strip().lower()
+        if host:
+            hosts.add(host)
+    return hosts
+
+
+def validate_root_script_readiness_relevance(script_path: Path, bundle_dir: Path, text: str) -> None:
+    rel = script_path.relative_to(bundle_dir).as_posix()
+    flow_lines = extract_shell_function_body(text, "run_flow") or extract_shell_function_body(text, "main")
+    proof_lines = [
+        line for line in logical_shell_lines("\n".join(flow_lines))
+        if "run_logged_command" in line or EXECUTED_REPLAY_COMMAND_PATTERN.search(line)
+    ]
+    proof_hosts = collect_url_hosts("\n".join(proof_lines))
+    if not proof_hosts:
+        return
+    for line in logical_shell_lines(text):
+        if not READINESS_CHECK_LINE_PATTERN.search(line):
+            continue
+        if "docker_ready" in line or "require_container_running" in line:
+            continue
+        readiness_hosts = collect_url_hosts(line)
+        if not readiness_hosts:
+            continue
+        unrelated = sorted(host for host in readiness_hosts if host not in proof_hosts)
+        if unrelated:
+            fail(
+                f"{rel} contains a readiness/health check for a host that is not used by proof commands: "
+                + ", ".join(unrelated)
+            )
+
+
 def normalize_replay_log_path(raw: str) -> str:
     value = str(raw or "").strip().strip("'\"")
     value = value.replace("${ATTACH_DIR}", "attachments")
@@ -3722,6 +4156,8 @@ def validate_bundle_root_scripts(bundle_dir: Path, note_text: str) -> list[str]:
         validate_script_bundle_portability(script_path, bundle_dir, text)
         validate_root_script_bundle_contract(script_path, bundle_dir, text)
         validate_root_script_target_identity(script_path, bundle_dir, text)
+        validate_root_script_reviewer_context(script_path, bundle_dir, text)
+        validate_root_script_readiness_relevance(script_path, bundle_dir, text)
         validate_root_script_final_summary_pause(script_path, bundle_dir, text)
         validate_root_script_replay_log_contract(script_path, bundle_dir, text)
         validate_root_script_displayed_command_execution(script_path, bundle_dir, text)
@@ -4433,6 +4869,7 @@ def main() -> None:
     supplement_text = validate_reproduction_supplement(supplement_path, language)
     exploitability_text = validate_real_world_exploitability(lines, supplement_text, language)
     validate_report_depth(lines, language)
+    validate_code_context_section(lines, language)
     validate_bundle_identity(bundle_dir, lines, workspace_dir)
     findings_path = resolve_findings_path(bundle_dir)
     project_name = ""
@@ -4455,10 +4892,18 @@ def main() -> None:
     validate_no_absolute_paths(combined_text)
     validate_no_non_standalone_paths(combined_text, "report docx")
     validate_no_placeholder_text(combined_text, language, "report docx")
+    validate_no_raw_structured_objects(combined_text, "report docx")
+    validate_mutable_runtime_identity(combined_text, "report docx")
     validate_relative_attachment_refs(combined_text, bundle_dir)
     reviewer_addendum_text = validate_reviewer_evidence_addendum(bundle_dir, language)
     validate_attachment_note(note_path, language)
     note_text = note_path.read_text(encoding="utf-8")
+    validate_no_raw_structured_objects(note_text, "attachment note")
+    validate_no_raw_structured_objects(supplement_text, "reproduction supplement")
+    validate_no_raw_structured_objects(reviewer_addendum_text, "reviewer evidence addendum")
+    validate_mutable_runtime_identity(note_text, "attachment note")
+    validate_mutable_runtime_identity(supplement_text, "reproduction supplement")
+    validate_mutable_runtime_identity(reviewer_addendum_text, "reviewer evidence addendum")
     validate_no_untranslated_english_text(
         lines,
         [(path.name, path.read_text(encoding="utf-8")) for path in markdown_paths],
@@ -4541,6 +4986,7 @@ def main() -> None:
         ]
     )
     validate_no_non_standalone_paths(reviewer_story_text, "reviewer-facing bundle material")
+    validate_mutable_runtime_identity(reviewer_story_text, "reviewer-facing bundle material")
     validate_reviewer_story_gates(reviewer_story_text)
     validate_direct_impact_evidence(
         "\n".join(
@@ -4555,6 +5001,13 @@ def main() -> None:
         language,
     )
     validate_claim_oracle_consistency(reviewer_story_text)
+    validate_marker_synchronization(
+        bundle_dir,
+        root_script_paths,
+        verification_evidence,
+        _reviewer_index,
+        reviewer_story_text,
+    )
     validate_time_based_proof_drift(reviewer_summary_text)
     validate_local_helper_references(bundle_dir, "\n".join([supplement_text, reviewer_index_text]))
     validate_poc_attacker_capability_boundary(
