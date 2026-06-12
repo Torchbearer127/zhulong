@@ -250,13 +250,9 @@ confirmed/<vulnerability-slug>/
 A finding is not considered confirmed until runtime evidence exists from Docker
 or Docker Compose and Zhulong's automated report-package checks pass.
 
-When a confirmed bundle already exists, Zhulong can run a bounded seeded variant
-pass: `extract_variant_seed.py` turns the confirmed finding into a Variant Seed
-Card, and `find_variant_candidates.py` ranks same-repository candidates under
-`evidence/variant-analysis/`. These artifacts are auxiliary triage material:
-they must not appear in confirmed bundles as primary evidence, and no variant is
-confirmed until it has its own Docker reproduction and validated confirmed
-bundle.
+Seeded variant expansion is an optional candidate-generation pass for an
+existing confirmed bundle; see [`docs/WORKFLOW_DETAILS.md`](docs/WORKFLOW_DETAILS.md)
+for the full review contract and guardrails.
 
 For collaboration details, report quality checks, validation commands, example
 finding shape, and limitations, see [`docs/WORKFLOW_DETAILS.md`](docs/WORKFLOW_DETAILS.md).

@@ -151,7 +151,7 @@ The validator also checks for common contradiction patterns, including:
 These checks are intentionally conservative. They are meant to reduce false
 positives without changing the confirmed bundle contract.
 
-## Seeded Variant Discovery (P6.1/P6.2)
+## Seeded Variant Discovery (P6)
 
 - A confirmed seed is a confirmed finding that already has a valid confirmed
   bundle, reproducible Docker evidence, and a completed severity-escalation pass.
@@ -190,7 +190,7 @@ positives without changing the confirmed bundle contract.
   replacement for `verification-evidence.json`, findings JSON, DOCX reports,
   reproduction supplements, attachment indexes, replay logs, Docker evidence, or
   confirmed bundle validation.
-- Intended future seed-card artifacts live under
+- Seed-card artifacts live under
   `<audit-workspace>/evidence/variant-analysis/`:
   `seeds.jsonl`, `variant-candidates.jsonl`,
   `variant-expansion-summary.json`, and optional `seed-<slug>.md` notes. Existing

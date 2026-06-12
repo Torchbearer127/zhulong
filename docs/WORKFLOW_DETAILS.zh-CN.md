@@ -106,7 +106,7 @@ bash <audit-workspace>/bin/check_omc_runtime.sh --json
 
 这些检查刻意保持保守，目标是降低误报，并确保已确认漏洞包的契约稳定性。
 
-## 基于 confirmed seed 的同类漏洞扩展（P6.1/P6.2）
+## 基于 confirmed seed 的同类漏洞扩展（P6）
 
 - confirmed seed（已确认种子）是已产生有效 confirmed bundle、可复现 Docker 证据、且完成严重性升级复核的确认漏洞。
 - variant candidate（同类/变体候选）是基于已确认种子产生的候选材料，默认归入候选材料池，不可直接当作已确认。
@@ -121,7 +121,7 @@ bash <audit-workspace>/bin/check_omc_runtime.sh --json
 - P6.5 增加 `validate_report_bundle.py --variant-candidates`，用于校验候选专用 JSONL/JSON array。该校验独立于 confirmed bundle validation：候选 JSONL 只能指导后续验证，不能证明漏洞已确认。
 - confirmed bundle 不得把 `variant-candidates.jsonl` 作为主证据，也不得把候选排名、seed 相似性或候选记录本身写成确认依据。
 - Variant Seed Card 是同类漏洞扩展的辅助证据，不替代 `verification-evidence.json`、findings JSON、DOCX 报告、补充复现说明、附件索引、replay 日志、Docker 证据或 confirmed bundle validation。
-- 未来 seed-card 产物预期位于 `<audit-workspace>/evidence/variant-analysis/`：
+- Seed-card 产物位于 `<audit-workspace>/evidence/variant-analysis/`：
   `seeds.jsonl`、`variant-candidates.jsonl`、`variant-expansion-summary.json`，以及可选的 `seed-<slug>.md` 说明。现有工作区和旧 confirmed bundle 不要求包含这些文件。
 - Seed card 使用 `schema_version=1`，字段包括：`seed_id`、`confirmed_bundle_path`、`bug_class`、`root_cause`、`source_pattern`、`propagation_pattern`、`sink_pattern`、`missing_constraint_pattern`、`trigger_condition`、`docker_success_oracle`、`search_scope`、`negative_filters`。
 - 最终 seed card 必须引用 bundle-relative 或 workspace-relative 的 confirmed bundle path，并记录 Docker success oracle。`root_cause`、`source_pattern`、`sink_pattern`、`docker_success_oracle` 必须非空，且最终卡片中不得写成 `unknown`。

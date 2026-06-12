@@ -211,7 +211,7 @@ confirmed/<vulnerability-slug>/
 
 只有当 Docker 或 Docker Compose 中的运行时证据存在，并且烛龙的报告证据包自动检查通过时，一个发现才算完成态的已确认交付物。
 
-当某个漏洞已经有合格的 confirmed bundle 后，烛龙可以运行受约束的同类扩展流程：`extract_variant_seed.py` 将已确认漏洞抽取为 Variant Seed Card，`find_variant_candidates.py` 在同一仓库内生成排序候选，并写入 `evidence/variant-analysis/`。这些产物只是辅助研判材料，不能作为 confirmed bundle 的主要证据；任何变体都必须拥有自己的 Docker 复现和通过校验的 confirmed bundle，才可以被称为已确认。
+同类扩展只是针对既有 confirmed bundle 的可选候选生成环节，候选仍需独立 Docker 复现；完整复审机制和边界见 [`docs/WORKFLOW_DETAILS.zh-CN.md`](docs/WORKFLOW_DETAILS.zh-CN.md)。
 
 人机协同细节、报告质量门禁、验证命令、示例审计发现形态和限制请阅读 [`docs/WORKFLOW_DETAILS.zh-CN.md`](docs/WORKFLOW_DETAILS.zh-CN.md)。
 
