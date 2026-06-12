@@ -33,6 +33,7 @@
 
 - 🛡️ **Docker 优先验证：** 只有 Docker 或 Docker Compose 证据支持的问题，才会进入已确认报告。
 - 🎯 **仅交付已确认结果：** 扫描器告警、依赖提示、静态分析结果和 LLM 推测会先隔离为候选项，不会直接混入已确认漏洞。
+- 🌱 **基于已确认 seed 的同类扩展：** 已确认漏洞可以转成可审计的 Seed Card，并在同一仓库中排序同类候选；但每个变体仍必须独立完成 Docker 复现后才能确认。
 - 🔌 **轻量模块化：** 不强制依赖后端服务、数据看板、数据库、向量存储或 RAG 平台；通过本地 Agent 模块和脚本即可运行。
 - 🤝 **人机协同易读：** 工作区、交接摘要和机器可读判断记录同时面向 AI 编程 Agent 与人工审核员设计。
 
@@ -192,6 +193,7 @@ bash scripts/asr_start.sh --repo-root /path/to/repo
 ├── 🧭 runtime/                   # 运行时状态
 ├── 🐳 docker/                    # Docker 初始基线与清理状态
 ├── 🔎 evidence/                  # 支撑证据
+│   └── variant-analysis/         # 可选 Seed Card 与同类候选
 └── 🎯 confirmed/                 # 已确认漏洞证据包，如存在
 ```
 
@@ -209,6 +211,8 @@ confirmed/<vulnerability-slug>/
 
 只有当 Docker 或 Docker Compose 中的运行时证据存在，并且烛龙的报告证据包自动检查通过时，一个发现才算完成态的已确认交付物。
 
+当某个漏洞已经有合格的 confirmed bundle 后，烛龙可以运行受约束的同类扩展流程：`extract_variant_seed.py` 将已确认漏洞抽取为 Variant Seed Card，`find_variant_candidates.py` 在同一仓库内生成排序候选，并写入 `evidence/variant-analysis/`。这些产物只是辅助研判材料，不能作为 confirmed bundle 的主要证据；任何变体都必须拥有自己的 Docker 复现和通过校验的 confirmed bundle，才可以被称为已确认。
+
 人机协同细节、报告质量门禁、验证命令、示例审计发现形态和限制请阅读 [`docs/WORKFLOW_DETAILS.zh-CN.md`](docs/WORKFLOW_DETAILS.zh-CN.md)。
 
 ---
@@ -219,7 +223,7 @@ confirmed/<vulnerability-slug>/
 | :---: | :--- | :--- | :--- |
 | 1 | 项目导入 | 本地 Agent + 启动脚本 | 接收目标仓库，创建时间戳工作区，记录 Docker 初始状态，加载参考规则。 |
 | 2 | 信息收集与建模 | Agent + 审计手册 (Playbook) | 识别仓库技术栈、入口、信任边界、污染汇聚点 (Sink)、部署假设和项目安全策略。 |
-| 3 | 候选发现 | Agent + 本地工具 | 把扫描器、审计手册、依赖提示、静态推理和 LLM 推理作为候选生成器，而不是确认来源。 |
+| 3 | 候选发现 | Agent + 本地工具 | 把扫描器、审计手册、依赖提示、静态推理、LLM 推理和可选的 confirmed-seed 同类扩展作为候选生成器，而不是确认来源。 |
 | 4 | Docker 验证 | 安全前置检查 + 验证脚本 | 拒绝危险验证容器，在 Docker 或 Compose 中复现候选项，并收集具体证据。 |
 | 5 | 判断与打包 | 判断记录 + 证据包检查 | 把每条线索归类为已确认、误报、未验证、阻塞或仍为候选，并为已确认漏洞生成可复核证据包。 |
 | 6 | 完成检查与交接 | 完成检查 + 完整性脚本 | 重新检查 Docker 清理状态，校验判断记录和证据包，然后写入最终摘要与交接文件。 |
@@ -278,12 +282,15 @@ zhulong/
 │   ├── audit_disposition.py            # 工作区级线索判断记录
 │   ├── finalize_audit_workspace.py     # 交接前完成检查
 │   ├── assert_finalized_workspace.py   # 已完成工作区完整性检查
+│   ├── extract_variant_seed.py         # confirmed bundle -> Variant Seed Card
+│   ├── find_variant_candidates.py      # Seed Card -> 同仓库排序候选
 │   ├── validate_report_bundle.py       # 已确认漏洞证据包检查
 │   └── selftest_plugin.py              # 发布 / 打包自检
 ├── assets/
 │   ├── branding/                       # README 视觉与 logo 资源
 │   ├── attacker-container/             # 可选本地 attacker container 模板
 │   ├── references/                     # 审计手册、安全契约、输出模板
+│   ├── schemas/                        # Variant Seed Card 等结构化 schema
 │   └── examples/                       # 示例结构化输入
 ├── docs/                               # 使用、工作流、安装、维护和发布文档
 │   ├── INSTALL.md

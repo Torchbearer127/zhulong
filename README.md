@@ -35,6 +35,9 @@ with Docker reproduction before confirmation.</strong></p>
   after Docker or Docker Compose evidence supports them.
 - 🎯 **Confirmed-only deliverables:** Scanner alerts, dependency hints, static
   findings, and LLM guesses stay quarantined until evidence is strong enough.
+- 🌱 **Seeded variant discovery:** Confirmed vulnerabilities can be converted
+  into auditable seed cards and same-repository variant candidates, but every
+  variant still needs its own Docker reproduction before confirmation.
 - 🔌 **Lightweight and modular:** No required backend, dashboard, database,
   vector store, or RAG platform; Zhulong runs through local agent modules and
   scripts.
@@ -228,6 +231,7 @@ Each audit run creates a timestamped workspace inside the target repository:
 ├── 🧭 runtime/                   # runtime hygiene status
 ├── 🐳 docker/                    # Docker baseline and cleanup status
 ├── 🔎 evidence/                  # supporting evidence
+│   └── variant-analysis/         # optional seed cards and variant candidates
 └── 🎯 confirmed/                 # confirmed vulnerability packages, if any
 ```
 
@@ -246,6 +250,14 @@ confirmed/<vulnerability-slug>/
 A finding is not considered confirmed until runtime evidence exists from Docker
 or Docker Compose and Zhulong's automated report-package checks pass.
 
+When a confirmed bundle already exists, Zhulong can run a bounded seeded variant
+pass: `extract_variant_seed.py` turns the confirmed finding into a Variant Seed
+Card, and `find_variant_candidates.py` ranks same-repository candidates under
+`evidence/variant-analysis/`. These artifacts are auxiliary triage material:
+they must not appear in confirmed bundles as primary evidence, and no variant is
+confirmed until it has its own Docker reproduction and validated confirmed
+bundle.
+
 For collaboration details, report quality checks, validation commands, example
 finding shape, and limitations, see [`docs/WORKFLOW_DETAILS.md`](docs/WORKFLOW_DETAILS.md).
 
@@ -257,7 +269,7 @@ finding shape, and limitations, see [`docs/WORKFLOW_DETAILS.md`](docs/WORKFLOW_D
 | :---: | :--- | :--- | :--- |
 | 1 | Project intake | Local agent + start script | Receive the target, create a timestamped workspace, record the starting Docker state, and load reference rules. |
 | 2 | Recon and modeling | Agent + playbook references | Fingerprint the repository, map entry points, trust boundaries, sinks, deployment assumptions, and security policy. |
-| 3 | Candidate discovery | Agent + local tools | Use scanners, playbooks, dependency hints, static reasoning, and LLM reasoning as candidate generators only. |
+| 3 | Candidate discovery | Agent + local tools | Use scanners, playbooks, dependency hints, static reasoning, LLM reasoning, and optional confirmed-seed variant expansion as candidate generators only. |
 | 4 | Docker verification | Safety pre-check + verification scripts | Reject unsafe verification containers, reproduce candidates in Docker or Compose, and collect concrete evidence. |
 | 5 | Decision and packaging | Decision log + package checks | Classify each issue as confirmed, false positive, unverified, blocked, or still a candidate; generate a validated evidence package for confirmed vulnerabilities. |
 | 6 | Completion and handoff | Completion checks + assertion scripts | Recheck Docker cleanup state, validate the decision log and evidence packages, then write final summary and handoff files. |
@@ -321,12 +333,15 @@ zhulong/
 │   ├── audit_disposition.py            # Workspace-level issue decision log
 │   ├── finalize_audit_workspace.py     # Completion checks before handoff
 │   ├── assert_finalized_workspace.py   # Finalized workspace integrity checks
+│   ├── extract_variant_seed.py         # Confirmed bundle -> Variant Seed Card
+│   ├── find_variant_candidates.py      # Seed card -> same-repo ranked candidates
 │   ├── validate_report_bundle.py       # Confirmed vulnerability package checker
 │   └── selftest_plugin.py              # Release and packaging selftest
 ├── assets/
 │   ├── branding/                       # README visuals and logo assets
 │   ├── attacker-container/             # Optional local attacker container template
 │   ├── references/                     # Playbooks, safety contracts, output templates
+│   ├── schemas/                        # Structured schemas such as Variant Seed Card
 │   └── examples/                       # Example structured inputs
 ├── docs/                               # Usage, workflow, install, maintenance, and release docs
 │   ├── INSTALL.md
