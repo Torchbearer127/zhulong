@@ -106,6 +106,31 @@ bash <audit-workspace>/bin/check_omc_runtime.sh --json
 
 这些检查刻意保持保守，目标是降低误报，并确保已确认漏洞包的契约稳定性。
 
+## 基于 confirmed seed 的同类漏洞扩展（P6.1/P6.2）
+
+- confirmed seed（已确认种子）是已产生有效 confirmed bundle、可复现 Docker 证据、且完成严重性升级复核的确认漏洞。
+- variant candidate（同类/变体候选）是基于已确认种子产生的候选材料，默认归入候选材料池，不可直接当作已确认。
+- confirmed variant（已确认同类）必须拥有独立的 Docker 重现通过与 `verification_status=confirmed_in_docker` 的完整 bundle 验证；与 seed 的相似性只能作为优先级线索。
+- 同类候选的路由状态仅为：
+  `candidate`、`blocked`、`false_positive`、`unverified`、`confirmed_in_docker`。
+- 同类候选不得在补充说明、结论包、审阅说明等面向确认材料中被当作已确认结论直接写出；只有完成独立 Docker 重现和 bundle 验证后才可进入 `confirmed_in_docker`。
+- P6.1 建立同类扩展流程边界。P6.2 定义 Variant Seed Card 字段，但不实现自动 seed 抽取或候选发现。
+- P6.3 增加 `scripts/extract_variant_seed.py` 离线辅助脚本，用于从一个既有 confirmed bundle 抽取 Variant Seed Card。它不执行 PoC、不运行 Docker、不搜索仓库、不排序候选，也不确认同类漏洞。
+- P6.4 增加 `scripts/find_variant_candidates.py` 离线辅助脚本，用于读取一张最终 Variant Seed Card，并在同一目标仓库内排序同类候选。它只使用本地 Python 文件遍历，不调用 scanner、`rg`、`grep`、`git`、网络 API、LLM、Docker、PoC、DOCX 渲染或 confirmed bundle 生成。
+- P6.4 候选输出写入 `variant-candidates.jsonl`。每条记录都保持 `status=candidate`，文件路径必须是仓库相对路径，分数和排名必须可复现，并且必须要求独立 Docker 或 Docker Compose 验证后才可做任何确认决策。
+- P6.5 增加 `validate_report_bundle.py --variant-candidates`，用于校验候选专用 JSONL/JSON array。该校验独立于 confirmed bundle validation：候选 JSONL 只能指导后续验证，不能证明漏洞已确认。
+- confirmed bundle 不得把 `variant-candidates.jsonl` 作为主证据，也不得把候选排名、seed 相似性或候选记录本身写成确认依据。
+- Variant Seed Card 是同类漏洞扩展的辅助证据，不替代 `verification-evidence.json`、findings JSON、DOCX 报告、补充复现说明、附件索引、replay 日志、Docker 证据或 confirmed bundle validation。
+- 未来 seed-card 产物预期位于 `<audit-workspace>/evidence/variant-analysis/`：
+  `seeds.jsonl`、`variant-candidates.jsonl`、`variant-expansion-summary.json`，以及可选的 `seed-<slug>.md` 说明。现有工作区和旧 confirmed bundle 不要求包含这些文件。
+- Seed card 使用 `schema_version=1`，字段包括：`seed_id`、`confirmed_bundle_path`、`bug_class`、`root_cause`、`source_pattern`、`propagation_pattern`、`sink_pattern`、`missing_constraint_pattern`、`trigger_condition`、`docker_success_oracle`、`search_scope`、`negative_filters`。
+- 最终 seed card 必须引用 bundle-relative 或 workspace-relative 的 confirmed bundle path，并记录 Docker success oracle。`root_cause`、`source_pattern`、`sink_pattern`、`docker_success_oracle` 必须非空，且最终卡片中不得写成 `unknown`。
+- extractor 生成的最终 seed 必须通过 `validate_report_bundle.py --variant-seed-card`。抽取信息不足时只能生成 draft note 或可选 draft seed card，不能写入最终 seed。
+- `source_pattern` 要描述攻击者可控输入，`sink_pattern` 要描述 sink 家族/API 或危险行为，`search_scope` 默认限定在同一目标仓库内，`negative_filters` 记录要排除或降权的目录、模式、缓解措施或上下文。
+- 候选发现必须在 seed scope 不是结构化同一目标仓库、workspace 不在被扫描仓库内，或 seed 的 confirmed bundle path 不能解析到当前 workspace 的 `confirmed/` 目录下时 fail closed。
+- Seed card 只能产生 variant candidates。任何同类漏洞仍需独立 Docker 或 Docker Compose 复现和 confirmed-bundle validation 后，才能称为 confirmed。
+- 未来若某个同类漏洞真正确认，它仍必须像普通 confirmed bundle 一样拥有独立 Docker 复现、replay/直接影响证据、`verification-evidence.json` 和 confirmed-bundle validation。
+
 面向审核/录屏的根脚本应从脚本自身位置推导 bundle 根目录，使用相对该目录的
 `attachments/`，并且要么从 bundle-local 附件自举 Docker 环境，要么在最前面清晰失败并告诉审核员应先运行哪条 bundle-local 命令。
 脚本在 `docker exec` 前应检查目标容器是否存在且运行；触发漏洞前应尽量做健康/就绪检查；关键 Docker、curl 或 token 生成命令失败时应输出捕获到的错误上下文，而不是裸用 `2>/dev/null` 吞掉原因。

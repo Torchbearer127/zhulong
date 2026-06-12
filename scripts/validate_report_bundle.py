@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import shutil
@@ -10,7 +11,7 @@ import subprocess
 import sys
 import tempfile
 import zipfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Iterable
 
 try:
@@ -418,6 +419,137 @@ SHELL_CONFIRMATION_PRINT_PATTERNS = [
         r"\b(?:echo|printf|highlight_success|highlight_danger|print_banner)\b.*(?:漏洞已确认|攻击成功)",
     )
 ]
+VARIANT_CANDIDATE_CONFIRMATION_PATTERNS = [
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"\bvariant candidate confirmed\b",
+        r"\bconfirmed variant candidate\b",
+        r"同类候选已确认",
+        r"变体候选已确认",
+    )
+]
+VARIANT_CANDIDATE_REQUIRED_FIELDS = (
+    "schema_version",
+    "candidate_id",
+    "variant_of",
+    "bug_class",
+    "file",
+    "entry",
+    "source_match",
+    "sink_match",
+    "root_cause_similarity",
+    "negative_evidence",
+    "rank",
+    "score",
+    "status",
+    "recommended_next_step",
+    "evidence_basis",
+)
+VARIANT_CANDIDATE_FORBIDDEN_FILE_PARTS = {
+    ".git",
+    "attachments",
+    "confirmed",
+    "node_modules",
+    "vendor",
+}
+VARIANT_CANDIDATE_FORBIDDEN_TEXT_PATTERNS = [
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"\bconfirmed_in_docker\b",
+        r"\bvulnerability confirmed\b",
+        r"\bVULNERABILITY CONFIRMED\b",
+        r"\bATTACK SUCCESS\b",
+        r"漏洞已确认",
+        r"同类候选已确认",
+        r"变体候选已确认",
+        r"(?<![A-Za-z0-9_-])confirmed/[^\s`'\"<>]*",
+        r"\bconfirmed\s+(?:bundle|report|docx)\s+generation\b",
+        r"\bgenerate\s+(?:a\s+)?(?:confirmed\s+)?(?:DOCX|report|bundle)\b",
+        r"\brender_confirmed_vuln_docx\b",
+        r"\bDOCX\b",
+        r"生成\s*(?:confirmed\s*)?(?:DOCX|报告|bundle|证据包)",
+        r"写入\s*confirmed/",
+        r"进入\s*confirmed/",
+    )
+]
+VARIANT_CANDIDATE_SIMILARITY_CONFIRMATION_PATTERNS = [
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"\b(?:similarity|resemblance|ranking|score)\b.{0,80}\b(?:sufficient|enough)\b.{0,80}\bconfirm",
+        r"\bconfirm(?:ed|ation)?\b.{0,80}\b(?:because|since)\b.{0,80}\b(?:resembles?|similar|same seed|seed)\b",
+        r"\b(?:candidate ranking|candidate score|ranked candidate)\b.{0,80}\b(?:docker proof|proof of docker|verification evidence|confirms?)\b",
+        r"\b(?:seed similarity|similarity to (?:the )?seed)\b.{0,80}\b(?:proves?|confirms?|confirmation)\b",
+        r"相似.{0,40}(?:足以|可以|能够|直接).{0,40}确认",
+        r"(?:排序|排名|分数).{0,40}(?:Docker|复现|验证).{0,40}(?:证明|证据|确认)",
+        r"因为.{0,40}(?:相似|类似|同根因|同类).{0,40}(?:确认|已确认)",
+    )
+]
+VARIANT_CANDIDATE_MISUSE_PATTERNS = [
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"variant-candidates\.jsonl.{0,120}\b(?:proves?|proof|confirms?|confirmed|confirmation)\b",
+        r"\b(?:proves?|proof|confirms?|confirmed|confirmation)\b.{0,120}variant-candidates\.jsonl",
+        r"variant-candidates\.jsonl.{0,80}(?:证明|确认|已确认|确认依据)",
+        r"(?:证明|确认|已确认|确认依据).{0,80}variant-candidates\.jsonl",
+        r"\b(?:candidate ranking|candidate score|ranked candidate)\b.{0,120}\b(?:docker proof|proof of docker|verification evidence|confirms?|confirmed)\b",
+        r"(?:候选排序|候选排名|候选分数).{0,80}(?:Docker|复现|验证).{0,40}(?:证明|证据|确认)",
+        r"\b(?:candidate-only|candidate only)\s+evidence\b.{0,120}\b(?:substitute|replace|instead of)\b.{0,120}\b(?:verification-evidence\.json|replay evidence|direct-impact evidence)\b",
+        r"候选.{0,40}证据.{0,40}(?:替代|代替).{0,40}(?:verification-evidence\.json|复现证据|直接影响证据)",
+        r"\bvariant candidate\b.{0,120}\bconfirmed\b.{0,120}\b(?:resembles?|similar|similarity|same root cause|seed)\b",
+        r"\bconfirmed\b.{0,120}\bvariant candidate\b.{0,120}\b(?:resembles?|similar|similarity|same root cause|seed)\b",
+        r"(?:同类候选|变体候选).{0,80}(?:因为|由于).{0,40}(?:相似|类似|同根因|seed|种子).{0,40}(?:确认|已确认)",
+        r"(?:同类候选|变体候选).{0,80}status.{0,20}(?:confirmed_in_docker|confirmed)",
+        r"variant-candidates\.jsonl.{0,120}\"status\"\s*:\s*\"(?:confirmed_in_docker|confirmed)\"",
+    )
+]
+GENERATED_WORKSPACE_PART_PATTERN = re.compile(r"^security-research-.+")
+VARIANT_SEED_REQUIRED_FIELDS = (
+    "schema_version",
+    "seed_id",
+    "confirmed_bundle_path",
+    "bug_class",
+    "root_cause",
+    "source_pattern",
+    "propagation_pattern",
+    "sink_pattern",
+    "missing_constraint_pattern",
+    "trigger_condition",
+    "docker_success_oracle",
+    "search_scope",
+    "negative_filters",
+)
+VARIANT_SEED_FINAL_NO_UNKNOWN_FIELDS = (
+    "root_cause",
+    "source_pattern",
+    "sink_pattern",
+    "docker_success_oracle",
+)
+VARIANT_SEED_ATTACKER_SOURCE_PATTERN = re.compile(
+    r"\b(attacker|user[- ]controlled|untrusted|external|request|http|upload|webhook|"
+    r"low[- ]privilege|authenticated user|anonymous user|cli argument|user input)\b|"
+    r"攻击者|用户可控|不可信|外部输入|请求|上传|低权限|匿名用户|命令行参数",
+    re.IGNORECASE,
+)
+VARIANT_SEED_SINK_FAMILY_PATTERN = re.compile(
+    r"\b(sink|api|exec|command|shell|fetch|request|http client|open-url|filesystem|file read|"
+    r"file write|path traversal|deseriali[sz]e|template|sql|query|redirect|eval|dangerous behavior)\b|"
+    r"汇聚点|危险行为|文件读|文件写|命令执行|反序列化|模板|查询|重定向",
+    re.IGNORECASE,
+)
+VARIANT_SEED_ORACLE_RUNTIME_PATTERN = re.compile(
+    r"\b(docker|compose|container|verification-evidence\.json|confirmed_in_docker|replay|"
+    r"runtime evidence|log|oracle|success marker)\b|运行时证据|复现日志|成功判据|容器",
+    re.IGNORECASE,
+)
+VARIANT_SEED_UNBOUNDED_SCOPE_PATTERN = re.compile(
+    r"\b(all repositories|any repository|global search|internet|github-wide|cross[- ]repo)\b|"
+    r"全网|所有仓库|跨仓库",
+    re.IGNORECASE,
+)
+VARIANT_SEED_SAME_REPO_SCOPE_PATTERN = re.compile(
+    r"\b(same|target|repository|repo)\b|同一仓库|目标仓库",
+    re.IGNORECASE,
+)
 SHELL_SUCCESS_ORACLE_PATTERNS = [
     re.compile(pattern, re.IGNORECASE)
     for pattern in (
@@ -718,7 +850,20 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Validate a confirmed vulnerability report bundle for structural and content stability."
     )
-    parser.add_argument("--bundle-dir", required=True, help="Per-vulnerability bundle directory under confirmed/.")
+    parser.add_argument("--bundle-dir", help="Per-vulnerability bundle directory under confirmed/.")
+    parser.add_argument(
+        "--variant-seed-card",
+        help="Validate one P6.2 Variant Seed Card JSON object or JSONL file instead of a confirmed bundle.",
+    )
+    parser.add_argument(
+        "--variant-candidates",
+        help="Validate one P6.4 variant-candidates JSONL file or JSON array instead of a confirmed bundle.",
+    )
+    parser.add_argument(
+        "--variant-seed-draft",
+        action="store_true",
+        help="Allow draft-only unknown values in non-final Variant Seed Cards.",
+    )
     parser.add_argument(
         "--language",
         choices=["zh-CN", "en-US", "auto"],
@@ -752,6 +897,292 @@ def fail(message: str) -> None:
 
 def warn(message: str) -> None:
     print(f"WARN: {message}")
+
+
+def is_unknown_value(value: object) -> bool:
+    return isinstance(value, str) and value.strip().lower() == "unknown"
+
+
+def require_variant_seed_text(card: dict[str, object], field: str) -> str:
+    value = card.get(field)
+    if not isinstance(value, str) or not value.strip():
+        fail(f"variant seed card field {field!r} must be a non-empty string")
+    return value.strip()
+
+
+def stringify_variant_seed_value(value: object) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        return " ".join(stringify_variant_seed_value(item) for item in value)
+    if isinstance(value, dict):
+        return " ".join(stringify_variant_seed_value(item) for item in value.values())
+    return "" if value is None else str(value)
+
+
+def validate_variant_seed_path(value: str) -> None:
+    if value.startswith("file://") or value.startswith("~") or Path(value).is_absolute():
+        fail("variant seed confirmed_bundle_path must be bundle-relative or workspace-relative")
+    if re.match(r"^[A-Za-z]:[\\/]", value):
+        fail("variant seed confirmed_bundle_path must not be an operator-local absolute path")
+    if any(pattern.search(value) for pattern in ABSOLUTE_PATH_PATTERNS):
+        fail("variant seed confirmed_bundle_path must not contain an operator-local absolute path")
+
+
+def validate_variant_seed_card(card: dict[str, object], *, final: bool = True) -> None:
+    if not isinstance(card, dict):
+        fail("variant seed card must be a JSON object")
+    missing = [field for field in VARIANT_SEED_REQUIRED_FIELDS if field not in card]
+    if missing:
+        fail(f"variant seed card missing required field(s): {', '.join(missing)}")
+    if type(card.get("schema_version")) is not int or card["schema_version"] != 1:
+        fail("variant seed card schema_version must be integer 1")
+
+    for field in (
+        "seed_id",
+        "confirmed_bundle_path",
+        "bug_class",
+        "root_cause",
+        "source_pattern",
+        "propagation_pattern",
+        "sink_pattern",
+        "missing_constraint_pattern",
+        "trigger_condition",
+        "docker_success_oracle",
+    ):
+        require_variant_seed_text(card, field)
+
+    if final:
+        unknown_fields = [
+            field for field in VARIANT_SEED_FINAL_NO_UNKNOWN_FIELDS if is_unknown_value(card.get(field))
+        ]
+        if unknown_fields:
+            fail(
+                "final variant seed card must not use unknown for required root-cause/source/sink/oracle field(s): "
+                + ", ".join(unknown_fields)
+            )
+
+    confirmed_bundle_path = require_variant_seed_text(card, "confirmed_bundle_path")
+    validate_variant_seed_path(confirmed_bundle_path)
+
+    source_pattern = require_variant_seed_text(card, "source_pattern")
+    if not is_unknown_value(source_pattern) and not VARIANT_SEED_ATTACKER_SOURCE_PATTERN.search(source_pattern):
+        fail("variant seed source_pattern must describe attacker-controlled or untrusted input")
+
+    sink_pattern = require_variant_seed_text(card, "sink_pattern")
+    if not is_unknown_value(sink_pattern) and not VARIANT_SEED_SINK_FAMILY_PATTERN.search(sink_pattern):
+        fail("variant seed sink_pattern must describe a sink family/API or dangerous behavior")
+
+    oracle = require_variant_seed_text(card, "docker_success_oracle")
+    if not is_unknown_value(oracle) and not VARIANT_SEED_ORACLE_RUNTIME_PATTERN.search(oracle):
+        fail("variant seed docker_success_oracle must tie back to Docker/runtime evidence")
+
+    search_scope = card.get("search_scope")
+    search_scope_text = stringify_variant_seed_value(search_scope).strip()
+    if not search_scope_text:
+        fail("variant seed search_scope must be non-empty")
+    if VARIANT_SEED_UNBOUNDED_SCOPE_PATTERN.search(search_scope_text):
+        fail("variant seed search_scope must stay bounded to the same target repository")
+    if not VARIANT_SEED_SAME_REPO_SCOPE_PATTERN.search(search_scope_text):
+        fail("variant seed search_scope should explicitly name the same target repository")
+
+    negative_filters = card.get("negative_filters")
+    if isinstance(negative_filters, list):
+        if not all(isinstance(item, str) for item in negative_filters):
+            fail("variant seed negative_filters must contain only strings")
+    elif not isinstance(negative_filters, str):
+        fail("variant seed negative_filters must be a string or list of strings")
+
+
+def load_variant_seed_cards(path: Path) -> list[dict[str, object]]:
+    if not path.exists() or not path.is_file():
+        fail(f"variant seed card file does not exist: {path}")
+    text = path.read_text(encoding="utf-8")
+    records: list[dict[str, object]] = []
+    if path.suffix.lower() == ".jsonl":
+        for line_number, line in enumerate(text.splitlines(), start=1):
+            stripped = line.strip()
+            if not stripped:
+                continue
+            try:
+                value = json.loads(stripped)
+            except json.JSONDecodeError as exc:
+                fail(f"variant seed JSONL line {line_number} is invalid JSON: {exc}")
+            if not isinstance(value, dict):
+                fail(f"variant seed JSONL line {line_number} must be a JSON object")
+            records.append(value)
+    else:
+        try:
+            value = json.loads(text)
+        except json.JSONDecodeError as exc:
+            fail(f"variant seed card JSON is invalid: {exc}")
+        if isinstance(value, list):
+            if not all(isinstance(item, dict) for item in value):
+                fail("variant seed card JSON array must contain only objects")
+            records = value
+        elif isinstance(value, dict):
+            records = [value]
+        else:
+            fail("variant seed card JSON must be an object, array of objects, or JSONL")
+    if not records:
+        fail("variant seed card file did not contain any seed card records")
+    return records
+
+
+def load_variant_candidate_records(path: Path) -> list[dict[str, object]]:
+    if not path.exists() or not path.is_file():
+        fail(f"variant candidates file does not exist: {path}")
+    text = path.read_text(encoding="utf-8")
+    stripped = text.strip()
+    if not stripped:
+        fail("variant candidates file did not contain any candidate records")
+
+    records: list[dict[str, object]] = []
+    if stripped.startswith("["):
+        try:
+            value = json.loads(stripped)
+        except json.JSONDecodeError as exc:
+            fail(f"variant candidates JSON array is invalid: {exc}")
+        if not isinstance(value, list):
+            fail("variant candidates JSON must be an array of objects or JSONL")
+        for index, item in enumerate(value, start=1):
+            if not isinstance(item, dict):
+                fail(f"variant candidates JSON array item {index} must be a JSON object")
+            records.append(item)
+    else:
+        for line_number, line in enumerate(text.splitlines(), start=1):
+            line_text = line.strip()
+            if not line_text:
+                continue
+            try:
+                value = json.loads(line_text)
+            except json.JSONDecodeError as exc:
+                fail(f"variant candidates JSONL line {line_number} is invalid JSON: {exc}")
+            if not isinstance(value, dict):
+                fail(f"variant candidates JSONL line {line_number} must be a JSON object")
+            records.append(value)
+
+    if not records:
+        fail("variant candidates file did not contain any candidate records")
+    return records
+
+
+def require_variant_candidate_text(record: dict[str, object], field: str) -> str:
+    value = record.get(field)
+    if not isinstance(value, str) or not value.strip():
+        fail(f"variant candidate field {field!r} must be a non-empty string")
+    return value.strip()
+
+
+def validate_variant_candidate_file_path(value: object) -> None:
+    if not isinstance(value, str) or not value.strip():
+        fail("variant candidate file must be a non-empty repo-relative path")
+    raw = value.strip()
+    if raw.startswith("file://") or raw.startswith("~"):
+        fail("variant candidate file must not be a file URI or home-relative path")
+    if "\\" in raw:
+        fail("variant candidate file must be a POSIX repo-relative path, not a Windows-style path")
+    if re.match(r"^[A-Za-z]:[\\/]", raw):
+        fail("variant candidate file must not be a Windows absolute path")
+    if any(pattern.search(raw) for pattern in ABSOLUTE_PATH_PATTERNS):
+        fail("variant candidate file must not contain an operator-local absolute path")
+
+    path = PurePosixPath(raw)
+    if path.is_absolute():
+        fail("variant candidate file must not be absolute")
+    parts = path.parts
+    if not parts or raw in {".", "./"}:
+        fail("variant candidate file must point to a repository file")
+    if any(part in {"", ".", ".."} for part in parts):
+        fail("variant candidate file must not use path traversal")
+
+    lowered_parts = [part.lower() for part in parts]
+    for part in lowered_parts:
+        if part in VARIANT_CANDIDATE_FORBIDDEN_FILE_PARTS:
+            fail(f"variant candidate file must not point under {part}/")
+    if any(GENERATED_WORKSPACE_PART_PATTERN.match(part) for part in parts):
+        fail("variant candidate file must not point under generated security-research-* workspaces")
+    for index in range(len(lowered_parts) - 1):
+        if lowered_parts[index] == "evidence" and lowered_parts[index + 1] == "variant-analysis":
+            fail("variant candidate file must not point under evidence/variant-analysis/")
+
+
+def validate_variant_candidate_next_step(record: dict[str, object]) -> None:
+    next_step = require_variant_candidate_text(record, "recommended_next_step")
+    lowered = next_step.lower()
+    has_docker_verification = (
+        ("docker" in lowered or "docker compose" in lowered or "docker-compose" in lowered)
+        and ("verification" in lowered or "verify" in lowered or "验证" in next_step or "复现" in next_step)
+    )
+    has_bundle_validation = (
+        "confirmed-bundle validation" in lowered
+        or "confirmed bundle validation" in lowered
+        or "bundle validation" in lowered
+        or "证据包校验" in next_step
+        or "bundle 校验" in next_step
+    )
+    has_before_confirmation = (
+        "before any confirmation" in lowered
+        or "before confirmation" in lowered
+        or "before any confirmed" in lowered
+        or "确认前" in next_step
+        or "才可" in next_step and "确认" in next_step
+    )
+    if not (has_docker_verification and has_bundle_validation and has_before_confirmation):
+        fail(
+            "variant candidate recommended_next_step must require Docker/Docker Compose verification "
+            "and confirmed-bundle validation before any confirmation decision"
+        )
+
+
+def validate_variant_candidate_forbidden_text(record: dict[str, object]) -> None:
+    text = json.dumps(record, ensure_ascii=False, sort_keys=True)
+    for pattern in ABSOLUTE_PATH_PATTERNS:
+        match = pattern.search(text)
+        if match:
+            fail(f"variant candidate output contains an operator-local absolute path: {match.group(0)}")
+    for pattern in VARIANT_CANDIDATE_FORBIDDEN_TEXT_PATTERNS:
+        match = pattern.search(text)
+        if match:
+            fail(f"variant candidate output contains forbidden confirmation/report wording: {match.group(0)}")
+    for pattern in VARIANT_CANDIDATE_SIMILARITY_CONFIRMATION_PATTERNS:
+        match = pattern.search(text)
+        if match:
+            fail(
+                "variant candidate output must not claim seed similarity, score, or ranking is sufficient "
+                f"for confirmation: {match.group(0)}"
+            )
+
+
+def validate_variant_candidate_record(record: dict[str, object]) -> None:
+    missing = [field for field in VARIANT_CANDIDATE_REQUIRED_FIELDS if field not in record]
+    if missing:
+        fail(f"variant candidate missing required field(s): {', '.join(missing)}")
+    if type(record.get("schema_version")) is not int or record["schema_version"] != 1:
+        fail("variant candidate schema_version must be integer 1")
+
+    candidate_id = require_variant_candidate_text(record, "candidate_id")
+    if not candidate_id.startswith("candidate-"):
+        fail("variant candidate candidate_id must start with candidate-")
+    require_variant_candidate_text(record, "variant_of")
+    status = require_variant_candidate_text(record, "status")
+    if status != "candidate":
+        fail("variant candidate status must be exactly candidate")
+
+    validate_variant_candidate_file_path(record.get("file"))
+    rank = record.get("rank")
+    if type(rank) is not int or rank < 1:
+        fail("variant candidate rank must be a positive integer")
+    score = record.get("score")
+    if type(score) not in {int, float} or not math.isfinite(float(score)):
+        fail("variant candidate score must be a finite JSON number")
+    validate_variant_candidate_next_step(record)
+    validate_variant_candidate_forbidden_text(record)
+
+
+def validate_variant_candidate_records(records: list[dict[str, object]]) -> None:
+    for record in records:
+        validate_variant_candidate_record(record)
 
 
 def find_audit_event_writer() -> Path | None:
@@ -2196,7 +2627,52 @@ def missing_library_boundary_kinds(text: str) -> list[str]:
     ]
 
 
+def has_variant_candidate_safe_context(text: str, start: int, end: int) -> bool:
+    window = text[max(0, start - 160): min(len(text), end + 160)].lower()
+    safe_markers = (
+        "cannot prove",
+        "does not prove",
+        "must not",
+        "should not",
+        "not proof",
+        "not evidence",
+        "requires docker",
+        "requires independent docker",
+        "before confirmation",
+        "before any confirmation",
+        "不能证明",
+        "不可证明",
+        "不得",
+        "不能作为",
+        "不作为",
+        "不应",
+        "需要独立 docker",
+        "需要 docker",
+        "确认前",
+    )
+    return any(marker in window for marker in safe_markers)
+
+
+def validate_variant_candidate_misuse(text: str) -> None:
+    for pattern in VARIANT_CANDIDATE_MISUSE_PATTERNS:
+        match = pattern.search(text)
+        if match and not has_variant_candidate_safe_context(text, match.start(), match.end()):
+            fail(
+                "variant candidate output must not be used as confirmed evidence; "
+                "use independent Docker reproduction, replay/direct-impact evidence, "
+                "verification-evidence.json, and confirmed-bundle validation instead."
+            )
+
+
 def validate_reviewer_story_gates(text: str) -> None:
+    for pattern in VARIANT_CANDIDATE_CONFIRMATION_PATTERNS:
+        match = pattern.search(text)
+        if match and not has_variant_candidate_safe_context(text, match.start(), match.end()):
+            fail(
+                "reviewer-facing materials must not assert a variant/同类候选已确认 before "
+                "independent Docker reproduction and confirmed-bundle validation."
+            )
+    validate_variant_candidate_misuse(text)
     validate_no_submitter_local_images(text)
     warn_remote_latest_without_fixture_rationale(text)
     if material_has_pattern(FIXTURE_HINT_PATTERNS, text) and not has_fixture_provenance(text):
@@ -2359,6 +2835,13 @@ def validate_report_body_severity_consistency(
 
 
 def validate_bundle_cleanliness(bundle_dir: Path) -> None:
+    for path in bundle_dir.rglob("variant-candidates.jsonl"):
+        if path.is_file():
+            rel = path.relative_to(bundle_dir).as_posix()
+            fail(
+                "final confirmed bundle must not include variant-candidates.jsonl as primary evidence: "
+                + rel
+            )
     for child in bundle_dir.iterdir():
         if child.is_dir() and child.name in FORBIDDEN_BUNDLE_DIRS:
             if child.name == "evidence":
@@ -3898,6 +4381,27 @@ def optional_markitdown_check(docx_path: Path) -> None:
 
 def main() -> None:
     args = parse_args()
+    variant_modes = [bool(args.variant_seed_card), bool(args.variant_candidates)]
+    if sum(1 for enabled in variant_modes if enabled) > 1:
+        fail("use only one of --variant-seed-card or --variant-candidates")
+    if args.variant_seed_draft and not args.variant_seed_card:
+        fail("--variant-seed-draft is only valid with --variant-seed-card")
+    if args.variant_seed_card:
+        cards = load_variant_seed_cards(Path(args.variant_seed_card).expanduser())
+        for card in cards:
+            validate_variant_seed_card(card, final=not args.variant_seed_draft)
+        print(f"VARIANT SEED VALIDATION PASSED: {args.variant_seed_card}")
+        print(f"cards={len(cards)}")
+        print(f"mode={'draft' if args.variant_seed_draft else 'final'}")
+        return
+    if args.variant_candidates:
+        records = load_variant_candidate_records(Path(args.variant_candidates).expanduser())
+        validate_variant_candidate_records(records)
+        print(f"VARIANT CANDIDATE VALIDATION PASSED: {args.variant_candidates}")
+        print(f"candidates={len(records)}")
+        return
+    if not args.bundle_dir:
+        fail("--bundle-dir is required unless --variant-seed-card or --variant-candidates is used")
     bundle_dir = Path(args.bundle_dir).expanduser().resolve()
     if not bundle_dir.exists() or not bundle_dir.is_dir():
         fail(f"bundle directory does not exist: {bundle_dir}")

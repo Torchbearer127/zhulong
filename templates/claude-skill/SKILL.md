@@ -43,6 +43,11 @@ Use this Claude Code skill when you want a repository-level security-focused cod
   - [ssrf-checklist.md](./assets/references/ssrf-checklist.md)
   - [path-traversal-checklist.md](./assets/references/path-traversal-checklist.md)
   - [prototype-pollution-checklist.md](./assets/references/prototype-pollution-checklist.md)
+- seeded variant discovery:
+  - [extract_variant_seed.py](./scripts/extract_variant_seed.py)
+  - [find_variant_candidates.py](./scripts/find_variant_candidates.py)
+  - [variant-seed-template.md](./assets/references/variant-seed-template.md)
+  - [variant-seed.schema.json](./assets/schemas/variant-seed.schema.json)
 - workspace setup:
   - [prepare_target_repo.sh](./scripts/prepare_target_repo.sh)
   - [bootstrap_verification_workspace.sh](./scripts/bootstrap_verification_workspace.sh)
@@ -118,6 +123,53 @@ default contract even when the user does not restate them:
 - Confirm vulnerabilities only with Docker evidence. After the first
   confirmation, run one explicit severity-escalation pass in Docker before final
   scoring, and only upgrade severity when stronger impact is verified.
+- After a confirmed seed is available, run one explicit seeded variant-discovery
+  pass in the same repository using the confirmed seed only when it already has
+  a valid confirmed bundle and Docker success oracle.
+- A confirmed seed must document the root-cause chain, attacker-controlled source,
+  propagation path, sink family, missing constraint, trigger condition, and a
+  deterministic success oracle.
+- A Variant Seed Card is auxiliary evidence for seeded variant discovery, not a
+  confirmed vulnerability and not a replacement for `verification-evidence.json`,
+  findings JSON, DOCX reports, reproduction supplements, attachment indexes,
+  replay logs, Docker evidence, or confirmed bundle validation.
+- Write future seed-card artifacts under
+  `<audit-workspace>/evidence/variant-analysis/` as `seeds.jsonl`,
+  `variant-candidates.jsonl`, `variant-expansion-summary.json`, and optional
+  `seed-<slug>.md` notes. Do not require existing workspaces or old confirmed
+  bundles to contain these files.
+- Final seed cards use schema version `1`, are rooted in a confirmed bundle path
+  that is bundle-relative or workspace-relative, keep search scope bounded to the
+  same target repository, and must not use `unknown` for root cause, source,
+  sink, or Docker success oracle.
+- To bridge an existing confirmed bundle into the seed-card contract, use
+  `scripts/extract_variant_seed.py` offline. It reads existing bundle evidence
+  only; it does not execute PoCs, run Docker, search the repository, rank
+  candidates, or confirm variants.
+- Extractor final output must pass
+  `validate_report_bundle.py --variant-seed-card`. Incomplete extraction is a
+  draft note or optional draft seed card, not a final seed.
+- To rank candidates from one final seed card, use
+  `scripts/find_variant_candidates.py` offline. It reads local same-repository
+  source text only; it must not call scanners, `rg`/`grep`/`git`, network APIs,
+  LLMs, Docker, PoCs, DOCX rendering, or confirmed-bundle generation.
+- Candidate finder output is auxiliary `variant-candidates.jsonl` material only:
+  every record must stay `status=candidate`, use repo-relative file paths, and
+  require independent Docker or Docker Compose verification before any
+  confirmation decision.
+- Validate candidate output with
+  `scripts/validate_report_bundle.py --variant-candidates <path>`. This
+  candidate validation is separate from confirmed bundle validation.
+- Candidate JSONL can guide follow-up verification, but it cannot prove a
+  vulnerability. Confirmed bundles must not cite candidate ranking, seed
+  similarity, or `variant-candidates.jsonl` as confirmation evidence.
+- Variant candidates are candidate material by default. Route them as one of:
+  `candidate`, `blocked`, `false_positive`, `unverified`, `confirmed_in_docker`.
+- Do not mark a variant candidate as confirmed based on resemblance to a seed.
+  It must complete its own Docker reproduction and confirmed-bundle validation
+  before `confirmed_in_docker`.
+- The seeded variant pass must not replace the severity-escalation pass. Both are
+  required in a normal confirmed discovery flow.
 - Static scanning, source-to-sink reasoning, pattern matching, dependency alerts,
   and LLM analysis can only create candidates. They must not be written as
   confirmed findings unless Docker reproduction succeeds.

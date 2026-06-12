@@ -151,6 +151,77 @@ The validator also checks for common contradiction patterns, including:
 These checks are intentionally conservative. They are meant to reduce false
 positives without changing the confirmed bundle contract.
 
+## Seeded Variant Discovery (P6.1/P6.2)
+
+- A confirmed seed is a confirmed finding that already has a valid confirmed
+  bundle, reproducible Docker evidence, and a completed severity-escalation pass.
+- A variant candidate is a separate candidate derived from a confirmed seed as a
+  similarity/ranking target and must be tracked as candidate material.
+- A confirmed variant is a candidate that passes its own Docker reproduction and
+  has a valid `verification_status=confirmed_in_docker` bundle; similarity alone
+  is not enough.
+- Route variant candidates as one of:
+  `candidate`, `blocked`, `false_positive`, `unverified`, `confirmed_in_docker`.
+- A variant candidate must not be reported as confirmed in a confirmed package,
+  supplement, note, or reviewer-facing summary before Docker reproduction and
+  independent bundle validation are complete.
+- P6.1 established the seeded-variant workflow boundary. P6.2 defines the Variant Seed Card fields without implementing automatic seed extraction or candidate finding.
+- P6.3 adds `scripts/extract_variant_seed.py`, an offline helper that reads one
+  existing confirmed bundle and extracts a Variant Seed Card. It does not
+  execute PoCs, run Docker, search the repository, rank candidates, or confirm
+  variants.
+- P6.4 adds `scripts/find_variant_candidates.py`, an offline helper that reads
+  one final Variant Seed Card and ranks same-repository candidates. It uses
+  local Python filesystem traversal only; it does not call scanners, `rg`,
+  `grep`, `git`, network APIs, LLMs, Docker, PoCs, DOCX rendering, or confirmed
+  bundle generation.
+- P6.4 candidate output lives in `variant-candidates.jsonl`. Each record stays
+  `status=candidate`, uses repo-relative file paths, includes deterministic
+  score/rank evidence, and must require independent Docker or Docker Compose
+  verification before any confirmation decision.
+- P6.5 adds `validate_report_bundle.py --variant-candidates` for candidate-only
+  JSONL/JSON-array validation. This is separate from confirmed bundle
+  validation: candidate JSONL can guide follow-up verification, but it cannot
+  prove a vulnerability.
+- Confirmed bundles must not include `variant-candidates.jsonl` as primary
+  evidence or cite candidate ranking, seed similarity, or candidate-only records
+  as confirmation evidence.
+- A Variant Seed Card is auxiliary evidence for variant discovery, not a
+  replacement for `verification-evidence.json`, findings JSON, DOCX reports,
+  reproduction supplements, attachment indexes, replay logs, Docker evidence, or
+  confirmed bundle validation.
+- Intended future seed-card artifacts live under
+  `<audit-workspace>/evidence/variant-analysis/`:
+  `seeds.jsonl`, `variant-candidates.jsonl`,
+  `variant-expansion-summary.json`, and optional `seed-<slug>.md` notes. Existing
+  workspaces and old confirmed bundles are not required to contain these files.
+- Seed cards use `schema_version=1` and include: `seed_id`,
+  `confirmed_bundle_path`, `bug_class`, `root_cause`, `source_pattern`,
+  `propagation_pattern`, `sink_pattern`, `missing_constraint_pattern`,
+  `trigger_condition`, `docker_success_oracle`, `search_scope`, and
+  `negative_filters`.
+- Final seed cards must be rooted in a bundle-relative or workspace-relative
+  confirmed bundle path and a Docker success oracle. `root_cause`,
+  `source_pattern`, `sink_pattern`, and `docker_success_oracle` must be non-empty
+  and must not be `unknown` in a final card.
+- Extractor final output must pass
+  `validate_report_bundle.py --variant-seed-card`. Incomplete extraction becomes
+  a draft note or optional draft seed card, not a final seed.
+- `source_pattern` describes attacker control, `sink_pattern` describes a sink
+  family/API or dangerous behavior, `search_scope` stays bounded to the same
+  target repository, and `negative_filters` records directories, patterns,
+  mitigations, or contexts to exclude or downgrade.
+- Candidate finding must fail closed when the seed scope is not the structured
+  same target repository scope, when the workspace is outside the scanned repo,
+  or when the seed's confirmed bundle path does not resolve under the current
+  workspace `confirmed/` directory.
+- A seed card can generate variant candidates only. Every variant still requires
+  independent Docker or Docker Compose reproduction and confirmed-bundle
+  validation before it can be called confirmed.
+- A later confirmed variant must look like a normal confirmed bundle, with its
+  own Docker reproduction, replay/direct-impact evidence,
+  `verification-evidence.json`, and confirmed-bundle validation.
+
 Reviewer-facing recording helpers should derive their own bundle directory,
 refer to `attachments/` relative to that directory, and either bootstrap the
 Docker environment from bundle-local attachments or fail early with the exact

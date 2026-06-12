@@ -25,6 +25,8 @@ REQUIRED_FILES = [
     "assets/references/final-summary-template.md",
     "assets/references/docker-resource-hygiene.md",
     "assets/references/docker-registry-fallbacks.example.json",
+    "assets/references/variant-seed-template.md",
+    "assets/schemas/variant-seed.schema.json",
     "assets/references/java-web-audit-playbook.md",
     "assets/references/go-web-audit-playbook.md",
     "assets/references/nodejs-library-audit-playbook.md",
@@ -56,6 +58,8 @@ REQUIRED_FILES = [
     "scripts/plan_security_toolchain.py",
     "scripts/render_confirmed_vuln_docx.py",
     "scripts/scaffold_bilingual_findings.py",
+    "scripts/extract_variant_seed.py",
+    "scripts/find_variant_candidates.py",
     "scripts/validate_report_bundle.py",
     "scripts/validate_all_report_bundles.py",
     "scripts/finalize_audit_workspace.py",
@@ -71,6 +75,8 @@ INSTALLED_SKILL_REQUIRED_FILES = [
     "assets/confirmed-vuln-report-template.docx",
     "assets/references/docker-resource-hygiene.md",
     "assets/references/docker-registry-fallbacks.example.json",
+    "assets/references/variant-seed-template.md",
+    "assets/schemas/variant-seed.schema.json",
     "assets/references/nodejs-web-audit-playbook.md",
     "assets/references/php-swoole-audit-playbook.md",
     "assets/references/python-library-audit-playbook.md",
@@ -84,6 +90,8 @@ INSTALLED_SKILL_REQUIRED_FILES = [
     "scripts/run_verification_case.sh",
     "scripts/manage_docker_resources.py",
     "scripts/render_confirmed_vuln_docx.py",
+    "scripts/extract_variant_seed.py",
+    "scripts/find_variant_candidates.py",
     "scripts/validate_report_bundle.py",
     "scripts/validate_all_report_bundles.py",
     "scripts/finalize_audit_workspace.py",
@@ -199,6 +207,928 @@ def require_no_repo_text(plugin_root: Path, needle: str, label: str) -> None:
             continue
         if needle in path.read_text(encoding="utf-8", errors="ignore"):
             raise SystemExit(f"FAILED: forbidden repository text for {label}: {path}: {needle}")
+
+
+def valid_variant_seed_card() -> dict:
+    return {
+        "schema_version": 1,
+        "seed_id": "seed-confirmed-ssrf-import-url",
+        "confirmed_bundle_path": "confirmed/ssrf-import-url",
+        "bug_class": "SSRF",
+        "root_cause": "Import flow trusted a URL before enforcing private-network deny rules.",
+        "source_pattern": "Authenticated attacker controls the import URL in the HTTP request body.",
+        "propagation_pattern": "Request body URL reaches the server-side fetch helper without host revalidation.",
+        "sink_pattern": "Server-side HTTP fetch/open-url sink can reach internal network targets.",
+        "missing_constraint_pattern": "Missing canonicalization and private-address denylist immediately before the sink.",
+        "trigger_condition": "Import feature enabled; low-privilege authenticated user can submit imports.",
+        "docker_success_oracle": (
+            "Docker Compose replay observed the callback and verification-evidence.json records "
+            "verification_status=confirmed_in_docker."
+        ),
+        "search_scope": {
+            "repository": "same-target-repository",
+            "default": "exclude generated outputs and confirmed bundles",
+        },
+        "negative_filters": [
+            "tests/",
+            "docs/",
+            "examples/",
+            "fixtures/",
+            "call sites with canonical host validation before fetch",
+        ],
+    }
+
+
+def write_variant_seed_card(path: Path, overrides: dict | None = None, *, drop: str | None = None) -> None:
+    card = valid_variant_seed_card()
+    if overrides:
+        card.update(overrides)
+    if drop:
+        card.pop(drop, None)
+    path.write_text(json.dumps(card, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def exercise_variant_seed_card_validation(plugin_root: Path, workspace: Path) -> None:
+    validator = plugin_root / "scripts/validate_report_bundle.py"
+    seeds_dir = workspace / "variant-seed-fixtures"
+    seeds_dir.mkdir(parents=True, exist_ok=True)
+
+    good = seeds_dir / "good-seed.json"
+    write_variant_seed_card(good)
+    run([sys.executable, str(validator), "--variant-seed-card", str(good)], plugin_root)
+
+    draft_unknown = seeds_dir / "draft-unknown-seed.json"
+    write_variant_seed_card(draft_unknown, {"root_cause": "unknown"})
+    run([sys.executable, str(validator), "--variant-seed-card", str(draft_unknown), "--variant-seed-draft"], plugin_root)
+
+    bad_cases = [
+        ("empty-root-cause.json", {"root_cause": ""}, None, "field 'root_cause' must be a non-empty string"),
+        (
+            "source-lacks-attacker-control.json",
+            {"source_pattern": "import_url parameter"},
+            None,
+            "source_pattern must describe attacker-controlled or untrusted input",
+        ),
+        ("missing-sink.json", None, "sink_pattern", "missing required field(s): sink_pattern"),
+        (
+            "empty-oracle.json",
+            {"docker_success_oracle": ""},
+            None,
+            "field 'docker_success_oracle' must be a non-empty string",
+        ),
+        (
+            "unknown-final.json",
+            {"docker_success_oracle": "unknown"},
+            None,
+            "must not use unknown for required root-cause/source/sink/oracle",
+        ),
+        (
+            "absolute-bundle-path.json",
+            {"confirmed_bundle_path": str(Path.cwd() / "confirmed" / "seed")},
+            None,
+            "confirmed_bundle_path must be bundle-relative or workspace-relative",
+        ),
+    ]
+    for filename, overrides, drop, expected in bad_cases:
+        path = seeds_dir / filename
+        write_variant_seed_card(path, overrides, drop=drop)
+        run_expect_fail([sys.executable, str(validator), "--variant-seed-card", str(path)], plugin_root, expected)
+
+
+def write_extractor_fixture_bundle(
+    bundle: Path,
+    *,
+    verification_status: str = "confirmed_in_docker",
+    include_verification: bool = True,
+    complete_finding: bool = True,
+    local_path_text: str = "",
+    finding_payload: dict | None = None,
+) -> None:
+    bundle.mkdir(parents=True, exist_ok=True)
+    if include_verification:
+        (bundle / "verification-evidence.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "finding_slug": bundle.name,
+                    "verification_status": verification_status,
+                    "docker_required": True,
+                    "docker_image": "zhulong-selftest:local",
+                    "docker_command": "docker compose run verifier",
+                    "poc_path": "attachments/poc.js",
+                    "expected_observation": "SSRF callback marker is observed",
+                    "observed_observation": "SSRF callback marker is observed in Docker replay",
+                    "oracle_token": "SSRF_CALLBACK_CONFIRMED",
+                    "evidence_files": ["attachments/evidence/replay.log"],
+                    "severity_escalation_attempted": True,
+                    "severity_escalation_result": "no_higher_impact_found",
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+    if finding_payload is not None:
+        (bundle / "findings.json").write_text(
+            json.dumps(finding_payload, ensure_ascii=False, sort_keys=True),
+            encoding="utf-8",
+        )
+    elif complete_finding:
+        (bundle / "findings.json").write_text(
+            json.dumps(
+                {
+                    "finding_slug": bundle.name,
+                    "bug_class": "SSRF",
+                    "root_cause": (
+                        "Import flow trusts the submitted URL before canonical private-network checks. "
+                        + local_path_text
+                    ).strip(),
+                    "source_pattern": "Authenticated attacker controls the import URL in the HTTP request body.",
+                    "propagation_pattern": "Request body URL reaches the server-side import fetch helper unchanged.",
+                    "sink_pattern": "Server-side HTTP fetch sink can reach internal network services.",
+                    "missing_constraint_pattern": "Missing canonicalization and private-address denylist immediately before the sink.",
+                    "trigger_condition": "Import feature enabled; low-privilege authenticated user can submit imports.",
+                    "search_scope": "all repositories on GitHub",
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+
+
+def historical_finding_fixture(*, local_path_text: str = "") -> dict:
+    suffix = (" " + local_path_text) if local_path_text else ""
+    return {
+        "slug": "historical-config-path-traversal",
+        "bug_class": "Path Traversal / Code Execution",
+        "title": "historical config path traversal",
+        "analysis": [
+            "入口/可控输入：configPath = argv[configKey]，来自用户完全控制的命令行参数。",
+            "危险函数/危险操作：mixin.resolve(mixin.cwd(), configPath) 将攻击者提供的路径解析为绝对路径后直接传递给 mixin.require()，后者调用 require(path) 或 readFileSync(path)。",
+            "触发路径：--config=../../tmp/payload -> argv['config'] 获取路径 -> path.resolve(cwd(), path) 解析 -> require(resolvedPath) 加载并执行 JS / readFileSync 读取文件 -> 内容合并至 argv。",
+            "根因：setConfig 未对 configPath 进行路径规范化校验，也未限制可加载的文件类型或路径模式。" + suffix,
+            "缺失校验：未确保规范化后的路径仍在用户预期目录范围内。",
+            "触发条件：攻击者可以控制命令行参数并启用 config 加载功能。",
+        ],
+        "analysis_en": [
+            "Entry / controllable input: configPath = argv[configKey], sourced from fully attacker-controlled command-line arguments.",
+            "Dangerous operation: mixin.resolve(mixin.cwd(), configPath) resolves the attacker-supplied path and passes it directly to mixin.require(), which calls require(path) or readFileSync(path).",
+            "Root cause: setConfig does not perform path normalization validation and does not restrict loadable file types or path patterns.",
+        ],
+        "code_context": [
+            {
+                "summary": "setConfig 从 argv 中读取 configKey 对应的路径值，通过 mixin.resolve 解析后传递给 mixin.require，期间未对路径进行任何校验。",
+                "summary_en": "setConfig reads the configKey path from argv, resolves it via mixin.resolve, and passes it to mixin.require without any path validation.",
+            },
+            {
+                "summary": "mixin.require 在 CommonJS 下调用 require(path) 可执行任意 JS 代码；在 ESM 下调用 readFileSync 可读取任意文件。",
+                "summary_en": "mixin.require calls require(path) in CommonJS (enables arbitrary code execution); uses readFileSync in ESM (enables arbitrary file read).",
+            },
+        ],
+    }
+
+
+def exercise_extract_variant_seed(plugin_root: Path, workspace: Path) -> None:
+    extractor = plugin_root / "scripts/extract_variant_seed.py"
+    validator = plugin_root / "scripts/validate_report_bundle.py"
+    fixture_root = workspace / "variant-extractor-fixtures"
+    fixture_workspace = fixture_root / "audit-workspace"
+    confirmed_dir = fixture_workspace / "confirmed"
+    output_dir = fixture_workspace / "evidence/variant-analysis"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    positive_bundle = confirmed_dir / "ssrf-import-url"
+    fixture_local_path = "/" + "Users" + "/" + "fixture" + "/private/repo"
+    write_extractor_fixture_bundle(positive_bundle, local_path_text=fixture_local_path)
+    final_output = output_dir / "seeds.jsonl"
+    run(
+        [
+            sys.executable,
+            str(extractor),
+            "--workspace-dir",
+            str(fixture_workspace),
+            "--bundle-dir",
+            str(positive_bundle),
+            "--output",
+            str(final_output),
+        ],
+        plugin_root,
+    )
+    run([sys.executable, str(validator), "--variant-seed-card", str(final_output)], plugin_root)
+    records = [json.loads(line) for line in final_output.read_text(encoding="utf-8").splitlines() if line.strip()]
+    if len(records) != 1:
+        raise SystemExit("FAILED: extractor should produce exactly one final seed card")
+    card = records[0]
+    if card.get("confirmed_bundle_path") != "confirmed/ssrf-import-url":
+        raise SystemExit(f"FAILED: extractor emitted non-relative confirmed_bundle_path: {card}")
+    if card.get("search_scope", {}).get("repository") != "same-target-repository":
+        raise SystemExit(f"FAILED: extractor did not emit structured same-repository scope: {card}")
+    if "all repositories" in json.dumps(card, ensure_ascii=False):
+        raise SystemExit("FAILED: extractor preserved broad input search_scope into final output")
+    if fixture_local_path in json.dumps(card, ensure_ascii=False):
+        raise SystemExit("FAILED: extractor emitted local absolute path text")
+    if "<local-absolute-path>" not in card.get("root_cause", ""):
+        raise SystemExit("FAILED: extractor did not sanitize local absolute path text")
+
+    historical_bundle = confirmed_dir / "historical-config-path-traversal"
+    write_extractor_fixture_bundle(
+        historical_bundle,
+        finding_payload=historical_finding_fixture(local_path_text=fixture_local_path),
+    )
+    historical_output = output_dir / "historical-seeds.jsonl"
+    run(
+        [
+            sys.executable,
+            str(extractor),
+            "--workspace-dir",
+            str(fixture_workspace),
+            "--bundle-dir",
+            str(historical_bundle),
+            "--output",
+            str(historical_output),
+        ],
+        plugin_root,
+    )
+    run([sys.executable, str(validator), "--variant-seed-card", str(historical_output)], plugin_root)
+    historical_records = [
+        json.loads(line) for line in historical_output.read_text(encoding="utf-8").splitlines() if line.strip()
+    ]
+    historical_card = historical_records[0]
+    if historical_card.get("root_cause") == "unknown" or historical_card.get("source_pattern") == "unknown":
+        raise SystemExit(f"FAILED: historical natural-language analysis did not fill root/source: {historical_card}")
+    if historical_card.get("sink_pattern") == "unknown" or "Sink/API" not in historical_card.get("sink_pattern", ""):
+        raise SystemExit(f"FAILED: historical natural-language analysis did not fill safe sink hint: {historical_card}")
+    historical_text = json.dumps(historical_card, ensure_ascii=False)
+    if fixture_local_path in historical_text or "<local-absolute-path>" not in historical_text:
+        raise SystemExit("FAILED: historical natural-language extraction did not sanitize local absolute path text")
+
+    explicit_precedence_bundle = confirmed_dir / "explicit-precedence"
+    explicit_payload = historical_finding_fixture()
+    explicit_payload.update(
+        {
+            "root_cause": "Explicit root cause keeps the structured field before natural-language hints.",
+            "source_pattern": "Authenticated attacker controls the explicit HTTP request body source.",
+            "sink_pattern": "Explicit filesystem file read sink remains authoritative.",
+        }
+    )
+    write_extractor_fixture_bundle(explicit_precedence_bundle, finding_payload=explicit_payload)
+    explicit_output = output_dir / "explicit-precedence.jsonl"
+    run(
+        [
+            sys.executable,
+            str(extractor),
+            "--workspace-dir",
+            str(fixture_workspace),
+            "--bundle-dir",
+            str(explicit_precedence_bundle),
+            "--output",
+            str(explicit_output),
+        ],
+        plugin_root,
+    )
+    explicit_card = json.loads(explicit_output.read_text(encoding="utf-8").splitlines()[0])
+    if explicit_card.get("root_cause") != explicit_payload["root_cause"]:
+        raise SystemExit("FAILED: natural-language hints overwrote explicit root_cause")
+    if explicit_card.get("source_pattern") != explicit_payload["source_pattern"]:
+        raise SystemExit("FAILED: natural-language hints overwrote explicit source_pattern")
+    if explicit_card.get("sink_pattern") != explicit_payload["sink_pattern"]:
+        raise SystemExit("FAILED: natural-language hints overwrote explicit sink_pattern")
+
+    code_context_sink_bundle = confirmed_dir / "code-context-sink"
+    write_extractor_fixture_bundle(
+        code_context_sink_bundle,
+        finding_payload={
+            "slug": "code-context-sink",
+            "bug_class": "Path Traversal",
+            "root_cause": "Path normalization validation is missing before loading a user-selected file.",
+            "source_pattern": "Attacker-controlled CLI argument supplies the config path.",
+            "analysis": [
+                "触发路径：attacker CLI argument -> configPath -> resolve -> loader helper。",
+                "缺失校验：missing canonical directory-boundary validation before the loader helper。",
+            ],
+            "code_context": [
+                {
+                    "summary_en": (
+                        "loader helper calls require(path) and readFileSync(path), enabling dangerous "
+                        "filesystem file read and code execution behavior."
+                    )
+                }
+            ],
+        },
+    )
+    code_context_output = output_dir / "code-context-sink.jsonl"
+    run(
+        [
+            sys.executable,
+            str(extractor),
+            "--workspace-dir",
+            str(fixture_workspace),
+            "--bundle-dir",
+            str(code_context_sink_bundle),
+            "--output",
+            str(code_context_output),
+        ],
+        plugin_root,
+    )
+    run([sys.executable, str(validator), "--variant-seed-card", str(code_context_output)], plugin_root)
+    code_context_card = json.loads(code_context_output.read_text(encoding="utf-8").splitlines()[0])
+    if "filesystem file read" not in code_context_card.get("sink_pattern", ""):
+        raise SystemExit("FAILED: code_context summary_en did not fill sink hint")
+    if code_context_card.get("propagation_pattern") == "unknown":
+        raise SystemExit("FAILED: analysis trigger path did not fill propagation hint")
+
+    missing_verification = confirmed_dir / "missing-verification"
+    write_extractor_fixture_bundle(missing_verification, include_verification=False)
+    run_expect_fail(
+        [
+            sys.executable,
+            str(extractor),
+            "--workspace-dir",
+            str(fixture_workspace),
+            "--bundle-dir",
+            str(missing_verification),
+            "--output",
+            str(output_dir / "missing.jsonl"),
+        ],
+        plugin_root,
+        "missing verification-evidence.json",
+    )
+
+    blocked_bundle = confirmed_dir / "blocked-verification"
+    write_extractor_fixture_bundle(blocked_bundle, verification_status="blocked_docker_unavailable")
+    run_expect_fail(
+        [
+            sys.executable,
+            str(extractor),
+            "--workspace-dir",
+            str(fixture_workspace),
+            "--bundle-dir",
+            str(blocked_bundle),
+            "--output",
+            str(output_dir / "blocked.jsonl"),
+        ],
+        plugin_root,
+        "verification_status must be confirmed_in_docker",
+    )
+
+    outside_bundle = fixture_root / "outside-bundle"
+    write_extractor_fixture_bundle(outside_bundle)
+    run_expect_fail(
+        [
+            sys.executable,
+            str(extractor),
+            "--workspace-dir",
+            str(fixture_workspace),
+            "--bundle-dir",
+            str(outside_bundle),
+            "--output",
+            str(output_dir / "outside.jsonl"),
+        ],
+        plugin_root,
+        "bundle-dir must be inside workspace confirmed/ directory",
+    )
+
+    incomplete_bundle = confirmed_dir / "incomplete-source-sink"
+    write_extractor_fixture_bundle(incomplete_bundle, complete_finding=False)
+    incomplete_final = output_dir / "incomplete-final.jsonl"
+    incomplete_draft = output_dir / "drafts.jsonl"
+    incomplete_note = output_dir / "seed-incomplete-source-sink.md"
+    run(
+        [
+            sys.executable,
+            str(extractor),
+            "--workspace-dir",
+            str(fixture_workspace),
+            "--bundle-dir",
+            str(incomplete_bundle),
+            "--output",
+            str(incomplete_final),
+            "--allow-draft",
+            "--draft-output",
+            str(incomplete_draft),
+            "--seed-note-output",
+            str(incomplete_note),
+        ],
+        plugin_root,
+    )
+    if incomplete_final.exists():
+        raise SystemExit("FAILED: incomplete extraction wrote an invalid final output")
+    if not incomplete_draft.exists() or not incomplete_note.exists():
+        raise SystemExit("FAILED: incomplete extraction did not write draft artifacts")
+    run([sys.executable, str(validator), "--variant-seed-card", str(incomplete_draft), "--variant-seed-draft"], plugin_root)
+    require_text(incomplete_note, "no variant can be confirmed from this note", "extractor draft note guardrail")
+    require_text(incomplete_note, "Possible Unmapped Hints", "extractor draft note unmapped-hints section")
+
+    bug_class_only_bundle = confirmed_dir / "bug-class-only-natural-language"
+    write_extractor_fixture_bundle(
+        bug_class_only_bundle,
+        finding_payload={
+            "slug": "bug-class-only-natural-language",
+            "bug_class": "Path Traversal",
+            "title": "Possible path traversal in config loading",
+            "analysis": ["漏洞类型：Path Traversal", "Title: config path traversal"],
+        },
+    )
+    bug_class_draft = output_dir / "bug-class-only-draft.jsonl"
+    bug_class_note = output_dir / "seed-bug-class-only.md"
+    run(
+        [
+            sys.executable,
+            str(extractor),
+            "--workspace-dir",
+            str(fixture_workspace),
+            "--bundle-dir",
+            str(bug_class_only_bundle),
+            "--output",
+            str(output_dir / "bug-class-only-final.jsonl"),
+            "--allow-draft",
+            "--draft-output",
+            str(bug_class_draft),
+            "--seed-note-output",
+            str(bug_class_note),
+        ],
+        plugin_root,
+    )
+    bug_class_card = json.loads(bug_class_draft.read_text(encoding="utf-8").splitlines()[0])
+    if bug_class_card.get("root_cause") != "unknown" or bug_class_card.get("source_pattern") != "unknown":
+        raise SystemExit("FAILED: bug class/title-only analysis fabricated final seed fields")
+    require_text(bug_class_note, "findings.json:analysis", "extractor bug-class-only unmapped source")
+
+    bare_source_bundle = confirmed_dir / "bare-variable-source"
+    bare_source_payload = historical_finding_fixture()
+    bare_source_payload["analysis"] = [
+        "根因：loader does not perform path normalization validation before loading the file.",
+        "入口/可控输入：configPath",
+        "危险函数/危险操作：dangerous filesystem file read sink via readFileSync(path).",
+    ]
+    bare_source_payload.pop("analysis_en", None)
+    bare_source_payload.pop("code_context", None)
+    write_extractor_fixture_bundle(bare_source_bundle, finding_payload=bare_source_payload)
+    bare_source_draft = output_dir / "bare-source-draft.jsonl"
+    run(
+        [
+            sys.executable,
+            str(extractor),
+            "--workspace-dir",
+            str(fixture_workspace),
+            "--bundle-dir",
+            str(bare_source_bundle),
+            "--output",
+            str(output_dir / "bare-source-final.jsonl"),
+            "--allow-draft",
+            "--draft-output",
+            str(bare_source_draft),
+            "--seed-note-output",
+            str(output_dir / "seed-bare-source.md"),
+        ],
+        plugin_root,
+    )
+    bare_source_card = json.loads(bare_source_draft.read_text(encoding="utf-8").splitlines()[0])
+    if bare_source_card.get("source_pattern") != "unknown":
+        raise SystemExit("FAILED: bare variable name filled source_pattern")
+
+    bare_sink_bundle = confirmed_dir / "bare-file-path-sink"
+    bare_sink_payload = historical_finding_fixture()
+    bare_sink_payload["analysis"] = [
+        "根因：loader does not perform path normalization validation before loading the file.",
+        "入口/可控输入：attacker-controlled CLI argument supplies configPath.",
+        "危险函数/危险操作：lib/yargs-parser.ts:655-692",
+    ]
+    bare_sink_payload.pop("analysis_en", None)
+    bare_sink_payload.pop("code_context", None)
+    write_extractor_fixture_bundle(bare_sink_bundle, finding_payload=bare_sink_payload)
+    bare_sink_draft = output_dir / "bare-sink-draft.jsonl"
+    run(
+        [
+            sys.executable,
+            str(extractor),
+            "--workspace-dir",
+            str(fixture_workspace),
+            "--bundle-dir",
+            str(bare_sink_bundle),
+            "--output",
+            str(output_dir / "bare-sink-final.jsonl"),
+            "--allow-draft",
+            "--draft-output",
+            str(bare_sink_draft),
+            "--seed-note-output",
+            str(output_dir / "seed-bare-sink.md"),
+        ],
+        plugin_root,
+    )
+    bare_sink_card = json.loads(bare_sink_draft.read_text(encoding="utf-8").splitlines()[0])
+    if bare_sink_card.get("sink_pattern") != "unknown":
+        raise SystemExit("FAILED: bare file path filled sink_pattern")
+
+    ambiguous_bundle = confirmed_dir / "ambiguous-natural-language"
+    write_extractor_fixture_bundle(
+        ambiguous_bundle,
+        finding_payload={
+            "slug": "ambiguous-natural-language",
+            "bug_class": "Path Traversal",
+            "analysis": [
+                (
+                    "Root cause / source / sink: attacker-controlled request path reaches dangerous "
+                    "filesystem file read sink because validation is missing."
+                )
+            ],
+        },
+    )
+    ambiguous_draft = output_dir / "ambiguous-draft.jsonl"
+    ambiguous_note = output_dir / "seed-ambiguous.md"
+    run(
+        [
+            sys.executable,
+            str(extractor),
+            "--workspace-dir",
+            str(fixture_workspace),
+            "--bundle-dir",
+            str(ambiguous_bundle),
+            "--output",
+            str(output_dir / "ambiguous-final.jsonl"),
+            "--allow-draft",
+            "--draft-output",
+            str(ambiguous_draft),
+            "--seed-note-output",
+            str(ambiguous_note),
+        ],
+        plugin_root,
+    )
+    ambiguous_card = json.loads(ambiguous_draft.read_text(encoding="utf-8").splitlines()[0])
+    if ambiguous_card.get("root_cause") != "unknown" or ambiguous_card.get("source_pattern") != "unknown":
+        raise SystemExit("FAILED: ambiguous multi-field hint fabricated root/source fields")
+    require_text(ambiguous_note, "Root cause / source / sink", "extractor ambiguous unmapped hint")
+
+
+VARIANT_CANDIDATE_REQUIRED_FIELDS = {
+    "schema_version",
+    "candidate_id",
+    "variant_of",
+    "bug_class",
+    "file",
+    "entry",
+    "source_match",
+    "sink_match",
+    "root_cause_similarity",
+    "negative_evidence",
+    "rank",
+    "score",
+    "status",
+    "recommended_next_step",
+    "evidence_basis",
+}
+
+
+def valid_variant_candidate_record(overrides: dict | None = None, *, drop: str | None = None) -> dict:
+    record = {
+        "schema_version": 1,
+        "candidate_id": "candidate-0123456789abcdef",
+        "variant_of": "seed-confirmed-ssrf-import-url",
+        "bug_class": "SSRF",
+        "file": "src/routes/import.js",
+        "entry": "route POST /import",
+        "source_match": {
+            "family": "source",
+            "keyword": "req.body",
+            "line": 4,
+            "snippet": "const importUrl = req.body.url;",
+        },
+        "sink_match": {
+            "family": "http-fetch",
+            "keyword": "fetch(",
+            "line": 5,
+            "snippet": "const response = await fetch(importUrl);",
+        },
+        "root_cause_similarity": [
+            "same sink family: http-fetch",
+            "attacker-controlled source indicator present",
+        ],
+        "negative_evidence": [],
+        "rank": 1,
+        "score": 7,
+        "status": "candidate",
+        "recommended_next_step": (
+            "Candidate only. Run independent Docker or Docker Compose verification "
+            "and confirmed-bundle validation before any confirmation decision."
+        ),
+        "evidence_basis": ["source and sink signals matched in the same repository file"],
+    }
+    if overrides:
+        record.update(overrides)
+    if drop:
+        record.pop(drop, None)
+    return record
+
+
+def write_variant_candidates_jsonl(path: Path, records: list[dict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "".join(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n" for record in records),
+        encoding="utf-8",
+    )
+
+
+def exercise_variant_candidate_validation(plugin_root: Path, workspace: Path) -> None:
+    validator = plugin_root / "scripts/validate_report_bundle.py"
+    candidates_dir = workspace / "variant-candidate-validation-fixtures"
+    candidates_dir.mkdir(parents=True, exist_ok=True)
+
+    good_jsonl = candidates_dir / "variant-candidates.jsonl"
+    write_variant_candidates_jsonl(good_jsonl, [valid_variant_candidate_record()])
+    run([sys.executable, str(validator), "--variant-candidates", str(good_jsonl)], plugin_root)
+
+    good_array = candidates_dir / "variant-candidates.json"
+    good_array.write_text(
+        json.dumps([valid_variant_candidate_record({"candidate_id": "candidate-fedcba9876543210"})], ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    run([sys.executable, str(validator), "--variant-candidates", str(good_array)], plugin_root)
+
+    bad_cases = [
+        ("missing-required-field.jsonl", None, "sink_match", "missing required field(s): sink_match"),
+        ("status-confirmed-in-docker.jsonl", {"status": "confirmed_in_docker"}, None, "status must be exactly candidate"),
+        ("status-confirmed.jsonl", {"status": "confirmed"}, None, "status must be exactly candidate"),
+        (
+            "next-step-missing-bundle-validation.jsonl",
+            {"recommended_next_step": "Run Docker verification later."},
+            None,
+            "recommended_next_step must require",
+        ),
+        (
+            "absolute-file.jsonl",
+            {"file": "/" + "Users" + "/" + "fixture" + "/repo/src/routes/import.js"},
+            None,
+            "operator-local absolute path",
+        ),
+        ("traversal-file.jsonl", {"file": "../src/routes/import.js"}, None, "path traversal"),
+        ("confirmed-file.jsonl", {"file": "confirmed/ssrf-import-url/poc.js"}, None, "under confirmed/"),
+        ("variant-analysis-file.jsonl", {"file": "evidence/variant-analysis/variant-candidates.jsonl"}, None, "evidence/variant-analysis"),
+        ("zh-confirmation-text.jsonl", {"evidence_basis": ["漏洞已确认"]}, None, "forbidden confirmation/report wording"),
+        ("en-confirmation-text.jsonl", {"evidence_basis": ["VULNERABILITY CONFIRMED"]}, None, "forbidden confirmation/report wording"),
+        (
+            "local-path-text.jsonl",
+            {"evidence_basis": ["/" + "Users" + "/" + "fixture" + "/private/evidence.log"]},
+            None,
+            "operator-local absolute path",
+        ),
+        ("docx-generation.jsonl", {"evidence_basis": ["generate DOCX report for reviewer"]}, None, "forbidden confirmation/report wording"),
+        ("confirmed-destination.jsonl", {"evidence_basis": ["write candidate to confirmed/output"]}, None, "forbidden confirmation/report wording"),
+        (
+            "similarity-confirms.jsonl",
+            {"root_cause_similarity": ["similarity to seed is sufficient to confirm this issue"]},
+            None,
+            "seed similarity, score, or ranking is sufficient",
+        ),
+        (
+            "ranking-docker-proof.jsonl",
+            {"evidence_basis": ["candidate ranking is Docker proof for this issue"]},
+            None,
+            "seed similarity, score, or ranking is sufficient",
+        ),
+    ]
+    for filename, overrides, drop, expected in bad_cases:
+        path = candidates_dir / filename
+        write_variant_candidates_jsonl(path, [valid_variant_candidate_record(overrides, drop=drop)])
+        run_expect_fail([sys.executable, str(validator), "--variant-candidates", str(path)], plugin_root, expected)
+
+
+def write_variant_candidate_fixture_sources(repo_root: Path, temp_root: Path) -> None:
+    routes_dir = repo_root / "src/routes"
+    routes_dir.mkdir(parents=True, exist_ok=True)
+    (routes_dir / "import.js").write_text(
+        "import express from 'express';\n"
+        "const router = express.Router();\n"
+        "router.post('/import', async (req, res) => {\n"
+        "  const importUrl = req.body.url;\n"
+        "  const response = await fetch(importUrl);\n"
+        "  res.send(await response.text());\n"
+        "});\n",
+        encoding="utf-8",
+    )
+    tests_dir = repo_root / "tests"
+    tests_dir.mkdir(parents=True, exist_ok=True)
+    (tests_dir / "import.test.js").write_text(
+        "test('fixture candidate stays out of ranked source output', async () => {\n"
+        "  const importUrl = req.body.url;\n"
+        "  await fetch(importUrl);\n"
+        "});\n",
+        encoding="utf-8",
+    )
+    (repo_root / "src/sink-only.js").write_text(
+        "export async function pingInternalService() {\n"
+        "  return fetch('https://example.invalid/status');\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (repo_root / "src/source-only.js").write_text(
+        "export function readImportUrl(req) {\n"
+        "  return req.body.url;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    outside_dir = temp_root / "outside-variant-source"
+    outside_dir.mkdir(parents=True, exist_ok=True)
+    (outside_dir / "escape.js").write_text(
+        "export async function escaped(req) {\n"
+        "  return fetch(req.body.url);\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    symlink_path = repo_root / "linked-outside"
+    try:
+        symlink_path.symlink_to(outside_dir, target_is_directory=True)
+    except OSError:
+        pass
+
+
+def assert_no_forbidden_candidate_language(record: dict) -> None:
+    forbidden = ("confirmed_in_docker", "vulnerability confirmed", "漏洞已确认", "已确认")
+    for key, value in record.items():
+        if key == "variant_of":
+            continue
+        text = json.dumps(value, ensure_ascii=False).lower()
+        if "confirmed" in text:
+            raise SystemExit(f"FAILED: candidate field {key} contains final confirmation language: {record}")
+        for needle in forbidden:
+            if needle.lower() in text:
+                raise SystemExit(f"FAILED: candidate field {key} contains forbidden confirmation wording: {record}")
+
+
+def exercise_find_variant_candidates(plugin_root: Path, workspace: Path) -> None:
+    finder = plugin_root / "scripts/find_variant_candidates.py"
+    fixture_root = workspace / "variant-candidate-fixtures"
+    repo_root = fixture_root / "repo"
+    temp_root = fixture_root
+    fixture_workspace = repo_root / "security-research-variant"
+    fixture_workspace.mkdir(parents=True, exist_ok=True)
+    write_variant_candidate_fixture_sources(repo_root, temp_root)
+
+    seed_bundle = fixture_workspace / "confirmed/ssrf-import-url"
+    write_extractor_fixture_bundle(seed_bundle)
+    variant_dir = fixture_workspace / "evidence/variant-analysis"
+    variant_dir.mkdir(parents=True, exist_ok=True)
+    seed_card = variant_dir / "seeds.jsonl"
+    write_variant_seed_card(seed_card)
+    output = variant_dir / "variant-candidates.jsonl"
+    command = [
+        sys.executable,
+        str(finder),
+        "--repo-root",
+        str(repo_root),
+        "--workspace-dir",
+        str(fixture_workspace),
+        "--seed-card",
+        str(seed_card),
+        "--seed-id",
+        "seed-confirmed-ssrf-import-url",
+        "--output",
+        str(output),
+        "--limit",
+        "20",
+        "--language",
+        "nodejs",
+    ]
+    run(command, plugin_root)
+    records = [json.loads(line) for line in output.read_text(encoding="utf-8").splitlines() if line.strip()]
+    if not records:
+        raise SystemExit("FAILED: variant candidate finder produced no candidates for a valid fixture")
+    first_text = output.read_text(encoding="utf-8")
+    run_expect_fail(command, plugin_root, "refusing to overwrite existing file without --force")
+    run([*command, "--force"], plugin_root)
+    if output.read_text(encoding="utf-8") != first_text:
+        raise SystemExit("FAILED: variant candidate finder output is not deterministic across repeated runs")
+
+    files = [record.get("file") for record in records]
+    if files[0] != "src/routes/import.js":
+        raise SystemExit(f"FAILED: expected real source candidate to rank first, got: {files}")
+    forbidden_files = {"tests/import.test.js", "src/sink-only.js", "src/source-only.js", "linked-outside/escape.js"}
+    if any(path in forbidden_files for path in files):
+        raise SystemExit(f"FAILED: variant finder emitted excluded or source/sink-incomplete file: {files}")
+
+    for index, record in enumerate(records, start=1):
+        if set(record) != VARIANT_CANDIDATE_REQUIRED_FIELDS:
+            raise SystemExit(f"FAILED: variant candidate output fields drifted: {record}")
+        if record.get("schema_version") != 1:
+            raise SystemExit(f"FAILED: candidate schema_version must be 1: {record}")
+        if record.get("status") != "candidate":
+            raise SystemExit(f"FAILED: variant candidate status must stay candidate: {record}")
+        if record.get("variant_of") != "seed-confirmed-ssrf-import-url":
+            raise SystemExit(f"FAILED: variant_of must equal the selected seed id: {record}")
+        if Path(str(record.get("file", ""))).is_absolute():
+            raise SystemExit(f"FAILED: candidate file must be repo-relative: {record}")
+        if record.get("rank") != index or not isinstance(record.get("rank"), int) or record["rank"] < 1:
+            raise SystemExit(f"FAILED: candidate rank must be a positive sorted integer: {record}")
+        if not isinstance(record.get("score"), int) or record["score"] <= 0:
+            raise SystemExit(f"FAILED: candidate score must be positive for emitted fixtures: {record}")
+        next_step = str(record.get("recommended_next_step") or "")
+        if "Docker" not in next_step or "verification" not in next_step or "before any confirmation" not in next_step:
+            raise SystemExit(f"FAILED: candidate next step must require Docker verification before confirmation: {record}")
+        assert_no_forbidden_candidate_language(record)
+
+    missing_seed = variant_dir / "missing-seeds.jsonl"
+    run_expect_fail(
+        [
+            sys.executable,
+            str(finder),
+            "--repo-root",
+            str(repo_root),
+            "--workspace-dir",
+            str(fixture_workspace),
+            "--seed-card",
+            str(missing_seed),
+            "--seed-id",
+            "seed-confirmed-ssrf-import-url",
+            "--output",
+            str(variant_dir / "missing-output.jsonl"),
+        ],
+        plugin_root,
+        "seed-card file does not exist",
+    )
+
+    invalid_seed = variant_dir / "invalid-seed.jsonl"
+    write_variant_seed_card(invalid_seed, {"source_pattern": "import_url parameter"})
+    run_expect_fail(
+        [
+            sys.executable,
+            str(finder),
+            "--repo-root",
+            str(repo_root),
+            "--workspace-dir",
+            str(fixture_workspace),
+            "--seed-card",
+            str(invalid_seed),
+            "--seed-id",
+            "seed-confirmed-ssrf-import-url",
+            "--output",
+            str(variant_dir / "invalid-output.jsonl"),
+        ],
+        plugin_root,
+        "source_pattern must describe attacker-controlled or untrusted input",
+    )
+
+    other_scope_seed = variant_dir / "other-scope-seed.jsonl"
+    write_variant_seed_card(other_scope_seed, {"search_scope": {"repository": "different-target-repository"}})
+    run_expect_fail(
+        [
+            sys.executable,
+            str(finder),
+            "--repo-root",
+            str(repo_root),
+            "--workspace-dir",
+            str(fixture_workspace),
+            "--seed-card",
+            str(other_scope_seed),
+            "--seed-id",
+            "seed-confirmed-ssrf-import-url",
+            "--output",
+            str(variant_dir / "other-scope-output.jsonl"),
+        ],
+        plugin_root,
+        "search_scope.repository must be same-target-repository",
+    )
+
+    outside_bundle_seed = variant_dir / "outside-bundle-seed.jsonl"
+    write_variant_seed_card(outside_bundle_seed, {"confirmed_bundle_path": "../confirmed/ssrf-import-url"})
+    run_expect_fail(
+        [
+            sys.executable,
+            str(finder),
+            "--repo-root",
+            str(repo_root),
+            "--workspace-dir",
+            str(fixture_workspace),
+            "--seed-card",
+            str(outside_bundle_seed),
+            "--seed-id",
+            "seed-confirmed-ssrf-import-url",
+            "--output",
+            str(variant_dir / "outside-bundle-output.jsonl"),
+        ],
+        plugin_root,
+        "confirmed_bundle_path must resolve inside workspace confirmed",
+    )
+
+    outside_workspace = temp_root / "outside-audit-workspace"
+    outside_workspace.mkdir(parents=True, exist_ok=True)
+    run_expect_fail(
+        [
+            sys.executable,
+            str(finder),
+            "--repo-root",
+            str(repo_root),
+            "--workspace-dir",
+            str(outside_workspace),
+            "--seed-card",
+            str(seed_card),
+            "--seed-id",
+            "seed-confirmed-ssrf-import-url",
+            "--output",
+            str(variant_dir / "outside-workspace-output.jsonl"),
+        ],
+        plugin_root,
+        "workspace-dir must be inside repo-root",
+    )
 
 
 def iter_json_strings(value) -> list[str]:
@@ -847,6 +1777,8 @@ def selftest_installed_skill(skill_root: Path) -> None:
          str(skill_root / "scripts/check_sandbox_preflight.py"),
          str(skill_root / "scripts/manage_docker_resources.py"),
          str(skill_root / "scripts/render_confirmed_vuln_docx.py"),
+         str(skill_root / "scripts/extract_variant_seed.py"),
+         str(skill_root / "scripts/find_variant_candidates.py"),
          str(skill_root / "scripts/validate_report_bundle.py"),
          str(skill_root / "scripts/validate_all_report_bundles.py"),
          str(skill_root / "scripts/finalize_audit_workspace.py")], skill_root)
@@ -867,6 +1799,21 @@ def selftest_installed_skill(skill_root: Path) -> None:
         skill_root / "SKILL.md",
         "Confirm vulnerabilities only with Docker evidence",
         "installed skill Docker-confirmed-only contract",
+    )
+    require_text(
+        skill_root / "SKILL.md",
+        "find_variant_candidates.py",
+        "installed skill variant candidate finder reference",
+    )
+    forbid_text(
+        skill_root / "scripts/find_variant_candidates.py",
+        "import subprocess",
+        "installed variant candidate finder must not shell out",
+    )
+    forbid_text(
+        skill_root / "scripts/find_variant_candidates.py",
+        "subprocess.run",
+        "installed variant candidate finder must not run subprocesses",
     )
     require_text(
         skill_root / "SKILL.md",
@@ -1793,6 +2740,51 @@ def main() -> None:
         "exactly one vulnerability",
         "Claude invocation template one-finding-per-bundle contract",
     )
+    require_text(
+        plugin_root / "assets/references/variant-seed-template.md",
+        "A seed card is auxiliary evidence only",
+        "variant seed template auxiliary-evidence boundary",
+    )
+    require_text(
+        plugin_root / "assets/references/variant-seed-template.md",
+        "independent Docker or Docker Compose reproduction and confirmed",
+        "variant seed template Docker reproduction boundary",
+    )
+    require_text(
+        plugin_root / "assets/references/variant-seed-template.md",
+        "records must stay `status=candidate`",
+        "variant seed template candidate-output boundary",
+    )
+    require_text(
+        plugin_root / "docs/WORKFLOW_DETAILS.md",
+        "P6.2 defines the Variant Seed Card fields",
+        "workflow details P6.2 seed-card contract",
+    )
+    require_text(
+        plugin_root / "docs/WORKFLOW_DETAILS.md",
+        "P6.4 adds `scripts/find_variant_candidates.py`",
+        "workflow details P6.4 candidate finder contract",
+    )
+    require_text(
+        plugin_root / "docs/WORKFLOW_DETAILS.zh-CN.md",
+        "P6.2 定义 Variant Seed Card 字段",
+        "Chinese workflow details P6.2 seed-card contract",
+    )
+    require_text(
+        plugin_root / "docs/WORKFLOW_DETAILS.zh-CN.md",
+        "P6.4 增加 `scripts/find_variant_candidates.py`",
+        "Chinese workflow details P6.4 candidate finder contract",
+    )
+    forbid_text(
+        plugin_root / "scripts/find_variant_candidates.py",
+        "import subprocess",
+        "variant candidate finder must not shell out",
+    )
+    forbid_text(
+        plugin_root / "scripts/find_variant_candidates.py",
+        "subprocess.run",
+        "variant candidate finder must not run subprocesses",
+    )
     canonical_prompt = plugin_root / "assets" / "references" / "claude-code-invocation-template.md"
     root_prompt = plugin_root.parent.parent / "claude-code-zhulong-prompt-template.md"
     if root_prompt.exists() and canonical_prompt.read_text(encoding="utf-8") != root_prompt.read_text(encoding="utf-8"):
@@ -1813,6 +2805,8 @@ def main() -> None:
          str(plugin_root / "scripts/manage_docker_resources.py"),
          str(plugin_root / "scripts/render_confirmed_vuln_docx.py"),
          str(plugin_root / "scripts/scaffold_bilingual_findings.py"),
+         str(plugin_root / "scripts/extract_variant_seed.py"),
+         str(plugin_root / "scripts/find_variant_candidates.py"),
          str(plugin_root / "scripts/validate_report_bundle.py"),
          str(plugin_root / "scripts/validate_all_report_bundles.py"),
          str(plugin_root / "scripts/finalize_audit_workspace.py")], plugin_root)
@@ -1869,6 +2863,10 @@ def main() -> None:
             raise SystemExit("FAILED: bootstrapped workspace is missing assert-finalized-workspace.py")
         if not (workspace / "bin/blocked_verification.py").exists():
             raise SystemExit("FAILED: bootstrapped workspace is missing blocked_verification.py")
+        exercise_variant_seed_card_validation(plugin_root, workspace)
+        exercise_extract_variant_seed(plugin_root, workspace)
+        exercise_find_variant_candidates(plugin_root, workspace)
+        exercise_variant_candidate_validation(plugin_root, workspace)
         if not (workspace / "bin/audit_disposition.py").exists():
             raise SystemExit("FAILED: bootstrapped workspace is missing audit_disposition.py")
         if not (workspace / "scripts/render-handoff-summary.py").exists():
@@ -3796,6 +4794,89 @@ def main() -> None:
         ], plugin_root, "long English natural-language paragraph")
         shutil.rmtree(bad_english_supplement)
 
+        bad_variant_candidate_confirmed = copy_standard_bundle("variant_candidate_confirmed_text")
+        bad_variant_supplement = next(bad_variant_candidate_confirmed.glob("*_补充复现说明.md"))
+        bad_variant_supplement.write_text(
+            bad_variant_supplement.read_text(encoding="utf-8")
+            + "\n变体候选已确认：该条结论来自已确认种子的复现模式，直接复用相同结论即可。\n",
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_variant_candidate_confirmed),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "must not assert a variant/同类候选已确认")
+        shutil.rmtree(bad_variant_candidate_confirmed)
+
+        safe_variant_candidate_wording = copy_standard_bundle("safe_variant_candidate_wording")
+        safe_variant_supplement = next(safe_variant_candidate_wording.glob("*_补充复现说明.md"))
+        safe_variant_supplement.write_text(
+            safe_variant_supplement.read_text(encoding="utf-8")
+            + "\n安全说明：variant candidate requires Docker verification before confirmation，不能作为确认依据。\n",
+            encoding="utf-8",
+        )
+        run([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(safe_variant_candidate_wording),
+            "--language",
+            "zh-CN",
+        ], plugin_root)
+        shutil.rmtree(safe_variant_candidate_wording)
+
+        bad_variant_candidates_in_bundle = copy_standard_bundle("variant_candidates_jsonl_in_bundle")
+        (bad_variant_candidates_in_bundle / "attachments/evidence/variant-candidates.jsonl").write_text(
+            json.dumps(valid_variant_candidate_record(), ensure_ascii=False, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_variant_candidates_in_bundle),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "must not include variant-candidates.jsonl")
+        shutil.rmtree(bad_variant_candidates_in_bundle)
+
+        bad_variant_candidates_proof = copy_standard_bundle("variant_candidates_jsonl_proof")
+        bad_variant_proof_supplement = next(bad_variant_candidates_proof.glob("*_补充复现说明.md"))
+        bad_variant_proof_supplement.write_text(
+            bad_variant_proof_supplement.read_text(encoding="utf-8")
+            + "\n补充：variant-candidates.jsonl 证明该变体已确认，可作为确认依据。\n",
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_variant_candidates_proof),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "variant candidate output must not be used as confirmed evidence")
+        shutil.rmtree(bad_variant_candidates_proof)
+
+        bad_variant_seed_similarity_confirmed = copy_standard_bundle("variant_seed_similarity_confirmed")
+        bad_variant_similarity_supplement = next(bad_variant_seed_similarity_confirmed.glob("*_补充复现说明.md"))
+        bad_variant_similarity_supplement.write_text(
+            bad_variant_similarity_supplement.read_text(encoding="utf-8")
+            + "\n审核说明：变体候选因为与种子相似已确认。\n",
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_variant_seed_similarity_confirmed),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "variant candidate output must not be used as confirmed evidence")
+        shutil.rmtree(bad_variant_seed_similarity_confirmed)
+
         technical_english_ok = copy_standard_bundle("technical_english_ok")
         technical_supplement_path = next(technical_english_ok.glob("*_补充复现说明.md"))
         technical_supplement_path.write_text(
@@ -4613,6 +5694,22 @@ def main() -> None:
             "--language",
             "zh-CN",
         ], plugin_root)
+
+        bad_index_variant_candidates_proof = copy_standard_bundle("reviewer_index_variant_candidates_proof")
+        write_useful_reviewer_addendum(bad_index_variant_candidates_proof)
+        write_standard_reviewer_index(
+            bad_index_variant_candidates_proof,
+            extra={"confirmation_basis": "variant-candidates.jsonl proves this variant is confirmed"},
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_index_variant_candidates_proof),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "variant candidate output must not be used as confirmed evidence")
+        shutil.rmtree(bad_index_variant_candidates_proof)
 
         bad_index_missing_artifact = copy_standard_bundle("reviewer_index_missing_artifact")
         write_useful_reviewer_addendum(bad_index_missing_artifact)
@@ -6328,6 +7425,8 @@ def main() -> None:
             raise SystemExit("FAILED: Claude skill sync did not copy write_audit_event.py")
         if not (installed_skill / "scripts/validate_workspace_state.py").exists():
             raise SystemExit("FAILED: Claude skill sync did not copy validate_workspace_state.py")
+        if not (installed_skill / "scripts/find_variant_candidates.py").exists():
+            raise SystemExit("FAILED: Claude skill sync did not copy find_variant_candidates.py")
         if not (installed_skill / "scripts/assert_finalized_workspace.py").exists():
             raise SystemExit("FAILED: Claude skill sync did not copy assert_finalized_workspace.py")
         if not (installed_skill / "scripts/audit_disposition.py").exists():

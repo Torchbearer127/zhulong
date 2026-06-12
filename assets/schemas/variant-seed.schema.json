@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "$id": "https://zhulong.local/schemas/variant-seed.schema.json",
+  "title": "Zhulong Variant Seed Card",
+  "description": "Auxiliary root-cause seed record for same-repository variant discovery. This schema defines the contract only; it does not confirm variants.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "seed_id",
+    "confirmed_bundle_path",
+    "bug_class",
+    "root_cause",
+    "source_pattern",
+    "propagation_pattern",
+    "sink_pattern",
+    "missing_constraint_pattern",
+    "trigger_condition",
+    "docker_success_oracle",
+    "search_scope",
+    "negative_filters"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "seed_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "confirmed_bundle_path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?![A-Za-z]:[\\\\/])(?!file://)(?!~).+"
+    },
+    "bug_class": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Label only; not sufficient to find or confirm variants."
+    },
+    "root_cause": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_pattern": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Must describe attacker control, not only a variable name."
+    },
+    "propagation_pattern": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sink_pattern": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Must describe a sink family/API or dangerous behavior, not only a file path."
+    },
+    "missing_constraint_pattern": {
+      "type": "string",
+      "minLength": 1
+    },
+    "trigger_condition": {
+      "type": "string",
+      "minLength": 1
+    },
+    "docker_success_oracle": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Must tie the seed to Docker or Docker Compose runtime evidence."
+    },
+    "search_scope": {
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "object",
+          "minProperties": 1
+        }
+      ]
+    },
+    "negative_filters": {
+      "oneOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        {
+          "type": "string",
+          "minLength": 1
+        }
+      ]
+    }
+  }
+}

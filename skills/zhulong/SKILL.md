@@ -43,6 +43,11 @@ Use this Claude Code skill when you want a repository-level security-focused cod
   - [ssrf-checklist.md](./assets/references/ssrf-checklist.md)
   - [path-traversal-checklist.md](./assets/references/path-traversal-checklist.md)
   - [prototype-pollution-checklist.md](./assets/references/prototype-pollution-checklist.md)
+- seeded variant discovery:
+  - [extract_variant_seed.py](./scripts/extract_variant_seed.py)
+  - [find_variant_candidates.py](./scripts/find_variant_candidates.py)
+  - [variant-seed-template.md](./assets/references/variant-seed-template.md)
+  - [variant-seed.schema.json](./assets/schemas/variant-seed.schema.json)
 - workspace setup:
   - [prepare_target_repo.sh](./scripts/prepare_target_repo.sh)
   - [bootstrap_verification_workspace.sh](./scripts/bootstrap_verification_workspace.sh)
@@ -118,6 +123,53 @@ default contract even when the user does not restate them:
 - Confirm vulnerabilities only with Docker evidence. After the first
   confirmation, run one explicit severity-escalation pass in Docker before final
   scoring, and only upgrade severity when stronger impact is verified.
+- After a confirmed seed is available, run one explicit seeded variant-discovery
+  pass in the same repository using the confirmed seed only when it already has
+  a valid confirmed bundle and Docker success oracle.
+- A confirmed seed must document the root-cause chain, attacker-controlled source,
+  propagation path, sink family, missing constraint, trigger condition, and a
+  deterministic success oracle.
+- A Variant Seed Card is auxiliary evidence for seeded variant discovery, not a
+  confirmed vulnerability and not a replacement for `verification-evidence.json`,
+  findings JSON, DOCX reports, reproduction supplements, attachment indexes,
+  replay logs, Docker evidence, or confirmed bundle validation.
+- Write future seed-card artifacts under
+  `<audit-workspace>/evidence/variant-analysis/` as `seeds.jsonl`,
+  `variant-candidates.jsonl`, `variant-expansion-summary.json`, and optional
+  `seed-<slug>.md` notes. Do not require existing workspaces or old confirmed
+  bundles to contain these files.
+- Final seed cards use schema version `1`, are rooted in a confirmed bundle path
+  that is bundle-relative or workspace-relative, keep search scope bounded to the
+  same target repository, and must not use `unknown` for root cause, source,
+  sink, or Docker success oracle.
+- To bridge an existing confirmed bundle into the seed-card contract, use
+  `scripts/extract_variant_seed.py` offline. It reads existing bundle evidence
+  only; it does not execute PoCs, run Docker, search the repository, rank
+  candidates, or confirm variants.
+- Extractor final output must pass
+  `validate_report_bundle.py --variant-seed-card`. Incomplete extraction is a
+  draft note or optional draft seed card, not a final seed.
+- To rank candidates from one final seed card, use
+  `scripts/find_variant_candidates.py` offline. It reads local same-repository
+  source text only; it must not call scanners, `rg`/`grep`/`git`, network APIs,
+  LLMs, Docker, PoCs, DOCX rendering, or confirmed-bundle generation.
+- Candidate finder output is auxiliary `variant-candidates.jsonl` material only:
+  every record must stay `status=candidate`, use repo-relative file paths, and
+  require independent Docker or Docker Compose verification before any
+  confirmation decision.
+- Validate candidate output with
+  `scripts/validate_report_bundle.py --variant-candidates <path>`. This
+  candidate validation is separate from confirmed bundle validation.
+- Candidate JSONL can guide follow-up verification, but it cannot prove a
+  vulnerability. Confirmed bundles must not cite candidate ranking, seed
+  similarity, or `variant-candidates.jsonl` as confirmation evidence.
+- Variant candidates are candidate material by default. Route them as one of:
+  `candidate`, `blocked`, `false_positive`, `unverified`, `confirmed_in_docker`.
+- Do not mark a variant candidate as confirmed based on resemblance to a seed.
+  It must complete its own Docker reproduction and confirmed-bundle validation
+  before `confirmed_in_docker`.
+- The seeded variant pass must not replace the severity-escalation pass. Both are
+  required in a normal confirmed discovery flow.
 - Static scanning, source-to-sink reasoning, pattern matching, dependency alerts,
   and LLM analysis can only create candidates. They must not be written as
   confirmed findings unless Docker reproduction succeeds.
@@ -497,12 +549,11 @@ security impact that the Docker evidence does not prove.
 
 Confirmed reports must include a reviewer-readable real-world exploitability
 section, such as `实际场景中的危害与利用方式` or `Real-World
-Exploitability`. Keep it concise, but make it answer four concrete questions:
-who the attacker is and how they influence input or metadata, what server-side
-configuration/runtime behavior makes the path reachable, how the internal
-effect becomes visible or security-relevant (logs, error reporting, responses,
-stored artifacts, callbacks, or operator-visible evidence), and which impact is
-verified versus not claimed. If a PoC assumes strong attacker control, such as
+Exploitability`. Keep it concise, but make it answer five concrete questions:
+what real deployment or consumer scenario is affected, who the attacker is and
+how they influence input or metadata, what call/trigger chain carries that input
+to the affected code, what direct business or security consequence is proven,
+and which impact is verified versus not claimed. If a PoC assumes strong attacker control, such as
 directly writing a malicious JS/Python/PHP file or controlling a local source
 file, explicitly explain why the PoC demonstrates the target component boundary
 rather than a stronger unrelated capability.
@@ -536,9 +587,13 @@ When the `Documents` skill is used on a confirmed-vulnerability report:
 Each confirmed vulnerability bundle should also include one bundle-root reproduction helper shell script for macOS and Linux, such as `run-<slug>-recording.sh`, that reproduces the shortest confirmed Docker case with one command.
 That script should keep human-readable text aligned with the selected output language, include visible step markers, pause briefly at key checkpoints, and use ANSI color highlighting for dangerous lines or success evidence when stdout is interactive.
 At the beginning of replay, before proof steps, it must print a highlighted target identity card that names the target software/package and the tested or affected version.
+The opening identity card must include `测试软件名称` / `Tested Software` and `测试版本/分支` / `Tested Version / Branch` as separate fields, plus a short combined software/version line, so screen recordings make the tested target unambiguous.
 It must print each concrete command before execution, capture raw command stdout/stderr to a bundle-local `.log` file under `attachments/evidence/`, and list that `.log` in `verification-evidence.json` or `attachments/reviewer-evidence-index.json`.
+It must record a direct-impact marker such as `DIRECT_IMPACT_CONFIRMED`, `DIRECT_AVAILABILITY_IMPACT_CONFIRMED`, or an equivalent deterministic oracle in reviewer-facing replay evidence before final confirmation.
 It must derive `SCRIPT_DIR` from the script path, derive `ATTACH_DIR="$SCRIPT_DIR/attachments"`, and either self-bootstrap from bundle-local attachments or fail early with the exact bundle-local command the reviewer must run first.
 Every helper-like function called by the proof flow must be defined in the same root script; do not call a missing local `run_*`, `verify_*`, `show_*`, `print_*`, or `require_*` helper.
+Do not merely print a PoC/Docker command for the reviewer to run later; the bundle-root replay helper must execute the proof command itself, capture raw output, and fail closed if the command fails.
+Do not reference `./helper.sh`, `./poc.py`, or similar local helper files in the supplement or evidence index unless those files are included in the delivered bundle.
 Do not make root scripts or attachment scripts climb back to the submitter's
 repository with deep `../../..` paths, parent-repository mounts, or package
 external paths. Harmless `../` inside nested attachment directories is fine only
@@ -564,7 +619,7 @@ Reviewer-facing supplements should not stop at "technical trigger" when the clai
 
 - if the report claims denial of service, the materials should show the direct DoS oracle
 - if the report claims attack success, the materials should show the exact success oracle
-- if the reviewer is likely to ask about real-world harm or exploitation, include a short bundled supplement note that explains the practical impact and a typical exploitation path without overstating the claim
+- if the reviewer is likely to ask about real-world harm or exploitation, include a short bundled supplement note that explains the practical scenario, attacker-controlled input, trigger/call chain, direct impact, and impact boundary without overstating the claim
 - if report/supplement/evidence mention `PoC-4`, ensure the root recording
   script also covers `PoC-4`; stale videos that predate revised report/script
   material should be regenerated or clearly called out before submission
