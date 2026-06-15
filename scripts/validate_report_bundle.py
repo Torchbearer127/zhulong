@@ -45,7 +45,7 @@ NON_STANDALONE_PATH_PATTERNS = [
         r"/home/[^\s`'\"<>]+",
         r"(?<![A-Za-z])[A-Za-z]:[\\/][^\s`'\"<>]*",
         r"file://[^\s`'\"<>]+",
-        r"\boss-vulnerability-research\b",
+        r"\b(?:submitter-workspace|parent-audit-workspace|external-source-checkout)\b",
         r"\bsecurity-research-(?:YYYYMMDD-HHMMSS|\d{8}-\d{6})\b",
         r"/pkg/security-research(?:-[A-Za-z0-9_.-]+)?",
         r"/pkg/index\.js\b",
@@ -2486,7 +2486,7 @@ def collect_reviewer_command(data: dict[str, object]) -> str:
 def validate_reviewer_index_artifact_path(bundle_dir: Path, raw: str, label: str) -> None:
     if not raw:
         fail(f"reviewer evidence index {label} must not be empty")
-    if "oss-vulnerability-research" in raw:
+    if re.search(r"\b(?:submitter-workspace|parent-audit-workspace|external-source-checkout)\b", raw, re.IGNORECASE):
         fail(f"reviewer evidence index {label} contains submitter repository path text: {raw}")
     if re.search(r"/tmp/[A-Za-z0-9_.-]+-audit\b", raw):
         fail(f"reviewer evidence index {label} contains submitter-local audit path: {raw}")
@@ -2514,7 +2514,10 @@ def validate_reviewer_index_artifact_path(bundle_dir: Path, raw: str, label: str
 def validate_reviewer_command(bundle_dir: Path, command: str) -> None:
     if not command:
         fail("attachments/reviewer-evidence-index.json must include a bundle-root reviewer replay command")
-    if "oss-vulnerability-research" in command or re.search(r"/tmp/[A-Za-z0-9_.-]+-audit\b", command):
+    if (
+        re.search(r"\b(?:submitter-workspace|parent-audit-workspace|external-source-checkout)\b", command, re.IGNORECASE)
+        or re.search(r"/tmp/[A-Za-z0-9_.-]+-audit\b", command)
+    ):
         fail("reviewer evidence index replay command must not require the submitter repository or audit workspace")
     for pattern in ABSOLUTE_PATH_PATTERNS:
         if pattern.search(command):
@@ -2581,7 +2584,7 @@ def validate_reviewer_evidence_index(
         return "", None
     raw_text = path.read_text(encoding="utf-8")
     validate_no_absolute_paths(raw_text)
-    if "oss-vulnerability-research" in raw_text:
+    if re.search(r"\b(?:submitter-workspace|parent-audit-workspace|external-source-checkout)\b", raw_text, re.IGNORECASE):
         fail("attachments/reviewer-evidence-index.json must not contain submitter repository path text")
     if re.search(r"/tmp/[A-Za-z0-9_.-]+-audit\b", raw_text):
         fail("attachments/reviewer-evidence-index.json must not contain submitter-local audit paths")

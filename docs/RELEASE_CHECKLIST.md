@@ -21,6 +21,11 @@ Use this checklist before publishing a tagged open-source release of Zhulong
 - [ ] `.claude-plugin/plugin.json` is valid JSON and metadata-only.
 - [ ] `.codex-plugin/plugin.json` is valid JSON and uses the same release
   version.
+- [ ] `docs/CODEX_SKILL_ADAPTATION.md` reflects the current source,
+  Claude installed, and Codex installed layout contract.
+- [ ] Repo-root `AGENTS.md` exists, remains a short shim, points to
+  `$zhulong` and `docs/AGENTS.md`, and is not copied as an installed skill
+  contract.
 - [ ] Publisher, author, developer, copyright, homepage, and repository metadata
   are under `Torchbearer127`.
 - [ ] Manifest paths are relative and point to existing package content.
@@ -32,6 +37,10 @@ Use this checklist before publishing a tagged open-source release of Zhulong
 - [ ] No hooks, MCP servers, apps, agents, commands, background services,
   dashboards, databases, vector DBs, RAG services, Discord/Notion integrations,
   or platform dependencies are required for normal use.
+- [ ] Installed Claude and Codex skill directories are treated as generated
+  runtime copies. The plugin source tree remains the source of truth.
+- [ ] `scripts/zhulong_audit.sh --print-skill-root` resolves the source,
+  installed Claude, and installed Codex skill roots without starting an audit.
 - [ ] No maintainer metadata placeholders remain in public release manifests.
 
 ## 3. Safety Contracts
@@ -71,8 +80,12 @@ Run from the plugin root:
 python3 scripts/selftest_plugin.py
 bash scripts/sync_to_claude_skill.sh
 python3 ~/.claude/skills/zhulong/scripts/selftest_plugin.py
+bash scripts/sync_to_codex_skill.sh
+python3 ~/.agents/skills/zhulong/scripts/selftest_plugin.py
 python3 -m json.tool .claude-plugin/plugin.json >/dev/null
 python3 -m json.tool .codex-plugin/plugin.json >/dev/null
+bash scripts/resolve_skill_root.sh
+bash scripts/zhulong_audit.sh --print-skill-root
 rg -n "/Users/torchbear[e]r" . --glob '*.md' --glob '*.py' --glob '*.sh' --glob '*.json'
 rg -n "autonomous-security[-]researcher" . --glob '*.md' --glob '*.py' --glob '*.sh' --glob '*.json'
 rg -n "docker (system|builder|buildx) prune|builder pr[u]ne|system pr[u]ne|buildx pr[u]ne" . --glob '*.md' --glob '*.py' --glob '*.sh' --glob '*.json'
@@ -103,7 +116,8 @@ python3 scripts/validate_all_report_bundles.py --confirmed-dir <repo>/<audit-wor
 
 Publish only when:
 
-- [ ] Selftests pass in both plugin source and installed Claude skill layouts.
+- [ ] Selftests pass in plugin source, installed Claude skill, and installed
+  Codex skill layouts.
 - [ ] Confirmed bundles validate.
 - [ ] No local absolute paths or stale package names remain in public docs.
 - [ ] No broad Docker prune or PID signaling path is present.

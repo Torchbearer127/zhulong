@@ -9,7 +9,7 @@ maintainers.
 | Situation | Recommended mode |
 | --- | --- |
 | You use a local AI coding agent that can load the Zhulong skill | Use the short agent prompt below. |
-| You want to prepare a repository from the terminal first | Use `scripts/asr_start.sh`. |
+| You want to prepare a repository from the terminal first | Use `scripts/zhulong_audit.sh`. |
 | You are testing Zhulong on several repositories before a release | Use the trial-run prompt below. |
 | You already have a cloned repository | Use either the local-repository prompt or `--repo-root`. |
 
@@ -88,6 +88,23 @@ Avoid copying a long policy checklist into every prompt. Zhulong already carries
 its repeatable safety and reporting rules in the installed skill, reference
 docs, and automated checks.
 
+## Codex Support
+
+The Codex skill layout contract is documented in
+[`CODEX_SKILL_ADAPTATION.md`](CODEX_SKILL_ADAPTATION.md). Codex user-level sync
+installs the same Zhulong skill runtime into `~/.agents/skills/zhulong/`:
+
+```bash
+bash scripts/sync_to_codex_skill.sh
+python3 ~/.agents/skills/zhulong/scripts/selftest_plugin.py
+```
+
+This verifies the installed layout only; it does not run Codex, Docker, PoCs,
+network lookups, package registries, GitHub calls, or LLM calls.
+
+In a source checkout, repository-root `AGENTS.md` may point Codex to `$zhulong`,
+while installed skill behavior remains owned by `SKILL.md`.
+
 ## Manual Terminal Startup
 
 The agent prompt is the normal path. The terminal launcher is useful when you
@@ -97,37 +114,37 @@ startup summary.
 Start from a remote repository:
 
 ```bash
-bash scripts/asr_start.sh --source https://github.com/owner/repo
+bash scripts/zhulong_audit.sh --source https://github.com/owner/repo
 ```
 
 Start from `owner/repo` shorthand:
 
 ```bash
-bash scripts/asr_start.sh --source owner/repo
+bash scripts/zhulong_audit.sh --source owner/repo
 ```
 
 Start from an existing local checkout:
 
 ```bash
-bash scripts/asr_start.sh --repo-root /path/to/repo
+bash scripts/zhulong_audit.sh --repo-root /path/to/repo
 ```
 
 Use a specific branch or tag:
 
 ```bash
-bash scripts/asr_start.sh --source https://github.com/owner/repo --ref main
+bash scripts/zhulong_audit.sh --source https://github.com/owner/repo --ref main
 ```
 
 Emit startup information as JSON:
 
 ```bash
-bash scripts/asr_start.sh --source https://github.com/owner/repo --json
+bash scripts/zhulong_audit.sh --source https://github.com/owner/repo --json
 ```
 
 Show suspicious multi-agent worker processes for manual review:
 
 ```bash
-bash scripts/asr_start.sh --repo-root /path/to/repo --prompt-runtime-pid-review
+bash scripts/zhulong_audit.sh --repo-root /path/to/repo --prompt-runtime-pid-review
 ```
 
 This option only prints review information. It does not clean up or terminate
@@ -148,6 +165,7 @@ processes.
 | `--skip-plan` | You are debugging startup and want to skip tool planning. | Normal audit runs should not need it. |
 | `--prompt-runtime-pid-review` | You want a visible terminal reminder about suspicious multi-agent worker processes. | Review-only; no process cleanup. |
 | `--json` | You want machine-readable startup output. | Useful for wrappers or scripts. |
+| `--print-skill-root` | You want to inspect the resolved source or installed skill root. | Safe diagnostic; does not start an audit. |
 | `-h`, `--help` | You want the built-in help text. | Prints launcher usage. |
 
 ## What Happens After Startup

@@ -3,6 +3,9 @@
 This file is for Codex, Claude Code, Cursor, Gemini CLI, and other local AI
 coding agents that are asked to maintain Zhulong.
 
+The repo-root `AGENTS.md` is only a quick instruction shim. This document remains
+the maintainer guide and source-maintenance rule set.
+
 If you are an agent working on this repository, read this file before editing
 source code, prompts, scripts, templates, validators, or release docs.
 
@@ -11,6 +14,16 @@ source code, prompts, scripts, templates, validators, or release docs.
 - The canonical source tree is this repository root: `zhulong/`.
 - The installed Claude-compatible skill at `~/.claude/skills/zhulong/` is a
   synced runtime copy, not the source of truth.
+- The installed Codex user skill at `~/.agents/skills/zhulong/` and any optional
+  repo-scoped Codex skill at `<target-repo>/.agents/skills/zhulong/` are also
+  generated/synced runtime copies, not source.
+- `scripts/zhulong_audit.sh` is the platform-neutral terminal launcher. It
+  resolves its skill/package root through `scripts/resolve_skill_root.sh` and
+  delegates to `scripts/asr_start.sh`.
+- The Codex adaptation contract lives in
+  [`CODEX_SKILL_ADAPTATION.md`](CODEX_SKILL_ADAPTATION.md). Keep source,
+  Claude installed, and Codex installed layout changes aligned with that
+  contract.
 - `.claude-plugin/plugin.json` and `.codex-plugin/plugin.json` are package
   metadata. They must not introduce required hooks, MCP servers, apps, agents,
   commands, daemons, dashboards, databases, or platform services.
@@ -98,6 +111,8 @@ If skill-facing files changed, sync and test the installed layout:
 ```bash
 bash scripts/sync_to_claude_skill.sh
 python3 ~/.claude/skills/zhulong/scripts/selftest_plugin.py
+bash scripts/sync_to_codex_skill.sh
+python3 ~/.agents/skills/zhulong/scripts/selftest_plugin.py
 ```
 
 If report rendering or confirmed bundle logic changed, validate affected
@@ -118,6 +133,7 @@ Before a release, run through:
 When fixing a product bug, patch the canonical source area:
 
 - Workspace creation or path bugs: `scripts/asr_start.sh`,
+  `scripts/zhulong_audit.sh`, `scripts/resolve_skill_root.sh`,
   `scripts/prepare_target_repo.sh`, workspace helper scripts.
 - Docker cleanup or residue bugs: `scripts/manage_docker_resources.py`,
   finalization/assertion scripts, Docker hygiene references.

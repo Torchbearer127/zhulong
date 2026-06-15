@@ -27,7 +27,7 @@ The report must be portable across machines and reviewers.
 - Vulnerable source-code locations should stay project-root-relative.
 - Files shipped inside the per-vulnerability submission folder should be referenced with paths relative to that folder, for example `attachments/<audit-workspace>/docker/test-buffer-overread.js`.
 - Do not use the operator's absolute local paths such as `/Users/...`.
-- Do not embed submitter workspaces, template paths, `file://` URLs, external source checkouts, or parent-repository paths such as `oss-vulnerability-research`, `/pkg/index.js`, or `/pkg/security-research...` in confirmed deliverables.
+- Do not embed submitter workspaces, template paths, `file://` URLs, external source checkouts, or parent-repository paths such as `submitter-workspace`, `/pkg/index.js`, or `/pkg/security-research...` in confirmed deliverables.
 - Embed key reproduction file content when that content is necessary to reproduce the result.
 - Output one separate attachment-directory note file in the same per-vulnerability submission folder as the `.docx`, rather than placing attachment instructions inside the Word document.
 - Public issue text and public workflow notes must stay sanitized: describe the defect class, not unpublished project names, package names, vulnerability titles, bundle paths, attachment filenames, PoC commands, or payloads.

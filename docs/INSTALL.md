@@ -32,6 +32,11 @@ installed Skill plus the package scripts and assets; it does not introduce
 hooks, MCP servers, apps, agents, commands, background services, dashboards,
 databases, vector stores, or hosted services.
 
+The plugin source tree is the source of truth. Installed Claude and Codex skill
+directories are generated runtime copies. See
+[`docs/CODEX_SKILL_ADAPTATION.md`](CODEX_SKILL_ADAPTATION.md) for the source,
+Claude installed, and Codex installed layout contract.
+
 ## Platform Support
 
 Zhulong is designed around Bash, Python helper scripts, and Docker-first
@@ -43,7 +48,7 @@ verification. Use it from a Unix-like shell.
 | Linux | Supported target path | Install Python 3.11+, Docker Engine, Docker Compose, Bash, and run the same commands below. |
 | Windows | Use WSL2 | Run Zhulong inside WSL2 with Docker Desktop WSL integration enabled. Keep working repositories on the WSL filesystem when possible. Native PowerShell/CMD execution is not a first-class supported path yet. |
 
-If your local agent uses a non-default Skill directory, set
+If your local agent uses a non-default skill directory, set
 `CLAUDE_SKILLS_DIR` or pass `--claude-skills-dir` to the sync script.
 
 ## Install Into Claude Code
@@ -64,11 +69,51 @@ The default target is:
 ~/.claude/skills/zhulong/
 ```
 
-If a Skill already exists there, the script backs it up automatically before
+If a skill already exists there, the script backs it up automatically before
 replacing it.
 
-This is the most stable runtime path today because Claude Code loads the
-`SKILL.md` instructions and helper scripts directly from the installed Skill.
+This is a stable runtime path for Claude Code because it loads the `SKILL.md`
+instructions and helper scripts directly from the installed skill.
+
+## Install Into Codex
+
+From the package root:
+
+```bash
+python3 scripts/selftest_plugin.py
+bash scripts/sync_to_codex_skill.sh
+python3 ~/.agents/skills/zhulong/scripts/selftest_plugin.py
+```
+
+The default target is:
+
+```text
+~/.agents/skills/zhulong/
+```
+
+Codex user-level skills are supported through this installed layout.
+
+If a skill already exists there, the script moves it to a hidden sibling backup
+directory under:
+
+```text
+~/.agents/skills/.zhulong-backups/
+```
+
+Use `--codex-skills-dir DIR` when testing a repo-scoped or temporary Codex
+skills root. For a repo-scoped install, point it at that repository's Codex
+skills root:
+
+```bash
+bash scripts/sync_to_codex_skill.sh --codex-skills-dir /path/to/repo/.agents/skills
+```
+
+Do not hand-edit installed Codex skill directories as source. Edit this plugin
+source tree, keep `skills/zhulong/SKILL.md` and
+`templates/claude-skill/SKILL.md` identical, then resync.
+
+When working from this source checkout, repo-root `AGENTS.md` may point Codex to
+`$zhulong`; installed skill behavior is still owned by `SKILL.md`.
 
 ### Option B: Use The Plugin-Style Package
 
@@ -81,9 +126,9 @@ zhulong/
 
 The manifest points to `./skills`, `./scripts`, and `./assets` with relative
 paths. Use `skills/zhulong/SKILL.md` as the human/runtime entrypoint and
-`scripts/asr_start.sh` as the one-command launcher when you need a manual
-fallback. Do not manually chain many helpers unless you are debugging a specific
-stage.
+`scripts/zhulong_audit.sh` as the platform-neutral launcher when you need a
+manual fallback. Do not manually chain many helpers unless you are debugging a
+specific stage.
 
 ## One Command Manual Fallback
 
@@ -91,13 +136,13 @@ If you want to bootstrap or refresh a repository manually, use the one-shot
 launcher:
 
 ```bash
-bash scripts/asr_start.sh --source https://github.com/owner/repo
+bash scripts/zhulong_audit.sh --source https://github.com/owner/repo
 ```
 
 Or for an existing local repository:
 
 ```bash
-bash scripts/asr_start.sh --repo-root /path/to/repo
+bash scripts/zhulong_audit.sh --repo-root /path/to/repo
 ```
 
 By default, OMC suspect teammate PIDs are recorded in workspace status and
@@ -106,11 +151,23 @@ handoff documents without an interactive pause. Add
 block:
 
 ```bash
-bash scripts/asr_start.sh --repo-root /path/to/repo --prompt-runtime-pid-review
+bash scripts/zhulong_audit.sh --repo-root /path/to/repo --prompt-runtime-pid-review
 ```
 
 This option prints review-only process information. It does not enable PID
 cleanup or process termination.
+
+To inspect which source or installed skill copy the wrapper will use, run:
+
+```bash
+bash scripts/zhulong_audit.sh --print-skill-root
+```
+
+From an installed skill, use the same relative form under that skill root:
+
+```bash
+bash <skill-root>/scripts/zhulong_audit.sh --source https://github.com/owner/repo
+```
 
 After bootstrap, the preferred first-pass scan runner is:
 
@@ -168,15 +225,24 @@ Run:
 python3 scripts/selftest_plugin.py
 ```
 
-This self-test checks that the package can be installed into a
-Claude-compatible Skill layout. It also validates `.claude-plugin/plugin.json`
-without requiring that manifest inside the installed Skill copy.
+This self-test checks that the package can be installed into Claude-compatible
+and Codex-compatible skill layouts. It also validates plugin manifests without
+requiring those manifests inside installed skill copies.
 
 After syncing into Claude Code, verify the installed runtime copy too:
 
 ```bash
 python3 ~/.claude/skills/zhulong/scripts/selftest_plugin.py
 ```
+
+After syncing into Codex, verify that installed runtime copy too:
+
+```bash
+python3 ~/.agents/skills/zhulong/scripts/selftest_plugin.py
+```
+
+Installed selftests validate layout without Docker, network access, PoC
+execution, package registry calls, GitHub search, LLM calls, or Codex execution.
 
 ## Optional Tooling Installation
 
@@ -195,7 +261,7 @@ instructions listed in `assets/tool-registry.json`.
 Prepare a repository and run the stable first-pass helpers:
 
 ```bash
-bash scripts/asr_start.sh --source https://github.com/owner/repo
+bash scripts/zhulong_audit.sh --source https://github.com/owner/repo
 bash repo/<audit-workspace>/bin/check-docker-gate.sh --repo-root repo
 bash repo/<audit-workspace>/bin/run-initial-probes.sh --repo-root repo
 python3 repo/<audit-workspace>/bin/validate-all-report-bundles.py --confirmed-dir repo/<audit-workspace>/confirmed
@@ -210,7 +276,7 @@ unless `gh` is unavailable.
 Before publishing:
 
 1. Verify publisher, author, developer, homepage, and repository metadata in `.claude-plugin/plugin.json` and `.codex-plugin/plugin.json`.
-2. Review `README.md`, `README.zh-CN.md`, `docs/INSTALL.md`, `docs/USAGE.md`, and `CONTRIBUTING.md`.
+2. Review `README.md`, `README.zh-CN.md`, `docs/INSTALL.md`, `docs/USAGE.md`, `docs/CODEX_SKILL_ADAPTATION.md`, and `CONTRIBUTING.md`.
 3. Run the self-test script.
 4. Verify that no local absolute paths remain in plugin docs or assets.
 5. Keep the Claude plugin manifest metadata-only unless a future release intentionally adds and tests a real runtime component.

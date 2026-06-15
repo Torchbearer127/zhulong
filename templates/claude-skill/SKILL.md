@@ -5,15 +5,29 @@ description: Zhulong (烛龙), a Docker-first security-focused code audit workfl
 
 # Zhulong (烛龙)
 
-Use this Claude Code skill when you want a repository-level security-focused code audit workflow that is:
+Use this local-agent skill when you want a repository-level security-focused code audit workflow that is:
 
 - Docker-first for PoC execution and verification
 - broader than vulnerability scanning: it records confirmed vulnerabilities, candidates, false positives, non-security defects, hardening-only observations, and unverified leads separately
 - dynamic in tool selection based on stack and installed capabilities
 - deterministic in report generation
-- packaged from the open-source plugin repository into a Claude-native skill layout
+- packaged from the open-source plugin repository into local agent skill layouts
 
-## Installed Claude Skill Layout
+## Skill Layout Contract
+
+- Source of truth: `skills/zhulong/` in the plugin source tree.
+- Current stable installed Claude skill: `~/.claude/skills/zhulong/`.
+- Current Codex user skill target: `~/.agents/skills/zhulong/`.
+- Optional Codex repo-scoped target:
+  `<target-repo>/.agents/skills/zhulong/`.
+- Installed Claude and Codex skill directories are generated or synced runtime
+  copies. Do not edit installed copies as source.
+- Use `scripts/zhulong_audit.sh` as the platform-neutral terminal launcher. It
+  resolves the current skill/package root and delegates to `scripts/asr_start.sh`.
+- The P7 Codex layout and sync contract lives at
+  [CODEX_SKILL_ADAPTATION.md](./docs/CODEX_SKILL_ADAPTATION.md).
+
+## Installed Skill Runtime Contents
 
 - runtime checks:
   - [check_docker_gate.sh](./scripts/check_docker_gate.sh)
@@ -272,7 +286,7 @@ Do not execute `web_search`, `Search(...)`, `Fetch(...)`, or `WebFetch(...)` as 
 If a manual fallback is truly needed, do not call `./scripts/prepare_target_repo.sh` from an arbitrary current working directory. Use the installed one-shot launcher instead. By default it creates a new per-audit workspace such as `security-research-YYYYMMDD-HHMMSS/` under the repository root:
 
 ```bash
-bash "$HOME/.claude/skills/zhulong/scripts/asr_start.sh" --source <local-path-or-repo-url>
+bash <skill-root>/scripts/zhulong_audit.sh --source <local-path-or-repo-url>
 ```
 
 By default this launcher writes OMC suspect teammate PIDs to workspace status and

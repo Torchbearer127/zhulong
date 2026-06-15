@@ -137,7 +137,7 @@ procedure.
 Zhulong runs through a local agent, Docker, repository-local scripts, and
 optional security tools. For the full dependency table, see the
 Dependencies And Optional Integrations section below. For all launch prompts,
-manual startup options, and `asr_start.sh` parameters, see
+manual startup options, and `zhulong_audit.sh` parameters, see
 [`docs/USAGE.md`](docs/USAGE.md).
 
 ### Platform Support
@@ -154,26 +154,43 @@ Compose.
 
 ### Method 1: Local Agent Skill Sync (Recommended)
 
-From the plugin package root, run the selftest and sync the stable skill
-layout into your local agent environment:
+From the plugin package root, run the selftest once:
 
 ```bash
-# 1. Test and sync
 python3 scripts/selftest_plugin.py
-bash scripts/sync_to_claude_skill.sh
+```
 
-# 2. Verify installed layout
+Then sync Zhulong into the local agent you use.
+
+For Claude Code:
+
+```bash
+bash scripts/sync_to_claude_skill.sh
 python3 ~/.claude/skills/zhulong/scripts/selftest_plugin.py
 ```
 
-Restart the local agent session after syncing. The current stable
-Claude-compatible runtime path is:
+The Claude Code installed skill path is:
 
 ```text
 ~/.claude/skills/zhulong/
 ```
 
-Then use a short prompt in your supported local agent:
+For Codex:
+
+```bash
+bash scripts/sync_to_codex_skill.sh
+python3 ~/.agents/skills/zhulong/scripts/selftest_plugin.py
+```
+
+The Codex user-level installed skill path is:
+
+```text
+~/.agents/skills/zhulong/
+```
+
+Restart the local agent session after syncing. Then use a short prompt in your
+supported local agent. In Codex, explicit `$zhulong` invocation is also
+supported.
 
 > **🤖 Prompt your agent**
 >
@@ -199,10 +216,10 @@ If you want to start from the terminal without relying on agent skill discovery:
 
 ```bash
 # Remote repository
-bash scripts/asr_start.sh --source https://github.com/owner/repo
+bash scripts/zhulong_audit.sh --source https://github.com/owner/repo
 
 # Existing local repository
-bash scripts/asr_start.sh --repo-root /path/to/repo
+bash scripts/zhulong_audit.sh --repo-root /path/to/repo
 ```
 
 ---
@@ -280,7 +297,7 @@ optional ways to surface leads.
 
 | Dependency / Integration | Required? | Role in Zhulong | Link |
 | :--- | :---: | :--- | :--- |
-| **Local coding agent runtime** | Required for the intended workflow | Reads the Zhulong skill/docs, coordinates repository review, and runs local scripts. The current stable path is Claude-compatible skill sync; script-based manual startup remains available. | [Claude Code docs](https://docs.anthropic.com/en/docs/claude-code/overview) |
+| **Local coding agent runtime** | Required for the intended workflow | Reads the Zhulong skill/docs, coordinates repository review, and runs local scripts. Claude Code and Codex user-level skill sync paths are tested; script-based manual startup remains available. | [Claude Code docs](https://docs.anthropic.com/en/docs/claude-code/overview), [Codex Agent Skills docs](https://developers.openai.com/codex/skills) |
 | **Python 3.11+** | Required | Runs automated checks, completion checks, selftests, report rendering helpers, and workspace integrity checks. | [python.org](https://www.python.org/) |
 | **Docker Engine / Docker Desktop** | Required for confirmed vulnerabilities | Provides the isolated runtime for reproduction. If Docker is unavailable, Zhulong pauses or records the verification as blocked instead of falling back to host execution. | [Docker docs](https://docs.docker.com/engine/) |
 | **Docker Compose** | Required when target verification uses Compose | Starts target applications and verification stacks using project-native or generated Compose files. | [Docker Compose docs](https://docs.docker.com/compose/) |
@@ -322,6 +339,8 @@ zhulong/
 ├── skills/zhulong/SKILL.md             # Agent skill entry point
 ├── templates/claude-skill/SKILL.md     # Installed skill template
 ├── scripts/                            # Runtime helpers and automated checks
+│   ├── zhulong_audit.sh                # Platform-neutral launcher
+│   ├── resolve_skill_root.sh           # Source/installed skill root resolver
 │   ├── asr_start.sh                    # Create or reuse an audit workspace
 │   ├── manage_docker_resources.py      # Docker baseline, exact cleanup, strict hygiene
 │   ├── check_sandbox_preflight.py      # Unsafe verification container rejection
@@ -342,6 +361,7 @@ zhulong/
 │   ├── INSTALL.md
 │   ├── USAGE.md
 │   ├── USAGE.zh-CN.md
+│   ├── CODEX_SKILL_ADAPTATION.md
 │   ├── WORKFLOW_DETAILS.md
 │   ├── WORKFLOW_DETAILS.zh-CN.md
 │   ├── AGENTS.md
@@ -378,6 +398,11 @@ For complete rules, read:
 - Docker and Docker Compose
 - A local agent runtime that can load the `skills/zhulong` entry point
 - Optional security tools listed in `assets/tool-registry.json`
+
+Codex support is documented in
+[`docs/CODEX_SKILL_ADAPTATION.md`](docs/CODEX_SKILL_ADAPTATION.md). The plugin
+source tree stays canonical; installed Claude and Codex skills are generated
+runtime copies.
 
 ### Development Loop
 
@@ -467,6 +492,7 @@ security-sensitive discussion, contact:
 | --- | --- |
 | Email | [torchbearer127@qq.com](mailto:torchbearer127@qq.com) |
 | GitHub | [@Torchbearer127](https://github.com/Torchbearer127) |
+| X | [@Torchbearer127](https://x.com/Torchbearer127) |
 | Rednote | `1103633904` |
 
 ### Naming Philosophy: Holding Torch To Illuminate The Nether Gloom
@@ -494,12 +520,13 @@ Completed:
 - [x] Safety checks for unsafe verification containers, Docker residue, and review-only OMC multi-agent worker process handling.
 - [x] Same-repository variant discovery from confirmed vulnerabilities, with every lead still requiring its own Docker reproduction.
 - [x] Reviewer-facing replay helpers with code context, vulnerability analysis, practical impact, and final evidence summary screens.
+- [x] Codex user-level skill support with installed selftest, platform-neutral launcher, and repo-root AGENTS.md guidance.
 
 Planned:
 
 - [ ] Improve installation and examples for Linux and WSL2 users.
 - [ ] Add clearer sample workspaces and sanitized example outputs.
-- [ ] Expand compatibility notes for additional local agent environments, including Codex and Cursor.
+- [ ] Expand compatibility notes for Cursor and other local agent environments.
 - [ ] Continue tightening report consistency checks based on real project testing.
 
 ### Acknowledgements
@@ -526,7 +553,8 @@ tooling communities. Special thanks to:
 | Document | Audience | What It Covers |
 | --- | --- | --- |
 | [`docs/INSTALL.md`](docs/INSTALL.md) | New users | Installation paths, local skill sync, and setup notes. |
-| [`docs/USAGE.md`](docs/USAGE.md) | Operators | Launch prompts, trial-run prompts, manual startup commands, and `asr_start.sh` options. |
+| [`docs/USAGE.md`](docs/USAGE.md) | Operators | Launch prompts, trial-run prompts, manual startup commands, and `zhulong_audit.sh` options. |
+| [`docs/CODEX_SKILL_ADAPTATION.md`](docs/CODEX_SKILL_ADAPTATION.md) | Maintainers | Source, Claude installed, and Codex installed skill layout contract. |
 | [`docs/AGENTS.md`](docs/AGENTS.md) | AI coding agents and maintainers | Development rules, non-negotiable workflow contracts, and safe patch boundaries. |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Contributors | Contribution expectations, test discipline, and scope control. |
 | [`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md) | Maintainers | Pre-release checks for packaging, safety, docs, and regressions. |

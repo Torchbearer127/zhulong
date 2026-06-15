@@ -6,11 +6,11 @@
 
 ## 人机协同
 
-烛龙将审计工作区 (Workspace) 视为 Agent 与人工审核员共享的协作平面。关键状态会写入轻量且明确的文件，而不是困在冗长的对话记录或海量的原始扫描日志中。
+烛龙将审计工作区视为 Agent 与人工审核员共享的协作平面。关键状态会写入轻量且明确的文件，而不是困在冗长的对话记录或海量的原始扫描日志中。
 
 - **Agent 接力**：Agent 可以通过 `handoff-summary.md`、`stage-status.json` 和 `audit-disposition.json` 快速掌握进度。
 - **人工审计**：审核员可以优先查阅 `attack-surface.md`、`candidate-findings.md`、`false-positives.md`、`unverified-leads.md` 和 `SUMMARY.md`，无需手动翻阅全量日志。
-- **流程演进**：维护者可以通过优化脚本、参考契约和校验器 (Validator) 来演进工作流，而不是不断膨胀启动 Prompt。
+- **流程演进**：维护者可以通过优化脚本、参考契约和校验器来演进工作流，而不是不断膨胀启动提示词。
 - **结果复核**：审核员可以直接审查已确认漏洞包，无需重新拼接证据、命令、Payload 与报告结论之间的对应关系。
 
 ## 运行时残留与清理机制
@@ -20,7 +20,7 @@
 | 类型 | 记录位置 | 默认行为 | 用户或 Agent 可做什么 |
 | --- | --- | --- | --- |
 | Docker 容器、镜像、网络、卷、BuildKit cache | `docker/docker-cleanup-plan.json`、`docker/docker-cleanliness-status.json`、`handoff-summary.md` | 先生成清理计划；默认试运行；只自动处理能证明属于当前审计的资源。 | 人工审核计划后，可授权 Agent 使用精确参数和 `--apply` 清理。 |
-| OMC 滞留 Socket | `runtime/runtime-hygiene-status.json`、`handoff-summary.md` | 只清理确认为滞留且无活跃 swarm socket 的 `claude-swarm-*` Socket。 | 可以运行 `--cleanup-stale` 后重新检查。 |
+| OMC 滞留 Socket | `runtime/runtime-hygiene-status.json`、`handoff-summary.md` | 只清理确认为滞留且无活跃 swarm Socket 的 `claude-swarm-*` Socket。 | 可以运行 `--cleanup-stale` 后重新检查。 |
 | 可疑 `claude --teammate-mode tmux` PID | `runtime/runtime-hygiene-status.json`、`handoff-summary.md` | 只读复核；烛龙不会发送终止信号或强制结束命令。 | 用户可根据 `pid/ppid/pgid/sess/tty/stat/command` 等信息自行判断；如确认过期，应在烛龙之外手动处理。 |
 
 Docker 清理推荐流程是先查看计划，再决定是否授权清理：
@@ -167,11 +167,20 @@ python3 scripts/validate_report_bundle.py --variant-candidates <variant-candidat
 python3 scripts/selftest_plugin.py
 ```
 
-同步并测试 Claude 安装目录下的 Skill 结构：
+同步并测试 Claude 安装目录下的 skill 结构：
 
 ```bash
 bash scripts/sync_to_claude_skill.sh
 python3 ~/.claude/skills/zhulong/scripts/selftest_plugin.py
+```
+
+Codex 用户级 Skill 也已支持。它使用同一套布局契约、安装目录自检、平台无关启动入口和仓库根目录 `AGENTS.md` 引导文件；详见
+[`CODEX_SKILL_ADAPTATION.md`](CODEX_SKILL_ADAPTATION.md)。同步后，
+`~/.agents/skills/zhulong/` 是受支持的 Codex 安装 Skill 副本：
+
+```bash
+bash scripts/sync_to_codex_skill.sh
+python3 ~/.agents/skills/zhulong/scripts/selftest_plugin.py
 ```
 
 验证单个已确认漏洞包：

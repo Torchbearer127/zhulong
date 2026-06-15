@@ -1,17 +1,17 @@
 # 使用说明
 
-这份文档说明如何启动烛龙、什么时候使用哪种 Prompt，以及常用启动参数的含义。它面向想要运行授权代码审计的使用者，而不是插件维护者。
+这份文档说明如何启动烛龙、什么时候使用哪种提示词，以及常用启动参数的含义。它面向想要运行授权代码审计的使用者，而不是插件维护者。
 
 ## 选择启动方式
 
 | 使用场景 | 推荐方式 |
 | --- | --- |
-| 你的本地 AI 编程 Agent 已加载烛龙 Skill | 使用下方的短 Prompt。 |
-| 你想先从终端准备或克隆仓库 | 使用 `scripts/asr_start.sh` 脚本。 |
-| 你想在多个仓库上试运行烛龙 | 使用下方的试运行 Prompt。 |
-| 你已经有本地仓库 | 使用本地仓库专用 Prompt，或使用 `--repo-root` 参数。 |
+| 你的本地 AI 编程 Agent 已加载烛龙技能 | 使用下方的短提示词。 |
+| 你想先从终端准备或克隆仓库 | 使用 `scripts/zhulong_audit.sh` 脚本。 |
+| 你想在多个仓库上试运行烛龙 | 使用下方的试运行提示词。 |
+| 你已经有本地仓库 | 使用本地仓库专用提示词，或使用 `--repo-root` 参数。 |
 
-## 标准 Agent Prompt
+## 标准 Agent 提示词
 
 当你希望通过本地 Agent 审计一个仓库时，使用：
 
@@ -42,7 +42,7 @@ Output language: zh-CN.
 
 ## 输出语言
 
-请在 Prompt 中使用明确的 Locale 风格取值：
+请在提示词中使用明确的语言区域取值：
 
 | 取值 | 适用场景 |
 | --- | --- |
@@ -52,7 +52,7 @@ Output language: zh-CN.
 终端启动脚本也提供同样的选择：`--output-language` 和
 `--summary-language`。除非你有特殊需求，建议两者保持一致。
 
-## 试运行 Prompt
+## 试运行提示词
 
 当你需要评估烛龙在真实项目上的表现，且不希望为了“强行产出漏洞”而导致误报时，可以使用：
 
@@ -69,7 +69,7 @@ Preferences:
 - 任务结束时，总结哪些已确认、哪些已驳回、哪些仍未验证，以及生成的证据是否足以让人工审核员接手。
 ```
 
-## 常用 Prompt 偏好
+## 常用提示词偏好
 
 只在确实有助于当前工作流时添加偏好：
 
@@ -80,46 +80,63 @@ Preferences:
 - 将看似合理但未经证实的漏洞保留在审计笔记中，不要将其视为已确认漏洞。
 ```
 
-不要把很长的规则清单复制到每次启动的 Prompt 里。烛龙已经把可复用的安全规则、报告规范和自动检查集成在 Skill、参考文档和脚本中了。
+不要把很长的规则清单复制到每次启动的提示词里。烛龙已经把可复用的安全规则、报告规范和自动检查集成在技能、参考文档和脚本中了。
+
+## Codex 支持状态
+
+Codex 技能布局说明记录在
+[`CODEX_SKILL_ADAPTATION.md`](CODEX_SKILL_ADAPTATION.md)。Codex 用户级同步会
+把同一份烛龙技能运行副本安装到 `~/.agents/skills/zhulong/`：
+
+```bash
+bash scripts/sync_to_codex_skill.sh
+python3 ~/.agents/skills/zhulong/scripts/selftest_plugin.py
+```
+
+这个自检只验证安装目录布局；它不会运行 Codex、Docker、PoC、网络查询、包仓库、
+GitHub 调用或 LLM 调用。
+
+在源码检出目录中，仓库根目录 `AGENTS.md` 可能会提示 Codex 使用 `$zhulong`；
+已安装技能的行为仍由 `SKILL.md` 负责。
 
 ## 手动终端启动
 
-使用 Agent Prompt 是常规路径。终端启动脚本适合需要预先克隆仓库、准备环境，或者需要机器可读启动摘要的场景。
+使用 Agent 提示词是常规路径。终端启动脚本适合需要预先克隆仓库、准备环境，或者需要机器可读启动摘要的场景。
 
 从远程仓库开始：
 
 ```bash
-bash scripts/asr_start.sh --source https://github.com/owner/repo
+bash scripts/zhulong_audit.sh --source https://github.com/owner/repo
 ```
 
 使用 `owner/repo` 简写：
 
 ```bash
-bash scripts/asr_start.sh --source owner/repo
+bash scripts/zhulong_audit.sh --source owner/repo
 ```
 
 从已有本地仓库开始：
 
 ```bash
-bash scripts/asr_start.sh --repo-root /path/to/repo
+bash scripts/zhulong_audit.sh --repo-root /path/to/repo
 ```
 
 指定分支或 Tag：
 
 ```bash
-bash scripts/asr_start.sh --source https://github.com/owner/repo --ref main
+bash scripts/zhulong_audit.sh --source https://github.com/owner/repo --ref main
 ```
 
 输出 JSON 格式的启动信息：
 
 ```bash
-bash scripts/asr_start.sh --source https://github.com/owner/repo --json
+bash scripts/zhulong_audit.sh --source https://github.com/owner/repo --json
 ```
 
 在终端显示可疑的多 Agent 工作进程，供人工复核：
 
 ```bash
-bash scripts/asr_start.sh --repo-root /path/to/repo --prompt-runtime-pid-review
+bash scripts/zhulong_audit.sh --repo-root /path/to/repo --prompt-runtime-pid-review
 ```
 
 *注意：此选项仅打印复核信息，不会自动清理或终止进程。*
@@ -139,6 +156,7 @@ bash scripts/asr_start.sh --repo-root /path/to/repo --prompt-runtime-pid-review
 | `--skip-plan` | 调试启动阶段，跳过工具规划。 | 普通审计过程中不建议使用。 |
 | `--prompt-runtime-pid-review` | 终端显式提醒可疑 Agent 进程。 | 仅供只读复核，不做自动清理。 |
 | `--json` | 需要机器可读的启动输出。 | 适合脚本集成或包装器 (Wrapper) 调用。 |
+| `--print-skill-root` | 查看当前解析到的源码或安装技能根目录。 | 安全诊断选项，不会启动审计。 |
 | `-h`, `--help` | 查看内置帮助。 | 打印启动脚本用法。 |
 
 ## 启动后会发生什么
@@ -165,7 +183,7 @@ python3 <audit-workspace>/bin/render-handoff-summary.py --workspace-dir <audit-w
 
 ## 模板位置
 
-短 Prompt 模板位于：
+短提示词模板位于：
 
 ```text
 assets/references/claude-code-invocation-template.md

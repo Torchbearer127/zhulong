@@ -17,7 +17,7 @@ bash scripts/sync_to_claude_skill.sh
 - If manual fallback is genuinely needed, use the single launcher:
 
 ```bash
-bash scripts/asr_start.sh --source <repo-or-url>
+bash scripts/zhulong_audit.sh --source <repo-or-url>
 ```
 
 By default the launcher records OMC suspect teammate PIDs in workspace status

@@ -16,6 +16,7 @@ from xml.etree import ElementTree as ET
 REQUIRED_FILES = [
     ".claude-plugin/plugin.json",
     ".codex-plugin/plugin.json",
+    "AGENTS.md",
     "README.md",
     "assets/tool-registry.json",
     "assets/confirmed-vuln-report-template.docx",
@@ -39,6 +40,8 @@ REQUIRED_FILES = [
     "assets/references/prototype-pollution-checklist.md",
     "scripts/bootstrap_verification_workspace.sh",
     "scripts/asr_start.sh",
+    "scripts/resolve_skill_root.sh",
+    "scripts/zhulong_audit.sh",
     "scripts/prepare_target_repo.sh",
     "scripts/check_docker_gate.sh",
     "scripts/check_omc_runtime.sh",
@@ -53,6 +56,7 @@ REQUIRED_FILES = [
     "scripts/blocked_verification.py",
     "scripts/refresh_workspace_helpers.sh",
     "scripts/sync_to_claude_skill.sh",
+    "scripts/sync_to_codex_skill.sh",
     "scripts/write_audit_event.py",
     "scripts/validate_workspace_state.py",
     "scripts/plan_security_toolchain.py",
@@ -80,7 +84,12 @@ INSTALLED_SKILL_REQUIRED_FILES = [
     "assets/references/nodejs-web-audit-playbook.md",
     "assets/references/php-swoole-audit-playbook.md",
     "assets/references/python-library-audit-playbook.md",
+    "docs/CODEX_SKILL_ADAPTATION.md",
+    "docs/INSTALL.md",
+    "docs/USAGE.md",
     "scripts/asr_start.sh",
+    "scripts/resolve_skill_root.sh",
+    "scripts/zhulong_audit.sh",
     "scripts/bootstrap_verification_workspace.sh",
     "scripts/check_docker_gate.sh",
     "scripts/check_omc_runtime.sh",
@@ -101,6 +110,16 @@ INSTALLED_SKILL_REQUIRED_FILES = [
     "scripts/render_handoff_summary.py",
 ]
 
+FORBIDDEN_INSTALLED_TOP_LEVEL = [
+    "prompts",
+    "zhulong-real-runs",
+    "已提交",
+    ".codex",
+    ".claude",
+    ".omc",
+    "AGENTS.md",
+]
+
 
 def run(command: list[str], cwd: Path) -> None:
     proc = subprocess.run(command, cwd=cwd, capture_output=True, text=True)
@@ -115,6 +134,16 @@ def run_capture(command: list[str], cwd: Path) -> str:
     if proc.returncode != 0:
         raise SystemExit(f"FAILED: {' '.join(command)}\n{output}")
     return output
+
+
+def require_command_output(command: list[str], cwd: Path, expected: str, label: str) -> None:
+    output = run_capture(command, cwd)
+    if output != expected:
+        raise SystemExit(
+            f"FAILED: unexpected output for {label}\n"
+            f"Expected: {expected}\n"
+            f"Actual: {output}"
+        )
 
 
 def run_capture_with_env(
@@ -1226,7 +1255,7 @@ def validate_claude_plugin_manifest(plugin_root: Path) -> None:
             raise SystemExit(f"FAILED: Claude plugin manifest contains an absolute local path: {text}")
         if re.match(r"^[A-Za-z]:[\\/]", text):
             raise SystemExit(f"FAILED: Claude plugin manifest contains a Windows absolute path: {text}")
-        operator_local_path = "/" + "Users" + "/" + "torchbearer"
+        operator_local_path = "/" + "Users" + "/" + "localuser"
         if operator_local_path in text:
             raise SystemExit("FAILED: Claude plugin manifest contains operator-local absolute path")
 
@@ -1248,6 +1277,196 @@ def validate_claude_plugin_manifest(plugin_root: Path) -> None:
                 "FAILED: Claude plugin manifest must not declare runtime component "
                 f"{field!r}; Zhulong remains skill-and-scripts only"
             )
+
+
+def exercise_agents_shim(plugin_root: Path) -> None:
+    shim_path = plugin_root / "AGENTS.md"
+    if not shim_path.is_file():
+        raise SystemExit("FAILED: missing repo-root AGENTS.md shim")
+
+    content = shim_path.read_text(encoding="utf-8")
+    normalized_content = re.sub(r"\s+", " ", content)
+    lines = content.splitlines()
+    if len(lines) > 80:
+        raise SystemExit(f"FAILED: repo-root AGENTS.md must stay a short shim, got {len(lines)} lines")
+
+    required_texts = [
+        "# Zhulong Agent Shim",
+        "lightweight instruction shim",
+        "docs/AGENTS.md",
+        "CONTRIBUTING.md",
+        "docs/RELEASE_CHECKLIST.md",
+        "Treat this plugin source tree as canonical",
+        "Installed Claude and Codex skill directories are generated runtime copies",
+        "When the user asks for repository-level security audit",
+        "Docker-based PoC reproduction",
+        "confirmed vulnerability bundles",
+        "seeded variant discovery",
+        "use `$zhulong`",
+        "Do not duplicate the full `$zhulong` skill contract here.",
+        "Scanner, static-analysis, LLM, and dependency findings remain candidates until",
+        "Docker reproduction and confirmed-bundle validation support them.",
+        "Do not execute PoC or exploit verification directly on the host.",
+        "Docker / Docker Compose verification flow",
+        "Confirmed findings must live only in validated Zhulong confirmed bundles.",
+        "Do not use broad Docker prune or PID kill behavior.",
+        "skills/zhulong/SKILL.md",
+        "assets/references/",
+        "docs/WORKFLOW_DETAILS.md",
+        "docs/WORKFLOW_DETAILS.zh-CN.md",
+        "docs/CODEX_SKILL_ADAPTATION.md",
+        "deterministic validators/selftests",
+    ]
+    for needle in required_texts:
+        normalized_needle = re.sub(r"\s+", " ", needle)
+        if needle not in content and normalized_needle not in normalized_content:
+            raise SystemExit(f"FAILED: repo-root AGENTS.md missing required shim text: {needle}")
+
+    forbidden_skill_contract_headings = [
+        "## Installed Skill Runtime Contents",
+        "## Plugin-Owned Hard Constraints",
+        "## Standard Execution Order",
+    ]
+    for heading in forbidden_skill_contract_headings:
+        if heading in content:
+            raise SystemExit(f"FAILED: repo-root AGENTS.md duplicated skill contract heading: {heading}")
+
+    forbidden_command_patterns = [
+        r"docker\s+(system|builder|buildx)\s+prune",
+        r"\b(builder|system|buildx)\s+prune\b",
+        r"kill\s+-(TERM|9|KILL)",
+        r"\bSIG" + r"KILL\b",
+        r"cleanup-suspect-pid\s+.*--apply",
+    ]
+    for pattern in forbidden_command_patterns:
+        if re.search(pattern, content, flags=re.IGNORECASE):
+            raise SystemExit(f"FAILED: repo-root AGENTS.md contains forbidden command pattern: {pattern}")
+
+    platform_terms = [
+        "mcp server",
+        "daemon",
+        "dashboard",
+        "database",
+        "rag",
+        "vector store",
+        "hooks",
+        "rules",
+        "marketplace",
+        "docker socket",
+    ]
+    requirement_words = r"(?:require|requires|required|requiring|mandatory|must)"
+    for term in platform_terms:
+        escaped = re.escape(term)
+        patterns = [
+            rf"\b{requirement_words}\b[^\n.]*\b{escaped}\b",
+            rf"\b{escaped}\b[^\n.]*\b{requirement_words}\b",
+        ]
+        for pattern in patterns:
+            if re.search(pattern, content, flags=re.IGNORECASE):
+                raise SystemExit(
+                    "FAILED: repo-root AGENTS.md must not make platform/service "
+                    f"claims mandatory: {term}"
+                )
+
+
+def exercise_p7_wording_closure(plugin_root: Path) -> None:
+    skill_path = plugin_root / "skills/zhulong/SKILL.md"
+    template_path = plugin_root / "templates/claude-skill/SKILL.md"
+    skill_text = skill_path.read_text(encoding="utf-8")
+    template_text = template_path.read_text(encoding="utf-8")
+    if skill_text != template_text:
+        raise SystemExit("FAILED: skills/zhulong/SKILL.md and template SKILL.md must stay identical")
+
+    for path in (skill_path, template_path):
+        forbid_text(path, "Use this Claude Code skill when", "P7.5 local-agent-neutral skill opening")
+        require_text(path, "Use this local-agent skill when", "P7.5 local-agent-neutral skill opening")
+
+    repo_prep = plugin_root / "assets/references/repo-preparation.md"
+    forbid_text(
+        repo_prep,
+        '$HOME/.claude/skills/zhulong/scripts/asr_start.sh',
+        "repo preparation primary launcher must be platform-neutral",
+    )
+    require_text(
+        repo_prep,
+        "bash <skill-root>/scripts/zhulong_audit.sh --source <local-path-or-repo-url>",
+        "repo preparation platform-neutral launcher",
+    )
+
+    invocation_template = plugin_root / "assets/references/claude-code-invocation-template.md"
+    forbid_text(
+        invocation_template,
+        "bash scripts/asr_start.sh --source <repo-or-url>",
+        "manual fallback must use platform-neutral launcher",
+    )
+    require_text(
+        invocation_template,
+        "bash scripts/zhulong_audit.sh --source <repo-or-url>",
+        "manual fallback platform-neutral launcher",
+    )
+
+    future_only_phrases = [
+        "P7.1 defines only the layout and sync contract",
+        "P7.2 must add Codex",
+        "Codex 适配在 P7.1 只定义布局和同步契约",
+        "P7.2 需要实现 Codex",
+        "A future phase may add first-class repo-scoped install guidance",
+    ]
+    for rel in [
+        "docs/CODEX_SKILL_ADAPTATION.md",
+        "docs/WORKFLOW_DETAILS.md",
+        "docs/WORKFLOW_DETAILS.zh-CN.md",
+        "docs/INSTALL.md",
+        "docs/USAGE.md",
+        "docs/USAGE.zh-CN.md",
+        "docs/RELEASE_CHECKLIST.md",
+        "README.md",
+        "README.zh-CN.md",
+    ]:
+        path = plugin_root / rel
+        for phrase in future_only_phrases:
+            forbid_text(path, phrase, f"P7 completed-status wording in {rel}")
+
+    require_text(
+        plugin_root / "docs/CODEX_SKILL_ADAPTATION.md",
+        "Current Codex support status",
+        "Codex support current status",
+    )
+    require_text(
+        plugin_root / "docs/CODEX_SKILL_ADAPTATION.md",
+        "Source, Claude installed, and Codex installed regression checks are part of",
+        "Codex support release validation status",
+    )
+    require_text(
+        plugin_root / "docs/WORKFLOW_DETAILS.md",
+        "Codex user-level skill support is also available",
+        "workflow details Codex installed runtime support",
+    )
+    require_text(
+        plugin_root / "docs/WORKFLOW_DETAILS.zh-CN.md",
+        "Codex 用户级 Skill 也已支持",
+        "Chinese workflow details Codex installed runtime support",
+    )
+    require_text(
+        plugin_root / "README.md",
+        "Codex user-level skill support with installed selftest, platform-neutral launcher",
+        "README Codex completed support",
+    )
+    forbid_text(
+        plugin_root / "README.md",
+        "including Codex and Cursor",
+        "README planned Codex support must be completed",
+    )
+    require_text(
+        plugin_root / "README.zh-CN.md",
+        "Codex 用户级 Skill 支持、安装目录自检、平台无关启动入口",
+        "Chinese README Codex completed support",
+    )
+    forbid_text(
+        plugin_root / "README.zh-CN.md",
+        "例如 Codex 和 Cursor",
+        "Chinese README planned Codex support must be completed",
+    )
 
 
 def require_probe_record(
@@ -1765,6 +1984,10 @@ def selftest_installed_skill(skill_root: Path) -> None:
         path = skill_root / rel
         if not path.exists():
             raise SystemExit(f"FAILED: missing required installed skill file: {path}")
+    for rel in FORBIDDEN_INSTALLED_TOP_LEVEL:
+        path = skill_root / rel
+        if path.exists():
+            raise SystemExit(f"FAILED: installed skill contains forbidden top-level material: {path}")
 
     run([sys.executable, "-m", "py_compile",
          str(skill_root / "scripts/plan_security_toolchain.py"),
@@ -1786,6 +2009,8 @@ def selftest_installed_skill(skill_root: Path) -> None:
     for script in [
         "scripts/bootstrap_verification_workspace.sh",
         "scripts/asr_start.sh",
+        "scripts/resolve_skill_root.sh",
+        "scripts/zhulong_audit.sh",
         "scripts/prepare_target_repo.sh",
         "scripts/check_docker_gate.sh",
         "scripts/check_omc_runtime.sh",
@@ -1795,10 +2020,64 @@ def selftest_installed_skill(skill_root: Path) -> None:
     ]:
         run(["bash", "-n", str(skill_root / script)], skill_root)
 
+    expected_root = str(skill_root.resolve())
+    require_command_output(
+        ["bash", str(skill_root / "scripts/resolve_skill_root.sh")],
+        skill_root,
+        expected_root,
+        "installed skill root resolver",
+    )
+    require_command_output(
+        ["bash", str(skill_root / "scripts/zhulong_audit.sh"), "--print-skill-root"],
+        skill_root,
+        expected_root,
+        "installed skill launcher root print",
+    )
+
+    forbid_text(
+        skill_root / "SKILL.md",
+        "Use this Claude Code skill when",
+        "installed skill local-agent-neutral opening",
+    )
+    require_text(
+        skill_root / "SKILL.md",
+        "Use this local-agent skill when",
+        "installed skill local-agent-neutral opening",
+    )
     require_text(
         skill_root / "SKILL.md",
         "Confirm vulnerabilities only with Docker evidence",
         "installed skill Docker-confirmed-only contract",
+    )
+    require_text(
+        skill_root / "SKILL.md",
+        "Run all PoCs, exploit payloads, and verification traffic only inside Docker or",
+        "installed skill Docker-first verification contract",
+    )
+    require_text(
+        skill_root / "SKILL.md",
+        "False positives, non-security defects, unverified leads",
+        "installed skill confirmed-only bundle discipline",
+    )
+    require_text(
+        skill_root / "SKILL.md",
+        "Do not mark a variant candidate as confirmed based on resemblance to a seed",
+        "installed skill variant candidates remain candidates contract",
+    )
+    require_text(
+        skill_root / "SKILL.md",
+        "Never use broad Docker prune commands as the",
+        "installed skill no broad Docker prune contract",
+    )
+    require_text(
+        skill_root / "SKILL.md",
+        "Teammate PID cleanup is review-only",
+        "installed skill no PID kill behavior contract",
+    )
+    require_text(
+        skill_root / "SKILL.md",
+        "Validate every final bundle before finishing",
+        "installed skill confirmed bundle validation contract",
     )
     require_text(
         skill_root / "SKILL.md",
@@ -1896,7 +2175,7 @@ def selftest_installed_skill(skill_root: Path) -> None:
         "installed skill unverified security policy check field",
     )
 
-    operator_local_path = "/" + "Users" + "/" + "torchbearer"
+    operator_local_path = "/" + "Users" + "/" + "localuser"
     require_no_repo_text(skill_root, operator_local_path, "operator-local absolute path")
     stale_asr_name = "autonomous-security" + "-researcher"
     require_no_repo_text(skill_root, stale_asr_name, "stale ASR naming")
@@ -1930,7 +2209,7 @@ def selftest_installed_skill(skill_root: Path) -> None:
         )
         exercise_sandbox_ledger_guard(installed_workspace, skill_root)
 
-    print(f"SELFTEST PASSED: installed Claude skill layout {skill_root}")
+    print(f"SELFTEST PASSED: installed skill layout {skill_root}")
 
 
 def main() -> None:
@@ -1944,6 +2223,9 @@ def main() -> None:
         path = plugin_root / rel
         if not path.exists():
             raise SystemExit(f"FAILED: missing required plugin file: {path}")
+
+    exercise_agents_shim(plugin_root)
+    exercise_p7_wording_closure(plugin_root)
 
     plugin_json = json.loads((plugin_root / ".codex-plugin/plugin.json").read_text(encoding="utf-8"))
     if plugin_json.get("name") != "zhulong":
@@ -2716,7 +2998,7 @@ def main() -> None:
         "may execute PoC logic directly on the host",
         "verification runner positive host execution wording",
     )
-    operator_local_path = "/" + "Users" + "/" + "torchbearer"
+    operator_local_path = "/" + "Users" + "/" + "localuser"
     require_no_repo_text(plugin_root, operator_local_path, "operator-local absolute path")
     stale_asr_name = "autonomous-security" + "-researcher"
     require_no_repo_text(plugin_root, stale_asr_name, "stale ASR naming")
@@ -2813,6 +3095,8 @@ def main() -> None:
 
     run(["bash", "-n", str(plugin_root / "scripts/bootstrap_verification_workspace.sh")], plugin_root)
     run(["bash", "-n", str(plugin_root / "scripts/asr_start.sh")], plugin_root)
+    run(["bash", "-n", str(plugin_root / "scripts/resolve_skill_root.sh")], plugin_root)
+    run(["bash", "-n", str(plugin_root / "scripts/zhulong_audit.sh")], plugin_root)
     run(["bash", "-n", str(plugin_root / "scripts/prepare_target_repo.sh")], plugin_root)
     run(["bash", "-n", str(plugin_root / "scripts/check_docker_gate.sh")], plugin_root)
     run(["bash", "-n", str(plugin_root / "scripts/check_omc_runtime.sh")], plugin_root)
@@ -2821,6 +3105,20 @@ def main() -> None:
     run(["bash", "-n", str(plugin_root / "scripts/run_verification_case.sh")], plugin_root)
     run(["bash", "-n", str(plugin_root / "scripts/refresh_workspace_helpers.sh")], plugin_root)
     run(["bash", "-n", str(plugin_root / "scripts/sync_to_claude_skill.sh")], plugin_root)
+    run(["bash", "-n", str(plugin_root / "scripts/sync_to_codex_skill.sh")], plugin_root)
+    expected_plugin_root = str(plugin_root.resolve())
+    require_command_output(
+        ["bash", str(plugin_root / "scripts/resolve_skill_root.sh")],
+        plugin_root,
+        expected_plugin_root,
+        "source skill root resolver",
+    )
+    require_command_output(
+        ["bash", str(plugin_root / "scripts/zhulong_audit.sh"), "--print-skill-root"],
+        plugin_root,
+        expected_plugin_root,
+        "source launcher root print",
+    )
     run(["bash", str(plugin_root / "scripts/run_verification_case.sh"), "--help"], plugin_root)
     run([sys.executable, str(plugin_root / "scripts/manage_docker_resources.py"), "--help"], plugin_root)
     run([sys.executable, str(plugin_root / "scripts/render_handoff_summary.py"), "--help"], plugin_root)
@@ -5300,7 +5598,7 @@ def main() -> None:
         workspace_supplement = next(bad_workspace_marker.glob("*_补充复现说明.md"))
         workspace_supplement.write_text(
             workspace_supplement.read_text(encoding="utf-8")
-            + "\n错误示例：材料仍提到 oss-vulnerability-research 和 security-research-YYYYMMDD-HHMMSS。\n",
+            + "\n错误示例：材料仍提到 submitter-workspace 和 security-research-YYYYMMDD-HHMMSS。\n",
             encoding="utf-8",
         )
         run_expect_fail([
@@ -6021,7 +6319,7 @@ def main() -> None:
 
         bad_index_local_path = copy_standard_bundle("reviewer_index_local_path")
         write_useful_reviewer_addendum(bad_index_local_path)
-        submitter_local_path = "/" + "Users/" + "torchbearer/tmp/evidence.log"
+        submitter_local_path = "/" + "Users/" + "localuser/tmp/evidence.log"
         write_standard_reviewer_index(bad_index_local_path, artifact_paths=[submitter_local_path])
         run_expect_fail([
             sys.executable,
@@ -7701,6 +7999,8 @@ def main() -> None:
         installed_skill = claude_home / "skills" / "zhulong"
         if not (installed_skill / "SKILL.md").exists():
             raise SystemExit("FAILED: Claude skill sync did not create SKILL.md")
+        if (installed_skill / "AGENTS.md").exists():
+            raise SystemExit("FAILED: Claude skill sync copied repo-root AGENTS.md into installed skill")
         if not (installed_skill / "scripts/check_security_tooling.sh").exists():
             raise SystemExit("FAILED: Claude skill sync did not copy scripts")
         if not (installed_skill / "scripts/check_docker_gate.sh").exists():
@@ -7715,6 +8015,10 @@ def main() -> None:
             raise SystemExit("FAILED: Claude skill sync did not copy render_handoff_summary.py")
         if not (installed_skill / "scripts/asr_start.sh").exists():
             raise SystemExit("FAILED: Claude skill sync did not copy asr_start.sh")
+        if not (installed_skill / "scripts/resolve_skill_root.sh").exists():
+            raise SystemExit("FAILED: Claude skill sync did not copy resolve_skill_root.sh")
+        if not (installed_skill / "scripts/zhulong_audit.sh").exists():
+            raise SystemExit("FAILED: Claude skill sync did not copy zhulong_audit.sh")
         if not (installed_skill / "scripts/write_audit_event.py").exists():
             raise SystemExit("FAILED: Claude skill sync did not copy write_audit_event.py")
         if not (installed_skill / "scripts/validate_workspace_state.py").exists():
@@ -7925,6 +8229,67 @@ def main() -> None:
         top_level_backups = sorted((claude_home / "skills").glob("zhulong.backup.*"))
         if top_level_backups:
             raise SystemExit("FAILED: sync_to_claude_skill.sh left loadable backups at skills root")
+
+        codex_home = Path(tempdir) / "codex-home"
+        codex_skills_dir = codex_home / "skills"
+        codex_home.mkdir(parents=True, exist_ok=True)
+        codex_sync_output = run_capture([
+            "bash",
+            str(plugin_root / "scripts/sync_to_codex_skill.sh"),
+            "--codex-skills-dir",
+            str(codex_skills_dir),
+            "--keep-backups",
+            "2",
+        ], plugin_root)
+        if "Codex skill synced successfully." not in codex_sync_output:
+            raise SystemExit("FAILED: sync_to_codex_skill.sh did not report success")
+        if "Installed skill directory:" not in codex_sync_output or str(codex_skills_dir / "zhulong") not in codex_sync_output:
+            raise SystemExit("FAILED: sync_to_codex_skill.sh did not report installed path")
+        codex_installed_skill = codex_skills_dir / "zhulong"
+        if (codex_installed_skill / "AGENTS.md").exists():
+            raise SystemExit("FAILED: Codex skill sync copied repo-root AGENTS.md into installed skill")
+        for rel in INSTALLED_SKILL_REQUIRED_FILES:
+            if not (codex_installed_skill / rel).exists():
+                raise SystemExit(f"FAILED: Codex skill sync did not copy required installed file: {rel}")
+        for rel in FORBIDDEN_INSTALLED_TOP_LEVEL:
+            if (codex_installed_skill / rel).exists():
+                raise SystemExit(f"FAILED: Codex skill sync copied forbidden top-level material: {rel}")
+        require_text(
+            codex_installed_skill / "docs/CODEX_SKILL_ADAPTATION.md",
+            "Codex reads user skills from `$HOME/.agents/skills`",
+            "installed Codex skill adaptation docs",
+        )
+        require_text(
+            codex_installed_skill / "README.plugin-package.md",
+            "Zhulong",
+            "installed Codex package README",
+        )
+        require_text(
+            codex_installed_skill / "INSTALL.plugin-package.md",
+            "Install",
+            "installed Codex package install notes",
+        )
+        for _ in range(3):
+            run([
+                "bash",
+                str(plugin_root / "scripts/sync_to_codex_skill.sh"),
+                "--codex-skills-dir",
+                str(codex_skills_dir),
+                "--keep-backups",
+                "2",
+            ], plugin_root)
+        codex_backups = sorted((codex_skills_dir / ".zhulong-backups").glob("zhulong.backup.*"))
+        if len(codex_backups) != 2:
+            raise SystemExit("FAILED: sync_to_codex_skill.sh did not enforce backup retention")
+        if not all(backup.parent.name.startswith(".") for backup in codex_backups):
+            raise SystemExit("FAILED: sync_to_codex_skill.sh backup directories are not hidden")
+        codex_top_level_backups = sorted(codex_skills_dir.glob("zhulong.backup.*"))
+        if codex_top_level_backups:
+            raise SystemExit("FAILED: sync_to_codex_skill.sh left loadable backups at skills root")
+        run([
+            sys.executable,
+            str(codex_installed_skill / "scripts/selftest_plugin.py"),
+        ], codex_installed_skill)
 
     print(f"SELFTEST PASSED: {plugin_root}")
 

@@ -276,6 +276,17 @@ bash scripts/sync_to_claude_skill.sh
 python3 ~/.claude/skills/zhulong/scripts/selftest_plugin.py
 ```
 
+Codex user-level skill support is also available. It uses the same layout
+contract, installed selftest, platform-neutral launcher, and repository-root
+`AGENTS.md` guidance documented in
+[`CODEX_SKILL_ADAPTATION.md`](CODEX_SKILL_ADAPTATION.md). The Codex installed
+skill at `~/.agents/skills/zhulong/` is supported after syncing:
+
+```bash
+bash scripts/sync_to_codex_skill.sh
+python3 ~/.agents/skills/zhulong/scripts/selftest_plugin.py
+```
+
 Validate one confirmed bundle:
 
 ```bash

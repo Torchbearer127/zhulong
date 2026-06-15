@@ -7,7 +7,7 @@ For GitHub repositories, prefer `gh` for clone and later GitHub intelligence loo
 Recommended manual fallback:
 
 ```bash
-bash "$HOME/.claude/skills/zhulong/scripts/asr_start.sh" --source <local-path-or-repo-url>
+bash <skill-root>/scripts/zhulong_audit.sh --source <local-path-or-repo-url>
 ```
 
 By default, OMC suspect teammate PIDs are written to
@@ -40,31 +40,31 @@ Use `prepare_target_repo.sh` only as an internal helper or when you are already 
 Prepare a local repo in place:
 
 ```bash
-bash "$HOME/.claude/skills/zhulong/scripts/asr_start.sh" --source /path/to/repo
+bash <skill-root>/scripts/zhulong_audit.sh --source /path/to/repo
 ```
 
 Prepare a GitHub repo under the current working directory:
 
 ```bash
-bash "$HOME/.claude/skills/zhulong/scripts/asr_start.sh" --source https://github.com/owner/repo
+bash <skill-root>/scripts/zhulong_audit.sh --source https://github.com/owner/repo
 ```
 
 Prepare a GitLab repo under the current working directory:
 
 ```bash
-bash "$HOME/.claude/skills/zhulong/scripts/asr_start.sh" --source https://gitlab.com/group/project.git
+bash <skill-root>/scripts/zhulong_audit.sh --source https://gitlab.com/group/project.git
 ```
 
 Prepare a Gitee repo under the current working directory:
 
 ```bash
-bash "$HOME/.claude/skills/zhulong/scripts/asr_start.sh" --source https://gitee.com/owner/repo.git
+bash <skill-root>/scripts/zhulong_audit.sh --source https://gitee.com/owner/repo.git
 ```
 
 Prepare a GitHub repo with a specific branch:
 
 ```bash
-bash "$HOME/.claude/skills/zhulong/scripts/asr_start.sh" --source owner/repo --ref main
+bash <skill-root>/scripts/zhulong_audit.sh --source owner/repo --ref main
 ```
 
 ## Relative Path Warning

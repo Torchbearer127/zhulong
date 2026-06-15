@@ -46,7 +46,7 @@
 | [项目概述](#-项目概述) | 说明烛龙的定位、紧凑工作流和“先复现再确认”的核心原则。 |
 | [为什么选择烛龙？](#-为什么选择烛龙) | 对照传统审计痛点，解释烛龙的轻量化、低误报和证据导向优势。 |
 | [系统架构](#-系统架构) | 展示本地模块化流水线，以及 Agent、脚本、Docker 和产物之间的关系。 |
-| [快速开始](#-快速开始) | 给出平台支持、Skill 同步、Agent 提示词和手动脚本启动方式。 |
+| [快速开始](#-快速开始) | 给出平台支持、Skill同步、本地 Agent 提示词和手动脚本启动方式。 |
 | [烛龙会产出什么？](#-烛龙会产出什么) | 说明审计工作区结构和已确认漏洞证据包内容。 |
 | [审计工作流](#-审计工作流) | 拆解从项目导入到完成交接的主要阶段。 |
 | [依赖项与可选集成](#%EF%B8%8F-依赖项与可选集成) | 列出必选运行依赖和可选安全工具族。 |
@@ -112,7 +112,7 @@
 
 ## 🚀 快速开始
 
-烛龙会通过本地 Agent、Docker、仓库内脚本和可选安全工具协同运行。完整依赖清单见后文“依赖项与可选集成”部分；完整启动 Prompt、手动启动方式和 `asr_start.sh` 参数见 [`docs/USAGE.zh-CN.md`](docs/USAGE.zh-CN.md)。
+烛龙会通过本地 Agent、Docker、仓库内脚本和可选安全工具协同运行。完整依赖清单见后文“依赖项与可选集成”部分；完整启动提示词、手动启动方式和 `zhulong_audit.sh` 参数见 [`docs/USAGE.zh-CN.md`](docs/USAGE.zh-CN.md)。
 
 ### 平台支持
 
@@ -126,26 +126,44 @@
 
 ### 方式一：本地 Agent Skill 同步（推荐）
 
-从插件包根目录运行自检，并把稳定的 Skill 目录结构同步到本地 Agent 环境：
+从插件包根目录先运行一次自检：
 
 ```bash
-# 1. 测试并同步
 python3 scripts/selftest_plugin.py
-bash scripts/sync_to_claude_skill.sh
+```
 
-# 2. 验证安装后的目录结构
+然后按你实际使用的本地 Agent 选择同步目标。
+
+Claude Code：
+
+```bash
+bash scripts/sync_to_claude_skill.sh
 python3 ~/.claude/skills/zhulong/scripts/selftest_plugin.py
 ```
 
-同步后重启本地 Agent 会话。当前稳定的 Claude 兼容运行时路径是：
+Claude Code 安装目录是：
 
 ```text
 ~/.claude/skills/zhulong/
 ```
 
-然后在受支持的本地 Agent 中使用短 Prompt：
+Codex：
 
-> **🤖 给 Agent 的 Prompt**
+```bash
+bash scripts/sync_to_codex_skill.sh
+python3 ~/.agents/skills/zhulong/scripts/selftest_plugin.py
+```
+
+Codex 用户级 Skill 安装目录是：
+
+```text
+~/.agents/skills/zhulong/
+```
+
+同步后重启本地 Agent 会话，然后在受支持的本地 Agent 中使用短提示词。使用
+Codex 时，也可以显式输入 `$zhulong` 调用烛龙。
+
+> **🤖 给 Agent 的提示词**
 >
 > Please use the zhulong skill to perform an end-to-end security-focused code
 > audit on this repository:
@@ -161,14 +179,14 @@ python3 ~/.claude/skills/zhulong/scripts/selftest_plugin.py
 
 ### 方式二：手动脚本启动
 
-如果你希望不依赖 Agent 技能发现机制，直接从终端启动：
+如果你希望不依赖 Agent Skill 发现机制，直接从终端启动：
 
 ```bash
 # 远程仓库
-bash scripts/asr_start.sh --source https://github.com/owner/repo
+bash scripts/zhulong_audit.sh --source https://github.com/owner/repo
 
 # 已有本地仓库
-bash scripts/asr_start.sh --repo-root /path/to/repo
+bash scripts/zhulong_audit.sh --repo-root /path/to/repo
 ```
 
 ---
@@ -234,14 +252,14 @@ confirmed/<vulnerability-slug>/
 
 | 依赖项 / 集成 | 是否必选 | 在烛龙中的作用 | 链接 |
 | :--- | :---: | :--- | :--- |
-| **本地 AI 编程 Agent 运行时** | 预期工作流必选 | 读取烛龙 Skill 和文档，协调仓库审计，并运行本地脚本。当前稳定路径是 Claude 兼容的 Skill 同步方式；也保留脚本方式的手动启动。 | [Claude Code docs](https://docs.anthropic.com/en/docs/claude-code/overview) |
+| **本地 AI 编程 Agent 运行时** | 预期工作流必选 | 读取烛龙 Skill 和文档，协调仓库审计，并运行本地脚本。Claude Code 和 Codex 用户级 Skill 同步路径均已通过测试；也保留脚本方式的手动启动。 | [Claude Code docs](https://docs.anthropic.com/en/docs/claude-code/overview), [Codex Agent Skills docs](https://developers.openai.com/codex/skills) |
 | **Python 3.11+** | 必选 | 运行自动检查、完成检查、自检、报告渲染辅助脚本和工作区完整性检查。 | [python.org](https://www.python.org/) |
 | **Docker Engine / Docker Desktop** | 已确认漏洞必选 | 提供隔离复现运行时。Docker 不可用时，烛龙会暂停或记录验证受阻，不回退到宿主机执行。 | [Docker docs](https://docs.docker.com/engine/) |
 | **Docker Compose** | 目标验证使用 Compose 时必选 | 使用项目原生或生成的 Compose 文件启动目标应用和验证栈。 | [Docker Compose docs](https://docs.docker.com/compose/) |
 | **Git** | 远程目标必选 | 克隆目标仓库并保留源码上下文。 | [git-scm.com](https://git-scm.com/) |
 | **POSIX shell / Bash** | 必选 | 运行 Workspace 辅助脚本、Docker 环境卫生检查、初始探测任务和复现脚本。 | [GNU Bash](https://www.gnu.org/software/bash/) |
 | **GitHub CLI (`gh`)** | 可选 | 可用于 GitHub clone/auth 流程和仓库元数据查询。 | [GitHub CLI](https://cli.github.com/) |
-| **oh-my-claudecode (OMC)** | 可选多 Agent 增强 | 只有在你主动使用 OMC `/team`、`/ultrawork` 等多 Agent 模式时才需要。正常审计不依赖 OMC；烛龙对 OMC 多 Agent worker PID 始终只读复核。 | [OMC GitHub](https://github.com/Yeachan-Heo/oh-my-claudecode) |
+| **oh-my-claudecode (OMC)** | 可选多 Agent 增强 | 只有在你主动使用 OMC `/team`、`/ultrawork` 等多 Agent 模式时才需要。正常审计不依赖 OMC；烛龙对 OMC 多 Agent 工作进程 PID 始终只读复核。 | [OMC GitHub](https://github.com/Yeachan-Heo/oh-my-claudecode) |
 
 可选安全工具会在运行时探测并写入工作区。缺失工具会被记录为被跳过的探测任务，而不是审计阻塞。
 
@@ -270,10 +288,12 @@ confirmed/<vulnerability-slug>/
 ```text
 zhulong/
 ├── .claude-plugin/plugin.json          # Claude plugin-style 发现元数据
-├── .codex-plugin/plugin.json           # 跨 Agent / Codex 元数据
+├── .codex-plugin/plugin.json           # 跨本地 Agent / Codex 元数据
 ├── skills/zhulong/SKILL.md             # Agent Skill 入口
 ├── templates/claude-skill/SKILL.md     # 已安装 Skill 模板
 ├── scripts/                            # 运行时辅助脚本和自动检查
+│   ├── zhulong_audit.sh                # 平台无关启动入口
+│   ├── resolve_skill_root.sh           # 源码/安装 Skill 根目录解析器
 │   ├── asr_start.sh                    # 创建或复用审计工作区
 │   ├── manage_docker_resources.py      # Docker 初始基线、精确清理、严格环境卫生检查
 │   ├── check_sandbox_preflight.py      # 危险验证容器前置拒绝
@@ -294,6 +314,7 @@ zhulong/
 │   ├── INSTALL.md
 │   ├── USAGE.md
 │   ├── USAGE.zh-CN.md
+│   ├── CODEX_SKILL_ADAPTATION.md
 │   ├── WORKFLOW_DETAILS.md
 │   ├── WORKFLOW_DETAILS.zh-CN.md
 │   ├── AGENTS.md
@@ -327,6 +348,9 @@ zhulong/
 - 可加载 `skills/zhulong` 入口的本地 Agent 运行时
 - `assets/tool-registry.json` 中列出的可选安全工具
 
+Codex 支持说明见
+[`docs/CODEX_SKILL_ADAPTATION.md`](docs/CODEX_SKILL_ADAPTATION.md)。插件源码目录是唯一事实源；Claude 和 Codex 安装目录都是生成的运行副本。
+
 ### 开发调试循环
 
 先把这组项目规则交给 AI 编程 Agent：
@@ -341,7 +365,7 @@ Keep the change narrow.
 # 1. 运行源码目录自检
 python3 scripts/selftest_plugin.py
 
-# 2. 如果修改了 skill-facing 文件，同步并测试 installed layout
+# 2. 如果修改了面向 Skill 的文件，同步并测试安装目录
 bash scripts/sync_to_claude_skill.sh
 python3 ~/.claude/skills/zhulong/scripts/selftest_plugin.py
 
@@ -390,6 +414,7 @@ python3 scripts/validate_all_report_bundles.py --confirmed-dir <confirmed-dir>
 | --- | --- |
 | 邮箱 | [torchbearer127@qq.com](mailto:torchbearer127@qq.com) |
 | GitHub | [@Torchbearer127](https://github.com/Torchbearer127) |
+| X | [@Torchbearer127](https://x.com/Torchbearer127) |
 | 小红书 | `1103633904` |
 
 ### 命名哲学：衔火照九阴
@@ -412,15 +437,16 @@ python3 scripts/validate_all_report_bundles.py --confirmed-dir <confirmed-dir>
 - [x] 已确认漏洞报告前，先在 Docker 或 Docker Compose 中复现。
 - [x] 已确认漏洞证据包，包含报告、复现说明、证据 JSON、日志/截图和运行脚本。
 - [x] 机器可读的线索判断记录，以及便于人机协同接续的交接摘要。
-- [x] 针对危险验证容器、Docker 残留和 OMC 多 Agent worker 进程的安全检查与只读复核边界。
+- [x] 针对危险验证容器、Docker 残留和 OMC 多 Agent 工作进程的安全检查与只读复核边界。
 - [x] 基于已确认漏洞提示同仓库里的同类漏洞线索，并要求每条线索独立完成 Docker 复现。
 - [x] 面向审核录屏的 replay 脚本会展示代码上下文、漏洞分析、实际危害边界和最终证据汇总。
+- [x] Codex 用户级 Skill 支持、安装目录自检、平台无关启动入口和仓库根目录 AGENTS.md 引导文件。
 
 后续计划：
 
 - [ ] 优化 Linux 和 WSL2 用户的安装说明与示例。
 - [ ] 增加更清晰的示例工作区和脱敏输出样例。
-- [ ] 补充更多本地 Agent 环境的兼容说明，例如 Codex 和 Cursor。
+- [ ] 补充 Cursor 等其他本地 Agent 环境的兼容说明。
 - [ ] 基于真实项目测试继续收紧报告一致性检查。
 
 ### 致谢
@@ -439,8 +465,9 @@ python3 scripts/validate_all_report_bundles.py --confirmed-dir <confirmed-dir>
 
 | 文档 | 面向读者 | 主要内容 |
 | --- | --- | --- |
-| [`docs/INSTALL.md`](docs/INSTALL.md) | 新用户 | 安装路径、本地 skill sync 和环境准备说明。 |
-| [`docs/USAGE.zh-CN.md`](docs/USAGE.zh-CN.md) | 运行者 | 启动 Prompt、试运行 Prompt、手动启动命令和 `asr_start.sh` 参数。 |
+| [`docs/INSTALL.md`](docs/INSTALL.md) | 新用户 | 安装路径、本地 Skill 同步和环境准备说明。 |
+| [`docs/USAGE.zh-CN.md`](docs/USAGE.zh-CN.md) | 运行者 | 启动提示词、试运行提示词、手动启动命令和 `zhulong_audit.sh` 参数。 |
+| [`docs/CODEX_SKILL_ADAPTATION.md`](docs/CODEX_SKILL_ADAPTATION.md) | 维护者 | 源码、Claude 安装目录和 Codex 安装目录的 Skill 布局契约。 |
 | [`docs/AGENTS.md`](docs/AGENTS.md) | AI 编程 Agent 与维护者 | 开发规则、不可破坏的工作流契约和安全补丁边界。 |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | 贡献者 | 贡献预期、测试纪律和范围控制。 |
 | [`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md) | 维护者 | 发布前打包、安全、文档和回归检查。 |
@@ -449,7 +476,7 @@ python3 scripts/validate_all_report_bundles.py --confirmed-dir <confirmed-dir>
 | [`CHANGELOG.md`](CHANGELOG.md) | 版本读者 | 版本历史和重要行为变化。 |
 | [`docs/WORKFLOW_DETAILS.zh-CN.md`](docs/WORKFLOW_DETAILS.zh-CN.md) | 运行者与人工审核员 | 人机协同、报告质量门禁、验证命令、示例审计发现形态和限制。 |
 | [`assets/references/docker-resource-hygiene.md`](assets/references/docker-resource-hygiene.md) | 运行者与维护者 | Docker 初始基线、精确清理、残留资源处置和禁止大范围 Docker prune 清理规则。 |
-| [`assets/references/omc-runtime-stability.md`](assets/references/omc-runtime-stability.md) | 多 Agent 用户 | OMC 运行状态、滞留的 Socket 和只供人工复核的多 Agent 工作进程处理。 |
+| [`assets/references/omc-runtime-stability.md`](assets/references/omc-runtime-stability.md) | 多 Agent 用户 | OMC 运行状态、滞留套接字和只供人工复核的多 Agent 工作进程处理。 |
 | [`assets/references/confirmed-vuln-docx-format.md`](assets/references/confirmed-vuln-docx-format.md) | 报告作者与维护者 | 已确认漏洞报告格式、DOCX 要求和附件说明。 |
 
 ---

@@ -8,6 +8,8 @@
 - Keep optional tools optional.
 - Prefer adding runtime detection over hardcoded assumptions.
 - Do not turn third-party MCP servers into mandatory dependencies.
+- Keep the plugin source tree as the source of truth; installed Claude and
+  Codex skill directories are generated runtime copies.
 - Do not reintroduce plugin-owned teammate PID signaling, broad process cleanup,
   or broad Docker prune.
 - Do not treat Zhulong as only a scanner. It is a security-focused code audit
@@ -20,13 +22,16 @@
 1. Keep the plugin self-contained.
 2. Avoid introducing machine-specific paths.
 3. Update the reference docs if workflow behavior changes.
-4. Run the plugin self-test:
+4. For Codex layout or sync changes, update
+   `docs/CODEX_SKILL_ADAPTATION.md` first and keep installed copies out of
+   source control.
+5. Run the plugin self-test:
 
 ```bash
 python3 scripts/selftest_plugin.py
 ```
 
-5. If the change affects installed skill content, sync and test the installed
+6. If the change affects installed skill content, sync and test the installed
    copy:
 
 ```bash
