@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.0
+
+- added tested Codex user-level skill support at `~/.agents/skills/zhulong/`
+- added Codex sync, installed selftest, and a platform-neutral `zhulong_audit.sh` launcher
+- added repo-root `AGENTS.md` guidance for Codex and other local agents while keeping installed skill behavior owned by `SKILL.md`
+- documented source, Claude installed, and Codex installed layout boundaries
+- updated English and Chinese README/usage/install docs for Claude Code and Codex installation paths
+- tightened portability checks to avoid machine-local paths and parent workspace names in plugin source and confirmed deliverables
+- dogfooded the Codex installed skill on a real repository with no confirmed-finding overclaim
+
 ## 0.3.0
 
 - added seeded variant discovery for same-repository follow-up candidates from validated confirmed bundles
