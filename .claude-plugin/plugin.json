@@ -1,6 +1,6 @@
 {
   "name": "zhulong",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "displayName": "Zhulong (烛龙)",
     "description": "Docker-first, agent-operable security-focused code audit workflow packaged for local discovery.",
     "publisher": "Torchbearer127",

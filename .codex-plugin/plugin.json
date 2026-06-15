@@ -1,6 +1,6 @@
 {
   "name": "zhulong",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Zhulong (烛龙): Docker-first security-focused code audit workflow with dynamic toolchain planning, confirmed-only vulnerability bundles, and final workspace validation.",
   "publisher": "Torchbearer127",
   "author": {

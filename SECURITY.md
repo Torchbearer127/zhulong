@@ -2,8 +2,8 @@
 
 ## Supported Versions
 
-Zhulong is currently a release-candidate project. Security fixes should target
-the latest public release candidate unless a maintainer states otherwise.
+Security fixes should target the latest public release unless a maintainer
+states otherwise.
 
 ## Responsible Use
 

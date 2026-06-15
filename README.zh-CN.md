@@ -11,8 +11,8 @@
 <em>That which illumines the nether gloom — the Torch Dragon.</em></p>
 
 <p>
-  <a href="#"><img alt="Version" src="https://img.shields.io/badge/version-0.2.0-blue.svg?style=flat-square" /></a>
-  <a href="#"><img alt="Status" src="https://img.shields.io/badge/status-release%20candidate-orange.svg?style=flat-square" /></a>
+  <a href="#"><img alt="Version" src="https://img.shields.io/badge/version-0.3.0-blue.svg?style=flat-square" /></a>
+  <a href="#"><img alt="Status" src="https://img.shields.io/badge/status-release-brightgreen.svg?style=flat-square" /></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-green.svg?style=flat-square" /></a>
   <a href="#快速开始"><img alt="Runtime" src="https://img.shields.io/badge/runtime-Local%20Agent-111111.svg?style=flat-square" /></a>
   <a href="#审计工作流"><img alt="Verification" src="https://img.shields.io/badge/verification-Docker--first-2496ED.svg?style=flat-square" /></a>

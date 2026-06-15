@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.0
+
+- added seeded variant discovery for same-repository follow-up candidates from validated confirmed bundles
+- added Variant Seed Card validation, offline seed extraction, candidate ranking, and candidate-only guardrails
+- added historical findings compatibility so older confirmed bundles can produce useful variant seeds without weakening confirmation gates
+- dogfooded the variant flow on real confirmed bundles while preserving Docker-first and confirmed-only semantics
+- hardened confirmed bundle replay helpers with reviewer-facing identity, code context, code-level analysis, realistic impact, and final evidence summary screens
+- required DOCX vulnerability analysis to include reviewer-usable key code context
+- added cross-artifact consistency gates for raw structured-object cleanup, direct-impact marker synchronization, replay log registration, mutable version identity, marker drift, and readiness alignment
+- updated workflow documentation for variant discovery and confirmed-bundle quality gates
+
 ## 0.2.0
 
 - added metadata-only Claude plugin package manifest at `.claude-plugin/plugin.json`
