@@ -191,6 +191,26 @@ def rewrite_docx_paragraphs(docx_path: Path, replacer) -> None:
     doc.save(docx_path)
 
 
+def write_live_replay_log(bundle: Path, *, marker: str = "DIRECT_IMPACT_CONFIRMED", extra: str = "") -> None:
+    replay_log = bundle / "attachments/evidence/replay-output.log"
+    replay_log.parent.mkdir(parents=True, exist_ok=True)
+    replay_log.write_text(
+        "Zhulong reviewer replay log\n"
+        "Generated at: 2026-06-16T00:00:00Z\n"
+        "COMMAND: docker compose -f attachments/poc/docker-compose.selftest.yml up --abort-on-container-exit\n"
+        "RAW OUTPUT: deterministic selftest replay completed\n"
+        f"{marker}\n"
+        f"{extra}".rstrip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def write_live_replay_logs(*bundles: Path, marker: str = "DIRECT_IMPACT_CONFIRMED", extra: str = "") -> None:
+    for bundle in bundles:
+        write_live_replay_log(bundle, marker=marker, extra=extra)
+
+
 
 
 def run_with_env(command: list[str], cwd: Path, env: dict[str, str]) -> None:
@@ -4563,6 +4583,7 @@ def main() -> None:
             raise SystemExit("FAILED: zh-CN confirmed bundle is missing verification-evidence.json")
         if not (en_bundle / "verification-evidence.json").exists():
             raise SystemExit("FAILED: en-US confirmed bundle is missing verification-evidence.json")
+        write_live_replay_logs(zh_bundle, en_bundle)
         run([
             sys.executable,
             str(plugin_root / "scripts/validate_report_bundle.py"),
@@ -4685,6 +4706,10 @@ def main() -> None:
         if standard_bundle is None:
             raise SystemExit("FAILED: standard vulnerability_name fixture did not render a finding-specific bundle name")
         standard_docx = next(standard_bundle.glob("*.docx"))
+        write_live_replay_log(standard_bundle)
+        nested_compose = standard_bundle / "attachments/poc/docker-compose.selftest.yml"
+        nested_compose.parent.mkdir(parents=True, exist_ok=True)
+        nested_compose.write_text("services:\n  app:\n    image: alpine:3.20\n", encoding="utf-8")
         if "硬编码" not in standard_docx.name or "安全漏洞" in standard_docx.name:
             raise SystemExit("FAILED: standard vulnerability_name fixture rendered a generic DOCX filename")
         run([
@@ -4700,6 +4725,12 @@ def main() -> None:
             raise SystemExit("FAILED: standard vulnerability_name fixture rendered a generic DOCX title")
         if "最终判定待补充" in "\n".join(standard_lines):
             raise SystemExit("FAILED: standard vulnerability_name fixture left final verdict placeholder text")
+        with zipfile.ZipFile(standard_docx) as archive:
+            standard_docx_xml = archive.read("word/document.xml").decode("utf-8", errors="ignore")
+        if "Courier New" not in standard_docx_xml or 'w:sz w:val="17"' not in standard_docx_xml:
+            raise SystemExit("FAILED: generated DOCX code context must use compact 8-9 pt monospace snippets")
+        if "IntenseQuote" in standard_docx_xml:
+            raise SystemExit("FAILED: generated DOCX code context must not use oversized quote/display code blocks")
         standard_text = "\n".join(standard_lines)
         for label in ("攻击者条件", "服务端条件", "安全影响"):
             if label not in standard_text:
@@ -4765,11 +4796,13 @@ def main() -> None:
         ):
             if expected not in standard_script_text:
                 raise SystemExit(f"FAILED: generated recording script is missing target identity marker: {expected}")
+        if "find \"$ATTACH_DIR\" -maxdepth 4 -type f" not in standard_script_text:
+            raise SystemExit("FAILED: generated recording script must discover Compose files under nested attachments/")
         standard_evidence = json.loads((standard_bundle / "verification-evidence.json").read_text(encoding="utf-8"))
         if "attachments/evidence/replay-output.log" not in standard_evidence.get("evidence_files", []):
             raise SystemExit("FAILED: generated verification evidence must register replay-output.log")
         if not (standard_bundle / "attachments/evidence/replay-output.log").exists():
-            raise SystemExit("FAILED: generated confirmed bundle must include replay-output.log placeholder")
+            raise SystemExit("FAILED: generated confirmed bundle must include replay-output.log")
 
         def copy_standard_bundle(suffix: str) -> Path:
             copied = standard_bundle.parent / f"{standard_bundle.name}_{suffix}"
@@ -4777,6 +4810,80 @@ def main() -> None:
                 shutil.rmtree(copied)
             shutil.copytree(standard_bundle, copied)
             return copied
+
+        bad_placeholder_replay_log = copy_standard_bundle("placeholder_replay_log")
+        (bad_placeholder_replay_log / "attachments/evidence/replay-output.log").write_text(
+            "Zhulong reviewer replay log placeholder.\n"
+            "Run the bundle-root replay script to refresh this file with live reviewer output.\n"
+            "Replay contract direct-impact marker: DIRECT_IMPACT_CONFIRMED\n",
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_placeholder_replay_log),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "placeholder-only")
+
+        bad_ssrf_hit_only = copy_standard_bundle("ssrf_hit_only")
+        ssrf_hit_supplement = next(bad_ssrf_hit_only.glob("*_补充复现说明.md"))
+        ssrf_hit_supplement.write_text(
+            ssrf_hit_supplement.read_text(encoding="utf-8")
+            + "\n\nSSRF 补充证据：监听器收到请求，METADATA HIT，request received；证据停留在 callback 命中。\n",
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_ssrf_hit_only),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "listener HIT/callback evidence alone")
+
+        good_ssrf_response_exposure = copy_standard_bundle("ssrf_response_exposure")
+        ssrf_good_supplement = next(good_ssrf_response_exposure.glob("*_补充复现说明.md"))
+        ssrf_good_supplement.write_text(
+            ssrf_good_supplement.read_text(encoding="utf-8")
+            + "\n\nSSRF 直接危害证据：内部 metadata response content 进入目标输出，"
+            "INTERNAL_RESPONSE_EXFILTRATED_CONFIRMED，并由 DIRECT_IMPACT_CONFIRMED replay 标记界定。\n",
+            encoding="utf-8",
+        )
+        write_live_replay_log(
+            good_ssrf_response_exposure,
+            extra="INTERNAL_RESPONSE_EXFILTRATED_CONFIRMED: internal response content exposed in target output\n",
+        )
+        run([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(good_ssrf_response_exposure),
+            "--language",
+            "zh-CN",
+        ], plugin_root)
+        shutil.rmtree(good_ssrf_response_exposure)
+
+        bad_root_relative_artifact = copy_standard_bundle("root_relative_attachment_artifact")
+        nested_bad_compose = bad_root_relative_artifact / "attachments/poc/docker-compose.root-path.yml"
+        nested_bad_compose.parent.mkdir(parents=True, exist_ok=True)
+        nested_bad_compose.write_text("services:\n  app:\n    image: alpine:3.20\n", encoding="utf-8")
+        bad_root_script = bad_root_relative_artifact / "run-selftest-jwt-recording.sh"
+        bad_root_script.write_text(
+            bad_root_script.read_text(encoding="utf-8")
+            + "\nprintf '%s\\n' 'docker compose -f docker-compose.root-path.yml up --abort-on-container-exit'\n"
+            + "run_logged_command 'docker compose -f docker-compose.root-path.yml up --abort-on-container-exit'\n",
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_root_relative_artifact),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "references root-relative Compose path")
 
         def mutate_bundle_finding(bundle: Path, mutator) -> None:
             findings_path = bundle / "findings.json"
@@ -4837,7 +4944,7 @@ def main() -> None:
         rewrite_docx_paragraphs(
             next(bad_unauth_title.glob("*.docx")),
             lambda text: (
-                "gothinkster/node-express-realworld-example-app Unauthenticated SSRF 硬编码 JWT 密钥导致身份认证绕过 严重漏洞报告"
+                "gothinkster/node-express-realworld-example-app Unauthenticated 硬编码 JWT 密钥导致身份认证绕过 严重漏洞报告"
                 if text.startswith("gothinkster/node-express-realworld-example-app")
                 else text
             ),
@@ -5489,6 +5596,59 @@ def main() -> None:
             "en-US",
         ], plugin_root, "placeholder-only code context")
 
+        bad_abbreviated_code_context = copy_standard_bundle("abbreviated_code_context")
+        replace_docx_section_with_one_line(
+            next(bad_abbreviated_code_context.glob("*.docx")),
+            "关键代码上下文",
+            code_context_stop_headings,
+            (
+                "1. src/app/routes/auth/auth.ts:18-26\n"
+                "const secret = process.env.JWT_SECRET || 'superSecret';\n"
+                "// ...\n"
+                "// ... omitted validation logic ...\n"
+                "app.use(jwt({ secret, algorithms: ['HS256'] }));\n"
+                "攻击者可控输入从 Authorization 头传播到认证 sink。缺失 guard 是启动阶段没有强制校验 JWT_SECRET；"
+                "相邻校验不足以阻断公开密钥签名。Docker 已验证影响边界为认证绕过。"
+            ),
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_abbreviated_code_context),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "too abbreviated")
+
+        bad_blue_code_context = copy_standard_bundle("blue_display_code_context")
+        from docx import Document
+        from docx.shared import Pt, RGBColor
+
+        blue_docx_path = next(bad_blue_code_context.glob("*.docx"))
+        blue_doc = Document(blue_docx_path)
+        in_code_context = False
+        for paragraph in blue_doc.paragraphs:
+            text = paragraph.text.strip()
+            if text == "关键代码上下文":
+                in_code_context = True
+                continue
+            if in_code_context and text in code_context_stop_headings:
+                break
+            if in_code_context and ("const secret" in text or "app.use(jwt" in text):
+                paragraph.style = "Intense Quote"
+                for docx_run in paragraph.runs:
+                    docx_run.font.size = Pt(14)
+                    docx_run.font.color.rgb = RGBColor(0, 0, 255)
+        blue_doc.save(blue_docx_path)
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_blue_code_context),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "small readable code font")
+
         bad_placeholder_real_world = copy_standard_bundle("placeholder_real_world_exploitability")
         rewrite_docx_paragraphs(
             next(bad_placeholder_real_world.glob("*.docx")),
@@ -5976,8 +6136,10 @@ def main() -> None:
         bad_replay_log_marker_missing = copy_standard_bundle("replay_log_marker_missing")
         replay_log_path = bad_replay_log_marker_missing / "attachments/evidence/replay-output.log"
         replay_log_path.write_text(
-            "Zhulong reviewer replay log placeholder.\n"
-            "This fixture intentionally omits the deterministic direct marker.\n",
+            "Zhulong reviewer replay log\n"
+            "Generated at: 2026-06-16T00:00:00Z\n"
+            "COMMAND: docker compose -f attachments/poc/docker-compose.selftest.yml up --abort-on-container-exit\n"
+            "RAW OUTPUT: deterministic selftest replay completed without the direct-impact token\n",
             encoding="utf-8",
         )
         run_expect_fail([
@@ -6560,11 +6722,16 @@ def main() -> None:
             bad_missing_impact,
             bad_placeholder_attacker,
             bad_weak_impact,
+            bad_placeholder_replay_log,
+            bad_ssrf_hit_only,
+            bad_root_relative_artifact,
             bad_missing_real_world,
             bad_missing_code_context,
             bad_prose_code_context,
             bad_placeholder_code_context,
             bad_en_placeholder_code_context,
+            bad_abbreviated_code_context,
+            bad_blue_code_context,
             bad_placeholder_real_world,
             bad_strong_boundary,
             good_strong_boundary,
@@ -6640,6 +6807,20 @@ def main() -> None:
             "Root cause: URL import lacks complete private-network deny-list validation.",
             "Why existing checks fail: the current deny list is incomplete for common internal ranges.",
         ]
+        legacy_marker_data["security_impact"] = (
+            "Docker replay confirms SSRF internal response content is exposed in target output; "
+            "INTERNAL_RESPONSE_EXFILTRATED_CONFIRMED bounds the direct impact."
+        )
+        legacy_marker_data["real_world_exploitability"] = [
+            "实际使用场景：导入 URL 服务处理用户提交的远程地址，服务端默认可访问内部 metadata service。",
+            "攻击者路径：认证攻击者控制导入 URL，使服务端请求内部服务。",
+            "触发调用链：用户 URL 进入 importOne() 后到达 axios.get() 请求 sink。",
+            "直接危害证明：内部响应内容进入目标输出，INTERNAL_RESPONSE_EXFILTRATED_CONFIRMED 和 DIRECT_IMPACT_CONFIRMED 标记证明有界直接危害。",
+            "影响边界：仅声称 Docker PoC 证明的内部响应外显，不声称未验证的更强主机影响。",
+        ]
+        legacy_marker_data["reproduction"][0]["results"].append(
+            "结果证据：INTERNAL_RESPONSE_EXFILTRATED_CONFIRMED 显示内部响应内容进入目标输出。"
+        )
         legacy_marker_fixture.write_text(json.dumps(legacy_marker_data, ensure_ascii=False, indent=2), encoding="utf-8")
         run([
             sys.executable,
@@ -6660,6 +6841,10 @@ def main() -> None:
         )
         if legacy_marker_bundle is None:
             raise SystemExit("FAILED: legacy marker fixture did not render a confirmed bundle")
+        write_live_replay_log(
+            legacy_marker_bundle,
+            extra="INTERNAL_RESPONSE_EXFILTRATED_CONFIRMED: internal response content exposed in target output\n",
+        )
         run([
             sys.executable,
             str(plugin_root / "scripts/validate_report_bundle.py"),

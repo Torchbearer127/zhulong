@@ -137,6 +137,15 @@ checks are insufficient or out of scope, and the verified impact boundary. If
 line numbers are genuinely unavailable, say so explicitly and provide enough
 location detail for a reviewer to find the code.
 
+The `关键代码上下文` / `Key Code Context` section must be reviewer-readable code,
+not a prose summary. Include compact snippets that cover the attacker-controlled
+entry, important branch/condition, dangerous sink, and adjacent missing guard or
+failed validation. Split long context into multiple small snippets when needed,
+but do not hide the relevant logic behind repeated `// ...`, `...`, `省略`,
+`omitted`, or similar abbreviation placeholders. Generated DOCX snippets should
+use compact monospace formatting, about 8-9 pt, with tight spacing rather than
+oversized blue quote/display blocks.
+
 Add a dedicated real-world exploitability section in the report body, using a
 heading such as `实际场景中的危害与利用方式` or `Real-World
 Exploitability`. This section may be short, but it must concretely state:
@@ -225,12 +234,14 @@ Final bundles must not contain runtime state or source-control/cache directories
 
 For confirmed vulnerabilities, include one bundle-root reproduction helper script such as `run-<slug>-recording.sh` or `run-<slug>-repro.sh`.
 The helper must be executable, pass a static shell syntax check, and use only Docker/Docker Compose reproduction paths.
-It must derive `SCRIPT_DIR` and `ATTACH_DIR="$SCRIPT_DIR/attachments"` from the script location, then either start the reproduction environment from bundle-local attachments or fail early with a clear command such as `docker compose -f "$ATTACH_DIR/docker-compose.zhulong.yml" up -d`.
+It must derive `SCRIPT_DIR`, `BUNDLE_ROOT`, `ATTACH_DIR`, and any PoC/Compose/Dockerfile paths from the script location, then either start the reproduction environment from bundle-local attachments or fail early with a clear bundle-local command such as `docker compose -f "$ATTACH_DIR/poc/docker-compose.zhulong.yml" up -d`.
+If Dockerfile, Compose, PoC, or helper files are bundled under nested attachment directories such as `attachments/poc/`, the root helper must run correctly from the bundle root without requiring a manual `cd`; Compose discovery should search bundle-local attachment subdirectories and Docker/Compose examples should use bundle-local paths or execute from the owning attachment directory.
 The helper must be standalone-copy friendly: Docker mounts, file reads, PoC commands, and evidence paths stay under the delivered bundle after the folder is copied to a clean temporary directory.
 At the beginning of replay, before proof steps, the helper must print a highlighted target identity card containing the target software/package name and the tested or affected version.
 The helper is a reviewer-facing recording artifact: before proof commands it must show target identity, code context, code-level vulnerability analysis, and real-world exploitability / verified impact-boundary screens; it must print concrete commands before execution, keep overrideable pauses, and end with a concise evidence summary/conclusion block.
 The code-context screen should use bundled finding data such as `code_context` and must not depend on a parent repository checkout to show source snippets.
 The helper must capture raw command stdout/stderr to at least one bundle-local `.log` file under `attachments/evidence/`, and that `.log` must be listed in `verification-evidence.json` or `attachments/reviewer-evidence-index.json`.
+`attachments/evidence/replay-output.log` is valid only after a real reviewer replay or quick replay refreshes it. Placeholder text such as `Zhulong reviewer replay log placeholder`, `Run the bundle-root replay script to refresh this file`, generic `placeholder`, `待补充`, or `占位` is invalid for confirmed bundles even if the placeholder mentions a direct-impact marker.
 Bundle-root helpers must be helper-closed: helper-like calls such as `run_*`, `verify_*`, `assert_*`, `show_*`, `print_*`, or `require_*` must be defined in the same script unless they are normal shell/system commands.
 If the helper includes reviewer pauses, it must honor `REVIEWER_PAUSE_SHORT` and `REVIEWER_PAUSE_LONG`; reviewer automation should be able to run `REVIEWER_PAUSE_SHORT=0 REVIEWER_PAUSE_LONG=0 ./run-*.sh quick docker` without fixed sleeps.
 The helper must not recursively invoke itself from the proof path; call the underlying Docker/Docker Compose proof command directly.
@@ -241,6 +252,17 @@ Avoid naked `2>/dev/null` on critical Docker, curl, or token-generation commands
 Do not rely on pre-existing database state such as `ApiToken.objects.first()` unless the helper explicitly creates or validates that state.
 Every final confirmation banner must be guarded by a programmatic, fail-closed success-marker check: `grep -q`, `grep -Fq`, `jq -e`, HTTP status checks, JSON field checks, or equivalent assertions must `exit 1` on failure before printing `VULNERABILITY CONFIRMED`, `ATTACK SUCCESS`, `漏洞已确认`, or `攻击成功`.
 Docker Compose files shipped under `attachments/` must be self-consistent: relative `env_file` entries and relative bind-mount sources must exist relative to the Compose file, named volumes are allowed, and absolute host paths are not allowed in final bundles.
+
+For SSRF confirmed bundles, a listener HIT or callback is not enough. The report,
+supplement, evidence JSON, replay script, and replay log must show a direct
+impact loop: internal-only service scope, attacker-controlled input reaching the
+request/fetch sink without the missing guard, and internal response content,
+sensitive internal state, or a clearly bounded direct-impact result becoming
+visible in target output, logs, returned data, files, pages, or another
+reviewer-observable location. Include `DIRECT_IMPACT_CONFIRMED` or an equivalent
+direct-impact marker plus a response-exposure or bounded-impact marker; do not
+ship SSRF bundles that only prove `HIT`, `METADATA HIT`, `request received`, or
+listener callback traffic.
 
 ## Verification Evidence JSON
 

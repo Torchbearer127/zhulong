@@ -7,11 +7,13 @@ import re
 import shutil
 import sys
 import zipfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Iterable
 
 try:
     from docx import Document
+    from docx.oxml.ns import qn
+    from docx.shared import Pt
 except ModuleNotFoundError as exc:
     raise SystemExit(
         "python-docx is required. Install it with `python3 -m pip install python-docx` and rerun."
@@ -578,6 +580,17 @@ def add_labeled_block(doc: Document, label: str, lines: list[str], style: str = 
         doc.add_paragraph(line, style=style)
 
 
+def add_compact_code_paragraph(doc: Document, text: str) -> None:
+    paragraph = doc.add_paragraph()
+    paragraph.paragraph_format.space_before = Pt(0)
+    paragraph.paragraph_format.space_after = Pt(0)
+    paragraph.paragraph_format.line_spacing = 1.0
+    run = paragraph.add_run(text)
+    run.font.name = "Courier New"
+    run.font.size = Pt(8.5)
+    run._element.rPr.rFonts.set(qn("w:eastAsia"), "Courier New")
+
+
 def resolve_project_root(output_dir: Path, finding: dict[str, Any]) -> Path:
     explicit = str(finding.get("project_root_dir", "")).strip() or str(finding.get("project_root", "")).strip()
     if explicit:
@@ -665,13 +678,20 @@ def collect_bundle_metadata(finding: dict[str, Any], project_root: Path, bundle_
     source_to_bundle: dict[str, str] = {}
 
     def choose_target(rel: str, source_path: Path) -> str:
-        base = Path(rel).name or source_path.name or "attachment"
-        stem = Path(base).stem or "attachment"
-        suffix = Path(base).suffix
-        candidate = f"attachments/{base}"
+        normalized_rel = Path(rel).as_posix().lstrip("./")
+        parts = PurePosixPath(normalized_rel).parts
+        preserve_under = {"poc", "docker", "evidence", "fixture", "fixtures", "functions", "vendor"}
+        if len(parts) > 1 and parts[0] in preserve_under:
+            candidate = f"attachments/{normalized_rel}"
+        else:
+            base = Path(rel).name or source_path.name or "attachment"
+            candidate = f"attachments/{base}"
+        stem = Path(candidate).stem or "attachment"
+        suffix = Path(candidate).suffix
+        parent = Path(candidate).parent.as_posix()
         counter = 2
         while candidate in seen_targets:
-            candidate = f"attachments/{stem}-{counter}{suffix}"
+            candidate = f"{parent}/{stem}-{counter}{suffix}"
             counter += 1
         return candidate
 
@@ -1345,7 +1365,7 @@ def build_generated_recording_shell(
         "",
         "first_bundle_compose_file() {",
         "    if [ -d \"$ATTACH_DIR\" ]; then",
-        "        find \"$ATTACH_DIR\" -maxdepth 1 \\( -name 'docker-compose*.yml' -o -name 'docker-compose*.yaml' -o -name 'compose*.yml' -o -name 'compose*.yaml' \\) -print -quit",
+        "        find \"$ATTACH_DIR\" -maxdepth 4 -type f \\( -name 'docker-compose*.yml' -o -name 'docker-compose*.yaml' -o -name 'compose*.yml' -o -name 'compose*.yaml' \\) -print -quit",
         "    fi",
         "}",
         "",
@@ -1849,7 +1869,7 @@ def render_code_context(doc: Document, finding: dict[str, Any], language: str) -
             doc.add_paragraph(summary)
         if snippet:
             for line in snippet.splitlines():
-                doc.add_paragraph(line, style="Intense Quote")
+                add_compact_code_paragraph(doc, line)
         if explanation:
             doc.add_paragraph(explanation)
 

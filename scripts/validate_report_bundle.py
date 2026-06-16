@@ -6,6 +6,7 @@ import json
 import math
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -379,6 +380,25 @@ CODE_CONTEXT_PLACEHOLDER_PATTERNS = [
         r"占位",
     )
 ]
+CODE_CONTEXT_ABBREVIATION_PATTERNS = [
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"^\s*(?://|#|--|/\*)?\s*(?:\.\.\.|…)\s*(?:\*/)?\s*$",
+        r"^\s*(?://|#|--)\s*(?:omitted|省略|略|snip|truncated)\b",
+        r"\b(?:omitted|truncated for brevity|省略|略去|此处省略)\b",
+    )
+]
+MONOSPACE_FONT_NAMES = {
+    "courier",
+    "courier new",
+    "consolas",
+    "menlo",
+    "monaco",
+    "dejavu sans mono",
+    "liberation mono",
+    "source code pro",
+    "fira code",
+}
 CODE_CONTEXT_EXPLANATION_MARKERS = {
     "zh-CN": {
         "input/source": ("攻击者", "可控", "不可信", "输入", "请求", "参数", "入口", "前提"),
@@ -791,6 +811,65 @@ STABLE_RUNTIME_IDENTITY_ANCHOR_PATTERN = re.compile(
 )
 DIRECT_IMPACT_MARKER_TOKEN_PATTERN = re.compile(
     r"\bDIRECT_(?:[A-Z0-9_]+_)?IMPACT_CONFIRMED\b|\bDIRECT_AVAILABILITY_IMPACT_CONFIRMED\b"
+)
+SSRF_HINT_PATTERN = re.compile(
+    r"\bSSRF\b|server[- ]side request forgery|服务端请求伪造|内网请求|metadata service|169\.254\.169\.254",
+    re.IGNORECASE,
+)
+SSRF_HIT_ONLY_PATTERN = re.compile(
+    r"\b(?:HIT|METADATA HIT|request received|callback received|SSRF callback|listener callback)\b|"
+    r"收到请求|收到回调|请求命中|回调命中|监听器收到",
+    re.IGNORECASE,
+)
+SSRF_RESPONSE_EXPOSURE_PATTERN = re.compile(
+    r"\b(?:INTERNAL_RESPONSE_[A-Z0-9_]*CONFIRMED|RESPONSE_[A-Z0-9_]*EXFILTRATED|"
+    r"INTERNAL_[A-Z0-9_]*(?:EXFILTRATED|EXPOSED|DISCLOSED|LEAKED)_CONFIRMED|"
+    r"(?:internal|metadata|service)\s+(?:response|body|content|state|secret|data).{0,80}"
+    r"(?:exfiltrat|expos|disclos|leak|returned|logged|written|output)|"
+    r"(?:internal|metadata|service|secret|credential)\s+(?:response|body|content|state|secret|data).{0,80}"
+    r"(?:visible|observable|in target output|in log|returned to caller)|"
+    r"SecretAccessKey|AccessKeyId|credential|bounded direct impact|bounded impact)\b|"
+    r"内部(?:响应|服务|状态|数据|凭证|密钥)|"
+    r"响应内容.{0,40}(?:外显|泄露|进入目标输出|写入日志|返回)|"
+    r"(?:敏感|内部).{0,30}(?:外显|泄露|进入目标输出|写入日志|返回)|"
+    r"有界直接危害",
+    re.IGNORECASE,
+)
+REPLAY_LOG_PLACEHOLDER_PATTERNS = [
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"Zhulong reviewer replay log placeholder",
+        r"Run the bundle-root replay script to refresh this file",
+        r"\bplaceholder\b",
+        r"待补充",
+        r"占位",
+    )
+]
+ROOT_ARTIFACT_REFERENCE_PATTERNS = [
+    re.compile(r"\bdocker\s+build\b[^\n;&|]*?(?:-f|--file)\s+(?P<path>[^\s'\";&|]+)", re.IGNORECASE),
+    re.compile(r"\bdocker\s+compose\b[^\n;&|]*?-f\s+(?P<path>[^\s'\";&|]+)", re.IGNORECASE),
+    re.compile(
+        r"\b(?:python3?|node|bash|sh|php|ruby)\s+(?P<path>\./)?(?P<file>[A-Za-z0-9_.-]+\.(?:py|js|mjs|cjs|sh|bash|php|rb))\b",
+        re.IGNORECASE,
+    ),
+    re.compile(r"(?<![A-Za-z0-9_/.-])(?P<path>\./[A-Za-z0-9_.-]+\.(?:sh|bash|py|js|mjs|cjs|php|rb))\b", re.IGNORECASE),
+]
+STRUCTURED_NARRATIVE_FIELDS = (
+    "root_cause",
+    "root_cause_zh",
+    "root_cause_en",
+    "missing_guard",
+    "missing_guard_zh",
+    "missing_guard_en",
+    "missing_constraint",
+    "missing_constraint_zh",
+    "missing_constraint_en",
+    "dangerous_sink",
+    "sink",
+    "call_chain",
+    "propagation_path",
+    "impact_boundary",
+    "direct_impact_marker",
 )
 SHELL_ASSIGNMENT_PATTERN_TEMPLATE = r"^\s*{name}=(?:'([^']*)'|\"([^\"]*)\"|([^#\s]+))"
 URL_HOST_PATTERN = re.compile(r"https?://([^/\s'\"`$)]+)", re.IGNORECASE)
@@ -1445,9 +1524,13 @@ def validate_code_context_section(lines: list[str], language: str) -> None:
     if not section:
         fail(f"report {heading} section is missing or empty; include source path, line metadata, snippet, and code-level explanation")
 
+    abbreviated_lines = 0
     for raw_line in section.splitlines():
-        if any(pattern.search(raw_line.strip()) for pattern in CODE_CONTEXT_PLACEHOLDER_PATTERNS):
+        stripped = raw_line.strip()
+        if any(pattern.search(stripped) for pattern in CODE_CONTEXT_PLACEHOLDER_PATTERNS):
             fail(f"report {heading} section contains placeholder-only code context; replace it with real source snippets")
+        if any(pattern.search(stripped) for pattern in CODE_CONTEXT_ABBREVIATION_PATTERNS):
+            abbreviated_lines += 1
 
     paths = SOURCE_PATH_PATTERN.findall(section)
     if not paths:
@@ -1463,6 +1546,11 @@ def validate_code_context_section(lines: list[str], language: str) -> None:
     code_lines = [line for line in section.splitlines() if is_code_like_line(line)]
     if not code_lines:
         fail(f"report {heading} section must include actual code-like snippet lines, not only prose")
+    if abbreviated_lines >= 2 or abbreviated_lines >= max(1, len(code_lines) // 2):
+        fail(
+            f"report {heading} section is too abbreviated; include compact complete snippets instead of repeated // ... "
+            "or omitted-logic placeholders"
+        )
 
     missing = missing_code_context_explanation_kinds(section, language)
     if missing:
@@ -1470,6 +1558,109 @@ def validate_code_context_section(lines: list[str], language: str) -> None:
             f"report {heading} section is missing code-level explanation for: "
             + ", ".join(missing)
         )
+
+
+def paragraph_text(paragraph: object) -> str:
+    return str(getattr(paragraph, "text", "") or "").strip()
+
+
+def code_context_paragraphs(docx_path: Path, language: str) -> list[object]:
+    doc = Document(docx_path)
+    heading, stop_headings = code_context_headings(language)
+    paragraphs: list[object] = []
+    in_section = False
+    for paragraph in doc.paragraphs:
+        text = paragraph_text(paragraph)
+        if not in_section:
+            if text == heading:
+                in_section = True
+            continue
+        if text in stop_headings:
+            break
+        if text:
+            paragraphs.append(paragraph)
+    return paragraphs
+
+
+def run_font_names(paragraph: object) -> set[str]:
+    names: set[str] = set()
+    for run in getattr(paragraph, "runs", []):
+        if not str(getattr(run, "text", "") or "").strip():
+            continue
+        font_name = str(getattr(getattr(run, "font", None), "name", "") or "").strip().lower()
+        if font_name:
+            names.add(font_name)
+    return names
+
+
+def paragraph_uses_monospace(paragraph: object) -> bool:
+    style_name = str(getattr(getattr(paragraph, "style", None), "name", "") or "").strip().lower()
+    if "code" in style_name or "mono" in style_name:
+        return True
+    return any(name in MONOSPACE_FONT_NAMES for name in run_font_names(paragraph))
+
+
+def paragraph_max_font_size_pt(paragraph: object) -> float:
+    max_size = 0.0
+    for run in getattr(paragraph, "runs", []):
+        if not str(getattr(run, "text", "") or "").strip():
+            continue
+        size = getattr(getattr(run, "font", None), "size", None)
+        if size is not None:
+            max_size = max(max_size, float(size.pt))
+    return max_size
+
+
+def paragraph_has_blue_code_display(paragraph: object) -> bool:
+    style_name = str(getattr(getattr(paragraph, "style", None), "name", "") or "").strip().lower()
+    if "intense quote" in style_name:
+        return True
+    for run in getattr(paragraph, "runs", []):
+        if not str(getattr(run, "text", "") or "").strip():
+            continue
+        color = getattr(getattr(getattr(run, "font", None), "color", None), "rgb", None)
+        if color is None:
+            continue
+        rgb = str(color).lower()
+        if rgb in {"0000ff", "0070c0", "0563c1", "1f4e79", "2f5597"}:
+            return True
+    return False
+
+
+def validate_docx_code_context_style(docx_path: Path, language: str) -> None:
+    code_paragraphs = [
+        paragraph for paragraph in code_context_paragraphs(docx_path, language)
+        if is_standalone_code_paragraph(paragraph_text(paragraph))
+    ]
+    if not code_paragraphs:
+        return
+    monospace_count = sum(1 for paragraph in code_paragraphs if paragraph_uses_monospace(paragraph))
+    if monospace_count < len(code_paragraphs):
+        fail(
+            "report code-context snippets must use compact monospace formatting; "
+            "avoid prose-only or default-body styled code paragraphs"
+        )
+    oversized = [
+        paragraph_text(paragraph)
+        for paragraph in code_paragraphs
+        if paragraph_max_font_size_pt(paragraph) > 10.0
+    ]
+    if oversized:
+        fail("report code-context snippets must use small readable code font around 8-9 pt, not oversized display text")
+    if any(paragraph_has_blue_code_display(paragraph) for paragraph in code_paragraphs):
+        fail("report code-context snippets must not use oversized blue display/quote blocks")
+
+
+def is_standalone_code_paragraph(line: str) -> bool:
+    stripped = line.strip()
+    if not is_code_like_line(stripped):
+        return False
+    if CODE_LIKE_KEYWORD_PATTERN.search(stripped):
+        return True
+    if re.search(r"=>|==|!=|<=|>=|\|\||&&|[{};=]", stripped):
+        return True
+    words = re.findall(r"[A-Za-z_][A-Za-z0-9_]*", stripped)
+    return len(words) <= 8 and not stripped.endswith((".", "。"))
 
 
 def line_looks_like_raw_structured_object(line: str) -> bool:
@@ -1893,6 +2084,23 @@ def validate_direct_impact_evidence(material_text: str, exploitability_text: str
         "missing direct-impact replay evidence; add a deterministic DIRECT_IMPACT_CONFIRMED-style marker "
         f"or an equivalent programmatic oracle that proves {display}"
     )
+
+
+def validate_ssrf_direct_impact_evidence(reviewer_story_text: str) -> None:
+    if not SSRF_HINT_PATTERN.search(reviewer_story_text):
+        return
+    has_direct_marker = bool(DIRECT_IMPACT_MARKER_TOKEN_PATTERN.search(reviewer_story_text))
+    has_response_exposure = any(
+        not has_nonclaim_context(reviewer_story_text, match.start(), match.end())
+        for match in SSRF_RESPONSE_EXPOSURE_PATTERN.finditer(reviewer_story_text)
+    )
+    if has_direct_marker and has_response_exposure:
+        return
+    if SSRF_HIT_ONLY_PATTERN.search(reviewer_story_text) or not has_response_exposure:
+        fail(
+            "SSRF confirmed bundles must prove response exposure or a clearly bounded direct-impact loop; "
+            "listener HIT/callback evidence alone is not sufficient"
+        )
 
 
 def validate_poc_attacker_capability_boundary(material_text: str, exploitability_text: str, language: str) -> None:
@@ -3187,6 +3395,25 @@ def validate_bundle_relative_file(value: object, bundle_dir: Path, label: str) -
     return path.as_posix()
 
 
+def replay_log_is_placeholder(text: str) -> bool:
+    stripped = text.strip()
+    if not stripped:
+        return True
+    return any(pattern.search(stripped) for pattern in REPLAY_LOG_PLACEHOLDER_PATTERNS)
+
+
+def validate_registered_replay_log_content(bundle_dir: Path, rel: str) -> None:
+    path = bundle_dir / rel
+    if path.suffix.lower() != ".log":
+        return
+    text = path.read_text(encoding="utf-8", errors="ignore")
+    if replay_log_is_placeholder(text):
+        fail(
+            f"registered replay log {rel} is placeholder-only; run the bundle-root replay script "
+            "and replace it with live reviewer output before bundle validation"
+        )
+
+
 def validate_verification_evidence(bundle_dir: Path, finding: dict[str, object] | None = None) -> dict[str, object]:
     evidence_path = bundle_dir / "verification-evidence.json"
     if not evidence_path.exists():
@@ -3253,6 +3480,7 @@ def validate_verification_evidence(bundle_dir: Path, finding: dict[str, object] 
         if rel in seen:
             fail(f"verification-evidence.json evidence_files contains duplicate path: {rel}")
         seen.add(rel)
+        validate_registered_replay_log_content(bundle_dir, rel)
     return evidence
 
 
@@ -3762,6 +3990,77 @@ def validate_root_script_bundle_contract(script_path: Path, bundle_dir: Path, te
             f"{rel} defines a parent/source workspace root. Reviewer replay helpers must stay inside "
             "the delivered bundle root."
         )
+    validate_root_script_static_artifact_paths(script_path, bundle_dir, text)
+
+
+def strip_shell_wrapping(value: str) -> str:
+    text = str(value or "").strip().strip("'\"")
+    if text.startswith("./"):
+        text = text[2:]
+    return text
+
+
+def path_uses_bundle_variable(value: str) -> bool:
+    return "$" in value or value.startswith(("attachments/", "./attachments/"))
+
+
+def attachment_artifact_candidates(bundle_dir: Path, name: str) -> list[Path]:
+    attachments_dir = bundle_dir / "attachments"
+    if not attachments_dir.exists():
+        return []
+    return sorted(path for path in attachments_dir.rglob(name) if path.is_file())
+
+
+def validate_static_artifact_reference(script_path: Path, bundle_dir: Path, raw_path: str, label: str) -> None:
+    token = strip_shell_wrapping(raw_path)
+    if not token or path_uses_bundle_variable(token):
+        return
+    if token.startswith(("/", "~")) or re.match(r"^[A-Za-z]:[\\/]", token):
+        return
+    path = PurePosixPath(token)
+    if ".." in path.parts:
+        return
+    if (bundle_dir / token).exists():
+        return
+    candidates = attachment_artifact_candidates(bundle_dir, path.name)
+    if candidates:
+        rel = script_path.relative_to(bundle_dir).as_posix()
+        locations = ", ".join(candidate.relative_to(bundle_dir).as_posix() for candidate in candidates[:3])
+        fail(
+            f"{rel} references root-relative {label} path {token!r}, but the bundled artifact lives under "
+            f"attachments/ ({locations}). Use ATTACH_DIR/BUNDLE_ROOT or run in the owning attachment directory."
+        )
+
+
+def static_artifact_paths_from_shell_line(line: str) -> list[tuple[str, str]]:
+    paths: list[tuple[str, str]] = []
+    expanded_lines = [line]
+    try:
+        tokens = shlex.split(line, comments=False, posix=True)
+    except ValueError:
+        tokens = []
+    for token in tokens:
+        if re.search(r"\b(?:docker|python3?|node|bash|sh|php|ruby)\b", token):
+            expanded_lines.append(token)
+    for pattern in ROOT_ARTIFACT_REFERENCE_PATTERNS:
+        for haystack in expanded_lines:
+            for match in pattern.finditer(haystack):
+                if "file" in match.groupdict() and match.group("file"):
+                    paths.append(("PoC/helper", match.group("file")))
+                else:
+                    raw = match.groupdict().get("path", "")
+                    if raw:
+                        label = "Compose" if "compose" in pattern.pattern else "Dockerfile"
+                        paths.append((label, raw))
+    return paths
+
+
+def validate_root_script_static_artifact_paths(script_path: Path, bundle_dir: Path, text: str) -> None:
+    for line in logical_shell_lines(text):
+        if not ("docker" in line or "compose" in line or "python" in line or "node" in line or "bash" in line or "sh" in line):
+            continue
+        for label, raw_path in static_artifact_paths_from_shell_line(line):
+            validate_static_artifact_reference(script_path, bundle_dir, raw_path, label)
 
 
 def validate_root_script_target_identity(script_path: Path, bundle_dir: Path, text: str) -> None:
@@ -4683,6 +4982,47 @@ def validate_structured_material_consistency(
             )
 
 
+def collect_exact_narrative_values(finding: dict[str, object] | None, evidence: dict[str, object]) -> dict[str, str]:
+    values: dict[str, str] = {}
+    containers: list[object] = [finding or {}, evidence]
+    if isinstance(finding, dict):
+        containers.extend(
+            item for item in (
+                finding.get("impact"),
+                finding.get("verification_evidence"),
+                finding.get("root_cause_details"),
+            )
+            if isinstance(item, dict)
+        )
+    for container in containers:
+        if not isinstance(container, dict):
+            continue
+        for field in STRUCTURED_NARRATIVE_FIELDS:
+            value = container.get(field)
+            if not isinstance(value, str):
+                continue
+            text = value.strip()
+            if 8 <= len(text) <= 220:
+                values.setdefault(field, text)
+    direct_marker = str(evidence.get("direct_impact_marker") or "").strip()
+    if direct_marker:
+        values["direct_impact_marker"] = direct_marker
+    return values
+
+
+def validate_exact_narrative_synchronization(
+    finding: dict[str, object] | None,
+    evidence: dict[str, object],
+    reviewer_story_text: str,
+) -> None:
+    values = collect_exact_narrative_values(finding, evidence)
+    for field, value in values.items():
+        if value not in reviewer_story_text:
+            fail(
+                f"structured narrative field {field} is not synchronized into reviewer-facing artifacts: {value}"
+            )
+
+
 def validate_success_evidence(text: str, language: str, *, label: str = "report") -> None:
     if language == "zh-CN":
         required_anchors = ["结果证据："] if label == "report" else ["结果证据：", "关键成功证据"]
@@ -4873,6 +5213,7 @@ def main() -> None:
     exploitability_text = validate_real_world_exploitability(lines, supplement_text, language)
     validate_report_depth(lines, language)
     validate_code_context_section(lines, language)
+    validate_docx_code_context_style(docx_path, language)
     validate_bundle_identity(bundle_dir, lines, workspace_dir)
     findings_path = resolve_findings_path(bundle_dir)
     project_name = ""
@@ -5003,6 +5344,7 @@ def main() -> None:
         exploitability_text,
         language,
     )
+    validate_ssrf_direct_impact_evidence(reviewer_story_text)
     validate_claim_oracle_consistency(reviewer_story_text)
     validate_marker_synchronization(
         bundle_dir,
@@ -5048,6 +5390,11 @@ def main() -> None:
         combined_text,
         supplement_text,
         root_scripts,
+    )
+    validate_exact_narrative_synchronization(
+        selected_finding,
+        verification_evidence,
+        reviewer_story_text,
     )
     warn_attachment_hygiene(bundle_dir, [combined_text, note_text, supplement_text], verification_evidence)
 
