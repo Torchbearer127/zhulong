@@ -1,0 +1,54 @@
+{
+  "attacker_model": {
+    "attacker_controls": [
+      "plugin file"
+    ],
+    "environment_assumptions": [
+      "native runtime requires manual setup outside the R1 automatic verifier"
+    ],
+    "required_auth": "local_operator"
+  },
+  "bug_class": "unsafe native plugin loading",
+  "candidate_id": "CAND-CONTRACT-BLOCKED",
+  "claim": {
+    "impact": "native plugin loading could affect process integrity if reproduced",
+    "missing_constraint": "plugin origin is not constrained before load",
+    "sink": "native plugin loader",
+    "source": "operator-provided plugin file"
+  },
+  "entrypoint": {
+    "id": "native-plugin",
+    "kind": "native-extension",
+    "route": "plugin load"
+  },
+  "evidence": {
+    "dynamic_evidence": [],
+    "static_locations": [
+      {
+        "end_line": 132,
+        "path": "cmd/plugin_loader.go",
+        "reason": "The loader accepts a plugin path before origin checks.",
+        "start_line": 120
+      }
+    ]
+  },
+  "finder": {
+    "created_at": "2026-06-18T00:00:00Z",
+    "source": "fixture"
+  },
+  "poc": {
+    "expected_oracle": {
+      "description": "Automatic verifier cannot run this manual runtime in R1.",
+      "type": "manual_blocked"
+    },
+    "kind": "manual-not-executable-fixture",
+    "path": "candidates/CAND-CONTRACT-BLOCKED/poc/manual-notes.md"
+  },
+  "schema_version": 1,
+  "status": "candidate",
+  "target_ref": {
+    "target_config": "zhulong-target.yaml",
+    "tested_ref": "fixture-blocked-ref"
+  },
+  "title": "Manual runtime native plugin claim"
+}

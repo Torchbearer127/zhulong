@@ -1,0 +1,17 @@
+{
+  "candidate_path": "candidates/CAND-CONTRACT-BLOCKED/candidate.json",
+  "claim": {
+    "impact": "native plugin loading could affect process integrity if reproduced",
+    "missing_constraint": "plugin origin is not constrained before load",
+    "sink": "native plugin loader",
+    "source": "operator-provided plugin file"
+  },
+  "oracle_summary": "Verification blocked because the target contract is manual-blocked and unsupported by the automatic verifier.",
+  "source": "verifier-verdict",
+  "status": "blocked",
+  "target_ref": {
+    "target_config": "zhulong-target.yaml",
+    "tested_ref": "fixture-blocked-ref"
+  },
+  "verdict_path": "verifier/CAND-CONTRACT-BLOCKED/verifier-verdict.json"
+}

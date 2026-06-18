@@ -1,0 +1,36 @@
+{
+  "artifacts": [],
+  "candidate_id": "CAND-CONTRACT-BLOCKED",
+  "commands": [],
+  "disposition_recommendation": "blocked",
+  "environment": {
+    "credential_paths_mounted": false,
+    "docker_socket_mounted": false,
+    "egress_policy": "not-executed",
+    "fresh_container": false,
+    "host_network": false,
+    "privileged": false,
+    "runtime_type": "manual-blocked"
+  },
+  "negative_checks": [
+    {
+      "check": "target runtime supports automatic verifier",
+      "passed": false,
+      "reason": "Target contract is manual-blocked and non-confirmable by automatic verification."
+    }
+  ],
+  "oracle_result": {
+    "success": false,
+    "summary": "Verification blocked because the target contract is manual-blocked and unsupported by the automatic verifier.",
+    "type": "manual_blocked"
+  },
+  "reason": "manual-blocked target runtime; unsupported automatic verification.",
+  "schema_version": 1,
+  "target_ref": {
+    "target_config": "zhulong-target.yaml",
+    "tested_ref": "fixture-blocked-ref"
+  },
+  "verification_status": "blocked",
+  "verdict": "blocked",
+  "verified_at": "2026-06-18T00:08:00Z"
+}

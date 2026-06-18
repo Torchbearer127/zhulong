@@ -1,0 +1,43 @@
+schema_version: 1
+target:
+  name: "contract-fixture-ssrf"
+  repo_root: "."
+  tested_ref: "fixture-ssrf-ref"
+  language_hint:
+    - "python"
+runtime:
+  type: "docker-compose"
+  compose_file: "docker-compose.zhulong.yml"
+  service: "app"
+  healthcheck:
+    command: "curl -fsS http://127.0.0.1:8080/health"
+    timeout_seconds: 30
+build:
+  command: "docker compose -f docker-compose.zhulong.yml build"
+  network_required: false
+start:
+  command: "docker compose -f docker-compose.zhulong.yml up -d"
+  readiness:
+    command: "curl -fsS http://127.0.0.1:8080/health"
+    timeout_seconds: 60
+verify:
+  mode: "fresh-container"
+  allowed_network: "local-only"
+  success_oracles:
+    - type: "callback_observed"
+  cleanup:
+    command: "docker compose -f docker-compose.zhulong.yml down -v"
+scope:
+  entrypoints:
+    - id: "import-url"
+      kind: "http"
+      route: "POST /api/import"
+      auth: "low-privileged-user"
+      attacker_control:
+        - "url"
+  trust_boundaries:
+    - "external import request -> server-side URL fetch"
+  in_scope_bug_classes:
+    - "SSRF"
+  out_of_scope:
+    - "host shell access"

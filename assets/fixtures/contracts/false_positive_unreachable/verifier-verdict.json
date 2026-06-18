@@ -1,0 +1,36 @@
+{
+  "artifacts": [],
+  "candidate_id": "CAND-CONTRACT-FP",
+  "commands": [],
+  "disposition_recommendation": "false_positive",
+  "environment": {
+    "credential_paths_mounted": false,
+    "docker_socket_mounted": false,
+    "egress_policy": "none",
+    "fresh_container": false,
+    "host_network": false,
+    "privileged": false,
+    "runtime_type": "docker"
+  },
+  "negative_checks": [
+    {
+      "check": "route reachable by attacker model",
+      "passed": true,
+      "reason": "The route is administrator-only and unavailable to the claimed attacker."
+    }
+  ],
+  "oracle_result": {
+    "success": false,
+    "summary": "Verifier rejected the claim because the debug import route is unreachable under the stated attacker model.",
+    "type": "http_response_contains"
+  },
+  "reason": "Clear negative finding: unreachable path for the claimed attacker model.",
+  "schema_version": 1,
+  "target_ref": {
+    "target_config": "zhulong-target.yaml",
+    "tested_ref": "fixture-false-positive-ref"
+  },
+  "verification_status": "false_positive",
+  "verdict": "false_positive",
+  "verified_at": "2026-06-18T00:06:00Z"
+}

@@ -1,0 +1,17 @@
+{
+  "candidate_path": "candidates/CAND-CONTRACT-SSRF/candidate.json",
+  "claim": {
+    "impact": "server-side request reaches an attacker-controlled callback endpoint",
+    "missing_constraint": "URL host is fetched before private-network deny rules are enforced",
+    "sink": "server-side HTTP fetch helper",
+    "source": "user-controlled import URL"
+  },
+  "oracle_summary": "Callback server observed a request from the target container for the attacker-controlled import URL.",
+  "source": "verifier-verdict",
+  "status": "confirmed_in_docker",
+  "target_ref": {
+    "target_config": "zhulong-target.yaml",
+    "tested_ref": "fixture-ssrf-ref"
+  },
+  "verdict_path": "verifier/CAND-CONTRACT-SSRF/verifier-verdict.json"
+}

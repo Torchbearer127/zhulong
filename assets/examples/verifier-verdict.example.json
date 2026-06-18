@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "candidate_id": "CAND-0001",
+  "verdict": "confirmed_in_docker",
+  "verification_status": "confirmed_in_docker",
+  "target_ref": {
+    "target_config": "zhulong-target.yaml",
+    "tested_ref": "git-sha-or-local-state"
+  },
+  "environment": {
+    "fresh_container": true,
+    "runtime_type": "docker-compose",
+    "host_network": false,
+    "privileged": false,
+    "docker_socket_mounted": false,
+    "credential_paths_mounted": false,
+    "egress_policy": "local-only"
+  },
+  "commands": [
+    {
+      "name": "poc",
+      "command": "bash candidates/CAND-0001/poc/reproduce.sh",
+      "exit_code": 0
+    }
+  ],
+  "oracle_result": {
+    "type": "callback_observed",
+    "success": true,
+    "summary": "Callback server received request from target container."
+  },
+  "disposition_recommendation": "confirmed_in_docker",
+  "negative_checks": [
+    {
+      "check": "auth prerequisite matches candidate",
+      "passed": true
+    }
+  ],
+  "artifacts": [
+    "verifier/CAND-0001/logs/poc.log"
+  ],
+  "verified_at": "2026-06-18T00:00:00Z"
+}

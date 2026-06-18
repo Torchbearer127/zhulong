@@ -1,0 +1,54 @@
+{
+  "attacker_model": {
+    "attacker_controls": [
+      "debug URL"
+    ],
+    "environment_assumptions": [
+      "administrator-only debug route is exposed to the caller"
+    ],
+    "required_auth": "administrator"
+  },
+  "bug_class": "SSRF",
+  "candidate_id": "CAND-CONTRACT-FP",
+  "claim": {
+    "impact": "attacker could make the server fetch an internal URL",
+    "missing_constraint": "debug importer appears to accept arbitrary URLs",
+    "sink": "admin debug importer fetch",
+    "source": "debug URL parameter"
+  },
+  "entrypoint": {
+    "id": "admin-debug",
+    "kind": "http",
+    "route": "POST /admin/debug/import"
+  },
+  "evidence": {
+    "dynamic_evidence": [],
+    "static_locations": [
+      {
+        "end_line": 24,
+        "path": "src/admin-debug.js",
+        "reason": "Debug importer source appeared reachable during static review.",
+        "start_line": 18
+      }
+    ]
+  },
+  "finder": {
+    "created_at": "2026-06-18T00:00:00Z",
+    "source": "fixture"
+  },
+  "poc": {
+    "expected_oracle": {
+      "description": "The verifier should see a response body marker if the route is reachable.",
+      "type": "http_response_contains"
+    },
+    "kind": "inert-fixture",
+    "path": "candidates/CAND-CONTRACT-FP/poc/request.http"
+  },
+  "schema_version": 1,
+  "status": "candidate",
+  "target_ref": {
+    "target_config": "zhulong-target.yaml",
+    "tested_ref": "fixture-false-positive-ref"
+  },
+  "title": "Admin debug import route SSRF claim"
+}

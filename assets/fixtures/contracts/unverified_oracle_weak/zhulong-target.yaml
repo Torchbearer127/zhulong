@@ -1,0 +1,43 @@
+schema_version: 1
+target:
+  name: "contract-fixture-weak-oracle"
+  repo_root: "."
+  tested_ref: "fixture-unverified-ref"
+  language_hint:
+    - "python"
+runtime:
+  type: "docker-compose"
+  compose_file: "docker-compose.zhulong.yml"
+  service: "worker"
+  healthcheck:
+    command: "curl -fsS http://127.0.0.1:8082/health"
+    timeout_seconds: 30
+build:
+  command: "docker compose -f docker-compose.zhulong.yml build"
+  network_required: false
+start:
+  command: "docker compose -f docker-compose.zhulong.yml up -d"
+  readiness:
+    command: "curl -fsS http://127.0.0.1:8082/health"
+    timeout_seconds: 60
+verify:
+  mode: "fresh-container"
+  allowed_network: "local-only"
+  success_oracles:
+    - type: "log_pattern"
+  cleanup:
+    command: "docker compose -f docker-compose.zhulong.yml down -v"
+scope:
+  entrypoints:
+    - id: "task-name"
+      kind: "queue"
+      route: "POST /api/tasks"
+      auth: "low-privileged-user"
+      attacker_control:
+        - "task name"
+  trust_boundaries:
+    - "external task request -> worker log processing"
+  in_scope_bug_classes:
+    - "log injection"
+  out_of_scope:
+    - "claims without a direct impact oracle"

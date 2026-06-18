@@ -140,6 +140,10 @@ copy_helper_if_present "$SKILL_DIR/scripts/write_audit_event.py" "$WORKSPACE_DIR
 copy_helper_if_present "$SKILL_DIR/scripts/validate_workspace_state.py" "$WORKSPACE_DIR/bin/validate-workspace-state.py"
 copy_helper_if_present "$SKILL_DIR/scripts/assert_finalized_workspace.py" "$WORKSPACE_DIR/bin/assert-finalized-workspace.py"
 copy_helper_if_present "$SKILL_DIR/scripts/blocked_verification.py" "$WORKSPACE_DIR/bin/blocked_verification.py"
+copy_helper_if_present "$SKILL_DIR/scripts/validate_target_contract.py" "$WORKSPACE_DIR/bin/validate_target_contract.py"
+copy_helper_if_present "$SKILL_DIR/scripts/validate_candidate.py" "$WORKSPACE_DIR/bin/validate_candidate.py"
+copy_helper_if_present "$SKILL_DIR/scripts/validate_verifier_verdict.py" "$WORKSPACE_DIR/bin/validate_verifier_verdict.py"
+copy_helper_if_present "$SKILL_DIR/scripts/verify_candidate.py" "$WORKSPACE_DIR/bin/verify_candidate.py"
 copy_helper_if_present "$SKILL_DIR/scripts/audit_disposition.py" "$WORKSPACE_DIR/bin/audit_disposition.py"
 copy_helper_if_present "$SKILL_DIR/scripts/finalize_audit_workspace.py" "$WORKSPACE_DIR/bin/finalize-audit-workspace.py"
 

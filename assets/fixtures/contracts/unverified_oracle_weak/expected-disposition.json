@@ -1,0 +1,17 @@
+{
+  "candidate_path": "candidates/CAND-CONTRACT-UNVERIFIED/candidate.json",
+  "claim": {
+    "impact": "log content may be misleading, but no security boundary impact is proven",
+    "missing_constraint": "task name is logged without escaping",
+    "sink": "worker log formatter",
+    "source": "task name request field"
+  },
+  "oracle_summary": "PoC/oracle did not prove the claimed impact; only a weak log marker was present.",
+  "source": "verifier-verdict",
+  "status": "unverified",
+  "target_ref": {
+    "target_config": "zhulong-target.yaml",
+    "tested_ref": "fixture-unverified-ref"
+  },
+  "verdict_path": "verifier/CAND-CONTRACT-UNVERIFIED/verifier-verdict.json"
+}

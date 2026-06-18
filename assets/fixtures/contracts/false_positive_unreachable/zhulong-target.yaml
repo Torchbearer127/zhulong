@@ -1,0 +1,41 @@
+schema_version: 1
+target:
+  name: "contract-fixture-unreachable"
+  repo_root: "."
+  tested_ref: "fixture-false-positive-ref"
+  language_hint:
+    - "node"
+runtime:
+  type: "docker"
+  healthcheck:
+    command: "curl -fsS http://127.0.0.1:8081/health"
+    timeout_seconds: 30
+build:
+  command: "docker build -t zhulong-contract-unreachable ."
+  network_required: false
+start:
+  command: "docker run --name zhulong-contract-unreachable -d -p 127.0.0.1:8081:8080 zhulong-contract-unreachable"
+  readiness:
+    command: "curl -fsS http://127.0.0.1:8081/health"
+    timeout_seconds: 60
+verify:
+  mode: "fresh-container"
+  allowed_network: "none"
+  success_oracles:
+    - type: "http_response_contains"
+  cleanup:
+    command: "docker rm -f zhulong-contract-unreachable"
+scope:
+  entrypoints:
+    - id: "admin-debug"
+      kind: "http"
+      route: "POST /admin/debug/import"
+      auth: "administrator"
+      attacker_control:
+        - "debug URL"
+  trust_boundaries:
+    - "admin-only debug route -> internal importer"
+  in_scope_bug_classes:
+    - "SSRF"
+  out_of_scope:
+    - "administrator-only maintenance actions"

@@ -1,0 +1,60 @@
+{
+  "attacker_model": {
+    "attacker_controls": [
+      "task name"
+    ],
+    "environment_assumptions": [
+      "worker logs task names"
+    ],
+    "required_auth": "low_privileged_user"
+  },
+  "bug_class": "log injection",
+  "candidate_id": "CAND-CONTRACT-UNVERIFIED",
+  "claim": {
+    "impact": "log content may be misleading, but no security boundary impact is proven",
+    "missing_constraint": "task name is logged without escaping",
+    "sink": "worker log formatter",
+    "source": "task name request field"
+  },
+  "entrypoint": {
+    "id": "task-name",
+    "kind": "queue",
+    "route": "POST /api/tasks"
+  },
+  "evidence": {
+    "dynamic_evidence": [
+      {
+        "path": "evidence/weak-log-oracle.txt",
+        "summary": "The observed log marker does not prove the claimed security impact.",
+        "type": "fixture-summary"
+      }
+    ],
+    "static_locations": [
+      {
+        "end_line": 91,
+        "path": "src/worker.py",
+        "reason": "Task name reaches log output without escaping.",
+        "start_line": 84
+      }
+    ]
+  },
+  "finder": {
+    "created_at": "2026-06-18T00:00:00Z",
+    "source": "fixture"
+  },
+  "poc": {
+    "expected_oracle": {
+      "description": "A log marker appears, but it must prove a security impact before promotion.",
+      "type": "log_pattern"
+    },
+    "kind": "inert-fixture",
+    "path": "candidates/CAND-CONTRACT-UNVERIFIED/poc/payload.txt"
+  },
+  "schema_version": 1,
+  "status": "candidate",
+  "target_ref": {
+    "target_config": "zhulong-target.yaml",
+    "tested_ref": "fixture-unverified-ref"
+  },
+  "title": "Weak log oracle task-name claim"
+}

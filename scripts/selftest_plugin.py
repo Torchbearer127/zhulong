@@ -21,6 +21,9 @@ REQUIRED_FILES = [
     "assets/tool-registry.json",
     "assets/confirmed-vuln-report-template.docx",
     "assets/examples/confirmed-findings.example.json",
+    "assets/examples/zhulong-target.example.yaml",
+    "assets/examples/candidate.example.json",
+    "assets/examples/verifier-verdict.example.json",
     "assets/references/false-positive-template.md",
     "assets/references/unverified-lead-template.md",
     "assets/references/final-summary-template.md",
@@ -28,6 +31,9 @@ REQUIRED_FILES = [
     "assets/references/docker-registry-fallbacks.example.json",
     "assets/references/variant-seed-template.md",
     "assets/schemas/variant-seed.schema.json",
+    "assets/schemas/zhulong-target.schema.json",
+    "assets/schemas/candidate.schema.json",
+    "assets/schemas/verifier-verdict.schema.json",
     "assets/references/java-web-audit-playbook.md",
     "assets/references/go-web-audit-playbook.md",
     "assets/references/nodejs-library-audit-playbook.md",
@@ -59,6 +65,10 @@ REQUIRED_FILES = [
     "scripts/sync_to_codex_skill.sh",
     "scripts/write_audit_event.py",
     "scripts/validate_workspace_state.py",
+    "scripts/validate_target_contract.py",
+    "scripts/validate_candidate.py",
+    "scripts/validate_verifier_verdict.py",
+    "scripts/verify_candidate.py",
     "scripts/plan_security_toolchain.py",
     "scripts/render_confirmed_vuln_docx.py",
     "scripts/scaffold_bilingual_findings.py",
@@ -67,6 +77,27 @@ REQUIRED_FILES = [
     "scripts/validate_report_bundle.py",
     "scripts/validate_all_report_bundles.py",
     "scripts/finalize_audit_workspace.py",
+    "docs/runner-contracts/target-contract-r1.md",
+    "docs/runner-contracts/finding-contract-r1.md",
+    "docs/runner-contracts/independent-verifier-r1.md",
+    "docs/runner-contracts/disposition-integration-r1.md",
+    "docs/runner-contracts/contract-layer-r1-closure.md",
+    "assets/fixtures/contracts/confirmed_ssrf/zhulong-target.yaml",
+    "assets/fixtures/contracts/confirmed_ssrf/candidate.json",
+    "assets/fixtures/contracts/confirmed_ssrf/verifier-verdict.json",
+    "assets/fixtures/contracts/confirmed_ssrf/expected-disposition.json",
+    "assets/fixtures/contracts/false_positive_unreachable/zhulong-target.yaml",
+    "assets/fixtures/contracts/false_positive_unreachable/candidate.json",
+    "assets/fixtures/contracts/false_positive_unreachable/verifier-verdict.json",
+    "assets/fixtures/contracts/false_positive_unreachable/expected-disposition.json",
+    "assets/fixtures/contracts/unverified_oracle_weak/zhulong-target.yaml",
+    "assets/fixtures/contracts/unverified_oracle_weak/candidate.json",
+    "assets/fixtures/contracts/unverified_oracle_weak/verifier-verdict.json",
+    "assets/fixtures/contracts/unverified_oracle_weak/expected-disposition.json",
+    "assets/fixtures/contracts/blocked_manual_runtime/zhulong-target.yaml",
+    "assets/fixtures/contracts/blocked_manual_runtime/candidate.json",
+    "assets/fixtures/contracts/blocked_manual_runtime/verifier-verdict.json",
+    "assets/fixtures/contracts/blocked_manual_runtime/expected-disposition.json",
     "skills/zhulong/SKILL.md",
     "templates/claude-skill/SKILL.md",
 ]
@@ -81,6 +112,12 @@ INSTALLED_SKILL_REQUIRED_FILES = [
     "assets/references/docker-registry-fallbacks.example.json",
     "assets/references/variant-seed-template.md",
     "assets/schemas/variant-seed.schema.json",
+    "assets/schemas/zhulong-target.schema.json",
+    "assets/schemas/candidate.schema.json",
+    "assets/schemas/verifier-verdict.schema.json",
+    "assets/examples/zhulong-target.example.yaml",
+    "assets/examples/candidate.example.json",
+    "assets/examples/verifier-verdict.example.json",
     "assets/references/nodejs-web-audit-playbook.md",
     "assets/references/php-swoole-audit-playbook.md",
     "assets/references/python-library-audit-playbook.md",
@@ -102,12 +139,37 @@ INSTALLED_SKILL_REQUIRED_FILES = [
     "scripts/extract_variant_seed.py",
     "scripts/find_variant_candidates.py",
     "scripts/validate_report_bundle.py",
+    "scripts/validate_target_contract.py",
+    "scripts/validate_candidate.py",
+    "scripts/validate_verifier_verdict.py",
+    "scripts/verify_candidate.py",
     "scripts/validate_all_report_bundles.py",
     "scripts/finalize_audit_workspace.py",
     "scripts/assert_finalized_workspace.py",
     "scripts/audit_disposition.py",
     "scripts/blocked_verification.py",
     "scripts/render_handoff_summary.py",
+    "docs/runner-contracts/target-contract-r1.md",
+    "docs/runner-contracts/finding-contract-r1.md",
+    "docs/runner-contracts/independent-verifier-r1.md",
+    "docs/runner-contracts/disposition-integration-r1.md",
+    "docs/runner-contracts/contract-layer-r1-closure.md",
+    "assets/fixtures/contracts/confirmed_ssrf/zhulong-target.yaml",
+    "assets/fixtures/contracts/confirmed_ssrf/candidate.json",
+    "assets/fixtures/contracts/confirmed_ssrf/verifier-verdict.json",
+    "assets/fixtures/contracts/confirmed_ssrf/expected-disposition.json",
+    "assets/fixtures/contracts/false_positive_unreachable/zhulong-target.yaml",
+    "assets/fixtures/contracts/false_positive_unreachable/candidate.json",
+    "assets/fixtures/contracts/false_positive_unreachable/verifier-verdict.json",
+    "assets/fixtures/contracts/false_positive_unreachable/expected-disposition.json",
+    "assets/fixtures/contracts/unverified_oracle_weak/zhulong-target.yaml",
+    "assets/fixtures/contracts/unverified_oracle_weak/candidate.json",
+    "assets/fixtures/contracts/unverified_oracle_weak/verifier-verdict.json",
+    "assets/fixtures/contracts/unverified_oracle_weak/expected-disposition.json",
+    "assets/fixtures/contracts/blocked_manual_runtime/zhulong-target.yaml",
+    "assets/fixtures/contracts/blocked_manual_runtime/candidate.json",
+    "assets/fixtures/contracts/blocked_manual_runtime/verifier-verdict.json",
+    "assets/fixtures/contracts/blocked_manual_runtime/expected-disposition.json",
 ]
 
 FORBIDDEN_INSTALLED_TOP_LEVEL = [
@@ -256,6 +318,970 @@ def require_no_repo_text(plugin_root: Path, needle: str, label: str) -> None:
             continue
         if needle in path.read_text(encoding="utf-8", errors="ignore"):
             raise SystemExit(f"FAILED: forbidden repository text for {label}: {path}: {needle}")
+
+
+def valid_target_contract_yaml(*, runtime_type: str = "docker-compose", entrypoints: str | None = None) -> str:
+    scope_entrypoints = entrypoints
+    if scope_entrypoints is None:
+        scope_entrypoints = """    - id: "import-url"
+      kind: "http"
+      route: "POST /api/import"
+      auth: "low-privileged-user"
+      attacker_control:
+        - "url"
+"""
+    if runtime_type == "manual-blocked":
+        return f"""schema_version: 1
+target:
+  name: "selftest-service"
+  repo_root: "."
+  tested_ref: "local-state"
+  language_hint:
+    - "python"
+runtime:
+  type: "manual-blocked"
+verify:
+  mode: "manual-required"
+scope:
+  entrypoints:
+{scope_entrypoints if scope_entrypoints.strip() else "    []"}
+  trust_boundaries:
+    - "external request -> application boundary"
+  in_scope_bug_classes:
+    - "SSRF"
+  out_of_scope:
+    - "host shell access"
+"""
+    if runtime_type == "docker":
+        runtime_block = """runtime:
+  type: "docker"
+  healthcheck:
+    command: "curl -fsS http://127.0.0.1:8080/health"
+    timeout_seconds: 30
+build:
+  command: "docker build -t zhulong-target-selftest ."
+  network_required: false
+start:
+  command: "docker run --name zhulong-target-selftest -d -p 127.0.0.1:8080:8080 zhulong-target-selftest"
+  readiness:
+    command: "curl -fsS http://127.0.0.1:8080/health"
+    timeout_seconds: 60
+"""
+    else:
+        runtime_block = """runtime:
+  type: "docker-compose"
+  compose_file: "docker-compose.zhulong.yml"
+  service: "app"
+  healthcheck:
+    command: "curl -fsS http://127.0.0.1:8080/health"
+    timeout_seconds: 30
+build:
+  command: "docker compose -f docker-compose.zhulong.yml build"
+  network_required: true
+start:
+  command: "docker compose -f docker-compose.zhulong.yml up -d"
+  readiness:
+    command: "curl -fsS http://127.0.0.1:8080/health"
+    timeout_seconds: 60
+"""
+    cleanup = (
+        "docker rm -f zhulong-target-selftest"
+        if runtime_type == "docker"
+        else "docker compose -f docker-compose.zhulong.yml down -v"
+    )
+    return f"""schema_version: 1
+target:
+  name: "selftest-service"
+  repo_root: "."
+  tested_ref: "local-state"
+  language_hint:
+    - "python"
+    - "node"
+{runtime_block}verify:
+  mode: "fresh-container"
+  allowed_network: "local-only"
+  success_oracles:
+    - type: "http_response"
+    - type: "log_pattern"
+  cleanup:
+    command: "{cleanup}"
+scope:
+  entrypoints:
+{scope_entrypoints if scope_entrypoints.strip() else "    []"}
+  trust_boundaries:
+    - "external request -> application boundary"
+  in_scope_bug_classes:
+    - "SSRF"
+  out_of_scope:
+    - "host shell access"
+"""
+
+
+def exercise_target_contract_validator(plugin_root: Path) -> None:
+    validator = plugin_root / "scripts/validate_target_contract.py"
+    example = plugin_root / "assets/examples/zhulong-target.example.yaml"
+    schema = json.loads((plugin_root / "assets/schemas/zhulong-target.schema.json").read_text(encoding="utf-8"))
+    if schema.get("title") != "Zhulong Target Contract R1":
+        raise SystemExit("FAILED: zhulong-target schema title mismatch")
+    if str(schema.get("$id", "")).startswith("https://zhulong.local/"):
+        raise SystemExit("FAILED: zhulong-target schema must not use a placeholder $id URI")
+    if '"additionalProperties": true' in json.dumps(schema, sort_keys=True):
+        raise SystemExit("FAILED: zhulong-target schema must not leave known contract objects open to arbitrary properties")
+
+    output = run_capture([sys.executable, str(validator), str(example)], plugin_root)
+    if "OK: zhulong-target valid" not in output or "runtime_type=docker-compose" not in output:
+        raise SystemExit(f"FAILED: example target contract did not validate as docker-compose:\n{output}")
+
+    with tempfile.TemporaryDirectory() as tempdir:
+        tmp = Path(tempdir)
+
+        def write_case(name: str, content: str) -> Path:
+            path = tmp / f"{name}.yaml"
+            path.write_text(content, encoding="utf-8")
+            return path
+
+        compose_path = write_case("valid-compose", valid_target_contract_yaml())
+        docker_path = write_case("valid-docker", valid_target_contract_yaml(runtime_type="docker"))
+        manual_path = write_case("valid-manual", valid_target_contract_yaml(runtime_type="manual-blocked"))
+        empty_entrypoints_path = write_case(
+            "empty-entrypoints",
+            valid_target_contract_yaml(entrypoints="    []"),
+        )
+
+        if "runtime_type=docker-compose" not in run_capture([sys.executable, str(validator), str(compose_path)], plugin_root):
+            raise SystemExit("FAILED: valid docker-compose target contract did not pass")
+        if "runtime_type=docker" not in run_capture([sys.executable, str(validator), str(docker_path)], plugin_root):
+            raise SystemExit("FAILED: valid docker target contract did not pass")
+        manual_output = run_capture([sys.executable, str(validator), str(manual_path)], plugin_root)
+        if "runtime_type=manual-blocked" not in manual_output or "non_confirmable=true" not in manual_output:
+            raise SystemExit(f"FAILED: manual-blocked target contract did not report non-confirmable:\n{manual_output}")
+        empty_output = run_capture([sys.executable, str(validator), str(empty_entrypoints_path)], plugin_root)
+        if "recon_incomplete=true" not in empty_output:
+            raise SystemExit(f"FAILED: empty entrypoints did not mark recon incomplete:\n{empty_output}")
+
+        missing_field = valid_target_contract_yaml().replace('  name: "selftest-service"\n', "")
+        run_expect_fail(
+            [sys.executable, str(validator), str(write_case("missing-field", missing_field))],
+            plugin_root,
+            "missing required string: $.target.name",
+        )
+
+        invalid_runtime = valid_target_contract_yaml().replace('type: "docker-compose"', 'type: "podman"')
+        run_expect_fail(
+            [sys.executable, str(validator), str(write_case("invalid-runtime", invalid_runtime))],
+            plugin_root,
+            "$.runtime.type must be one of",
+        )
+
+        no_compose_file = valid_target_contract_yaml().replace('  compose_file: "docker-compose.zhulong.yml"\n', "")
+        run_expect_fail(
+            [sys.executable, str(validator), str(write_case("missing-compose-file", no_compose_file))],
+            plugin_root,
+            "missing required string: $.runtime.compose_file",
+        )
+        no_service = valid_target_contract_yaml().replace('  service: "app"\n', "")
+        run_expect_fail(
+            [sys.executable, str(validator), str(write_case("missing-compose-service", no_service))],
+            plugin_root,
+            "missing required string: $.runtime.service",
+        )
+
+        absolute_path = valid_target_contract_yaml().replace('repo_root: "."', 'repo_root: "/Users/example/service"')
+        run_expect_fail(
+            [sys.executable, str(validator), str(write_case("absolute-path", absolute_path))],
+            plugin_root,
+            "operator-local absolute path",
+        )
+
+        traversal_path = valid_target_contract_yaml().replace(
+            'compose_file: "docker-compose.zhulong.yml"',
+            'compose_file: "../docker-compose.yml"',
+        )
+        run_expect_fail(
+            [sys.executable, str(validator), str(write_case("parent-traversal", traversal_path))],
+            plugin_root,
+            "parent path traversal",
+        )
+
+        broad_prune = valid_target_contract_yaml().replace(
+            "docker compose -f docker-compose.zhulong.yml down -v",
+            "docker system prune -af",
+        )
+        run_expect_fail(
+            [sys.executable, str(validator), str(write_case("broad-prune", broad_prune))],
+            plugin_root,
+            "broad Docker prune",
+        )
+
+        dangerous_kill = valid_target_contract_yaml().replace(
+            "docker compose -f docker-compose.zhulong.yml down -v",
+            "kill -9 1234",
+        )
+        run_expect_fail(
+            [sys.executable, str(validator), str(write_case("dangerous-kill", dangerous_kill))],
+            plugin_root,
+            "dangerous PID kill",
+        )
+
+        unsafe_cases = {
+            "privileged": "docker run --privileged example",
+            "host-network": "docker run --network host example",
+            "docker-socket": "docker run -v ./docker.sock:/sock example",
+            "credential-mount": "docker run -v .npmrc:/workspace/.npmrc example",
+        }
+        for name, command in unsafe_cases.items():
+            content = valid_target_contract_yaml(runtime_type="docker").replace(
+                "docker run --name zhulong-target-selftest -d -p 127.0.0.1:8080:8080 zhulong-target-selftest",
+                command,
+            )
+            run_expect_fail(
+                [sys.executable, str(validator), str(write_case(f"unsafe-{name}", content))],
+                plugin_root,
+                "must not request privileged",
+            )
+
+
+def valid_candidate_contract(overrides: dict | None = None) -> dict:
+    candidate = {
+        "schema_version": 1,
+        "candidate_id": "CAND-0001",
+        "title": "SSRF through import URL fetch",
+        "bug_class": "SSRF",
+        "status": "candidate",
+        "target_ref": {
+            "target_config": "zhulong-target.yaml",
+            "tested_ref": "git-sha-or-local-state",
+        },
+        "entrypoint": {
+            "id": "import-url",
+            "kind": "http",
+            "route": "POST /api/import",
+        },
+        "attacker_model": {
+            "required_auth": "low_privileged_user",
+            "attacker_controls": ["url"],
+            "environment_assumptions": [
+                "import endpoint enabled",
+                "backend can make outbound HTTP requests",
+            ],
+        },
+        "claim": {
+            "source": "user-controlled import URL",
+            "sink": "server-side HTTP fetch",
+            "missing_constraint": "private IP or metadata address denylist is absent or bypassable",
+            "impact": "internal service probing or metadata fetch",
+        },
+        "poc": {
+            "kind": "script",
+            "path": "poc/reproduce.sh",
+            "expected_oracle": {
+                "type": "callback_observed",
+                "description": "attacker-controlled callback server receives request from target container",
+            },
+        },
+        "evidence": {
+            "static_locations": [
+                {
+                    "path": "src/importer.py",
+                    "start_line": 42,
+                    "end_line": 67,
+                    "reason": "URL is fetched server-side without network range validation",
+                }
+            ],
+            "dynamic_evidence": [],
+        },
+        "finder": {
+            "source": "agent",
+            "created_at": "2026-06-18T00:00:00Z",
+        },
+    }
+    if overrides:
+        candidate.update(overrides)
+    return candidate
+
+
+def valid_verifier_verdict(overrides: dict | None = None) -> dict:
+    verdict = {
+        "schema_version": 1,
+        "candidate_id": "CAND-0001",
+        "verdict": "confirmed_in_docker",
+        "verification_status": "confirmed_in_docker",
+        "target_ref": {
+            "target_config": "zhulong-target.yaml",
+            "tested_ref": "git-sha-or-local-state",
+        },
+        "environment": {
+            "fresh_container": True,
+            "runtime_type": "docker-compose",
+            "host_network": False,
+            "privileged": False,
+            "docker_socket_mounted": False,
+            "credential_paths_mounted": False,
+            "egress_policy": "local-only",
+        },
+        "commands": [
+            {
+                "name": "poc",
+                "command": "bash candidates/CAND-0001/poc/reproduce.sh",
+                "exit_code": 0,
+            }
+        ],
+        "oracle_result": {
+            "type": "callback_observed",
+            "success": True,
+            "summary": "Callback server received request from target container.",
+        },
+        "disposition_recommendation": "confirmed_in_docker",
+        "negative_checks": [
+            {
+                "check": "auth prerequisite matches candidate",
+                "passed": True,
+            }
+        ],
+        "artifacts": ["verifier/CAND-0001/logs/poc.log"],
+        "verified_at": "2026-06-18T00:00:00Z",
+    }
+    if overrides:
+        verdict.update(overrides)
+    return verdict
+
+
+def json_clone(value: dict) -> dict:
+    return json.loads(json.dumps(value))
+
+
+def write_json_fixture(path: Path, value: dict) -> Path:
+    path.write_text(json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def exercise_finding_contract_validators(plugin_root: Path) -> None:
+    candidate_validator = plugin_root / "scripts/validate_candidate.py"
+    verdict_validator = plugin_root / "scripts/validate_verifier_verdict.py"
+    candidate_example = plugin_root / "assets/examples/candidate.example.json"
+    verdict_example = plugin_root / "assets/examples/verifier-verdict.example.json"
+
+    candidate_schema = json.loads((plugin_root / "assets/schemas/candidate.schema.json").read_text(encoding="utf-8"))
+    if candidate_schema.get("title") != "Zhulong Candidate Finding Contract R1":
+        raise SystemExit("FAILED: candidate schema title mismatch")
+    if str(candidate_schema.get("$id", "")).startswith("https://zhulong.local/"):
+        raise SystemExit("FAILED: candidate schema must not use a placeholder $id URI")
+    if '"additionalProperties": true' in json.dumps(candidate_schema, sort_keys=True):
+        raise SystemExit("FAILED: candidate schema must not leave known contract objects open to arbitrary properties")
+
+    verdict_schema = json.loads((plugin_root / "assets/schemas/verifier-verdict.schema.json").read_text(encoding="utf-8"))
+    if verdict_schema.get("title") != "Zhulong Verifier Verdict Contract R1":
+        raise SystemExit("FAILED: verifier verdict schema title mismatch")
+    if str(verdict_schema.get("$id", "")).startswith("https://zhulong.local/"):
+        raise SystemExit("FAILED: verifier verdict schema must not use a placeholder $id URI")
+    if '"additionalProperties": true' in json.dumps(verdict_schema, sort_keys=True):
+        raise SystemExit("FAILED: verifier verdict schema must not leave known contract objects open to arbitrary properties")
+
+    candidate_output = run_capture([sys.executable, str(candidate_validator), str(candidate_example)], plugin_root)
+    if "OK: candidate valid" not in candidate_output or "status=candidate" not in candidate_output:
+        raise SystemExit(f"FAILED: candidate example did not validate:\n{candidate_output}")
+    verdict_output = run_capture([
+        sys.executable,
+        str(verdict_validator),
+        "--candidate",
+        str(candidate_example),
+        str(verdict_example),
+    ], plugin_root)
+    if "OK: verifier-verdict valid" not in verdict_output or "verdict=confirmed_in_docker" not in verdict_output:
+        raise SystemExit(f"FAILED: verifier verdict example did not validate:\n{verdict_output}")
+
+    with tempfile.TemporaryDirectory() as tempdir:
+        tmp = Path(tempdir)
+
+        good_candidate = write_json_fixture(tmp / "candidate-good.json", valid_candidate_contract())
+        run([sys.executable, str(candidate_validator), str(good_candidate)], plugin_root)
+
+        bad_status = json_clone(valid_candidate_contract())
+        bad_status["status"] = "confirmed_in_docker"
+        run_expect_fail(
+            [sys.executable, str(candidate_validator), str(write_json_fixture(tmp / "candidate-confirmed-status.json", bad_status))],
+            plugin_root,
+            "$.status must be exactly candidate",
+        )
+
+        missing_claim_source = json_clone(valid_candidate_contract())
+        del missing_claim_source["claim"]["source"]
+        run_expect_fail(
+            [sys.executable, str(candidate_validator), str(write_json_fixture(tmp / "candidate-missing-claim-source.json", missing_claim_source))],
+            plugin_root,
+            "missing required string: $.claim.source",
+        )
+
+        missing_claim_sink = json_clone(valid_candidate_contract())
+        del missing_claim_sink["claim"]["sink"]
+        run_expect_fail(
+            [sys.executable, str(candidate_validator), str(write_json_fixture(tmp / "candidate-missing-claim-sink.json", missing_claim_sink))],
+            plugin_root,
+            "missing required string: $.claim.sink",
+        )
+
+        missing_poc_oracle_type = json_clone(valid_candidate_contract())
+        del missing_poc_oracle_type["poc"]["expected_oracle"]["type"]
+        run_expect_fail(
+            [sys.executable, str(candidate_validator), str(write_json_fixture(tmp / "candidate-missing-poc-oracle.json", missing_poc_oracle_type))],
+            plugin_root,
+            "missing required string: $.poc.expected_oracle.type",
+        )
+
+        absolute_path = json_clone(valid_candidate_contract())
+        absolute_path["evidence"]["static_locations"][0]["path"] = "/Users/example/project/src/importer.py"
+        run_expect_fail(
+            [sys.executable, str(candidate_validator), str(write_json_fixture(tmp / "candidate-absolute-path.json", absolute_path))],
+            plugin_root,
+            "operator-local absolute path",
+        )
+
+        traversal_path = json_clone(valid_candidate_contract())
+        traversal_path["poc"]["path"] = "../poc/reproduce.sh"
+        run_expect_fail(
+            [sys.executable, str(candidate_validator), str(write_json_fixture(tmp / "candidate-parent-traversal.json", traversal_path))],
+            plugin_root,
+            "parent path traversal",
+        )
+
+        unsafe_cases = {
+            "broad-prune": ("poc", "path", "docker system prune -af"),
+            "dangerous-kill": ("poc", "path", "kill -9 1234"),
+            "unsafe-runtime": ("poc", "path", "docker run --privileged -v docker.sock:/sock example"),
+        }
+        for name, (section, key, value) in unsafe_cases.items():
+            bad_candidate = json_clone(valid_candidate_contract())
+            bad_candidate[section][key] = value
+            expected = "broad Docker prune" if name == "broad-prune" else "dangerous PID kill" if name == "dangerous-kill" else "must not request privileged"
+            run_expect_fail(
+                [sys.executable, str(candidate_validator), str(write_json_fixture(tmp / f"candidate-{name}.json", bad_candidate))],
+                plugin_root,
+                expected,
+            )
+
+        good_verdict = write_json_fixture(tmp / "verdict-good.json", valid_verifier_verdict())
+        run([sys.executable, str(verdict_validator), "--candidate", str(good_candidate), str(good_verdict)], plugin_root)
+
+        confirmed_failure_cases = [
+            ("fresh-container-false", ("environment", "fresh_container"), False, "fresh_container=true"),
+            ("host-network-true", ("environment", "host_network"), True, "host_network=false"),
+            ("privileged-true", ("environment", "privileged"), True, "privileged=false"),
+            ("docker-socket-mounted", ("environment", "docker_socket_mounted"), True, "docker_socket_mounted=false"),
+            ("credential-paths-mounted", ("environment", "credential_paths_mounted"), True, "credential_paths_mounted=false"),
+            ("oracle-success-false", ("oracle_result", "success"), False, "oracle_result.success=true"),
+            ("empty-artifacts", ("artifacts",), [], "non-empty artifacts"),
+        ]
+        for name, path_keys, value, expected in confirmed_failure_cases:
+            bad_verdict = json_clone(valid_verifier_verdict())
+            if len(path_keys) == 1:
+                bad_verdict[path_keys[0]] = value
+            else:
+                bad_verdict[path_keys[0]][path_keys[1]] = value
+            run_expect_fail(
+                [sys.executable, str(verdict_validator), str(write_json_fixture(tmp / f"verdict-{name}.json", bad_verdict))],
+                plugin_root,
+                expected,
+            )
+
+        for verdict_name in ["blocked", "false_positive", "unverified"]:
+            non_confirmed = json_clone(valid_verifier_verdict())
+            non_confirmed["verdict"] = verdict_name
+            non_confirmed["verification_status"] = verdict_name
+            non_confirmed["disposition_recommendation"] = verdict_name
+            non_confirmed["commands"] = []
+            non_confirmed["artifacts"] = []
+            non_confirmed["oracle_result"]["success"] = False
+            non_confirmed["oracle_result"]["summary"] = f"{verdict_name} decision has a clear selftest reason."
+            non_confirmed["reason"] = f"{verdict_name} selftest reason"
+            run([sys.executable, str(verdict_validator), str(write_json_fixture(tmp / f"verdict-{verdict_name}.json", non_confirmed))], plugin_root)
+
+        mismatch = json_clone(valid_verifier_verdict())
+        mismatch["candidate_id"] = "CAND-9999"
+        run_expect_fail(
+            [
+                sys.executable,
+                str(verdict_validator),
+                "--candidate",
+                str(good_candidate),
+                str(write_json_fixture(tmp / "verdict-candidate-id-mismatch.json", mismatch)),
+            ],
+            plugin_root,
+            "candidate_id mismatch",
+        )
+
+
+def exercise_independent_verifier(plugin_root: Path) -> None:
+    verifier = plugin_root / "scripts/verify_candidate.py"
+    verdict_validator = plugin_root / "scripts/validate_verifier_verdict.py"
+    doc_path = plugin_root / "docs/runner-contracts/independent-verifier-r1.md"
+    require_text(doc_path, "finder cannot self-certify", "independent verifier finder/verifier separation")
+    require_text(doc_path, "does not read `finder-notes.md`", "independent verifier ignores finder notes")
+    require_text(doc_path, "ZC-004 handles disposition promotion", "independent verifier ZC-004 boundary")
+    require_text(doc_path, "does not create a confirmed bundle", "independent verifier bundle boundary")
+
+    with tempfile.TemporaryDirectory(prefix="zhulong-verifier-selftest-") as tempdir:
+        tmp = Path(tempdir)
+        workspace = tmp / "security-research-selftest"
+        workspace.mkdir(parents=True)
+        fakebin = tmp / "fakebin"
+        fakebin.mkdir()
+        docker_marker = tmp / "docker-called"
+        fake_docker = fakebin / "docker"
+        fake_docker.write_text(f"#!/usr/bin/env bash\nprintf called > {docker_marker}\nexit 77\n", encoding="utf-8")
+        fake_docker.chmod(0o755)
+        env = {"PATH": f"{fakebin}{os.pathsep}{os.environ.get('PATH', '')}"}
+
+        def write_target(name: str, content: str) -> Path:
+            path = workspace / name
+            path.write_text(content, encoding="utf-8")
+            return path
+
+        def candidate_doc(*, tested_ref: str = "local-state", oracle: str = "callback_observed") -> dict:
+            candidate = valid_candidate_contract(
+                {
+                    "target_ref": {
+                        "target_config": "zhulong-target.yaml",
+                        "tested_ref": tested_ref,
+                    }
+                }
+            )
+            candidate["poc"]["expected_oracle"]["type"] = oracle
+            return candidate
+
+        def write_candidate(name: str, candidate: dict) -> Path:
+            cand_dir = workspace / "candidates" / candidate.get("candidate_id", "CAND-0001")
+            cand_dir.mkdir(parents=True, exist_ok=True)
+            (cand_dir / "finder-notes.md").write_text(
+                "Finder note says confirmed, but verifier must ignore this wording.\n",
+                encoding="utf-8",
+            )
+            return write_json_fixture(cand_dir / name, candidate)
+
+        def verdict_path(candidate_id: str = "CAND-0001", suffix: str = "verifier-verdict.json") -> Path:
+            return workspace / "verifier" / candidate_id / suffix
+
+        def run_verify(
+            target: Path,
+            candidate: Path,
+            out: Path,
+            *,
+            run_id: str,
+            expected_returncode: int = 1,
+            extra: list[str] | None = None,
+        ) -> str:
+            command = [
+                sys.executable,
+                str(verifier),
+                "--target-config",
+                str(target),
+                "--candidate",
+                str(candidate),
+                "--workspace",
+                str(workspace),
+                "--out",
+                str(out),
+                "--run-id",
+                run_id,
+                "--dry-run",
+                "--no-execute",
+            ]
+            if extra:
+                command.extend(extra)
+            return run_capture_with_env(command, plugin_root, env, expected_returncode=expected_returncode)
+
+        def load_json(path: Path) -> dict:
+            return json.loads(path.read_text(encoding="utf-8"))
+
+        def assert_valid_verdict(candidate: Path, out: Path) -> dict:
+            run([sys.executable, str(verdict_validator), "--candidate", str(candidate), str(out)], plugin_root)
+            return load_json(out)
+
+        target = write_target("zhulong-target.yaml", valid_target_contract_yaml(runtime_type="docker"))
+        candidate = write_candidate("candidate.json", candidate_doc())
+
+        out_unverified = verdict_path(suffix="unverified.json")
+        output = run_verify(target, candidate, out_unverified, run_id="no-execute")
+        if "verdict=unverified" not in output:
+            raise SystemExit(f"FAILED: no-execute verifier did not report unverified:\n{output}")
+        unverified_doc = assert_valid_verdict(candidate, out_unverified)
+        if unverified_doc["verdict"] != "unverified" or unverified_doc["oracle_result"]["success"]:
+            raise SystemExit("FAILED: no-execute verifier did not produce unverified oracle mismatch")
+        if not (workspace / "verifier/CAND-0001/runs/no-execute/verifier.log").exists():
+            raise SystemExit("FAILED: verifier run directory was not created under workspace")
+
+        manual_target = write_target("manual-target.yaml", valid_target_contract_yaml(runtime_type="manual-blocked"))
+        manual_candidate_doc = candidate_doc()
+        manual_candidate_doc["target_ref"]["target_config"] = "manual-target.yaml"
+        manual_candidate = write_candidate("candidate-manual.json", manual_candidate_doc)
+        out_manual = verdict_path(suffix="manual-blocked.json")
+        run_verify(manual_target, manual_candidate, out_manual, run_id="manual-blocked")
+        manual_doc = assert_valid_verdict(manual_candidate, out_manual)
+        if manual_doc["verdict"] != "blocked" or "manual-blocked" not in manual_doc.get("reason", ""):
+            raise SystemExit("FAILED: manual-blocked target did not produce blocked verdict")
+
+        unsupported_candidate_doc = candidate_doc(oracle="unsupported_fixture_oracle")
+        unsupported_candidate = write_candidate("candidate-unsupported.json", unsupported_candidate_doc)
+        out_unsupported = verdict_path(suffix="unsupported.json")
+        run_verify(target, unsupported_candidate, out_unsupported, run_id="unsupported-oracle")
+        unsupported_doc = assert_valid_verdict(unsupported_candidate, out_unsupported)
+        if unsupported_doc["verdict"] != "blocked" or "unsupported oracle type" not in unsupported_doc.get("reason", ""):
+            raise SystemExit("FAILED: unsupported oracle did not block verification")
+
+        out_confirmed = verdict_path(suffix="fixture-confirmed.json")
+        confirmed_output = run_verify(
+            target,
+            candidate,
+            out_confirmed,
+            run_id="fixture-confirmed",
+            expected_returncode=0,
+            extra=["--dry-run-result", "confirmed_in_docker"],
+        )
+        if "verdict=confirmed_in_docker" not in confirmed_output:
+            raise SystemExit(f"FAILED: fixture confirmed verifier did not report confirmed:\n{confirmed_output}")
+        confirmed_doc = assert_valid_verdict(candidate, out_confirmed)
+        if confirmed_doc["verdict"] != "confirmed_in_docker":
+            raise SystemExit("FAILED: fixture confirmed verdict did not validate as confirmed_in_docker")
+        if "SIMULATED dry-run fixture" not in confirmed_doc["oracle_result"]["summary"]:
+            raise SystemExit("FAILED: fixture confirmed verdict is not clearly marked simulated")
+        if not confirmed_doc["artifacts"]:
+            raise SystemExit("FAILED: fixture confirmed verdict must include fixture artifacts")
+
+        invalid_target = write_target(
+            "invalid-target.yaml",
+            valid_target_contract_yaml(runtime_type="docker").replace('  name: "selftest-service"\n', ""),
+        )
+        invalid_target_candidate_doc = candidate_doc()
+        invalid_target_candidate_doc["target_ref"]["target_config"] = "invalid-target.yaml"
+        invalid_target_candidate = write_candidate("candidate-invalid-target.json", invalid_target_candidate_doc)
+        out_invalid_target = verdict_path(suffix="invalid-target.json")
+        run_verify(invalid_target, invalid_target_candidate, out_invalid_target, run_id="invalid-target")
+        invalid_target_doc = assert_valid_verdict(invalid_target_candidate, out_invalid_target)
+        if invalid_target_doc["verdict"] != "blocked" or "invalid target" not in invalid_target_doc.get("reason", ""):
+            raise SystemExit("FAILED: invalid target did not produce blocked verifier verdict")
+
+        invalid_candidate_doc = candidate_doc()
+        invalid_candidate_doc["unexpected_field"] = "candidate remains invalid before confirmation"
+        invalid_candidate = write_candidate("candidate-invalid.json", invalid_candidate_doc)
+        out_invalid_candidate = verdict_path(suffix="invalid-candidate.json")
+        invalid_candidate_output = run_verify(
+            target,
+            invalid_candidate,
+            out_invalid_candidate,
+            run_id="invalid-candidate",
+        )
+        if "generated verifier verdict failed validation" not in invalid_candidate_output:
+            raise SystemExit("FAILED: invalid candidate did not fail before verifier success")
+        invalid_candidate_doc_out = load_json(out_invalid_candidate)
+        if invalid_candidate_doc_out["verdict"] == "confirmed_in_docker":
+            raise SystemExit("FAILED: invalid candidate produced confirmed verdict")
+
+        mismatch_candidate_doc = candidate_doc(tested_ref="different-ref")
+        mismatch_candidate = write_candidate("candidate-mismatch.json", mismatch_candidate_doc)
+        out_mismatch = verdict_path(suffix="target-ref-mismatch.json")
+        run_verify(target, mismatch_candidate, out_mismatch, run_id="target-ref-mismatch")
+        mismatch_doc = assert_valid_verdict(mismatch_candidate, out_mismatch)
+        if mismatch_doc["verdict"] != "blocked" or "target_ref.tested_ref" not in mismatch_doc.get("reason", ""):
+            raise SystemExit("FAILED: target_ref mismatch did not block verification")
+
+        unsafe_target = write_target(
+            "unsafe-target.yaml",
+            valid_target_contract_yaml(runtime_type="docker").replace(
+                "docker run --name zhulong-target-selftest -d -p 127.0.0.1:8080:8080 zhulong-target-selftest",
+                "docker run --privileged example",
+            ),
+        )
+        unsafe_candidate_doc = candidate_doc()
+        unsafe_candidate_doc["target_ref"]["target_config"] = "unsafe-target.yaml"
+        unsafe_candidate = write_candidate("candidate-unsafe.json", unsafe_candidate_doc)
+        out_unsafe = verdict_path(suffix="unsafe-runtime.json")
+        run_verify(unsafe_target, unsafe_candidate, out_unsafe, run_id="unsafe-runtime")
+        unsafe_doc = assert_valid_verdict(unsafe_candidate, out_unsafe)
+        if unsafe_doc["verdict"] != "blocked" or "invalid target" not in unsafe_doc.get("reason", ""):
+            raise SystemExit("FAILED: unsafe runtime text did not block verification")
+
+        out_outside = tmp / "outside-verdict.json"
+        outside_output = run_verify(target, candidate, out_outside, run_id="outside-output")
+        if "verifier verdict output must stay under the workspace" not in outside_output:
+            raise SystemExit("FAILED: verifier allowed output path outside workspace")
+
+        if docker_marker.exists():
+            raise SystemExit("FAILED: independent verifier selftest invoked Docker")
+
+
+def exercise_disposition_integration(plugin_root: Path) -> None:
+    disposition = plugin_root / "scripts/audit_disposition.py"
+    doc_path = plugin_root / "docs/runner-contracts/disposition-integration-r1.md"
+    require_text(doc_path, "Candidate-only records stay `status=candidate`", "disposition candidate-only guard")
+    require_text(doc_path, "finder-notes.md` is human context only", "disposition finder notes boundary")
+    require_text(doc_path, "ZC-004 does not generate confirmed bundles", "disposition bundle boundary")
+    require_text(doc_path, "validate_report_bundle.py pass", "disposition future confirmed bundle gate")
+
+    with tempfile.TemporaryDirectory(prefix="zhulong-disposition-selftest-") as tempdir:
+        tmp = Path(tempdir)
+
+        def make_workspace(name: str = "security-research-selftest") -> Path:
+            workspace = tmp / name
+            workspace.mkdir(parents=True, exist_ok=True)
+            return workspace
+
+        def write_candidate(workspace: Path, candidate: dict | None = None) -> Path:
+            doc = candidate or valid_candidate_contract()
+            cand_dir = workspace / "candidates" / doc.get("candidate_id", "CAND-0001")
+            cand_dir.mkdir(parents=True, exist_ok=True)
+            (cand_dir / "finder-notes.md").write_text(
+                "Finder notes say confirmed_in_docker, but notes are not verifier evidence.\n",
+                encoding="utf-8",
+            )
+            return write_json_fixture(cand_dir / "candidate.json", doc)
+
+        def verdict_doc(status: str, overrides: dict | None = None) -> dict:
+            doc = json_clone(valid_verifier_verdict())
+            doc["verdict"] = status
+            doc["verification_status"] = status
+            doc["disposition_recommendation"] = status
+            if status != "confirmed_in_docker":
+                doc["environment"]["fresh_container"] = False
+                doc["commands"] = []
+                doc["artifacts"] = []
+                doc["oracle_result"]["success"] = False
+                doc["oracle_result"]["summary"] = f"{status} selftest disposition reason."
+                doc["reason"] = f"{status} selftest disposition reason"
+            if overrides:
+                doc.update(overrides)
+            return doc
+
+        def write_verdict(workspace: Path, status: str, overrides: dict | None = None) -> Path:
+            path = workspace / "verifier/CAND-0001/verifier-verdict.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            return write_json_fixture(path, verdict_doc(status, overrides))
+
+        def load_ledger(workspace: Path) -> dict:
+            return json.loads((workspace / "audit-disposition.json").read_text(encoding="utf-8"))
+
+        def candidate_record(workspace: Path) -> dict:
+            ledger = load_ledger(workspace)
+            records = ledger.get("candidate_dispositions", [])
+            if len(records) != 1:
+                raise SystemExit(f"FAILED: expected exactly one candidate disposition record: {ledger}")
+            return records[0]
+
+        def assert_status(workspace: Path, expected: str) -> dict:
+            record = candidate_record(workspace)
+            if record.get("status") != expected:
+                raise SystemExit(f"FAILED: expected disposition status={expected}, got {record}")
+            return record
+
+        def run_update(workspace: Path, candidate: Path, verdict: Path, *, expected_returncode: int = 0) -> str:
+            return run_capture_with_env(
+                [
+                    sys.executable,
+                    str(disposition),
+                    "--workspace",
+                    str(workspace),
+                    "--candidate",
+                    str(candidate),
+                    "--verdict",
+                    str(verdict),
+                    "--update-from-verdict",
+                ],
+                plugin_root,
+                {},
+                expected_returncode=expected_returncode,
+            )
+
+        candidate_only = make_workspace("candidate-only")
+        write_candidate(candidate_only)
+        run([sys.executable, str(disposition), "--workspace-dir", str(candidate_only), "--write"], plugin_root)
+        candidate_only_record = assert_status(candidate_only, "candidate")
+        if candidate_only_record.get("source") != "candidate-contract" or "verdict_path" in candidate_only_record:
+            raise SystemExit(f"FAILED: candidate-only disposition should not contain verifier source: {candidate_only_record}")
+
+        notes_guard = make_workspace("finder-notes-guard")
+        write_candidate(notes_guard)
+        run([sys.executable, str(disposition), "--workspace-dir", str(notes_guard), "--write"], plugin_root)
+        assert_status(notes_guard, "candidate")
+
+        for status in ["confirmed_in_docker", "false_positive", "unverified", "blocked"]:
+            workspace = make_workspace(f"verdict-{status}")
+            candidate_path = write_candidate(workspace)
+            verdict_path = write_verdict(workspace, status)
+            output = run_update(workspace, candidate_path, verdict_path)
+            if "AUDIT DISPOSITION OK" not in output:
+                raise SystemExit(f"FAILED: update-from-verdict did not validate ledger for {status}:\n{output}")
+            record = assert_status(workspace, status)
+            if record.get("source") != "verifier-verdict":
+                raise SystemExit(f"FAILED: verdict disposition source drifted: {record}")
+            if record.get("candidate_path") != "candidates/CAND-0001/candidate.json":
+                raise SystemExit(f"FAILED: candidate path should be workspace-relative: {record}")
+            if record.get("verdict_path") != "verifier/CAND-0001/verifier-verdict.json":
+                raise SystemExit(f"FAILED: verdict path should be workspace-relative: {record}")
+            if status == "confirmed_in_docker" and not record.get("oracle_summary"):
+                raise SystemExit("FAILED: confirmed disposition must carry oracle summary")
+
+        invalid_workspace = make_workspace("invalid-verdict")
+        invalid_candidate = write_candidate(invalid_workspace)
+        run([sys.executable, str(disposition), "--workspace-dir", str(invalid_workspace), "--write"], plugin_root)
+        before_invalid = (invalid_workspace / "audit-disposition.json").read_text(encoding="utf-8")
+        invalid_doc = verdict_doc("confirmed_in_docker")
+        invalid_doc["environment"]["fresh_container"] = False
+        invalid_verdict = invalid_workspace / "verifier/CAND-0001/verifier-verdict.json"
+        invalid_verdict.parent.mkdir(parents=True, exist_ok=True)
+        write_json_fixture(invalid_verdict, invalid_doc)
+        run_update(invalid_workspace, invalid_candidate, invalid_verdict, expected_returncode=1)
+        after_invalid = (invalid_workspace / "audit-disposition.json").read_text(encoding="utf-8")
+        if after_invalid != before_invalid:
+            raise SystemExit("FAILED: invalid verifier verdict changed audit-disposition.json")
+        assert_status(invalid_workspace, "candidate")
+
+        mismatch_workspace = make_workspace("mismatch-verdict")
+        mismatch_candidate = write_candidate(mismatch_workspace)
+        run([sys.executable, str(disposition), "--workspace-dir", str(mismatch_workspace), "--write"], plugin_root)
+        before_mismatch = (mismatch_workspace / "audit-disposition.json").read_text(encoding="utf-8")
+        mismatch_doc = verdict_doc("confirmed_in_docker")
+        mismatch_doc["candidate_id"] = "CAND-9999"
+        mismatch_verdict = mismatch_workspace / "verifier/CAND-0001/verifier-verdict.json"
+        mismatch_verdict.parent.mkdir(parents=True, exist_ok=True)
+        write_json_fixture(mismatch_verdict, mismatch_doc)
+        run_update(mismatch_workspace, mismatch_candidate, mismatch_verdict, expected_returncode=1)
+        after_mismatch = (mismatch_workspace / "audit-disposition.json").read_text(encoding="utf-8")
+        if after_mismatch != before_mismatch:
+            raise SystemExit("FAILED: candidate/verdict mismatch changed audit-disposition.json")
+        assert_status(mismatch_workspace, "candidate")
+
+
+def exercise_contract_fixture_chain(plugin_root: Path) -> None:
+    target_validator = plugin_root / "scripts/validate_target_contract.py"
+    candidate_validator = plugin_root / "scripts/validate_candidate.py"
+    verdict_validator = plugin_root / "scripts/validate_verifier_verdict.py"
+    disposition = plugin_root / "scripts/audit_disposition.py"
+    fixture_root = plugin_root / "assets/fixtures/contracts"
+    doc_path = plugin_root / "docs/runner-contracts/contract-layer-r1-closure.md"
+
+    require_text(doc_path, "ZC-005 locks the cross-step fixture chain", "contract closure ZC-005 summary")
+    require_text(doc_path, "not an autonomous runner", "contract closure runner boundary")
+    require_text(doc_path, "Confirmed bundle validation remains separate", "contract closure bundle boundary")
+    require_text(doc_path, "No Docker, PoC, replay, scanner, network, GitHub, package registry, or LLM", "contract closure selftest boundary")
+
+    expected_statuses = {
+        "confirmed_ssrf": "confirmed_in_docker",
+        "false_positive_unreachable": "false_positive",
+        "unverified_oracle_weak": "unverified",
+        "blocked_manual_runtime": "blocked",
+    }
+
+    with tempfile.TemporaryDirectory(prefix="zhulong-contract-chain-selftest-") as tempdir:
+        tmp = Path(tempdir)
+        fakebin = tmp / "fakebin"
+        fakebin.mkdir()
+        docker_marker = tmp / "docker-called"
+        fake_docker = fakebin / "docker"
+        fake_docker.write_text(f"#!/usr/bin/env bash\nprintf called > {docker_marker}\nexit 77\n", encoding="utf-8")
+        fake_docker.chmod(0o755)
+        env = {"PATH": f"{fakebin}{os.pathsep}{os.environ.get('PATH', '')}"}
+
+        candidate_only_checked = False
+        finder_notes_checked = False
+
+        for fixture_name, expected_status in expected_statuses.items():
+            fixture_dir = fixture_root / fixture_name
+            target_fixture = fixture_dir / "zhulong-target.yaml"
+            candidate_fixture = fixture_dir / "candidate.json"
+            verdict_fixture = fixture_dir / "verifier-verdict.json"
+            expected_fixture = fixture_dir / "expected-disposition.json"
+            for path in [target_fixture, candidate_fixture, verdict_fixture, expected_fixture]:
+                if not path.exists():
+                    raise SystemExit(f"FAILED: missing contract fixture file: {path}")
+
+            run_capture_with_env([sys.executable, str(target_validator), str(target_fixture)], plugin_root, env)
+            run_capture_with_env([sys.executable, str(candidate_validator), str(candidate_fixture)], plugin_root, env)
+            run_capture_with_env(
+                [sys.executable, str(verdict_validator), "--candidate", str(candidate_fixture), str(verdict_fixture)],
+                plugin_root,
+                env,
+            )
+
+            candidate_doc = json.loads(candidate_fixture.read_text(encoding="utf-8"))
+            expected_doc = json.loads(expected_fixture.read_text(encoding="utf-8"))
+            candidate_id = candidate_doc["candidate_id"]
+
+            workspace = tmp / f"workspace-{fixture_name}"
+            workspace.mkdir()
+            shutil.copy2(target_fixture, workspace / "zhulong-target.yaml")
+            candidate_path = workspace / "candidates" / candidate_id / "candidate.json"
+            verdict_path = workspace / "verifier" / candidate_id / "verifier-verdict.json"
+            candidate_path.parent.mkdir(parents=True)
+            verdict_path.parent.mkdir(parents=True)
+            shutil.copy2(candidate_fixture, candidate_path)
+            shutil.copy2(verdict_fixture, verdict_path)
+            (candidate_path.parent / "finder-notes.md").write_text(
+                "Finder notes claim confirmed_in_docker, but fixture status must come only from verifier-verdict.json.\n",
+                encoding="utf-8",
+            )
+
+            if not candidate_only_checked:
+                candidate_only_workspace = tmp / "candidate-only-guard"
+                candidate_only_workspace.mkdir()
+                shutil.copy2(target_fixture, candidate_only_workspace / "zhulong-target.yaml")
+                candidate_only_path = candidate_only_workspace / "candidates" / candidate_id / "candidate.json"
+                candidate_only_path.parent.mkdir(parents=True)
+                shutil.copy2(candidate_fixture, candidate_only_path)
+                (candidate_only_path.parent / "finder-notes.md").write_text(
+                    "Finder note says confirmed_in_docker while verifier verdict is withheld.\n",
+                    encoding="utf-8",
+                )
+                run_capture_with_env(
+                    [sys.executable, str(disposition), "--workspace-dir", str(candidate_only_workspace), "--write"],
+                    plugin_root,
+                    env,
+                )
+                candidate_only_ledger = json.loads(
+                    (candidate_only_workspace / "audit-disposition.json").read_text(encoding="utf-8")
+                )
+                records = candidate_only_ledger.get("candidate_dispositions", [])
+                if len(records) != 1 or records[0].get("status") != "candidate" or records[0].get("verdict_path"):
+                    raise SystemExit(f"FAILED: candidate-only fixture promoted without verdict: {candidate_only_ledger}")
+                candidate_only_checked = True
+
+            output = run_capture_with_env(
+                [
+                    sys.executable,
+                    str(disposition),
+                    "--workspace",
+                    str(workspace),
+                    "--candidate",
+                    str(candidate_path),
+                    "--verdict",
+                    str(verdict_path),
+                    "--update-from-verdict",
+                ],
+                plugin_root,
+                env,
+            )
+            if "AUDIT DISPOSITION OK" not in output:
+                raise SystemExit(f"FAILED: contract fixture disposition update did not pass for {fixture_name}:\n{output}")
+            ledger = json.loads((workspace / "audit-disposition.json").read_text(encoding="utf-8"))
+            records = ledger.get("candidate_dispositions", [])
+            if len(records) != 1:
+                raise SystemExit(f"FAILED: expected one candidate disposition record for {fixture_name}: {ledger}")
+            record = records[0]
+            if record.get("status") != expected_status or record.get("status") != expected_doc.get("status"):
+                raise SystemExit(f"FAILED: fixture {fixture_name} status mismatch: {record}")
+            for key in ["source", "candidate_path", "verdict_path", "target_ref", "claim", "oracle_summary"]:
+                if record.get(key) != expected_doc.get(key):
+                    raise SystemExit(
+                        f"FAILED: fixture {fixture_name} disposition field {key} mismatch\n"
+                        f"Expected: {expected_doc.get(key)!r}\n"
+                        f"Actual: {record.get(key)!r}"
+                    )
+            if fixture_name == "false_positive_unreachable" and record.get("status") == expected_status:
+                finder_notes_checked = True
+
+        if not candidate_only_checked:
+            raise SystemExit("FAILED: candidate-only no-verdict guard did not run")
+        if not finder_notes_checked:
+            raise SystemExit("FAILED: finder-notes status guard did not run")
+        if docker_marker.exists():
+            raise SystemExit("FAILED: contract fixture chain invoked Docker")
 
 
 def valid_variant_seed_card() -> dict:
@@ -2017,6 +3043,10 @@ def selftest_installed_skill(skill_root: Path) -> None:
          str(skill_root / "scripts/blocked_verification.py"),
          str(skill_root / "scripts/write_audit_event.py"),
          str(skill_root / "scripts/validate_workspace_state.py"),
+         str(skill_root / "scripts/validate_target_contract.py"),
+         str(skill_root / "scripts/validate_candidate.py"),
+         str(skill_root / "scripts/validate_verifier_verdict.py"),
+         str(skill_root / "scripts/verify_candidate.py"),
          str(skill_root / "scripts/check_sandbox_preflight.py"),
          str(skill_root / "scripts/manage_docker_resources.py"),
          str(skill_root / "scripts/render_confirmed_vuln_docx.py"),
@@ -2025,6 +3055,11 @@ def selftest_installed_skill(skill_root: Path) -> None:
          str(skill_root / "scripts/validate_report_bundle.py"),
          str(skill_root / "scripts/validate_all_report_bundles.py"),
          str(skill_root / "scripts/finalize_audit_workspace.py")], skill_root)
+    exercise_target_contract_validator(skill_root)
+    exercise_finding_contract_validators(skill_root)
+    exercise_independent_verifier(skill_root)
+    exercise_disposition_integration(skill_root)
+    exercise_contract_fixture_chain(skill_root)
 
     for script in [
         "scripts/bootstrap_verification_workspace.sh",
@@ -2246,6 +3281,11 @@ def main() -> None:
 
     exercise_agents_shim(plugin_root)
     exercise_p7_wording_closure(plugin_root)
+    exercise_target_contract_validator(plugin_root)
+    exercise_finding_contract_validators(plugin_root)
+    exercise_independent_verifier(plugin_root)
+    exercise_disposition_integration(plugin_root)
+    exercise_contract_fixture_chain(plugin_root)
 
     plugin_json = json.loads((plugin_root / ".codex-plugin/plugin.json").read_text(encoding="utf-8"))
     if plugin_json.get("name") != "zhulong":
@@ -3103,6 +4143,10 @@ def main() -> None:
          str(plugin_root / "scripts/blocked_verification.py"),
          str(plugin_root / "scripts/write_audit_event.py"),
          str(plugin_root / "scripts/validate_workspace_state.py"),
+         str(plugin_root / "scripts/validate_target_contract.py"),
+         str(plugin_root / "scripts/validate_candidate.py"),
+         str(plugin_root / "scripts/validate_verifier_verdict.py"),
+         str(plugin_root / "scripts/verify_candidate.py"),
          str(plugin_root / "scripts/check_sandbox_preflight.py"),
          str(plugin_root / "scripts/manage_docker_resources.py"),
          str(plugin_root / "scripts/render_confirmed_vuln_docx.py"),
@@ -3181,6 +4225,14 @@ def main() -> None:
             raise SystemExit("FAILED: bootstrapped workspace is missing assert-finalized-workspace.py")
         if not (workspace / "bin/blocked_verification.py").exists():
             raise SystemExit("FAILED: bootstrapped workspace is missing blocked_verification.py")
+        for contract_helper in [
+            "validate_target_contract.py",
+            "validate_candidate.py",
+            "validate_verifier_verdict.py",
+            "verify_candidate.py",
+        ]:
+            if not (workspace / "bin" / contract_helper).exists():
+                raise SystemExit(f"FAILED: bootstrapped workspace is missing {contract_helper}")
         exercise_variant_seed_card_validation(plugin_root, workspace)
         exercise_extract_variant_seed(plugin_root, workspace)
         exercise_find_variant_candidates(plugin_root, workspace)
@@ -8130,6 +9182,8 @@ def main() -> None:
         isolated_finalizer = isolated_finalizer_dir / "finalize_audit_workspace.py"
         shutil.copy2(plugin_root / "scripts/finalize_audit_workspace.py", isolated_finalizer)
         shutil.copy2(plugin_root / "scripts/blocked_verification.py", isolated_finalizer_dir / "blocked_verification.py")
+        shutil.copy2(plugin_root / "scripts/validate_candidate.py", isolated_finalizer_dir / "validate_candidate.py")
+        shutil.copy2(plugin_root / "scripts/validate_verifier_verdict.py", isolated_finalizer_dir / "validate_verifier_verdict.py")
         shutil.copy2(plugin_root / "scripts/audit_disposition.py", isolated_finalizer_dir / "audit_disposition.py")
         workspace_writer = workspace / "bin/write-audit-event.py"
         hidden_workspace_writer = workspace / "bin/write-audit-event.py.hidden-for-selftest"

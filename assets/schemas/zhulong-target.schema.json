@@ -1,0 +1,258 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/Torchbearer127/zhulong/blob/main/assets/schemas/zhulong-target.schema.json",
+  "title": "Zhulong Target Contract R1",
+  "description": "Structured target runtime, verification, cleanup, and scope input for the existing Zhulong workflow. This schema does not confirm findings.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "target",
+    "runtime",
+    "verify",
+    "scope"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "repo_root",
+        "tested_ref",
+        "language_hint"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "repo_root": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!/)(?![A-Za-z]:[\\\\/])(?!file://)(?!~)(?!.*(^|/)\\.\\.($|/)).+"
+        },
+        "tested_ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "language_hint": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "docker",
+            "docker-compose",
+            "manual-blocked"
+          ]
+        },
+        "compose_file": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!/)(?![A-Za-z]:[\\\\/])(?!file://)(?!~)(?!.*(^|/)\\.\\.($|/)).+"
+        },
+        "service": {
+          "type": "string",
+          "minLength": 1
+        },
+        "healthcheck": {
+          "$ref": "#/definitions/command_with_timeout"
+        }
+      }
+    },
+    "build": {
+      "$ref": "#/definitions/command_block"
+    },
+    "start": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "type": "string",
+          "minLength": 1
+        },
+        "readiness": {
+          "$ref": "#/definitions/command_with_timeout"
+        }
+      }
+    },
+    "verify": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode"
+      ],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "minLength": 1
+        },
+        "allowed_network": {
+          "type": "string",
+          "minLength": 1
+        },
+        "success_oracles": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "cleanup": {
+          "$ref": "#/definitions/command_block"
+        }
+      }
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "entrypoints",
+        "trust_boundaries",
+        "in_scope_bug_classes",
+        "out_of_scope"
+      ],
+      "properties": {
+        "entrypoints": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "kind": {
+                "type": "string",
+                "minLength": 1
+              },
+              "route": {
+                "type": "string",
+                "minLength": 1
+              },
+              "auth": {
+                "type": "string",
+                "minLength": 1
+              },
+              "attacker_control": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          }
+        },
+        "trust_boundaries": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "in_scope_bug_classes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "out_of_scope": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "runtime": {
+            "properties": {
+              "type": {
+                "const": "docker-compose"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "runtime": {
+            "required": [
+              "compose_file",
+              "service"
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "definitions": {
+    "command_block": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command"
+      ],
+      "properties": {
+        "command": {
+          "type": "string",
+          "minLength": 1
+        },
+        "network_required": {
+          "type": "boolean"
+        }
+      }
+    },
+    "command_with_timeout": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command",
+        "timeout_seconds"
+      ],
+      "properties": {
+        "command": {
+          "type": "string",
+          "minLength": 1
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    }
+  }
+}

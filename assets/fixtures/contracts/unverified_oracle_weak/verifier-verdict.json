@@ -1,0 +1,38 @@
+{
+  "artifacts": [
+    "verifier/CAND-CONTRACT-UNVERIFIED/logs/weak-oracle.log"
+  ],
+  "candidate_id": "CAND-CONTRACT-UNVERIFIED",
+  "commands": [],
+  "disposition_recommendation": "unverified",
+  "environment": {
+    "credential_paths_mounted": false,
+    "docker_socket_mounted": false,
+    "egress_policy": "local-only",
+    "fresh_container": false,
+    "host_network": false,
+    "privileged": false,
+    "runtime_type": "docker-compose"
+  },
+  "negative_checks": [
+    {
+      "check": "oracle proves claimed impact",
+      "passed": false,
+      "reason": "Only a log marker was observed; no security boundary impact was demonstrated."
+    }
+  ],
+  "oracle_result": {
+    "success": false,
+    "summary": "PoC/oracle did not prove the claimed impact; only a weak log marker was present.",
+    "type": "log_pattern"
+  },
+  "reason": "PoC/oracle did not prove claimed impact.",
+  "schema_version": 1,
+  "target_ref": {
+    "target_config": "zhulong-target.yaml",
+    "tested_ref": "fixture-unverified-ref"
+  },
+  "verification_status": "unverified",
+  "verdict": "unverified",
+  "verified_at": "2026-06-18T00:07:00Z"
+}

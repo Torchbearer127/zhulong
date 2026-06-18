@@ -1,0 +1,27 @@
+schema_version: 1
+target:
+  name: "contract-fixture-manual-runtime"
+  repo_root: "."
+  tested_ref: "fixture-blocked-ref"
+  language_hint:
+    - "go"
+runtime:
+  type: "manual-blocked"
+verify:
+  mode: "manual-required"
+  success_oracles:
+    - type: "manual_blocked"
+scope:
+  entrypoints:
+    - id: "native-plugin"
+      kind: "native-extension"
+      route: "plugin load"
+      auth: "local operator"
+      attacker_control:
+        - "plugin file"
+  trust_boundaries:
+    - "operator-provided native plugin -> application runtime"
+  in_scope_bug_classes:
+    - "unsafe native plugin loading"
+  out_of_scope:
+    - "automatic verification without a supported container runtime"

@@ -1,0 +1,270 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/Torchbearer127/zhulong/blob/main/assets/schemas/candidate.schema.json",
+  "title": "Zhulong Candidate Finding Contract R1",
+  "description": "Pre-verification vulnerability claim contract. A candidate is not a confirmation and cannot recommend confirmed status.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "candidate_id",
+    "title",
+    "bug_class",
+    "status",
+    "target_ref",
+    "entrypoint",
+    "attacker_model",
+    "claim",
+    "poc",
+    "evidence",
+    "finder"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "candidate_id": {
+      "type": "string",
+      "pattern": "^CAND-[0-9A-Za-z._-]+$"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "bug_class": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "const": "candidate"
+    },
+    "target_ref": {
+      "$ref": "#/definitions/target_ref"
+    },
+    "entrypoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "route"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "route": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "attacker_model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "required_auth",
+        "attacker_controls",
+        "environment_assumptions"
+      ],
+      "properties": {
+        "required_auth": {
+          "type": "string",
+          "minLength": 1
+        },
+        "attacker_controls": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "environment_assumptions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "claim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "sink",
+        "missing_constraint",
+        "impact"
+      ],
+      "properties": {
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sink": {
+          "type": "string",
+          "minLength": 1
+        },
+        "missing_constraint": {
+          "type": "string",
+          "minLength": 1
+        },
+        "impact": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "poc": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "path",
+        "expected_oracle"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "path": {
+          "$ref": "#/definitions/repo_relative_path"
+        },
+        "expected_oracle": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "description"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "minLength": 1
+            },
+            "description": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "static_locations",
+        "dynamic_evidence"
+      ],
+      "properties": {
+        "static_locations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "path",
+              "start_line",
+              "end_line",
+              "reason"
+            ],
+            "properties": {
+              "path": {
+                "$ref": "#/definitions/repo_relative_path"
+              },
+              "start_line": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "end_line": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "dynamic_evidence": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type",
+              "summary"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "minLength": 1
+              },
+              "path": {
+                "$ref": "#/definitions/repo_relative_path"
+              },
+              "summary": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    "finder": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "created_at"
+      ],
+      "properties": {
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    }
+  },
+  "definitions": {
+    "target_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "target_config",
+        "tested_ref"
+      ],
+      "properties": {
+        "target_config": {
+          "$ref": "#/definitions/repo_relative_path"
+        },
+        "tested_ref": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "repo_relative_path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?![A-Za-z]:[\\\\/])(?!file://)(?!~)(?!.*(^|/)\\.\\.($|/)).+"
+    }
+  }
+}

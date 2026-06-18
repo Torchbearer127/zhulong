@@ -434,8 +434,44 @@ copy_file \
   "$SKILL_DIR/scripts/blocked_verification.py" \
   "$WORKSPACE_DIR/bin/blocked_verification.py"
 copy_file \
+  "$SKILL_DIR/scripts/validate_target_contract.py" \
+  "$WORKSPACE_DIR/bin/validate_target_contract.py"
+copy_file \
+  "$SKILL_DIR/scripts/validate_candidate.py" \
+  "$WORKSPACE_DIR/bin/validate_candidate.py"
+copy_file \
+  "$SKILL_DIR/scripts/validate_verifier_verdict.py" \
+  "$WORKSPACE_DIR/bin/validate_verifier_verdict.py"
+copy_file \
+  "$SKILL_DIR/scripts/verify_candidate.py" \
+  "$WORKSPACE_DIR/bin/verify_candidate.py"
+copy_file \
   "$SKILL_DIR/scripts/audit_disposition.py" \
   "$WORKSPACE_DIR/bin/audit_disposition.py"
+write_text_file "$WORKSPACE_DIR/scripts/validate_target_contract.py" '#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec python3 "$SCRIPT_DIR/../bin/validate_target_contract.py" "$@"
+'
+chmod +x "$WORKSPACE_DIR/scripts/validate_target_contract.py"
+write_text_file "$WORKSPACE_DIR/scripts/validate_candidate.py" '#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec python3 "$SCRIPT_DIR/../bin/validate_candidate.py" "$@"
+'
+chmod +x "$WORKSPACE_DIR/scripts/validate_candidate.py"
+write_text_file "$WORKSPACE_DIR/scripts/validate_verifier_verdict.py" '#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec python3 "$SCRIPT_DIR/../bin/validate_verifier_verdict.py" "$@"
+'
+chmod +x "$WORKSPACE_DIR/scripts/validate_verifier_verdict.py"
+write_text_file "$WORKSPACE_DIR/scripts/verify_candidate.py" '#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec python3 "$SCRIPT_DIR/../bin/verify_candidate.py" "$@"
+'
+chmod +x "$WORKSPACE_DIR/scripts/verify_candidate.py"
 write_text_file "$WORKSPACE_DIR/scripts/assert-finalized-workspace.py" '#!/usr/bin/env bash
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

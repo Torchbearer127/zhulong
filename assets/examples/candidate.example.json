@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "candidate_id": "CAND-0001",
+  "title": "SSRF through import URL fetch",
+  "bug_class": "SSRF",
+  "status": "candidate",
+  "target_ref": {
+    "target_config": "zhulong-target.yaml",
+    "tested_ref": "git-sha-or-local-state"
+  },
+  "entrypoint": {
+    "id": "import-url",
+    "kind": "http",
+    "route": "POST /api/import"
+  },
+  "attacker_model": {
+    "required_auth": "low_privileged_user",
+    "attacker_controls": [
+      "url"
+    ],
+    "environment_assumptions": [
+      "import endpoint enabled",
+      "backend can make outbound HTTP requests"
+    ]
+  },
+  "claim": {
+    "source": "user-controlled import URL",
+    "sink": "server-side HTTP fetch",
+    "missing_constraint": "private IP or metadata address denylist is absent or bypassable",
+    "impact": "internal service probing or metadata fetch"
+  },
+  "poc": {
+    "kind": "script",
+    "path": "poc/reproduce.sh",
+    "expected_oracle": {
+      "type": "callback_observed",
+      "description": "attacker-controlled callback server receives request from target container"
+    }
+  },
+  "evidence": {
+    "static_locations": [
+      {
+        "path": "src/importer.py",
+        "start_line": 42,
+        "end_line": 67,
+        "reason": "URL is fetched server-side without network range validation"
+      }
+    ],
+    "dynamic_evidence": []
+  },
+  "finder": {
+    "source": "agent",
+    "created_at": "2026-06-18T00:00:00Z"
+  }
+}

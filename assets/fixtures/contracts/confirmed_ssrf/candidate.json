@@ -1,0 +1,61 @@
+{
+  "attacker_model": {
+    "attacker_controls": [
+      "import URL"
+    ],
+    "environment_assumptions": [
+      "import endpoint enabled",
+      "target container can reach the local callback service"
+    ],
+    "required_auth": "low_privileged_user"
+  },
+  "bug_class": "SSRF",
+  "candidate_id": "CAND-CONTRACT-SSRF",
+  "claim": {
+    "impact": "server-side request reaches an attacker-controlled callback endpoint",
+    "missing_constraint": "URL host is fetched before private-network deny rules are enforced",
+    "sink": "server-side HTTP fetch helper",
+    "source": "user-controlled import URL"
+  },
+  "entrypoint": {
+    "id": "import-url",
+    "kind": "http",
+    "route": "POST /api/import"
+  },
+  "evidence": {
+    "dynamic_evidence": [
+      {
+        "path": "evidence/ssrf-callback-summary.txt",
+        "summary": "Callback observation is supplied by the verifier verdict fixture.",
+        "type": "fixture-summary"
+      }
+    ],
+    "static_locations": [
+      {
+        "end_line": 58,
+        "path": "src/importer.py",
+        "reason": "The import URL flows to the fetch helper before network range validation.",
+        "start_line": 42
+      }
+    ]
+  },
+  "finder": {
+    "created_at": "2026-06-18T00:00:00Z",
+    "source": "fixture"
+  },
+  "poc": {
+    "expected_oracle": {
+      "description": "The verifier observes a callback from the target container.",
+      "type": "callback_observed"
+    },
+    "kind": "inert-fixture",
+    "path": "candidates/CAND-CONTRACT-SSRF/poc/reproduce.sh"
+  },
+  "schema_version": 1,
+  "status": "candidate",
+  "target_ref": {
+    "target_config": "zhulong-target.yaml",
+    "tested_ref": "fixture-ssrf-ref"
+  },
+  "title": "SSRF through import URL fetch"
+}

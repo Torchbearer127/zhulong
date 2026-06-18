@@ -1,0 +1,17 @@
+{
+  "candidate_path": "candidates/CAND-CONTRACT-FP/candidate.json",
+  "claim": {
+    "impact": "attacker could make the server fetch an internal URL",
+    "missing_constraint": "debug importer appears to accept arbitrary URLs",
+    "sink": "admin debug importer fetch",
+    "source": "debug URL parameter"
+  },
+  "oracle_summary": "Verifier rejected the claim because the debug import route is unreachable under the stated attacker model.",
+  "source": "verifier-verdict",
+  "status": "false_positive",
+  "target_ref": {
+    "target_config": "zhulong-target.yaml",
+    "tested_ref": "fixture-false-positive-ref"
+  },
+  "verdict_path": "verifier/CAND-CONTRACT-FP/verifier-verdict.json"
+}

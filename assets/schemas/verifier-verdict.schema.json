@@ -1,0 +1,251 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/Torchbearer127/zhulong/blob/main/assets/schemas/verifier-verdict.schema.json",
+  "title": "Zhulong Verifier Verdict Contract R1",
+  "description": "Independent verification verdict contract. Only this contract may recommend confirmed_in_docker before disposition promotion.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "candidate_id",
+    "verdict",
+    "verification_status",
+    "target_ref",
+    "environment",
+    "commands",
+    "oracle_result",
+    "disposition_recommendation",
+    "negative_checks",
+    "artifacts",
+    "verified_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "candidate_id": {
+      "type": "string",
+      "pattern": "^CAND-[0-9A-Za-z._-]+$"
+    },
+    "verdict": {
+      "$ref": "#/definitions/verdict"
+    },
+    "verification_status": {
+      "$ref": "#/definitions/verdict"
+    },
+    "target_ref": {
+      "$ref": "#/definitions/target_ref"
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fresh_container",
+        "runtime_type",
+        "host_network",
+        "privileged",
+        "docker_socket_mounted",
+        "credential_paths_mounted",
+        "egress_policy"
+      ],
+      "properties": {
+        "fresh_container": {
+          "type": "boolean"
+        },
+        "runtime_type": {
+          "type": "string",
+          "enum": [
+            "docker",
+            "docker-compose",
+            "manual-blocked"
+          ]
+        },
+        "host_network": {
+          "type": "boolean"
+        },
+        "privileged": {
+          "type": "boolean"
+        },
+        "docker_socket_mounted": {
+          "type": "boolean"
+        },
+        "credential_paths_mounted": {
+          "type": "boolean"
+        },
+        "egress_policy": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "commands": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "command",
+          "exit_code"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "command": {
+            "type": "string",
+            "minLength": 1
+          },
+          "exit_code": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    "oracle_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "success",
+        "summary"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "success": {
+          "type": "boolean"
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "disposition_recommendation": {
+      "$ref": "#/definitions/verdict"
+    },
+    "negative_checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "check",
+          "passed"
+        ],
+        "properties": {
+          "check": {
+            "type": "string",
+            "minLength": 1
+          },
+          "passed": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/repo_relative_path"
+      }
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1
+    },
+    "verified_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "verdict": {
+            "const": "confirmed_in_docker"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "environment": {
+            "properties": {
+              "fresh_container": {
+                "const": true
+              },
+              "host_network": {
+                "const": false
+              },
+              "privileged": {
+                "const": false
+              },
+              "docker_socket_mounted": {
+                "const": false
+              },
+              "credential_paths_mounted": {
+                "const": false
+              }
+            }
+          },
+          "commands": {
+            "minItems": 1
+          },
+          "oracle_result": {
+            "properties": {
+              "success": {
+                "const": true
+              }
+            }
+          },
+          "artifacts": {
+            "minItems": 1
+          }
+        }
+      }
+    }
+  ],
+  "definitions": {
+    "verdict": {
+      "type": "string",
+      "enum": [
+        "blocked",
+        "false_positive",
+        "unverified",
+        "confirmed_in_docker"
+      ]
+    },
+    "target_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "target_config",
+        "tested_ref"
+      ],
+      "properties": {
+        "target_config": {
+          "$ref": "#/definitions/repo_relative_path"
+        },
+        "tested_ref": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "repo_relative_path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?![A-Za-z]:[\\\\/])(?!file://)(?!~)(?!.*(^|/)\\.\\.($|/)).+"
+    }
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "artifacts": [
+    "verifier/CAND-CONTRACT-SSRF/logs/callback.log"
+  ],
+  "candidate_id": "CAND-CONTRACT-SSRF",
+  "commands": [
+    {
+      "command": "docker compose -f docker-compose.zhulong.yml run --rm verifier callback-check",
+      "exit_code": 0,
+      "name": "callback-check"
+    }
+  ],
+  "disposition_recommendation": "confirmed_in_docker",
+  "environment": {
+    "credential_paths_mounted": false,
+    "docker_socket_mounted": false,
+    "egress_policy": "local-only",
+    "fresh_container": true,
+    "host_network": false,
+    "privileged": false,
+    "runtime_type": "docker-compose"
+  },
+  "negative_checks": [
+    {
+      "check": "finder notes ignored as confirmation evidence",
+      "passed": true
+    },
+    {
+      "check": "callback came from target container network",
+      "passed": true
+    }
+  ],
+  "oracle_result": {
+    "success": true,
+    "summary": "Callback server observed a request from the target container for the attacker-controlled import URL.",
+    "type": "callback_observed"
+  },
+  "reason": "Docker Compose verifier fixture observed the expected callback and no negative check overturned the claim.",
+  "schema_version": 1,
+  "target_ref": {
+    "target_config": "zhulong-target.yaml",
+    "tested_ref": "fixture-ssrf-ref"
+  },
+  "verification_status": "confirmed_in_docker",
+  "verdict": "confirmed_in_docker",
+  "verified_at": "2026-06-18T00:05:00Z"
+}
