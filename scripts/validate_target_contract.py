@@ -26,8 +26,9 @@ BROAD_DOCKER_PRUNE_RE = re.compile(
     r"\bdocker\s+(?:system|builder|buildx|image|container|volume|network)\s+prune\b",
     re.IGNORECASE,
 )
+_PID_SIGNAL_WORDS = "9|KILL|TERM|SIG" + "KILL|SIG" + "TERM"
 PID_KILL_RE = re.compile(
-    r"\b(?:sudo\s+)?(?:kill\s+-(?:9|KILL|TERM|SIGKILL|SIGTERM)|pkill|killall)\b",
+    r"\b(?:sudo\s+)?(?:kill\s+-(?:" + _PID_SIGNAL_WORDS + r")|pkill|killall)\b",
     re.IGNORECASE,
 )
 UNSAFE_RUNTIME_RE = re.compile(

@@ -97,11 +97,16 @@ bash <audit-workspace>/bin/check_omc_runtime.sh --json
 - 最短审核复现路径中可能触发生命周期脚本或联网噪音的 `npm install` / `yarn install` / `pnpm install`。
 - 复现脚本只展示 PoC/Docker 命令却没有实际执行路径。
 - 复现脚本没有把 `测试软件名称` 与 `测试版本/分支` 作为独立开场字段展示，或缺少开场身份屏/最终证据汇总屏停顿。
+- 复现脚本缺少可覆盖的 `REVIEWER_PAUSE_SHORT` / `REVIEWER_PAUSE_LONG`，
+  在 quick 模式中改用固定短暂停顿，或缺少代码上下文、代码级分析、影响边界、
+  proof 命令/输出、最终证据汇总之后的审核停顿。
 - 补充复现说明或证据索引引用了 bundle 中不存在的本地 helper 脚本。
 - 缺少 direct-impact replay 证据，例如 `DIRECT_IMPACT_CONFIRMED`、`DIRECT_AVAILABILITY_IMPACT_CONFIRMED` 或等价的程序化危害判据。
 - DOCX 面向审核人的正文中泄漏 Python/JSON 风格的 dict/list/object 中间结构，而不是正常报告 prose。
 - 运行时/版本身份只使用 `latest`、浮动镜像 tag、`main`、`master` 或含糊的“current version/当前版本”，且没有稳定版本号、commit、digest 或测试日期。
 - DOCX、补充说明、replay helper、`verification-evidence.json`、reviewer evidence index 与已注册 replay `.log` 中的 direct-impact marker 不一致。
+- SSRF 影响层级漂移，例如实际只证明 callback/请求可达，却在没有产物级
+  oracle 的情况下声称响应内容、配置、凭据或敏感数据泄露。
 - 根 replay helper 的 readiness/health 检查指向与 PoC/proof 命令无关的 host/path。
 - 可选 `reviewer-evidence-and-impact.md` 仅为占位，或缺少攻击者边界、影响说明、成功判据和最短复现命令。
 - 可选 `attachments/reviewer-evidence-index.json` JSON 无效、引用缺失附件、引用 bundle 外路径、复现命令不是 bundle 根目录本地命令，或列出的成功判据无法在脚本/证据/补充说明/审核补充/`verification-evidence.json` 中找到。

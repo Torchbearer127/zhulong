@@ -1210,8 +1210,10 @@ def build_generated_recording_shell(
         "",
         'MODE="${1:-record}"',
         'RUNTIME="${2:-docker}"',
-        'PAUSE_SHORT="${REVIEWER_PAUSE_SHORT:-2}"',
-        'PAUSE_LONG="${REVIEWER_PAUSE_LONG:-4}"',
+        'REVIEWER_PAUSE_SHORT="${REVIEWER_PAUSE_SHORT:-2}"',
+        'REVIEWER_PAUSE_LONG="${REVIEWER_PAUSE_LONG:-4}"',
+        'PAUSE_SHORT="$REVIEWER_PAUSE_SHORT"',
+        'PAUSE_LONG="$REVIEWER_PAUSE_LONG"',
         'SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"',
         'ATTACH_DIR="$SCRIPT_DIR/attachments"',
         'EVIDENCE_DIR="$ATTACH_DIR/evidence"',
@@ -1536,8 +1538,10 @@ def build_generated_recording_shell(
         profile = generated_mode_profile(mode, language)
         script_lines.append(f"        {mode})")
         if mode.startswith("quick"):
-            script_lines.append("            PAUSE_SHORT=\"${REVIEWER_PAUSE_SHORT:-1}\"")
-            script_lines.append("            PAUSE_LONG=\"${REVIEWER_PAUSE_LONG:-2}\"")
+            script_lines.append("            REVIEWER_PAUSE_SHORT=\"${REVIEWER_PAUSE_SHORT:-1}\"")
+            script_lines.append("            REVIEWER_PAUSE_LONG=\"${REVIEWER_PAUSE_LONG:-2}\"")
+            script_lines.append("            PAUSE_SHORT=\"$REVIEWER_PAUSE_SHORT\"")
+            script_lines.append("            PAUSE_LONG=\"$REVIEWER_PAUSE_LONG\"")
         script_lines.append(f"            print_banner {shell_quote(strings['banner'])}")
         script_lines.append(f"            printf '%s %s\\n' {shell_quote(strings['mode'])} \"$MODE\"")
         script_lines.append(f"            printf '%s docker\\n' {shell_quote(strings['runtime'])}")

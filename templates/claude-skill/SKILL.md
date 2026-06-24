@@ -249,6 +249,13 @@ default contract even when the user does not restate them:
   print concrete commands before execution, capture raw stdout/stderr into a
   bundle-local `attachments/evidence/*.log`, and check a deterministic success
   marker programmatically before final confirmation.
+- Bundle-root replay helpers must expose `REVIEWER_PAUSE_SHORT` and
+  `REVIEWER_PAUSE_LONG`, keep reviewer-readable default pauses even in quick
+  mode, and pause after the opening tested software/version identity screen,
+  code-context screen, code-level analysis screen, realistic exploitability /
+  impact-boundary screen, proof command/output transitions, and final evidence
+  summary. Do not ship fixed `sleep 0`, `sleep 1`, or hardcoded short pauses
+  that cannot be overridden.
 - Bundle-root replay helpers must be helper-closed: helper-like calls such as
   `run_*`, `verify_*`, `assert_*`, `show_*`, `print_*`, or `require_*` must be
   defined in the same script unless they are normal shell/system commands.
@@ -590,6 +597,12 @@ propagation path, dangerous operation, missing guard or validation, why adjacent
 checks are insufficient or out of scope, and the verified impact boundary. Do
 not use placeholder-only entries such as `代码上下文 1`, `Key Code Context 1`,
 `待补充`, or `TODO`.
+Do not render single-line sink-only code context for confirmed reports. The
+snippet must cover enough of the vulnerable chain for a reviewer to see the
+attacker-controlled input, relevant branch or propagation step, dangerous sink,
+and missing or insufficient adjacent guard. If line numbers or source context
+are unavailable, keep the finding out of `confirmed/` until the evidence is
+enriched.
 
 Confirmed reports must also include the three quality-gate labels in the report
 language: `攻击者条件` / `Attacker Condition`, `服务端条件` /
@@ -643,6 +656,11 @@ The opening identity card must include `测试软件名称` / `Tested Software` 
 It must print each concrete command before execution, capture raw command stdout/stderr to a bundle-local `.log` file under `attachments/evidence/`, and list that `.log` in `verification-evidence.json` or `attachments/reviewer-evidence-index.json`.
 It must record a direct-impact marker such as `DIRECT_IMPACT_CONFIRMED`, `DIRECT_AVAILABILITY_IMPACT_CONFIRMED`, or an equivalent deterministic oracle in reviewer-facing replay evidence before final confirmation.
 Keep that direct-impact marker synchronized across the replay helper, DOCX/supplement prose, `verification-evidence.json`, reviewer evidence index, and registered replay `.log` files.
+For SSRF-class findings, distinguish callback/reachability evidence from
+response-content exposure, configuration leakage, credentials, or sensitive-data
+exposure. Callback-only evidence may support a bounded outbound-request
+reachability claim when the materials say so explicitly; stronger SSRF impact
+claims require concrete artifact-backed response/output/log/file oracle lines.
 It must derive `SCRIPT_DIR` from the script path, derive `ATTACH_DIR="$SCRIPT_DIR/attachments"`, and either self-bootstrap from bundle-local attachments or fail early with the exact bundle-local command the reviewer must run first.
 Every helper-like function called by the proof flow must be defined in the same root script; do not call a missing local `run_*`, `verify_*`, `show_*`, `print_*`, or `require_*` helper.
 Do not merely print a PoC/Docker command for the reviewer to run later; the bundle-root replay helper must execute the proof command itself, capture raw output, and fail closed if the command fails.

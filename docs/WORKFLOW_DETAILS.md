@@ -132,6 +132,10 @@ The validator also checks for common contradiction patterns, including:
 - replay helpers that do not show `Tested Software` and
   `Tested Version / Branch` as separate opening-screen fields, or that skip the
   opening/final reviewer pauses needed for screen recording
+- replay helpers that lack overrideable `REVIEWER_PAUSE_SHORT` /
+  `REVIEWER_PAUSE_LONG`, replace quick-mode pauses with fixed short sleeps, or
+  skip pauses after code context, code-level analysis, impact-boundary, proof
+  command/output, or final summary screens
 - reproduction supplements or evidence indexes that reference missing
   bundle-local helper scripts
 - missing direct-impact replay evidence, such as `DIRECT_IMPACT_CONFIRMED`,
@@ -143,6 +147,9 @@ The validator also checks for common contradiction patterns, including:
 - direct-impact marker drift between DOCX, supplement, replay helper,
   `verification-evidence.json`, reviewer evidence index, and registered replay
   `.log` files
+- SSRF impact-tier drift, such as proving only callback/reachability while
+  claiming response content, configuration leakage, credentials, or sensitive
+  data exposure without an artifact-backed oracle
 - readiness or health checks in root replay helpers that target an unrelated
   host/path instead of the runtime path exercised by proof commands
 - optional `reviewer-evidence-and-impact.md` files that are placeholder-only or

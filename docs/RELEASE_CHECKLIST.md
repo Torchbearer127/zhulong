@@ -68,8 +68,16 @@ Use this checklist before publishing a tagged open-source release of Zhulong
   reviewer-friendly bundle-root reproduction helper script.
 - [ ] Confirmed reports include attacker condition, server condition, and
   concrete CIA or equivalent security impact.
+- [ ] DOCX key code context includes project-relative paths, line metadata or an
+  explicit unavailable-line reason, vulnerable-chain snippets, compact
+  monospace formatting, and code-level analysis tied to the snippet.
+- [ ] Bundle-root replay helpers expose reviewer pause overrides and preserve
+  readable pauses around identity, code context, analysis, impact boundary,
+  proof command/output transitions, and final evidence summary screens.
 - [ ] Report wording, CVSS, reproduction scripts, evidence JSON, and
   reviewer-facing artifacts do not contradict each other.
+- [ ] SSRF reports keep callback/reachability, response-content exposure,
+  configuration leakage, and sensitive-data exposure in separate evidence tiers.
 - [ ] Bundle validation passes on all bundled confirmed findings.
 
 ## 5. Validation Commands

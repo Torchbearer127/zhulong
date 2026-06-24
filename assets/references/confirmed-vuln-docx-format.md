@@ -253,16 +253,16 @@ Do not rely on pre-existing database state such as `ApiToken.objects.first()` un
 Every final confirmation banner must be guarded by a programmatic, fail-closed success-marker check: `grep -q`, `grep -Fq`, `jq -e`, HTTP status checks, JSON field checks, or equivalent assertions must `exit 1` on failure before printing `VULNERABILITY CONFIRMED`, `ATTACK SUCCESS`, `漏洞已确认`, or `攻击成功`.
 Docker Compose files shipped under `attachments/` must be self-consistent: relative `env_file` entries and relative bind-mount sources must exist relative to the Compose file, named volumes are allowed, and absolute host paths are not allowed in final bundles.
 
-For SSRF confirmed bundles, a listener HIT or callback is not enough. The report,
-supplement, evidence JSON, replay script, and replay log must show a direct
-impact loop: internal-only service scope, attacker-controlled input reaching the
-request/fetch sink without the missing guard, and internal response content,
-sensitive internal state, or a clearly bounded direct-impact result becoming
-visible in target output, logs, returned data, files, pages, or another
-reviewer-observable location. Include `DIRECT_IMPACT_CONFIRMED` or an equivalent
-direct-impact marker plus a response-exposure or bounded-impact marker; do not
-ship SSRF bundles that only prove `HIT`, `METADATA HIT`, `request received`, or
-listener callback traffic.
+For SSRF confirmed bundles, separate the impact tier clearly. A listener `HIT`
+or callback can support a bounded outbound-request reachability claim only when
+the report, supplement, evidence JSON, replay script, and replay log explicitly
+say the verified impact is callback/reachability and do not claim response
+content, configuration, credentials, or sensitive-data exposure. If the bundle
+claims internal response exposure or data leakage, it must include a concrete
+oracle token or evidence line showing response content reached target-controlled
+output, logs, returned data, files, pages, or another reviewer-observable
+location. Include `DIRECT_IMPACT_CONFIRMED` or an equivalent direct-impact
+marker in either tier.
 
 ## Verification Evidence JSON
 

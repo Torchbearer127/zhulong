@@ -171,7 +171,9 @@ ROOT_SCRIPT_PROOF_STEP_PREFIXES = (
 )
 ROOT_SCRIPT_PROOF_STEP_COMMANDS = {"docker", "curl", "python", "python3", "node", "bash", "sh", "jq", "grep"}
 QUICK_MODE_CASE_PATTERN = re.compile(r"^\s*(?:quick[^\s)]*|\*\|quick)\)\s*$")
-FIXED_PAUSE_ASSIGNMENT_PATTERN = re.compile(r"^\s*PAUSE_(?:SHORT|LONG)\s*=\s*['\"]?[0-9]+(?:\.[0-9]+)?['\"]?\s*(?:#.*)?$")
+FIXED_PAUSE_ASSIGNMENT_PATTERN = re.compile(
+    r"^\s*(?:REVIEWER_)?PAUSE_(?:SHORT|LONG)\s*=\s*['\"]?[0-9]+(?:\.[0-9]+)?['\"]?\s*(?:#.*)?$"
+)
 FIXED_SLEEP_PATTERN = re.compile(r"(?<![A-Za-z0-9_-])sleep\s+['\"]?[0-9]+(?:\.[0-9]+)?['\"]?(?:\s|;|$)")
 FIXED_PAUSE_STEP_PATTERN = re.compile(r"(?<![A-Za-z0-9_-])pause_step\s+['\"]?[0-9]+(?:\.[0-9]+)?['\"]?(?:\s|;|$)")
 SCRIPT_SELF_CALL_PATTERNS = [
@@ -834,6 +836,31 @@ SSRF_RESPONSE_EXPOSURE_PATTERN = re.compile(
     r"(?:敏感|内部).{0,30}(?:外显|泄露|进入目标输出|写入日志|返回)|"
     r"有界直接危害",
     re.IGNORECASE,
+)
+SSRF_RESPONSE_EXPOSURE_ORACLE_PATTERN = re.compile(
+    r"\b(?:INTERNAL_RESPONSE_[A-Z0-9_]*CONFIRMED|RESPONSE_[A-Z0-9_]*EXFILTRATED|"
+    r"INTERNAL_[A-Z0-9_]*(?:EXFILTRATED|EXPOSED|DISCLOSED|LEAKED)_CONFIRMED|"
+    r"SecretAccessKey|AccessKeyId|credential_value_observed|sensitive_value_observed)\b|"
+    r"(?:response|body|content|secret|credential).{0,80}"
+    r"(?:reached|returned to|visible in|observable in|written to|logged in).{0,80}"
+    r"(?:target output|attacker output|reviewer output|replay log|evidence log|file|page)|"
+    r"(?:响应内容|内部内容|敏感数据|凭证|密钥).{0,50}(?:进入目标输出|返回给攻击者|写入日志|写入文件|审核可见)",
+    re.IGNORECASE,
+)
+SSRF_CALLBACK_BOUNDARY_PATTERN = re.compile(
+    r"\b(?:outbound request reachability|callback observed|callback-only|reachability only|listener callback only|"
+    r"request callback|server-side request was issued|bounded to callback|bounded reachability)\b|"
+    r"(?:仅|只)声称.{0,40}(?:回调|请求可达|出站请求|callback)|"
+    r"(?:不声称|未验证|not claim|not claimed|not verified).{0,60}(?:响应内容|配置|凭据|敏感|response content|configuration|credential|sensitive)",
+    re.IGNORECASE,
+)
+SSRF_STRONG_IMPACT_CLAIM_PATTERNS = (
+    r"\b(?:response|body|content).{0,80}(?:exfiltrat|expos|disclos|leak|returned|readable|visible)\b",
+    r"\b(?:configuration|config|credential|secret|token|sensitive data|sensitive information).{0,80}(?:expos|disclos|leak|read|exfiltrat)\b",
+    r"\b(?:metadata|internal service).{0,80}(?:response|body|content|credential|secret).{0,80}(?:expos|disclos|leak|returned|readable)\b",
+    r"响应内容.{0,50}(?:外显|泄露|暴露|返回|读取)",
+    r"(?:配置|凭据|密钥|敏感(?:信息|数据)?).{0,50}(?:泄露|暴露|读取|外显)",
+    r"内部(?:服务|metadata|元数据).{0,50}(?:响应|内容|凭据|密钥).{0,50}(?:泄露|暴露|返回|读取)",
 )
 REPLAY_LOG_PLACEHOLDER_PATTERNS = [
     re.compile(pattern, re.IGNORECASE)
@@ -1546,6 +1573,11 @@ def validate_code_context_section(lines: list[str], language: str) -> None:
     code_lines = [line for line in section.splitlines() if is_code_like_line(line)]
     if not code_lines:
         fail(f"report {heading} section must include actual code-like snippet lines, not only prose")
+    if len(code_lines) < 2:
+        fail(
+            f"report {heading} section is too thin; include a compact vulnerable-chain snippet, "
+            "not only one isolated sink line"
+        )
     if abbreviated_lines >= 2 or abbreviated_lines >= max(1, len(code_lines) // 2):
         fail(
             f"report {heading} section is too abbreviated; include compact complete snippets instead of repeated // ... "
@@ -2090,16 +2122,30 @@ def validate_ssrf_direct_impact_evidence(reviewer_story_text: str) -> None:
     if not SSRF_HINT_PATTERN.search(reviewer_story_text):
         return
     has_direct_marker = bool(DIRECT_IMPACT_MARKER_TOKEN_PATTERN.search(reviewer_story_text))
-    has_response_exposure = any(
-        not has_nonclaim_context(reviewer_story_text, match.start(), match.end())
-        for match in SSRF_RESPONSE_EXPOSURE_PATTERN.finditer(reviewer_story_text)
-    )
-    if has_direct_marker and has_response_exposure:
-        return
-    if SSRF_HIT_ONLY_PATTERN.search(reviewer_story_text) or not has_response_exposure:
+    has_callback = bool(SSRF_HIT_ONLY_PATTERN.search(reviewer_story_text))
+    has_response_oracle = bool(SSRF_RESPONSE_EXPOSURE_ORACLE_PATTERN.search(reviewer_story_text))
+    strong_claims = claim_matches_without_nonclaim(reviewer_story_text, SSRF_STRONG_IMPACT_CLAIM_PATTERNS)
+    if strong_claims and not has_response_oracle:
+        preview = strong_claims[0]
+        if len(preview) > 120:
+            preview = preview[:117] + "..."
         fail(
-            "SSRF confirmed bundles must prove response exposure or a clearly bounded direct-impact loop; "
-            "listener HIT/callback evidence alone is not sufficient"
+            "SSRF impact overclaim: response content, configuration leakage, credentials, or sensitive data "
+            f"are claimed without concrete response-exposure evidence: {preview}"
+        )
+    if has_direct_marker and has_response_oracle:
+        return
+    if has_direct_marker and has_callback and SSRF_CALLBACK_BOUNDARY_PATTERN.search(reviewer_story_text):
+        return
+    if has_callback:
+        fail(
+            "SSRF callback/reachability-only bundles must clearly bound the claim to outbound request "
+            "reachability and explicitly avoid response-content/configuration/sensitive-data overclaims"
+        )
+    if not has_response_oracle:
+        fail(
+            "SSRF confirmed bundles must include either bounded callback/reachability wording or concrete "
+            "response-exposure evidence with an oracle token"
         )
 
 
@@ -4190,9 +4236,9 @@ def validate_root_script_reviewer_context(script_path: Path, bundle_dir: Path, t
         if not pattern.search(text):
             fail(f"{rel} is missing reviewer-facing {label} for recording context")
     if ROOT_SCRIPT_UNAVAILABLE_CONTEXT_PATTERN.search(text):
-        warn(
+        fail(
             f"{rel} contains unavailable fallback text in reviewer-facing context; "
-            "enrich code analysis and real-world impact fields before submission when possible"
+            "confirmed bundles must fail closed instead of shipping analysis_unavailable or real_world_unavailable text"
         )
 
     defined_helpers = collect_shell_function_definitions(text)
@@ -4235,6 +4281,14 @@ def validate_root_script_reviewer_context(script_path: Path, bundle_dir: Path, t
     direct_body = "\n".join(extract_shell_function_body(text, "record_direct_impact_marker"))
     if "REPLAY_LOG" not in direct_body and "log_line" not in direct_body:
         fail(f"{rel} direct-impact marker helper must write to the bundle-local replay log")
+    for helper, label in (
+        ("show_code_hint", "code-context screen"),
+        ("show_vulnerability_analysis", "code-level vulnerability analysis screen"),
+        ("show_real_world_context", "realistic exploitability / impact-boundary screen"),
+    ):
+        body = "\n".join(extract_shell_function_body(text, helper))
+        if not re.search(r"\bpause_step\s+\"?\$PAUSE_(?:SHORT|LONG)\"?", body):
+            fail(f"{rel} must pause after the {label} so reviewer recordings remain readable")
 
 
 def collect_url_hosts(text: str) -> set[str]:
@@ -4399,6 +4453,17 @@ def validate_root_script_pause_contract(script_path: Path, bundle_dir: Path, tex
                 f"{rel} contains a fixed reviewer pause that cannot be disabled with REVIEWER_PAUSE_SHORT=0 "
                 f"REVIEWER_PAUSE_LONG=0: {stripped}"
             )
+    flow_lines = extract_shell_function_body(text, "run_flow") or extract_shell_function_body(text, "main")
+    for index, line in enumerate(flow_lines):
+        if "run_logged_command" not in line:
+            continue
+        previous_line = next((candidate.strip() for candidate in reversed(flow_lines[:index]) if candidate.strip()), "")
+        following_line = next((candidate.strip() for candidate in flow_lines[index + 1:] if candidate.strip()), "")
+        pause_pattern = re.compile(r"\bpause_step\s+\"?\$PAUSE_(?:SHORT|LONG)\"?")
+        if not pause_pattern.search(previous_line):
+            fail(f"{rel} must pause before proof command execution transitions")
+        if not pause_pattern.search(following_line):
+            fail(f"{rel} must pause after proof command output transitions")
 
 
 def validate_root_script_no_self_recursion(script_path: Path, bundle_dir: Path, text: str) -> None:

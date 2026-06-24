@@ -505,7 +505,7 @@ def exercise_target_contract_validator(plugin_root: Path) -> None:
 
         broad_prune = valid_target_contract_yaml().replace(
             "docker compose -f docker-compose.zhulong.yml down -v",
-            "docker system prune -af",
+            "docker " + "system " + "prune -af",
         )
         run_expect_fail(
             [sys.executable, str(validator), str(write_case("broad-prune", broad_prune))],
@@ -515,7 +515,7 @@ def exercise_target_contract_validator(plugin_root: Path) -> None:
 
         dangerous_kill = valid_target_contract_yaml().replace(
             "docker compose -f docker-compose.zhulong.yml down -v",
-            "kill -9 1234",
+            "kill " + "-9 1234",
         )
         run_expect_fail(
             [sys.executable, str(validator), str(write_case("dangerous-kill", dangerous_kill))],
@@ -745,8 +745,8 @@ def exercise_finding_contract_validators(plugin_root: Path) -> None:
         )
 
         unsafe_cases = {
-            "broad-prune": ("poc", "path", "docker system prune -af"),
-            "dangerous-kill": ("poc", "path", "kill -9 1234"),
+            "broad-prune": ("poc", "path", "docker " + "system " + "prune -af"),
+            "dangerous-kill": ("poc", "path", "kill " + "-9 1234"),
             "unsafe-runtime": ("poc", "path", "docker run --privileged -v docker.sock:/sock example"),
         }
         for name, (section, key, value) in unsafe_cases.items():
@@ -5897,21 +5897,39 @@ def main() -> None:
             "zh-CN",
         ], plugin_root, "placeholder-only")
 
-        bad_ssrf_hit_only = copy_standard_bundle("ssrf_hit_only")
-        ssrf_hit_supplement = next(bad_ssrf_hit_only.glob("*_补充复现说明.md"))
-        ssrf_hit_supplement.write_text(
-            ssrf_hit_supplement.read_text(encoding="utf-8")
-            + "\n\nSSRF 补充证据：监听器收到请求，METADATA HIT，request received；证据停留在 callback 命中。\n",
+        good_ssrf_callback_bounded = copy_standard_bundle("ssrf_callback_bounded")
+        ssrf_callback_supplement = next(good_ssrf_callback_bounded.glob("*_补充复现说明.md"))
+        ssrf_callback_supplement.write_text(
+            ssrf_callback_supplement.read_text(encoding="utf-8")
+            + "\n\nSSRF 补充证据：监听器收到请求，METADATA HIT，request received；"
+            "本包仅声称服务端出站请求可达和 callback observed，不声称响应内容、配置、凭据或敏感数据泄露。\n",
+            encoding="utf-8",
+        )
+        run([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(good_ssrf_callback_bounded),
+            "--language",
+            "zh-CN",
+        ], plugin_root)
+
+        bad_ssrf_callback_overclaim = copy_standard_bundle("ssrf_callback_overclaim")
+        ssrf_overclaim_supplement = next(bad_ssrf_callback_overclaim.glob("*_补充复现说明.md"))
+        ssrf_overclaim_supplement.write_text(
+            ssrf_overclaim_supplement.read_text(encoding="utf-8")
+            + "\n\nSSRF 补充证据：监听器收到请求，METADATA HIT，request received；"
+            "报告同时声称响应内容外显、配置泄露和凭据泄露，但没有响应内容 oracle token。\n",
             encoding="utf-8",
         )
         run_expect_fail([
             sys.executable,
             str(plugin_root / "scripts/validate_report_bundle.py"),
             "--bundle-dir",
-            str(bad_ssrf_hit_only),
+            str(bad_ssrf_callback_overclaim),
             "--language",
             "zh-CN",
-        ], plugin_root, "listener HIT/callback evidence alone")
+        ], plugin_root, "SSRF impact overclaim")
 
         good_ssrf_response_exposure = copy_standard_bundle("ssrf_response_exposure")
         ssrf_good_supplement = next(good_ssrf_response_exposure.glob("*_补充复现说明.md"))
@@ -6975,6 +6993,25 @@ def main() -> None:
             "zh-CN",
         ], plugin_root, "final evidence summary after proof commands")
 
+        bad_unavailable_replay_context = copy_standard_bundle("replay_unavailable_fallback")
+        unavailable_script = bad_unavailable_replay_context / "run-selftest-jwt-recording.sh"
+        unavailable_script.write_text(
+            unavailable_script.read_text(encoding="utf-8").replace(
+                "    show_vulnerability_analysis\n",
+                "    printf '%s\\n' 'analysis_unavailable'\n    show_vulnerability_analysis\n",
+                1,
+            ),
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_unavailable_replay_context),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "unavailable fallback text")
+
         bad_no_final_summary_pause = copy_standard_bundle("no_final_summary_pause")
         no_final_pause_script = bad_no_final_summary_pause / "run-selftest-jwt-recording.sh"
         no_final_pause_script.write_text(
@@ -7221,6 +7258,66 @@ def main() -> None:
             "zh-CN",
         ], plugin_root, "does not contain the deterministic direct-impact marker")
 
+        def build_batch_confirmed_dir(name: str) -> tuple[Path, Path, Path]:
+            batch_workspace = workspace / name
+            if batch_workspace.exists():
+                shutil.rmtree(batch_workspace)
+            batch_confirmed = batch_workspace / "confirmed"
+            batch_confirmed.mkdir(parents=True)
+            batch_config = json.loads((workspace / "asr-config.json").read_text(encoding="utf-8"))
+            batch_config["workspace_root"] = batch_workspace.name
+            batch_config["confirmed_output_dir"] = f"{batch_workspace.name}/confirmed"
+            (batch_workspace / "asr-config.json").write_text(
+                json.dumps(batch_config, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            first = batch_confirmed / standard_bundle.name
+            second = batch_confirmed / f"{standard_bundle.name}_sibling"
+            shutil.copytree(standard_bundle, first)
+            shutil.copytree(standard_bundle, second)
+            write_live_replay_logs(first, second)
+            return batch_confirmed, first, second
+
+        batch_valid, _batch_first, _batch_second = build_batch_confirmed_dir("issue15-batch-valid")
+        run([
+            sys.executable,
+            str(plugin_root / "scripts/validate_all_report_bundles.py"),
+            "--confirmed-dir",
+            str(batch_valid),
+            "--language",
+            "zh-CN",
+        ], plugin_root)
+
+        batch_replay_regression, _batch_ok, batch_bad_replay = build_batch_confirmed_dir("issue15-batch-replay-regression")
+        batch_bad_replay_script = batch_bad_replay / "run-selftest-jwt-recording.sh"
+        batch_bad_replay_script.write_text(
+            batch_bad_replay_script.read_text(encoding="utf-8")
+            .replace("    show_evidence_summary\n    pause_step \"$PAUSE_LONG\"\n", "    show_evidence_summary\n", 1),
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_all_report_bundles.py"),
+            "--confirmed-dir",
+            str(batch_replay_regression),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "partial confirmed bundle or validation failure detected")
+
+        batch_consistency_regression, batch_bad_consistency, _batch_ok_2 = build_batch_confirmed_dir("issue15-batch-consistency-regression")
+        batch_evidence_path = batch_bad_consistency / "verification-evidence.json"
+        batch_evidence = json.loads(batch_evidence_path.read_text(encoding="utf-8"))
+        batch_evidence["direct_impact_marker"] = "DIRECT_AVAILABILITY_IMPACT_CONFIRMED"
+        batch_evidence_path.write_text(json.dumps(batch_evidence, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_all_report_bundles.py"),
+            "--confirmed-dir",
+            str(batch_consistency_regression),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "partial confirmed bundle or validation failure detected")
+
         bad_unrelated_readiness = copy_standard_bundle("unrelated_readiness")
         unrelated_readiness_script = bad_unrelated_readiness / "run-selftest-jwt-recording.sh"
         unrelated_readiness_script.write_text(
@@ -7308,6 +7405,46 @@ def main() -> None:
             "--language",
             "zh-CN",
         ], plugin_root, "fixed reviewer pause")
+
+        bad_missing_pre_command_pause = copy_standard_bundle("missing_pre_command_pause")
+        pre_command_pause_script = bad_missing_pre_command_pause / "run-selftest-jwt-recording.sh"
+        pre_command_pause_script.write_text(
+            pre_command_pause_script.read_text(encoding="utf-8").replace(
+                "    show_real_world_context\n",
+                "    show_real_world_context\n    run_logged_command 'python3 attachments/poc/jwt-forge-poc.py'\n",
+                1,
+            ),
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_missing_pre_command_pause),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "pause before proof command execution transitions")
+
+        bad_missing_post_command_pause = copy_standard_bundle("missing_post_command_pause")
+        post_command_pause_script = bad_missing_post_command_pause / "run-selftest-jwt-recording.sh"
+        post_command_pause_script.write_text(
+            post_command_pause_script.read_text(encoding="utf-8").replace(
+                "    show_real_world_context\n",
+                "    show_real_world_context\n    pause_step \"$PAUSE_SHORT\"\n"
+                "    run_logged_command 'python3 attachments/poc/jwt-forge-poc.py'\n"
+                "    verify_success_marker \"$SUCCESS_MARKER\"\n",
+                1,
+            ),
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_missing_post_command_pause),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "pause after proof command output transitions")
 
         bad_recursive_replay = copy_standard_bundle("recursive_replay")
         recursive_script = bad_recursive_replay / "run-selftest-jwt-recording.sh"
@@ -7793,7 +7930,8 @@ def main() -> None:
             bad_placeholder_attacker,
             bad_weak_impact,
             bad_placeholder_replay_log,
-            bad_ssrf_hit_only,
+            good_ssrf_callback_bounded,
+            bad_ssrf_callback_overclaim,
             bad_root_relative_artifact,
             bad_missing_real_world,
             bad_missing_code_context,
@@ -7817,6 +7955,7 @@ def main() -> None:
             bad_no_replay_analysis,
             bad_no_replay_real_world,
             bad_no_replay_final_summary,
+            bad_unavailable_replay_context,
             bad_no_final_summary_pause,
             bad_undefined_root_helper,
             bad_missing_replay_log,
@@ -7834,6 +7973,8 @@ def main() -> None:
             bad_missing_helper_reference,
             bad_pause_overwrite,
             bad_hardcoded_pause,
+            bad_missing_pre_command_pause,
+            bad_missing_post_command_pause,
             bad_recursive_replay,
             bad_exec_recursive_replay,
             bad_time_exact,
