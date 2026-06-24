@@ -137,9 +137,9 @@ default contract even when the user does not restate them:
 - Confirm vulnerabilities only with Docker evidence. After the first
   confirmation, run one explicit severity-escalation pass in Docker before final
   scoring, and only upgrade severity when stronger impact is verified.
-- After a confirmed seed is available, run one explicit seeded variant-discovery
-  pass in the same repository using the confirmed seed only when it already has
-  a valid confirmed bundle and Docker success oracle.
+- Before finalizing `completed_with_confirmed_bundles`, run one explicit seeded
+  variant-discovery pass in the same repository using a confirmed seed that
+  already has a valid confirmed bundle and Docker success oracle.
 - A confirmed seed must document the root-cause chain, attacker-controlled source,
   propagation path, sink family, missing constraint, trigger condition, and a
   deterministic success oracle.
@@ -174,6 +174,10 @@ default contract even when the user does not restate them:
 - Validate candidate output with
   `scripts/validate_report_bundle.py --variant-candidates <path>`. This
   candidate validation is separate from confirmed bundle validation.
+- The completion gate rejects `completed_with_confirmed_bundles` unless
+  `evidence/variant-analysis/seeds.jsonl` and
+  `evidence/variant-analysis/variant-candidates.jsonl` exist and pass their
+  variant validators.
 - Candidate JSONL can guide follow-up verification, but it cannot prove a
   vulnerability. Confirmed bundles must not cite candidate ranking, seed
   similarity, or `variant-candidates.jsonl` as confirmation evidence.
@@ -543,6 +547,31 @@ confirmed deliverable. List the failure and remediation step instead, such as
 rerendering through `render-confirmed-vuln-docx.py` with
 `--output-dir <audit-workspace>/confirmed` or moving unsupported leads back to
 candidate/unverified records.
+
+After at least one confirmed bundle validates, run the seeded variant-discovery
+pass before finalization:
+
+```bash
+mkdir -p <audit-workspace>/evidence/variant-analysis
+python3 <audit-workspace>/bin/extract_variant_seed.py \
+  --workspace-dir <audit-workspace> \
+  --bundle-dir <audit-workspace>/confirmed/<confirmed-bundle> \
+  --output <audit-workspace>/evidence/variant-analysis/seeds.jsonl
+python3 <audit-workspace>/bin/validate-report-bundle.py \
+  --variant-seed-card <audit-workspace>/evidence/variant-analysis/seeds.jsonl
+python3 <audit-workspace>/bin/find_variant_candidates.py \
+  --repo-root <repo-root> \
+  --workspace-dir <audit-workspace> \
+  --seed-card <audit-workspace>/evidence/variant-analysis/seeds.jsonl \
+  --seed-id <seed-id> \
+  --output <audit-workspace>/evidence/variant-analysis/variant-candidates.jsonl
+python3 <audit-workspace>/bin/validate-report-bundle.py \
+  --variant-candidates <audit-workspace>/evidence/variant-analysis/variant-candidates.jsonl
+```
+
+These artifacts are required completion evidence for confirmed-bundle audits,
+but they remain candidate-only follow-up material. They must not be cited as
+confirmed evidence for any variant.
 
 Do not produce thin DOCX reports. The `Vulnerability Analysis` section must explain, in reviewer-readable prose, at least:
 

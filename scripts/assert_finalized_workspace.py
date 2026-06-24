@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -83,6 +85,56 @@ def completion_claimed(status: dict[str, Any]) -> bool:
     return stage == "completed" or state == "completed" or result in VALID_RESULTS or bool(status.get("completed_at"))
 
 
+def find_report_validator(workspace: Path) -> Path | None:
+    validator = workspace / "bin" / "validate-report-bundle.py"
+    if validator.exists():
+        return validator
+    validator = Path(__file__).resolve().parent / "validate_report_bundle.py"
+    if validator.exists():
+        return validator
+    return None
+
+
+def run_report_validator(workspace: Path, flag: str, path: Path) -> tuple[bool, str]:
+    validator = find_report_validator(workspace)
+    if validator is None:
+        return False, "validate_report_bundle.py not found"
+    proc = subprocess.run(
+        [sys.executable, str(validator), flag, str(path)],
+        capture_output=True,
+        text=True,
+    )
+    output = ((proc.stdout or "") + (proc.stderr or "")).strip()
+    return proc.returncode == 0, output[:800]
+
+
+def validate_seeded_variant_discovery(workspace: Path) -> tuple[bool, list[str], dict[str, Any]]:
+    variant_dir = workspace / "evidence" / "variant-analysis"
+    seeds_path = variant_dir / "seeds.jsonl"
+    candidates_path = variant_dir / "variant-candidates.jsonl"
+    errors: list[str] = []
+    if not variant_dir.is_dir():
+        errors.append("missing evidence/variant-analysis/")
+    if not seeds_path.is_file():
+        errors.append("missing evidence/variant-analysis/seeds.jsonl")
+    if not candidates_path.is_file():
+        errors.append("missing evidence/variant-analysis/variant-candidates.jsonl")
+    if seeds_path.is_file():
+        ok, output = run_report_validator(workspace, "--variant-seed-card", seeds_path)
+        if not ok:
+            errors.append(f"variant seed validation failed: {output or 'unknown error'}")
+    if candidates_path.is_file():
+        ok, output = run_report_validator(workspace, "--variant-candidates", candidates_path)
+        if not ok:
+            errors.append(f"variant candidates validation failed: {output or 'unknown error'}")
+    summary = {
+        "variant_dir": str(variant_dir),
+        "seeds": str(seeds_path),
+        "variant_candidates": str(candidates_path),
+    }
+    return not errors, errors, summary
+
+
 def validate_finalization(workspace: Path) -> tuple[bool, list[str], dict[str, Any]]:
     status = load_json(workspace / "stage-status.json")
     events = read_events(workspace / "audit-events.jsonl")
@@ -132,6 +184,12 @@ def validate_finalization(workspace: Path) -> tuple[bool, list[str], dict[str, A
             "blocked verification evidence exists in lightweight workspace records; "
             "completed_no_confirmed_findings is not a valid terminal result until Docker verification resumes."
         )
+    variant_summary: dict[str, Any] = {}
+    if result == "completed_with_confirmed_bundles":
+        variant_ok, variant_errors, variant_summary = validate_seeded_variant_discovery(workspace)
+        if not variant_ok:
+            for error in variant_errors:
+                errors.append(f"seeded variant discovery gate: {error}")
 
     disposition_validation = validate_disposition_ledger(workspace, result=result, language="auto")
     if not disposition_validation.get("ok"):
@@ -163,6 +221,7 @@ def validate_finalization(workspace: Path) -> tuple[bool, list[str], dict[str, A
         "docker_clean": docker_clean,
         "docker_strict": docker_strict,
         "blocked_verification": blocked_summary,
+        "seeded_variant_discovery": variant_summary,
         "audit_disposition": disposition_validation.get("summary", {}),
     }
     return not errors, errors, summary

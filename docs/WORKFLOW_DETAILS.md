@@ -204,6 +204,11 @@ positives without changing the confirmed bundle contract.
   `seeds.jsonl`, `variant-candidates.jsonl`,
   `variant-expansion-summary.json`, and optional `seed-<slug>.md` notes. Existing
   workspaces and old confirmed bundles are not required to contain these files.
+- For new audits finalized as `completed_with_confirmed_bundles`, the completion
+  gate requires `evidence/variant-analysis/seeds.jsonl` and
+  `evidence/variant-analysis/variant-candidates.jsonl` to exist and pass their
+  variant validators. This makes the same-repository variant pass part of the
+  normal confirmed-bundle workflow instead of an after-chat reminder.
 - Seed cards use `schema_version=1` and include: `seed_id`,
   `confirmed_bundle_path`, `bug_class`, `root_cause`, `source_pattern`,
   `propagation_pattern`, `sink_pattern`, `missing_constraint_pattern`,

@@ -248,7 +248,7 @@ Each audit run creates a timestamped workspace inside the target repository:
 ├── 🧭 runtime/                   # runtime hygiene status
 ├── 🐳 docker/                    # Docker baseline and cleanup status
 ├── 🔎 evidence/                  # supporting evidence
-│   └── variant-analysis/         # optional seed cards and variant candidates
+│   └── variant-analysis/         # seed cards and variant candidates for confirmed runs
 └── 🎯 confirmed/                 # confirmed vulnerability packages, if any
 ```
 

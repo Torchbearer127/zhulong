@@ -135,6 +135,8 @@ copy_helper "$SKILL_DIR/scripts/plan_security_toolchain.py" "$WORKSPACE_DIR/bin/
 copy_helper "$SKILL_DIR/scripts/scaffold_bilingual_findings.py" "$WORKSPACE_DIR/bin/scaffold-bilingual-findings.py"
 copy_helper "$SKILL_DIR/scripts/render_confirmed_vuln_docx.py" "$WORKSPACE_DIR/bin/render-confirmed-vuln-docx.py"
 copy_helper "$SKILL_DIR/scripts/validate_report_bundle.py" "$WORKSPACE_DIR/bin/validate-report-bundle.py"
+copy_helper_if_present "$SKILL_DIR/scripts/extract_variant_seed.py" "$WORKSPACE_DIR/bin/extract_variant_seed.py"
+copy_helper_if_present "$SKILL_DIR/scripts/find_variant_candidates.py" "$WORKSPACE_DIR/bin/find_variant_candidates.py"
 copy_helper "$SKILL_DIR/scripts/validate_all_report_bundles.py" "$WORKSPACE_DIR/bin/validate-all-report-bundles.py"
 copy_helper_if_present "$SKILL_DIR/scripts/write_audit_event.py" "$WORKSPACE_DIR/bin/write-audit-event.py"
 copy_helper_if_present "$SKILL_DIR/scripts/validate_workspace_state.py" "$WORKSPACE_DIR/bin/validate-workspace-state.py"

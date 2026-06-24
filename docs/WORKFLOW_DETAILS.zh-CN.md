@@ -128,6 +128,7 @@ bash <audit-workspace>/bin/check_omc_runtime.sh --json
 - 候选漏洞检索工具仅支持在单一目标仓库内运行。若种子卡配置的检索范围不属于当前仓库、工作区路径匹配异常，或是确认漏洞包路径无法解析至当前工作区的 `confirmed/` 目录，工具必须直接报错终止运行。
 - 候选检索逻辑不会调用网络 API、LLM、Docker、PoC、扫描器、DOCX 渲染、确认漏洞包生成等能力，仅执行本地、结果可稳定复现的候选优先级排序运算。
 - 确认漏洞包禁止将 `variant-candidates.jsonl` 作为核心佐证材料，也不能把候选排序分值、种子匹配相似度、候选记录本身当作漏洞核验通过的依据。
+- 对于以 `completed_with_confirmed_bundles` 收尾的新审计，完成门禁会要求 `evidence/variant-analysis/seeds.jsonl` 与 `evidence/variant-analysis/variant-candidates.jsonl` 已存在并通过校验。也就是说，同类扩展不再是审计结束后的人工提醒，而是确认漏洞包流程里的必做收尾步骤。
 
 推荐复核操作顺序：首先校验种子卡是否精准描述已确认漏洞可稳定复现的根因；其次核查候选列表内所有条目是否均维持候选状态；最后针对有跟进价值的候选漏洞，单独搭建 Docker 环境完成复现验证。配套校验命令如下：
 

@@ -211,7 +211,7 @@ bash scripts/zhulong_audit.sh --repo-root /path/to/repo
 ├── 🧭 runtime/                   # 运行时状态
 ├── 🐳 docker/                    # Docker 初始基线与清理状态
 ├── 🔎 evidence/                  # 支撑证据
-│   └── variant-analysis/         # 可选种子卡与同类候选
+│   └── variant-analysis/         # 确认漏洞审计中的种子卡与同类候选
 └── 🎯 confirmed/                 # 已确认漏洞证据包，如存在
 ```
 

@@ -109,6 +109,80 @@ def run_bundle_validator(workspace: Path, confirmed_dir: Path,
         }
 
 
+def find_report_validator(workspace: Path) -> Path | None:
+    validator = workspace / "bin" / "validate-report-bundle.py"
+    if validator.exists():
+        return validator
+    validator = Path(__file__).resolve().parent / "validate_report_bundle.py"
+    if validator.exists():
+        return validator
+    return None
+
+
+def run_single_report_validator(workspace: Path, flag: str, path: Path) -> dict[str, Any]:
+    validator = find_report_validator(workspace)
+    if validator is None:
+        return {"ok": False, "error": "validate_report_bundle.py not found"}
+    proc = subprocess.run(
+        [sys.executable, str(validator), flag, str(path)],
+        capture_output=True,
+        text=True,
+    )
+    output = ((proc.stdout or "") + (proc.stderr or "")).strip()
+    return {
+        "ok": proc.returncode == 0,
+        "exit_code": proc.returncode,
+        "output": output[:800],
+    }
+
+
+def validate_seeded_variant_discovery(workspace: Path) -> dict[str, Any]:
+    variant_dir = workspace / "evidence" / "variant-analysis"
+    seeds_path = variant_dir / "seeds.jsonl"
+    candidates_path = variant_dir / "variant-candidates.jsonl"
+    errors: list[str] = []
+
+    if not variant_dir.is_dir():
+        errors.append(
+            "missing evidence/variant-analysis/; run seeded variant discovery from a validated confirmed bundle before finalization."
+        )
+    if not seeds_path.is_file():
+        errors.append(
+            "missing evidence/variant-analysis/seeds.jsonl; run extract_variant_seed.py and validate the final seed card."
+        )
+    if not candidates_path.is_file():
+        errors.append(
+            "missing evidence/variant-analysis/variant-candidates.jsonl; run find_variant_candidates.py and validate candidate-only output."
+        )
+
+    seed_validation: dict[str, Any] = {}
+    candidate_validation: dict[str, Any] = {}
+    if seeds_path.is_file():
+        seed_validation = run_single_report_validator(workspace, "--variant-seed-card", seeds_path)
+        if not seed_validation.get("ok"):
+            errors.append(
+                "variant seed validation failed: "
+                + str(seed_validation.get("error") or seed_validation.get("output") or "unknown error")
+            )
+    if candidates_path.is_file():
+        candidate_validation = run_single_report_validator(workspace, "--variant-candidates", candidates_path)
+        if not candidate_validation.get("ok"):
+            errors.append(
+                "variant candidates validation failed: "
+                + str(candidate_validation.get("error") or candidate_validation.get("output") or "unknown error")
+            )
+
+    return {
+        "ok": not errors,
+        "errors": errors,
+        "variant_dir": "evidence/variant-analysis",
+        "seeds": "evidence/variant-analysis/seeds.jsonl",
+        "variant_candidates": "evidence/variant-analysis/variant-candidates.jsonl",
+        "seed_validation": seed_validation,
+        "candidate_validation": candidate_validation,
+    }
+
+
 def run_docker_verify_clean(workspace: Path, *, strict: bool) -> dict[str, Any]:
     if os.environ.get("ZHULONG_TEST_SKIP_DOCKER_CLEAN_CHECK") == "1":
         return {"clean": True, "skipped": True, "reason": "docker clean check skipped by test-only env var"}
@@ -342,6 +416,23 @@ def main() -> int:
             errors.append(
                 f"Cannot finalize: {failed_count} bundle(s) failed validation. "
                 "Fix or remove them before finalizing."
+            )
+        if validated_count > 0 and partial_count == 0 and failed_count == 0:
+            variant_summary = validate_seeded_variant_discovery(workspace)
+            if not variant_summary.get("ok"):
+                for error in variant_summary.get("errors", []):
+                    errors.append(f"Seeded variant discovery gate: {error}")
+            write_event(
+                workspace,
+                "seeded_variant_discovery_outcome",
+                "finalization",
+                "running",
+                "ok" if variant_summary.get("ok") else "warning",
+                (
+                    "Seeded variant discovery artifacts checked: "
+                    f"ok={str(bool(variant_summary.get('ok'))).lower()}."
+                ),
+                variant_summary=variant_summary,
             )
     elif result == "completed_no_confirmed_findings":
         if validated_count > 0:

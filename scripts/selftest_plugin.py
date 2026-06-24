@@ -1904,6 +1904,16 @@ def write_variant_candidates_jsonl(path: Path, records: list[dict]) -> None:
     )
 
 
+def write_finalization_variant_artifacts(workspace: Path) -> None:
+    variant_dir = workspace / "evidence" / "variant-analysis"
+    variant_dir.mkdir(parents=True, exist_ok=True)
+    write_variant_seed_card(variant_dir / "seeds.jsonl")
+    write_variant_candidates_jsonl(
+        variant_dir / "variant-candidates.jsonl",
+        [valid_variant_candidate_record()],
+    )
+
+
 def exercise_variant_candidate_validation(plugin_root: Path, workspace: Path) -> None:
     validator = plugin_root / "scripts/validate_report_bundle.py"
     candidates_dir = workspace / "variant-candidate-validation-fixtures"
@@ -4233,6 +4243,14 @@ def main() -> None:
         ]:
             if not (workspace / "bin" / contract_helper).exists():
                 raise SystemExit(f"FAILED: bootstrapped workspace is missing {contract_helper}")
+        for variant_helper in [
+            "extract_variant_seed.py",
+            "find_variant_candidates.py",
+        ]:
+            if not (workspace / "bin" / variant_helper).exists():
+                raise SystemExit(f"FAILED: bootstrapped workspace is missing {variant_helper}")
+            if not (workspace / "scripts" / variant_helper).exists():
+                raise SystemExit(f"FAILED: bootstrapped workspace is missing scripts/{variant_helper}")
         exercise_variant_seed_card_validation(plugin_root, workspace)
         exercise_extract_variant_seed(plugin_root, workspace)
         exercise_find_variant_candidates(plugin_root, workspace)
@@ -8968,6 +8986,15 @@ def main() -> None:
         ):
             if bad.exists():
                 shutil.rmtree(bad)
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/finalize_audit_workspace.py"),
+            "--workspace-dir", str(workspace),
+            "--language", "auto",
+            "--result", "completed_with_confirmed_bundles",
+        ], plugin_root, "Seeded variant discovery gate",
+           extra_env=SKIP_DOCKER_ENV)
+        write_finalization_variant_artifacts(workspace)
         run_with_env([
             sys.executable,
             str(plugin_root / "scripts/finalize_audit_workspace.py"),

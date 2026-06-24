@@ -397,6 +397,26 @@ exec python3 "$SCRIPT_DIR/../bin/validate-report-bundle.py" "$@"
 '
 chmod +x "$WORKSPACE_DIR/scripts/validate-report-bundle.py"
 copy_file \
+  "$SKILL_DIR/scripts/extract_variant_seed.py" \
+  "$WORKSPACE_DIR/bin/extract_variant_seed.py"
+chmod +x "$WORKSPACE_DIR/bin/extract_variant_seed.py"
+write_text_file "$WORKSPACE_DIR/scripts/extract_variant_seed.py" '#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec python3 "$SCRIPT_DIR/../bin/extract_variant_seed.py" "$@"
+'
+chmod +x "$WORKSPACE_DIR/scripts/extract_variant_seed.py"
+copy_file \
+  "$SKILL_DIR/scripts/find_variant_candidates.py" \
+  "$WORKSPACE_DIR/bin/find_variant_candidates.py"
+chmod +x "$WORKSPACE_DIR/bin/find_variant_candidates.py"
+write_text_file "$WORKSPACE_DIR/scripts/find_variant_candidates.py" '#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec python3 "$SCRIPT_DIR/../bin/find_variant_candidates.py" "$@"
+'
+chmod +x "$WORKSPACE_DIR/scripts/find_variant_candidates.py"
+copy_file \
   "$SKILL_DIR/scripts/validate_all_report_bundles.py" \
   "$WORKSPACE_DIR/bin/validate-all-report-bundles.py"
 chmod +x "$WORKSPACE_DIR/bin/validate-all-report-bundles.py"
