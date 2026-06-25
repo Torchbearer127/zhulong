@@ -1,0 +1,101 @@
+{
+  "schema_version": 1,
+  "bundle": {
+    "slug": "historical-sample-01",
+    "language": "zh-CN",
+    "final_path": "confirmed/historical-sample-01",
+    "one_vulnerability_only": true,
+    "fail_if_final_path_exists": true
+  },
+  "render": {
+    "source_findings_json": "confirmed/findings.json",
+    "finding_slug": "historical-sample-01"
+  },
+  "finding": {
+    "project_name": "historical-sample-01",
+    "vulnerability_name": "Sanitized SSRF evidence-boundary trace",
+    "bug_class": "SSRF",
+    "severity": "High",
+    "attacker_condition": "A low-privilege user controls one URL-like input in the historical trace.",
+    "server_condition": "The affected service path can make outbound HTTP requests in the historical trace.",
+    "security_impact": "The historical repair trail mixed callback reachability with stronger response-content wording before final cleanup."
+  },
+  "docker_evidence": {
+    "verification_status": "confirmed_in_docker",
+    "docker_required": true,
+    "docker_command": "docker compose -f attachments/poc/docker-compose.yml up --abort-on-container-exit",
+    "oracle_token": "DIRECT_IMPACT_CONFIRMED",
+    "expected_observation": "A registered replay transcript should show the bounded impact oracle.",
+    "observed_observation": "The historical trace initially kept a placeholder replay note instead of a real command/output transcript.",
+    "severity_escalation_attempted": true
+  },
+  "replay": {
+    "root_script": {
+      "path": "run-historical-sample-01-recording.sh"
+    },
+    "log": {
+      "path": "attachments/evidence/replay-output.log",
+      "registration_targets": []
+    }
+  },
+  "direct_impact": {
+    "marker": "DIRECT_IMPACT_CONFIRMED",
+    "sync_targets": [
+      {
+        "target": "replay.root_script",
+        "marker": "DIRECT_IMPACT_CONFIRMED"
+      },
+      {
+        "target": "replay.log",
+        "marker": "DRIFTED_MARKER"
+      },
+      {
+        "target": "files.verification_evidence",
+        "marker": "DIRECT_IMPACT_CONFIRMED"
+      }
+    ]
+  },
+  "files": {
+    "verification_evidence": "verification-evidence.json",
+    "reviewer_evidence_index": "attachments/reviewer-evidence-index.json",
+    "evidence_files": [
+      "attachments/poc/reproduce.py"
+    ],
+    "attachments": [
+      "attachments/poc/docker-compose.yml",
+      "attachments/poc/reproduce.py",
+      "attachments/evidence/replay-output.log",
+      "attachments/reviewer-evidence-index.json"
+    ]
+  },
+  "code_context": {
+    "entries": [
+      {
+        "source_path": "src/sanitized_fetcher.py"
+      }
+    ]
+  },
+  "fixture_provenance": {
+    "required": false,
+    "replay_type": "full_app"
+  },
+  "impact_tier": {
+    "bug_class": "SSRF",
+    "ssrf": {
+      "tier": "callback_reachability",
+      "claimed_exposures": [
+        "callback_reachability",
+        "response_content_exposure"
+      ],
+      "stronger_impacts_not_claimed": [
+        "configuration_exposure",
+        "credential_exposure",
+        "sensitive_data_exposure"
+      ]
+    }
+  },
+  "variant_seed_readiness": {
+    "run_after_promote": true
+  }
+}
+

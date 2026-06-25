@@ -68,12 +68,36 @@ Use this local-agent skill when you want a repository-level security-focused cod
 - reporting:
   - [render_confirmed_vuln_docx.py](./scripts/render_confirmed_vuln_docx.py)
   - [scaffold_bilingual_findings.py](./scripts/scaffold_bilingual_findings.py)
+  - [validate_bundle_contract.py](./scripts/validate_bundle_contract.py)
+  - [build_confirmed_bundle.py](./scripts/build_confirmed_bundle.py)
   - [validate_report_bundle.py](./scripts/validate_report_bundle.py)
   - [validate_all_report_bundles.py](./scripts/validate_all_report_bundles.py)
+  - [bundle-contract-template.json](./assets/references/bundle-contract-template.json)
+  - [bundle-generation-checklist.md](./assets/references/bundle-generation-checklist.md)
 - completion gate:
   - [finalize_audit_workspace.py](./scripts/finalize_audit_workspace.py)
   - [assert_finalized_workspace.py](./scripts/assert_finalized_workspace.py)
   - [audit_disposition.py](./scripts/audit_disposition.py)
+
+## Bundle Builder Path
+
+Before creating `confirmed/<slug>`, validate
+`confirmed/.contracts/<slug>.bundle-contract.json`. Do not hand-create final
+confirmed bundle directories. Use `build_confirmed_bundle.py` so rendering
+happens in `confirmed/.staging/<slug>`, final validation runs there, and promote
+happens only after validation passes.
+
+Do not patch `reviewer-evidence-index.json`, replay logs, or direct-impact
+markers reactively, and do not create marker-only replay logs. If staging or
+final validation fails, use `validate_report_bundle.py --all-errors` only for
+diagnostics. Contract preflight, staging, and all-errors diagnostics are
+workflow gates only; Docker evidence and final bundle validation remain required
+for confirmed status.
+
+After promote, run `validate_all_report_bundles.py`, seeded variant discovery,
+and finalization. See
+[`bundle-generation-checklist.md`](./assets/references/bundle-generation-checklist.md)
+for the one-page operational checklist.
 
 ## Plugin-Owned Hard Constraints
 
@@ -233,6 +257,19 @@ default contract even when the user does not restate them:
 - Write final confirmed bundles only to
   `<audit-workspace>/confirmed/<one-folder-per-vulnerability>/`, with exactly one
   confirmed vulnerability per bundle.
+- Do not hand-create final `confirmed/<slug>/` directories. Before creating
+  final artifacts, fill or derive
+  `<audit-workspace>/confirmed/.contracts/<slug>.bundle-contract.json` and run
+  `scripts/validate_bundle_contract.py --workspace-dir <audit-workspace> --contract <contract> --all-errors`.
+  Then build through
+  `scripts/build_confirmed_bundle.py --workspace-dir <audit-workspace> --contract <contract> --language <zh-CN|en-US>`.
+  The wrapper renders into `confirmed/.staging/<slug>`, validates, promotes, and
+  runs batch validation. Contract preflight does not replace final bundle
+  validation. Failed builds stay under `confirmed/.staging/` and must not be
+  called confirmed deliverables. Final audit completion still requires the
+  existing variant discovery and finalization gates. If preflight fails, fix the
+  contract or upstream Docker evidence rather than patching final bundle
+  artifacts. Do not create marker-only replay logs to satisfy the preflight.
 - Every final bundle must be self-contained and portable: one finding-specific
   `.docx`, one finding-specific attachment index markdown, one finding-specific
   reproduction supplement markdown, `verification-evidence.json`, `attachments/`,
@@ -249,6 +286,12 @@ default contract even when the user does not restate them:
   print concrete commands before execution, capture raw stdout/stderr into a
   bundle-local `attachments/evidence/*.log`, and check a deterministic success
   marker programmatically before final confirmation.
+- Registered replay logs must be real command/output/oracle transcripts, not
+  placeholders, marker-only files, or headings with manually appended
+  direct-impact markers. Copied successful transcripts require portable
+  provenance in the build manifest or reviewer-facing evidence. The staging
+  wrapper does not run replay by default; it validates bundled evidence and the
+  final validator applies replay-log trust checks.
 - Bundle-root replay helpers must expose `REVIEWER_PAUSE_SHORT` and
   `REVIEWER_PAUSE_LONG`, keep reviewer-readable default pauses even in quick
   mode, and pause after the opening tested software/version identity screen,
@@ -273,6 +316,11 @@ default contract even when the user does not restate them:
   filenames such as `report.docx` or `attachments.md`, final `evidence/`
   directories, runtime state, source-control directories, dependency trees, or
   cache directories inside a final bundle are incomplete output.
+- If staging or final bundle validation fails, use
+  `validate_report_bundle.py --bundle-dir <bundle> --all-errors --json --output-errors <bundle>/bundle-validation-errors.json`
+  only as a diagnostic pass. Default validation remains fail-fast. All-errors
+  reports do not repair bundles or confirm vulnerabilities; fix the upstream
+  contract, evidence, or reviewer materials, then rerun validation.
 - A finding may be called a confirmed deliverable only after both Docker
   evidence and successful bundle validation exist. Docker-confirmed evidence in
   an incomplete bundle must be described as `Docker-confirmed but bundle incomplete`,

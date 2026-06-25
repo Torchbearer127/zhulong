@@ -1,0 +1,116 @@
+{
+  "schema_version": 1,
+  "bundle": {
+    "slug": "example-ssrf-callback",
+    "language": "zh-CN",
+    "final_path": "confirmed/example-ssrf-callback",
+    "one_vulnerability_only": true,
+    "fail_if_final_path_exists": true
+  },
+  "render": {
+    "source_findings_json": "confirmed/findings.json",
+    "finding_slug": "example-ssrf-callback"
+  },
+  "finding": {
+    "project_name": "example-project",
+    "vulnerability_name": "SSRF callback reachability",
+    "bug_class": "SSRF",
+    "severity": "Medium",
+    "attacker_condition": "Authenticated low-privilege user controls the import URL.",
+    "server_condition": "The default import feature is enabled and the service can make outbound HTTP requests.",
+    "security_impact": "Docker evidence confirms outbound callback reachability only; response, configuration, credential, and sensitive-data exposure are not claimed."
+  },
+  "docker_evidence": {
+    "verification_status": "confirmed_in_docker",
+    "docker_required": true,
+    "docker_command": "docker compose -f attachments/poc/docker-compose.zhulong.yml up --abort-on-container-exit",
+    "oracle_token": "DIRECT_IMPACT_CONFIRMED",
+    "expected_observation": "The listener records one request from the target container.",
+    "observed_observation": "The replay log contains DIRECT_IMPACT_CONFIRMED after the listener receives the callback.",
+    "severity_escalation_attempted": true
+  },
+  "replay": {
+    "root_script": {
+      "path": "run-example-ssrf-callback-recording.sh"
+    },
+    "log": {
+      "path": "attachments/evidence/replay-output.log",
+      "registration_targets": [
+        "files.evidence_files",
+        "files.reviewer_evidence_index"
+      ]
+    }
+  },
+  "direct_impact": {
+    "marker": "DIRECT_IMPACT_CONFIRMED",
+    "sync_targets": [
+      {
+        "target": "replay.root_script",
+        "marker": "DIRECT_IMPACT_CONFIRMED"
+      },
+      {
+        "target": "replay.log",
+        "marker": "DIRECT_IMPACT_CONFIRMED"
+      },
+      {
+        "target": "files.verification_evidence",
+        "marker": "DIRECT_IMPACT_CONFIRMED"
+      },
+      {
+        "target": "files.reviewer_evidence_index",
+        "marker": "DIRECT_IMPACT_CONFIRMED"
+      },
+      {
+        "target": "reviewer_material",
+        "marker": "DIRECT_IMPACT_CONFIRMED"
+      }
+    ]
+  },
+  "files": {
+    "verification_evidence": "verification-evidence.json",
+    "reviewer_evidence_index": "attachments/reviewer-evidence-index.json",
+    "evidence_files": [
+      "attachments/evidence/replay-output.log",
+      "attachments/poc/reproduce.py"
+    ],
+    "attachments": [
+      "attachments/poc/docker-compose.zhulong.yml",
+      "attachments/poc/reproduce.py",
+      "attachments/evidence/replay-output.log",
+      "attachments/reviewer-evidence-index.json"
+    ]
+  },
+  "code_context": {
+    "entries": [
+      {
+        "source_path": "src/importer.py",
+        "line_range": "42-67",
+        "input_to_sink_chain": "The import URL parameter reaches the server-side HTTP client without network-range validation.",
+        "missing_guard": "No private-address denylist or resolved-IP validation is applied before the fetch.",
+        "verified_impact_boundary": "Docker evidence proves callback reachability only and does not prove response disclosure."
+      }
+    ]
+  },
+  "fixture_provenance": {
+    "required": false,
+    "replay_type": "full_app"
+  },
+  "impact_tier": {
+    "bug_class": "SSRF",
+    "ssrf": {
+      "tier": "callback_reachability",
+      "claimed_exposures": [
+        "callback_reachability"
+      ],
+      "stronger_impacts_not_claimed": [
+        "response_content_exposure",
+        "configuration_exposure",
+        "credential_exposure",
+        "sensitive_data_exposure"
+      ]
+    }
+  },
+  "variant_seed_readiness": {
+    "run_after_promote": true
+  }
+}

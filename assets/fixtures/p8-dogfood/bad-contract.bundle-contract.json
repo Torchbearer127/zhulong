@@ -1,0 +1,106 @@
+{
+  "schema_version": 1,
+  "bundle": {
+    "slug": "p8-dogfood-bad",
+    "language": "zh-CN",
+    "final_path": "confirmed/p8-dogfood-bad",
+    "one_vulnerability_only": true,
+    "fail_if_final_path_exists": true
+  },
+  "render": {
+    "source_findings_json": "confirmed/findings.json",
+    "finding_slug": "p8-dogfood-bad"
+  },
+  "finding": {
+    "project_name": "dogfood-project",
+    "vulnerability_name": "SSRF callback reachability",
+    "bug_class": "SSRF",
+    "severity": "Medium",
+    "attacker_condition": "Authenticated low-privilege user controls the import URL.",
+    "server_condition": "Default import feature is enabled and outbound requests are allowed.",
+    "security_impact": "Callback reachability is claimed together with stronger response exposure to exercise the preflight guard."
+  },
+  "docker_evidence": {
+    "verification_status": "failed_timeout",
+    "docker_required": true,
+    "docker_command": "docker compose -f attachments/poc/docker-compose.zhulong.yml up --abort-on-container-exit",
+    "oracle_token": "DIRECT_IMPACT_CONFIRMED",
+    "expected_observation": "Listener receives one request from the target container.",
+    "observed_observation": "Replay log contains DIRECT_IMPACT_CONFIRMED.",
+    "severity_escalation_attempted": true
+  },
+  "replay": {
+    "root_script": {
+      "path": "run-p8-dogfood-recording.sh"
+    },
+    "log": {
+      "path": "attachments/evidence/replay-output.log",
+      "registration_targets": []
+    }
+  },
+  "direct_impact": {
+    "marker": "DIRECT_IMPACT_CONFIRMED",
+    "sync_targets": [
+      {
+        "target": "replay.root_script",
+        "marker": "DIRECT_IMPACT_CONFIRMED"
+      },
+      {
+        "target": "replay.log",
+        "marker": "DRIFTED_MARKER"
+      },
+      {
+        "target": "files.verification_evidence",
+        "marker": "DIRECT_IMPACT_CONFIRMED"
+      }
+    ]
+  },
+  "files": {
+    "verification_evidence": "verification-evidence.json",
+    "reviewer_evidence_index": "attachments/reviewer-evidence-index.json",
+    "evidence_files": [
+      "../outside/replay-output.log",
+      "attachments/poc/reproduce.py"
+    ],
+    "attachments": [
+      "attachments/poc/docker-compose.zhulong.yml",
+      "attachments/poc/reproduce.py",
+      "attachments/evidence/replay-output.log",
+      "attachments/reviewer-evidence-index.json"
+    ]
+  },
+  "code_context": {
+    "entries": [
+      {
+        "source_path": "src/importer.py"
+      }
+    ]
+  },
+  "fixture_provenance": {
+    "required": true,
+    "replay_type": "minimal_fixture",
+    "upstream_sources": []
+  },
+  "impact_tier": {
+    "bug_class": "SSRF",
+    "ssrf": {
+      "tier": "callback_reachability",
+      "claimed_exposures": [
+        "callback_reachability",
+        "response_content_exposure"
+      ],
+      "stronger_impacts_not_claimed": [
+        "configuration_exposure",
+        "credential_exposure",
+        "sensitive_data_exposure"
+      ],
+      "artifact_backed_oracle": {
+        "evidence_path": "",
+        "oracle_token": ""
+      }
+    }
+  },
+  "variant_seed_readiness": {
+    "run_after_promote": false
+  }
+}

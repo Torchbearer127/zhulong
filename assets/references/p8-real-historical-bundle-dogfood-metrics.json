@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "measurement_type": "historical_dogfood",
+  "validator_invocation_count": 4,
+  "material_rewrite_count": 0,
+  "partial_confirmed_bundle_count": 1,
+  "manual_marker_patch_required": false,
+  "contract_preflight_issue_coverage": true,
+  "staging_failure_final_pollution_result": "blocked_or_isolated_before_final_promotion",
+  "marker_or_placeholder_replay_log_early_rejection": true,
+  "non_claims": [
+    "not a production token-saving statistic",
+    "does not prove new vulnerabilities",
+    "does not execute Docker, PoCs, replay helpers, scanners, package managers, network calls, or target code"
+  ],
+  "samples": [
+    {
+      "sample_id": "historical-sample-01",
+      "source_type": "sanitized_historical_handoff_trace",
+      "validator_invocation_count": 2,
+      "material_rewrite_count": 0,
+      "unique_errors_per_invocation": [
+        5,
+        1
+      ],
+      "partial_confirmed_bundle_created": false,
+      "manual_marker_patch_required": false,
+      "contract_preflight_caught_expected_issues": true,
+      "issue_codes": [
+        "CODE_CONTEXT_TOO_THIN",
+        "DIRECT_IMPACT_MARKER_DRIFT",
+        "FINAL_TARGET_EXISTS",
+        "REPLAY_LOG_UNREGISTERED",
+        "SSRF_IMPACT_OVERCLAIM",
+        "REPLAY_LOG_PLACEHOLDER"
+      ],
+      "missed_gaps": [
+        "preflight does not inspect whether a helper cleanup trap is semantically sufficient"
+      ]
+    },
+    {
+      "sample_id": "historical-sample-02",
+      "source_type": "sanitized_superseded_draft_bundle_trace",
+      "validator_invocation_count": 1,
+      "material_rewrite_count": 0,
+      "unique_errors_per_invocation": [
+        1
+      ],
+      "partial_confirmed_bundle_created": true,
+      "manual_marker_patch_required": false,
+      "contract_preflight_caught_expected_issues": false,
+      "issue_codes": [
+        "partial_confirmed_bundle"
+      ],
+      "missed_gaps": [
+        "a pure contract preflight cannot classify a manually-created final directory unless generation is routed through staging"
+      ]
+    },
+    {
+      "sample_id": "historical-sample-03",
+      "source_type": "sanitized_evidence_registration_trace",
+      "validator_invocation_count": 1,
+      "material_rewrite_count": 0,
+      "unique_errors_per_invocation": [
+        1
+      ],
+      "partial_confirmed_bundle_created": false,
+      "manual_marker_patch_required": false,
+      "contract_preflight_caught_expected_issues": true,
+      "issue_codes": [
+        "REPLAY_LOG_UNREGISTERED"
+      ],
+      "missed_gaps": [
+        "preflight catches intended registration, while final validation still owns actual artifact existence and transcript content"
+      ]
+    }
+  ]
+}
+

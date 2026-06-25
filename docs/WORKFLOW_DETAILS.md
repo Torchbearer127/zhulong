@@ -96,6 +96,64 @@ For details, see
 and
 [`../assets/references/omc-runtime-stability.md`](../assets/references/omc-runtime-stability.md).
 
+## Confirmed Bundle Short Path
+
+P8 standardizes confirmed bundle generation as a short, repeatable path:
+
+```text
+bundle contract preflight
+-> staging build wrapper
+-> staging final validation
+-> promote
+-> validate all
+-> seeded variant discovery
+-> finalization
+```
+
+The bundle contract preflight checks that one selected finding has the minimum
+portable, Docker-confirmed, reviewer-facing inputs needed for generation. It is
+a generation gate only; it does not prove a vulnerability and does not replace
+Docker evidence.
+
+Contract fields must map to renderer output, a final validator or batch gate,
+and a bundle evidence artifact. Fields that cannot be mapped should not be
+added to the contract.
+
+`finding.severity` in the contract uses the stable enum `Critical`, `High`,
+`Medium`, `Low`, or `Informational`; final reviewer materials may localize that
+label. `finding.bug_class` and `impact_tier.bug_class` stay free text with
+recommended values in the checklist because project-specific vulnerability
+classes are open-ended.
+
+The staging build wrapper renders into `confirmed/.staging/<slug>` and runs the
+same final bundle validator there before promotion. A failed staging directory
+is debugging material only, not a confirmed deliverable. After promotion,
+`validate_all_report_bundles.py` checks the full `confirmed/` directory before
+seeded variant discovery and finalization.
+
+Default final validation remains fail-fast. `validate_report_bundle.py
+--all-errors` is a diagnostic mode for staging or final validation failures; it
+collects actionable errors but does not repair bundles, relax the validator, or
+confirm vulnerabilities.
+
+Replay logs must be real command/output/oracle transcripts. Marker-only replay
+logs and logs with manually appended direct-impact markers are invalid. Copied
+successful transcripts need portable provenance, such as
+`bundle-build-manifest.json` or reviewer-facing evidence.
+
+The replay transcript corpus in `assets/fixtures/replay-transcript-corpus/`
+anchors this trust boundary with positive and negative static samples. The
+validator does not require a single rigid log format: different real transcript
+shapes are acceptable when they contain command, raw output, oracle, exit/pass,
+and direct-impact evidence, while marker-only, placeholder-only, thin
+explanatory logs, oracle-missing logs, and copied transcripts without provenance
+remain rejected.
+
+Seeded variant discovery stays candidate-only. `seeds.jsonl` and
+`variant-candidates.jsonl` are required closure artifacts for confirmed-bundle
+audits, but candidate ranking and seed similarity must not be cited as
+confirmation evidence.
+
 ## Report Quality Gates
 
 Confirmed reports must state:
@@ -147,6 +205,11 @@ The validator also checks for common contradiction patterns, including:
 - direct-impact marker drift between DOCX, supplement, replay helper,
   `verification-evidence.json`, reviewer evidence index, and registered replay
   `.log` files
+- registered replay `.log` files that are empty, placeholders, marker-only, or
+  lack command/output/oracle transcript signals; direct-impact markers must not
+  be manually appended to make a thin log pass validation
+- copied or historical successful replay transcripts without portable
+  provenance in `bundle-build-manifest.json` or reviewer-facing evidence
 - SSRF impact-tier drift, such as proving only callback/reachability while
   claiming response content, configuration leakage, credentials, or sensitive
   data exposure without an artifact-backed oracle
@@ -166,6 +229,14 @@ The validator also checks for common contradiction patterns, including:
 
 These checks are intentionally conservative. They are meant to reduce false
 positives without changing the confirmed bundle contract.
+
+Reviewer-readiness gates such as SSRF impact overclaim detection, code context
+minimum quality, and replay helper pause checks are classified in
+[`../assets/references/reviewer-readiness-validator-gates.md`](../assets/references/reviewer-readiness-validator-gates.md).
+That reference records their purpose, false-positive boundary, accepted and
+rejected examples, stable issue-code expectations where applicable, and the rule
+that these gates only reject weak reviewer material rather than prove
+vulnerabilities or replace Docker evidence.
 
 ## Seeded Variant Discovery (P6)
 
@@ -304,6 +375,58 @@ Validate one confirmed bundle:
 ```bash
 python3 scripts/validate_report_bundle.py --bundle-dir <bundle-dir>
 ```
+
+Default final bundle validation is fail-fast. When staging or final validation
+fails and you need a diagnosis pass, explicitly opt in to the focused
+all-errors collector:
+
+```bash
+python3 scripts/validate_report_bundle.py \
+  --bundle-dir <bundle-dir> \
+  --all-errors \
+  --json \
+  --output-errors <bundle-dir>/bundle-validation-errors.json
+```
+
+All-errors reports are diagnostics only. They do not repair bundles or confirm
+vulnerabilities; fix the upstream contract, evidence, or reviewer materials,
+then rerun validation.
+
+Before creating final `confirmed/<slug>/` artifacts, fill
+`<audit-workspace>/confirmed/.contracts/<slug>.bundle-contract.json` from
+`assets/references/bundle-contract-template.json`, point its `render` section at
+the selected source finding, and run:
+
+```bash
+python3 scripts/validate_bundle_contract.py \
+  --workspace-dir <audit-workspace> \
+  --contract <contract> \
+  --all-errors
+```
+
+If preflight fails, fix the contract or upstream Docker evidence. Do not create
+marker-only replay logs or patch direct-impact markers reactively. This
+preflight is only a generation guard; final bundle validation remains
+mandatory.
+
+Then build through staging:
+
+```bash
+python3 scripts/build_confirmed_bundle.py \
+  --workspace-dir <audit-workspace> \
+  --contract <contract> \
+  --language <zh-CN|en-US>
+```
+
+Do not hand-create final confirmed bundle directories. The wrapper renders a
+single selected finding under `confirmed/.staging/<slug>`, runs final bundle
+validation, promotes only after validation passes, and then runs batch
+validation. Failed builds stay under `confirmed/.staging/` and must not be
+called confirmed deliverables. Final audit finalization and the seeded variant
+discovery gates remain mandatory.
+The wrapper does not execute replay by default. It records replay-log provenance
+for bundled evidence when available, and final validation decides whether the
+registered replay log is a trusted transcript.
 
 Validate all bundles in a workspace:
 

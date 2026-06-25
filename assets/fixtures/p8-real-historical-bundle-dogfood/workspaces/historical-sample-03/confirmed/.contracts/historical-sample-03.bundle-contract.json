@@ -1,0 +1,101 @@
+{
+  "schema_version": 1,
+  "bundle": {
+    "slug": "historical-sample-03",
+    "language": "zh-CN",
+    "final_path": "confirmed/historical-sample-03",
+    "one_vulnerability_only": true,
+    "fail_if_final_path_exists": true
+  },
+  "render": {
+    "source_findings_json": "confirmed/findings.json",
+    "finding_slug": "historical-sample-03"
+  },
+  "finding": {
+    "project_name": "historical-sample-03",
+    "vulnerability_name": "Sanitized evidence registration trace",
+    "bug_class": "Authorization Bypass",
+    "severity": "High",
+    "attacker_condition": "A remote user controls request metadata in the historical trace.",
+    "server_condition": "The service accepts the affected request path in the historical trace.",
+    "security_impact": "The historical repair trail required evidence-list synchronization before final validation."
+  },
+  "docker_evidence": {
+    "verification_status": "confirmed_in_docker",
+    "docker_required": true,
+    "docker_command": "docker compose -f attachments/poc/docker-compose.yml up --abort-on-container-exit",
+    "oracle_token": "DIRECT_IMPACT_CONFIRMED",
+    "expected_observation": "A registered replay transcript and reviewer index should reference the same oracle.",
+    "observed_observation": "The historical trace had a replay evidence file present but not registered in all expected material.",
+    "severity_escalation_attempted": true
+  },
+  "replay": {
+    "root_script": {
+      "path": "run-historical-sample-03-recording.sh"
+    },
+    "log": {
+      "path": "attachments/evidence/replay-output.log",
+      "registration_targets": []
+    }
+  },
+  "direct_impact": {
+    "marker": "DIRECT_IMPACT_CONFIRMED",
+    "sync_targets": [
+      {
+        "target": "replay.root_script",
+        "marker": "DIRECT_IMPACT_CONFIRMED"
+      },
+      {
+        "target": "replay.log",
+        "marker": "DIRECT_IMPACT_CONFIRMED"
+      },
+      {
+        "target": "files.verification_evidence",
+        "marker": "DIRECT_IMPACT_CONFIRMED"
+      },
+      {
+        "target": "files.reviewer_evidence_index",
+        "marker": "DIRECT_IMPACT_CONFIRMED"
+      },
+      {
+        "target": "reviewer_material",
+        "marker": "DIRECT_IMPACT_CONFIRMED"
+      }
+    ]
+  },
+  "files": {
+    "verification_evidence": "verification-evidence.json",
+    "reviewer_evidence_index": "attachments/reviewer-evidence-index.json",
+    "evidence_files": [
+      "attachments/poc/reproduce.py"
+    ],
+    "attachments": [
+      "attachments/poc/docker-compose.yml",
+      "attachments/poc/reproduce.py",
+      "attachments/evidence/replay-output.log",
+      "attachments/reviewer-evidence-index.json"
+    ]
+  },
+  "code_context": {
+    "entries": [
+      {
+        "source_path": "src/sanitized_auth.py",
+        "line_range": "40-52",
+        "input_to_sink_chain": "The request metadata reaches an authorization decision without a server-side identity proof.",
+        "missing_guard": "No trusted credential or tenant ownership check is enforced before the decision point.",
+        "verified_impact_boundary": "The historical trace proved an authorization-boundary failure, not a broader platform compromise."
+      }
+    ]
+  },
+  "fixture_provenance": {
+    "required": false,
+    "replay_type": "full_app"
+  },
+  "impact_tier": {
+    "bug_class": "Authorization Bypass"
+  },
+  "variant_seed_readiness": {
+    "run_after_promote": true
+  }
+}
+

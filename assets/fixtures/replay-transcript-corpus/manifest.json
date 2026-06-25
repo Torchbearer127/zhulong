@@ -1,0 +1,83 @@
+{
+  "description": "Small local-only corpus for replay transcript trust-boundary regression tests. These samples are static text fixtures; tests must not execute Docker, replay helpers, PoCs, scanners, package managers, network calls, or target code.",
+  "samples": [
+    {
+      "copied_transcript": false,
+      "description": "Multi-command transcript with raw command output, oracle check, exit status, and direct-impact marker.",
+      "expected_classification": "trusted_transcript",
+      "expected_issue_code": null,
+      "id": "positive-multi-command-transcript",
+      "path": "positive-multi-command-transcript.log",
+      "provenance_required": false
+    },
+    {
+      "copied_transcript": false,
+      "description": "Static Docker Compose/service-style proof transcript with command, service output, oracle check, pass result, and direct-impact marker.",
+      "expected_classification": "trusted_transcript",
+      "expected_issue_code": null,
+      "id": "positive-compose-service-transcript",
+      "path": "positive-compose-service-transcript.log",
+      "provenance_required": false
+    },
+    {
+      "copied_transcript": true,
+      "description": "Trusted static transcript that represents a copied successful replay with portable provenance in the manifest.",
+      "expected_classification": "trusted_transcript",
+      "expected_issue_code": null,
+      "id": "positive-copied-with-provenance-transcript",
+      "path": "positive-copied-with-provenance-transcript.log",
+      "provenance": "Copied from bundle-local staged renderer input evidence in a deterministic selftest fixture.",
+      "provenance_required": true,
+      "source_kind": "copied_successful_transcript",
+      "source_path": "confirmed/.staging/.inputs/replay-corpus.renderer-input.json"
+    },
+    {
+      "copied_transcript": false,
+      "description": "Direct-impact marker only; no transcript content.",
+      "expected_classification": "marker_only_log",
+      "expected_issue_code": "REPLAY_LOG_MARKER_ONLY",
+      "id": "negative-marker-only",
+      "path": "negative-marker-only.log",
+      "provenance_required": false
+    },
+    {
+      "copied_transcript": false,
+      "description": "Placeholder text instructing the user to refresh the log.",
+      "expected_classification": "placeholder_log",
+      "expected_issue_code": "REPLAY_LOG_PLACEHOLDER",
+      "id": "negative-placeholder-only",
+      "path": "negative-placeholder-only.log",
+      "provenance_required": false
+    },
+    {
+      "copied_transcript": false,
+      "description": "Explanatory prose that lacks enough command/output/oracle/exit-status signals.",
+      "expected_classification": "thin_or_explanatory_log",
+      "expected_issue_code": "REPLAY_LOG_THIN_TRANSCRIPT",
+      "id": "negative-thin-explanatory",
+      "path": "negative-thin-explanatory.log",
+      "provenance_required": false
+    },
+    {
+      "copied_transcript": false,
+      "description": "Command plus observed text, but no accepted oracle, direct marker, or exit/pass signal.",
+      "expected_classification": "thin_or_explanatory_log",
+      "expected_issue_code": "REPLAY_LOG_THIN_TRANSCRIPT",
+      "id": "negative-oracle-missing",
+      "path": "negative-oracle-missing.log",
+      "provenance_required": false
+    },
+    {
+      "copied_transcript": true,
+      "description": "Content classifies as trusted, but copied-successful-transcript provenance is intentionally absent and bundle-level provenance validation must reject it.",
+      "expected_classification": "trusted_transcript",
+      "expected_issue_code": null,
+      "expected_provenance_issue": "lacks copied transcript provenance",
+      "id": "negative-copied-without-provenance",
+      "path": "negative-copied-without-provenance.log",
+      "provenance_required": true,
+      "source_kind": "copied_successful_transcript"
+    }
+  ],
+  "schema_version": 1
+}

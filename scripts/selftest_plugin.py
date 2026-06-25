@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import importlib.util
 import os
 import re
 import shutil
@@ -12,6 +13,18 @@ import zipfile
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
+
+REPLAY_TRANSCRIPT_CORPUS_FILES = [
+    "assets/fixtures/replay-transcript-corpus/manifest.json",
+    "assets/fixtures/replay-transcript-corpus/positive-multi-command-transcript.log",
+    "assets/fixtures/replay-transcript-corpus/positive-compose-service-transcript.log",
+    "assets/fixtures/replay-transcript-corpus/positive-copied-with-provenance-transcript.log",
+    "assets/fixtures/replay-transcript-corpus/negative-marker-only.log",
+    "assets/fixtures/replay-transcript-corpus/negative-placeholder-only.log",
+    "assets/fixtures/replay-transcript-corpus/negative-thin-explanatory.log",
+    "assets/fixtures/replay-transcript-corpus/negative-oracle-missing.log",
+    "assets/fixtures/replay-transcript-corpus/negative-copied-without-provenance.log",
+]
 
 REQUIRED_FILES = [
     ".claude-plugin/plugin.json",
@@ -29,7 +42,15 @@ REQUIRED_FILES = [
     "assets/references/final-summary-template.md",
     "assets/references/docker-resource-hygiene.md",
     "assets/references/docker-registry-fallbacks.example.json",
+    "assets/references/bundle-rule-mapping.md",
+    "assets/references/bundle-contract-template.json",
+    "assets/references/bundle-generation-checklist.md",
+    "assets/references/reviewer-readiness-validator-gates.md",
+    "assets/references/p8-bundle-generation-dogfood-report.md",
+    "assets/references/p8-real-historical-bundle-dogfood-report.md",
+    "assets/references/p8-real-historical-bundle-dogfood-metrics.json",
     "assets/references/variant-seed-template.md",
+    "assets/schemas/bundle-contract.schema.json",
     "assets/schemas/variant-seed.schema.json",
     "assets/schemas/zhulong-target.schema.json",
     "assets/schemas/candidate.schema.json",
@@ -68,6 +89,9 @@ REQUIRED_FILES = [
     "scripts/validate_target_contract.py",
     "scripts/validate_candidate.py",
     "scripts/validate_verifier_verdict.py",
+    "scripts/validate_bundle_contract.py",
+    "scripts/build_confirmed_bundle.py",
+    "scripts/p8_dogfood_metrics.py",
     "scripts/verify_candidate.py",
     "scripts/plan_security_toolchain.py",
     "scripts/render_confirmed_vuln_docx.py",
@@ -98,6 +122,16 @@ REQUIRED_FILES = [
     "assets/fixtures/contracts/blocked_manual_runtime/candidate.json",
     "assets/fixtures/contracts/blocked_manual_runtime/verifier-verdict.json",
     "assets/fixtures/contracts/blocked_manual_runtime/expected-disposition.json",
+    "assets/fixtures/p8-dogfood/README.md",
+    "assets/fixtures/p8-dogfood/bad-contract.bundle-contract.json",
+    "assets/fixtures/p8-dogfood/marker-only-replay-output.log",
+    "assets/fixtures/p8-real-historical-bundle-dogfood/README.md",
+    "assets/fixtures/p8-real-historical-bundle-dogfood/workspaces/historical-sample-01/confirmed/.contracts/historical-sample-01.bundle-contract.json",
+    "assets/fixtures/p8-real-historical-bundle-dogfood/workspaces/historical-sample-01/confirmed/historical-sample-01/README.sanitized.md",
+    "assets/fixtures/p8-real-historical-bundle-dogfood/workspaces/historical-sample-01/placeholder-replay-output.log",
+    "assets/fixtures/p8-real-historical-bundle-dogfood/workspaces/historical-sample-02/confirmed/historical-draft-bundle/README.sanitized.md",
+    "assets/fixtures/p8-real-historical-bundle-dogfood/workspaces/historical-sample-03/confirmed/.contracts/historical-sample-03.bundle-contract.json",
+    *REPLAY_TRANSCRIPT_CORPUS_FILES,
     "skills/zhulong/SKILL.md",
     "templates/claude-skill/SKILL.md",
 ]
@@ -110,7 +144,15 @@ INSTALLED_SKILL_REQUIRED_FILES = [
     "assets/confirmed-vuln-report-template.docx",
     "assets/references/docker-resource-hygiene.md",
     "assets/references/docker-registry-fallbacks.example.json",
+    "assets/references/bundle-rule-mapping.md",
+    "assets/references/bundle-contract-template.json",
+    "assets/references/bundle-generation-checklist.md",
+    "assets/references/reviewer-readiness-validator-gates.md",
+    "assets/references/p8-bundle-generation-dogfood-report.md",
+    "assets/references/p8-real-historical-bundle-dogfood-report.md",
+    "assets/references/p8-real-historical-bundle-dogfood-metrics.json",
     "assets/references/variant-seed-template.md",
+    "assets/schemas/bundle-contract.schema.json",
     "assets/schemas/variant-seed.schema.json",
     "assets/schemas/zhulong-target.schema.json",
     "assets/schemas/candidate.schema.json",
@@ -142,6 +184,9 @@ INSTALLED_SKILL_REQUIRED_FILES = [
     "scripts/validate_target_contract.py",
     "scripts/validate_candidate.py",
     "scripts/validate_verifier_verdict.py",
+    "scripts/validate_bundle_contract.py",
+    "scripts/build_confirmed_bundle.py",
+    "scripts/p8_dogfood_metrics.py",
     "scripts/verify_candidate.py",
     "scripts/validate_all_report_bundles.py",
     "scripts/finalize_audit_workspace.py",
@@ -170,7 +215,189 @@ INSTALLED_SKILL_REQUIRED_FILES = [
     "assets/fixtures/contracts/blocked_manual_runtime/candidate.json",
     "assets/fixtures/contracts/blocked_manual_runtime/verifier-verdict.json",
     "assets/fixtures/contracts/blocked_manual_runtime/expected-disposition.json",
+    "assets/fixtures/p8-dogfood/README.md",
+    "assets/fixtures/p8-dogfood/bad-contract.bundle-contract.json",
+    "assets/fixtures/p8-dogfood/marker-only-replay-output.log",
+    "assets/fixtures/p8-real-historical-bundle-dogfood/README.md",
+    "assets/fixtures/p8-real-historical-bundle-dogfood/workspaces/historical-sample-01/confirmed/.contracts/historical-sample-01.bundle-contract.json",
+    "assets/fixtures/p8-real-historical-bundle-dogfood/workspaces/historical-sample-01/confirmed/historical-sample-01/README.sanitized.md",
+    "assets/fixtures/p8-real-historical-bundle-dogfood/workspaces/historical-sample-01/placeholder-replay-output.log",
+    "assets/fixtures/p8-real-historical-bundle-dogfood/workspaces/historical-sample-02/confirmed/historical-draft-bundle/README.sanitized.md",
+    "assets/fixtures/p8-real-historical-bundle-dogfood/workspaces/historical-sample-03/confirmed/.contracts/historical-sample-03.bundle-contract.json",
+    *REPLAY_TRANSCRIPT_CORPUS_FILES,
 ]
+
+P8_RUNTIME_FILES = [
+    "scripts/validate_bundle_contract.py",
+    "scripts/build_confirmed_bundle.py",
+    "scripts/p8_dogfood_metrics.py",
+    "scripts/validate_report_bundle.py",
+    "scripts/validate_all_report_bundles.py",
+]
+
+P8_REFERENCE_FILES = [
+    "assets/schemas/bundle-contract.schema.json",
+    "assets/references/bundle-rule-mapping.md",
+    "assets/references/bundle-contract-template.json",
+    "assets/references/bundle-generation-checklist.md",
+    "assets/references/reviewer-readiness-validator-gates.md",
+    "assets/references/p8-bundle-generation-dogfood-report.md",
+    "assets/references/p8-real-historical-bundle-dogfood-report.md",
+    "assets/references/p8-real-historical-bundle-dogfood-metrics.json",
+]
+
+BUNDLE_RULE_MAPPING_REQUIRED_FIELDS = [
+    "schema_version",
+    "bundle",
+    "bundle.slug",
+    "bundle.language",
+    "bundle.final_path",
+    "bundle.one_vulnerability_only",
+    "render",
+    "render.source_findings_json",
+    "render.finding_slug",
+    "finding",
+    "finding.project_name",
+    "finding.vulnerability_name",
+    "finding.bug_class",
+    "finding.severity",
+    "finding.attacker_condition",
+    "finding.server_condition",
+    "finding.security_impact",
+    "docker_evidence",
+    "docker_evidence.verification_status",
+    "docker_evidence.docker_required",
+    "docker_evidence.docker_command",
+    "docker_evidence.oracle_token",
+    "docker_evidence.expected_observation",
+    "docker_evidence.observed_observation",
+    "docker_evidence.severity_escalation_attempted",
+    "replay",
+    "replay.root_script.path",
+    "replay.log.path",
+    "replay.log.registration_targets",
+    "direct_impact",
+    "direct_impact.marker",
+    "direct_impact.sync_targets",
+    "files",
+    "files.verification_evidence",
+    "files.reviewer_evidence_index",
+    "files.evidence_files",
+    "files.attachments",
+    "code_context",
+    "code_context.entries",
+    "fixture_provenance",
+    "fixture_provenance.required",
+    "fixture_provenance.replay_type",
+    "impact_tier",
+    "impact_tier.bug_class",
+    "impact_tier.ssrf.tier",
+    "impact_tier.ssrf.claimed_exposures",
+    "impact_tier.ssrf.stronger_impacts_not_claimed",
+    "impact_tier.ssrf.artifact_backed_oracle",
+    "variant_seed_readiness",
+    "variant_seed_readiness.run_after_promote",
+]
+
+BUNDLE_RULE_MAPPING_COLUMNS = [
+    "Contract field",
+    "Readiness meaning",
+    "Renderer / builder output",
+    "Final validator or batch gate",
+    "Evidence artifact",
+    "Notes / non-claims",
+]
+
+BUNDLE_RULE_MAPPING_FORBIDDEN_CLAIMS = [
+    "preflight proves a vulnerability",
+    "preflight confirms a vulnerability",
+    "contract proves a vulnerability",
+    "contract confirms a vulnerability",
+    "预检证明漏洞",
+    "合同证明漏洞",
+]
+
+REVIEWER_READINESS_GATE_FAMILIES = [
+    "SSRF Impact Overclaim",
+    "Code Context Minimum Quality",
+    "Replay Helper Pause Contract",
+]
+
+REVIEWER_READINESS_GATE_REQUIRED_TEXT = [
+    "Reviewer-readiness gates improve",
+    "They are final-bundle quality gates",
+    "do not discover",
+    "do not replace Docker evidence",
+    "must only add stricter rejection",
+    "False-positive boundary",
+    "Accepted example",
+    "Rejected example",
+    "SSRF_IMPACT_OVERCLAIM",
+    "CODE_CONTEXT_MINIMUM_QUALITY",
+    "REPLAY_HELPER_PAUSE_CONTRACT",
+    "ROOT_SCRIPT_CONTEXT_MISSING",
+    "Any new reviewer-readiness validator gate",
+    "positive and negative",
+]
+
+REVIEWER_READINESS_GATE_FORBIDDEN_CLAIMS = [
+    "these gates prove vulnerabilities",
+    "reviewer-readiness gates prove vulnerabilities",
+    "these gates confirm vulnerabilities",
+    "reviewer-readiness gates confirm vulnerabilities",
+]
+
+STABLE_CONTRACT_SEVERITIES = [
+    "Critical",
+    "High",
+    "Medium",
+    "Low",
+    "Informational",
+]
+
+RECOMMENDED_BUG_CLASS_TEXT = [
+    "recommended bug classes",
+    "free text",
+    "SSRF",
+    "Path Traversal",
+    "Prototype Pollution",
+    "Command Injection",
+    "Deserialization",
+    "Authentication Bypass",
+    "Authorization Bypass",
+    "Information Disclosure",
+    "Denial of Service",
+]
+
+P8_DOGFOOD_FILES = [
+    "assets/fixtures/p8-dogfood/README.md",
+    "assets/fixtures/p8-dogfood/bad-contract.bundle-contract.json",
+    "assets/fixtures/p8-dogfood/marker-only-replay-output.log",
+    "assets/references/p8-bundle-generation-dogfood-report.md",
+    "scripts/p8_dogfood_metrics.py",
+]
+
+P8_REAL_HISTORICAL_DOGFOOD_FILES = [
+    "assets/fixtures/p8-real-historical-bundle-dogfood/README.md",
+    "assets/fixtures/p8-real-historical-bundle-dogfood/workspaces/historical-sample-01/confirmed/.contracts/historical-sample-01.bundle-contract.json",
+    "assets/fixtures/p8-real-historical-bundle-dogfood/workspaces/historical-sample-01/confirmed/historical-sample-01/README.sanitized.md",
+    "assets/fixtures/p8-real-historical-bundle-dogfood/workspaces/historical-sample-01/placeholder-replay-output.log",
+    "assets/fixtures/p8-real-historical-bundle-dogfood/workspaces/historical-sample-02/confirmed/historical-draft-bundle/README.sanitized.md",
+    "assets/fixtures/p8-real-historical-bundle-dogfood/workspaces/historical-sample-03/confirmed/.contracts/historical-sample-03.bundle-contract.json",
+    "assets/references/p8-real-historical-bundle-dogfood-report.md",
+    "assets/references/p8-real-historical-bundle-dogfood-metrics.json",
+]
+
+REPLAY_TRANSCRIPT_CORPUS_REQUIRED_IDS = {
+    "positive-multi-command-transcript",
+    "positive-compose-service-transcript",
+    "positive-copied-with-provenance-transcript",
+    "negative-marker-only",
+    "negative-placeholder-only",
+    "negative-thin-explanatory",
+    "negative-oracle-missing",
+    "negative-copied-without-provenance",
+}
 
 FORBIDDEN_INSTALLED_TOP_LEVEL = [
     "prompts",
@@ -260,7 +487,8 @@ def write_live_replay_log(bundle: Path, *, marker: str = "DIRECT_IMPACT_CONFIRME
         "Zhulong reviewer replay log\n"
         "Generated at: 2026-06-16T00:00:00Z\n"
         "COMMAND: docker compose -f attachments/poc/docker-compose.selftest.yml up --abort-on-container-exit\n"
-        "RAW OUTPUT: deterministic selftest replay completed\n"
+        "stdout: deterministic selftest replay completed\n"
+        "success marker verified with grep -Fq\n"
         f"{marker}\n"
         f"{extra}".rstrip()
         + "\n",
@@ -318,6 +546,625 @@ def require_no_repo_text(plugin_root: Path, needle: str, label: str) -> None:
             continue
         if needle in path.read_text(encoding="utf-8", errors="ignore"):
             raise SystemExit(f"FAILED: forbidden repository text for {label}: {path}: {needle}")
+
+
+def require_files(root: Path, rels: list[str], label: str) -> None:
+    for rel in rels:
+        if not (root / rel).exists():
+            raise SystemExit(f"FAILED: missing {label} file: {root / rel}")
+
+
+def load_validate_report_bundle_module(root: Path):
+    module_path = root / "scripts/validate_report_bundle.py"
+    spec = importlib.util.spec_from_file_location("zhulong_validate_report_bundle_selftest", module_path)
+    if spec is None or spec.loader is None:
+        raise SystemExit(f"FAILED: could not load validate_report_bundle.py from {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def exercise_replay_transcript_corpus(root: Path) -> None:
+    corpus_dir = root / "assets/fixtures/replay-transcript-corpus"
+    manifest_path = corpus_dir / "manifest.json"
+    if not corpus_dir.is_dir():
+        raise SystemExit(f"FAILED: missing replay transcript corpus directory: {corpus_dir}")
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"FAILED: replay transcript corpus manifest is invalid JSON: {exc}") from exc
+    if manifest.get("schema_version") != 1:
+        raise SystemExit("FAILED: replay transcript corpus manifest schema_version must be 1")
+    samples = manifest.get("samples")
+    if not isinstance(samples, list) or not samples:
+        raise SystemExit("FAILED: replay transcript corpus manifest must contain samples")
+
+    validator = load_validate_report_bundle_module(root)
+    seen_ids: set[str] = set()
+    positive_formats: set[str] = set()
+    copied_with_provenance: dict[str, object] | None = None
+    copied_without_provenance: dict[str, object] | None = None
+    copied_without_provenance_path: Path | None = None
+
+    for index, sample in enumerate(samples):
+        if not isinstance(sample, dict):
+            raise SystemExit(f"FAILED: replay transcript corpus samples[{index}] must be an object")
+        sample_id = str(sample.get("id") or "").strip()
+        if not sample_id:
+            raise SystemExit(f"FAILED: replay transcript corpus samples[{index}].id must not be empty")
+        if sample_id in seen_ids:
+            raise SystemExit(f"FAILED: duplicate replay transcript corpus sample id: {sample_id}")
+        seen_ids.add(sample_id)
+
+        rel = str(sample.get("path") or "").strip()
+        rel_path = Path(rel)
+        if not rel or rel_path.is_absolute() or ".." in rel_path.parts or rel_path.suffix != ".log":
+            raise SystemExit(f"FAILED: replay transcript corpus sample path must be corpus-relative .log: {sample_id}")
+        sample_path = corpus_dir / rel_path
+        if not sample_path.is_file():
+            raise SystemExit(f"FAILED: missing replay transcript corpus sample: {sample_path}")
+
+        text = sample_path.read_text(encoding="utf-8")
+        classification = validator.classify_replay_transcript(text)
+        expected_classification = sample.get("expected_classification")
+        if classification.get("classification") != expected_classification:
+            raise SystemExit(
+                f"FAILED: replay transcript corpus classification mismatch for {sample_id}: "
+                f"expected {expected_classification}, got {classification.get('classification')}"
+            )
+        issue_code = validator.REPLAY_CLASSIFICATION_ISSUE_CODES.get(classification.get("classification"))
+        expected_issue_code = sample.get("expected_issue_code")
+        if issue_code != expected_issue_code:
+            raise SystemExit(
+                f"FAILED: replay transcript corpus issue-code mismatch for {sample_id}: "
+                f"expected {expected_issue_code}, got {issue_code}"
+            )
+
+        if expected_classification == "trusted_transcript":
+            if "[command]" in text:
+                positive_formats.add("bracket-command")
+            if "docker compose" in text or "container logs:" in text:
+                positive_formats.add("compose-service")
+            if "Run command:" in text and "RAW OUTPUT:" in text:
+                positive_formats.add("copied-run-command")
+        if sample_id == "positive-copied-with-provenance-transcript":
+            copied_with_provenance = sample
+        if sample_id == "negative-copied-without-provenance":
+            copied_without_provenance = sample
+            copied_without_provenance_path = sample_path
+
+    missing = sorted(REPLAY_TRANSCRIPT_CORPUS_REQUIRED_IDS - seen_ids)
+    if missing:
+        raise SystemExit(f"FAILED: replay transcript corpus missing required sample ids: {missing}")
+    if len(positive_formats) < 3:
+        raise SystemExit("FAILED: replay transcript corpus positive samples must use meaningfully different formats")
+    if copied_with_provenance is None or copied_without_provenance is None or copied_without_provenance_path is None:
+        raise SystemExit("FAILED: replay transcript corpus must include copied provenance boundary samples")
+
+    with tempfile.TemporaryDirectory(prefix="zhulong-replay-corpus-") as tempdir:
+        bundle = Path(tempdir)
+        rel = "attachments/evidence/replay-output.log"
+        log_path = bundle / rel
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+
+        log_path.write_text((corpus_dir / str(copied_with_provenance["path"])).read_text(encoding="utf-8"), encoding="utf-8")
+        manifest_payload = {
+            "schema_version": 1,
+            "replay_logs": [
+                {
+                    "path": rel,
+                    "source_kind": copied_with_provenance.get("source_kind"),
+                    "source_path": copied_with_provenance.get("source_path"),
+                    "provenance": copied_with_provenance.get("provenance"),
+                    "trust_classification": "trusted_transcript",
+                }
+            ],
+        }
+        (bundle / "bundle-build-manifest.json").write_text(
+            json.dumps(manifest_payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        manifest_entries = validator.build_manifest_replay_entries(bundle)
+        validator.validate_registered_replay_log_content(bundle, rel, manifest_entries.get(rel))
+
+        log_path.write_text(copied_without_provenance_path.read_text(encoding="utf-8"), encoding="utf-8")
+        manifest_payload["replay_logs"][0] = {
+            "path": rel,
+            "source_kind": copied_without_provenance.get("source_kind"),
+            "trust_classification": "trusted_transcript",
+        }
+        (bundle / "bundle-build-manifest.json").write_text(
+            json.dumps(manifest_payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        manifest_entries = validator.build_manifest_replay_entries(bundle)
+        try:
+            validator.validate_registered_replay_log_content(bundle, rel, manifest_entries.get(rel))
+        except SystemExit as exc:
+            if "lacks copied transcript provenance" not in str(exc):
+                raise
+        else:
+            raise SystemExit("FAILED: copied replay transcript without provenance unexpectedly passed")
+
+    docs = [
+        root / "assets/references/reviewer-readiness-validator-gates.md",
+        root / "assets/references/bundle-generation-checklist.md",
+        root / "docs/RELEASE_CHECKLIST.md",
+        root / "docs/WORKFLOW_DETAILS.md",
+        root / "docs/WORKFLOW_DETAILS.zh-CN.md",
+    ]
+    for path in docs:
+        require_text(path, "replay transcript corpus", f"replay transcript corpus docs pointer in {path.name}")
+        require_text(path, "single rigid log format", f"no rigid replay format boundary in {path.name}")
+
+
+def exercise_bundle_rule_mapping(root: Path) -> None:
+    mapping_path = root / "assets/references/bundle-rule-mapping.md"
+    if not mapping_path.is_file():
+        raise SystemExit(f"FAILED: missing bundle rule mapping: {mapping_path}")
+    content = mapping_path.read_text(encoding="utf-8")
+    lowered = content.lower()
+    normalized_lowered = re.sub(r"\s+", " ", lowered)
+    for phrase in (
+        "Contract preflight means `ready to render`",
+        "generation readiness workflow gate",
+        "does not prove a vulnerability",
+        "Docker evidence",
+        "final confirmed-bundle validation",
+    ):
+        if phrase.lower() not in normalized_lowered:
+            raise SystemExit(f"FAILED: bundle rule mapping missing boundary wording: {phrase}")
+    for field in BUNDLE_RULE_MAPPING_REQUIRED_FIELDS:
+        if f"`{field}`" not in content:
+            raise SystemExit(f"FAILED: bundle rule mapping missing contract field: {field}")
+    for column in BUNDLE_RULE_MAPPING_COLUMNS:
+        if column not in content:
+            raise SystemExit(f"FAILED: bundle rule mapping missing column: {column}")
+    for phrase in (
+        "Any new contract field must be added to this mapping in the same change",
+        "do not add it to the contract",
+    ):
+        if phrase not in content:
+            raise SystemExit(f"FAILED: bundle rule mapping missing maintenance rule: {phrase}")
+    for phrase in (
+        "stable enum",
+        "Critical",
+        "Informational",
+        "recommended bug classes",
+        "free text",
+        "Path Traversal",
+        "Command Injection",
+    ):
+        if phrase not in content:
+            raise SystemExit(f"FAILED: bundle rule mapping missing enum/recommended-values rationale: {phrase}")
+    for phrase in BUNDLE_RULE_MAPPING_FORBIDDEN_CLAIMS:
+        haystack = lowered if phrase.isascii() else content
+        needle = phrase.lower() if phrase.isascii() else phrase
+        if needle in haystack:
+            raise SystemExit(f"FAILED: bundle rule mapping contains forbidden claim: {phrase}")
+
+
+def exercise_reviewer_readiness_gate_classification(root: Path) -> None:
+    reference = root / "assets/references/reviewer-readiness-validator-gates.md"
+    for family in REVIEWER_READINESS_GATE_FAMILIES:
+        require_text(reference, family, f"reviewer-readiness gate family {family}")
+    for phrase in REVIEWER_READINESS_GATE_REQUIRED_TEXT:
+        require_text(reference, phrase, f"reviewer-readiness gate classification text {phrase}")
+    for phrase in REVIEWER_READINESS_GATE_FORBIDDEN_CLAIMS:
+        forbid_text(reference, phrase, "reviewer-readiness gate non-confirmation boundary")
+
+    validator = root / "scripts/validate_report_bundle.py"
+    contract_validator = root / "scripts/validate_bundle_contract.py"
+    release_checklist = root / "docs/RELEASE_CHECKLIST.md"
+
+    require_text(contract_validator, "SSRF_IMPACT_OVERCLAIM", "SSRF contract issue code")
+    require_text(validator, "SSRF_IMPACT_OVERCLAIM", "SSRF final validator collectable issue code")
+    require_text(validator, "CODE_CONTEXT_MINIMUM_QUALITY", "code context minimum quality issue code")
+    require_text(validator, "REPLAY_HELPER_PAUSE_CONTRACT", "replay helper pause contract issue code")
+    require_text(validator, "ROOT_SCRIPT_CONTEXT_MISSING", "replay helper context issue code")
+    require_text(validator, "report {heading} section contains placeholder-only code context", "code context placeholder rejection")
+    require_text(validator, "must pause before proof command execution transitions", "replay pre-command pause rejection")
+    require_text(validator, "must pause after proof command output transitions", "replay post-command pause rejection")
+
+    # These fixtures are deterministic local file rewrites in the report-bundle
+    # selftest section. They do not execute Docker, replay scripts, scanners,
+    # package managers, network calls, or real target code.
+    fixture_text = (root / "scripts/selftest_plugin.py").read_text(encoding="utf-8")
+    fixture_pairs = {
+        "SSRF gate positive": "good_ssrf_callback_bounded",
+        "SSRF gate negative": "bad_ssrf_callback_overclaim",
+        "Code context positive": "standard_bundle",
+        "Code context negative": "bad_placeholder_code_context",
+        "Replay pause positive": "standard_bundle",
+        "Replay pause negative": "bad_missing_pre_command_pause",
+    }
+    for label, needle in fixture_pairs.items():
+        if needle not in fixture_text:
+            raise SystemExit(f"FAILED: missing reviewer-readiness fixture coverage for {label}: {needle}")
+
+    require_text(
+        release_checklist,
+        "reviewer-readiness gate classification",
+        "release checklist reviewer-readiness classification entry",
+    )
+    require_text(
+        release_checklist,
+        "positive and negative fixture coverage",
+        "release checklist reviewer-readiness fixture entry",
+    )
+
+
+def exercise_p8_closure_contracts(root: Path) -> None:
+    require_files(root, P8_RUNTIME_FILES, "P8 runtime")
+    require_files(root, P8_REFERENCE_FILES, "P8 reference/schema")
+    exercise_bundle_rule_mapping(root)
+    exercise_reviewer_readiness_gate_classification(root)
+
+    schema = json.loads((root / "assets/schemas/bundle-contract.schema.json").read_text(encoding="utf-8"))
+    template = json.loads((root / "assets/references/bundle-contract-template.json").read_text(encoding="utf-8"))
+    severity_schema = schema["properties"]["finding"]["properties"]["severity"]
+    if severity_schema.get("enum") != STABLE_CONTRACT_SEVERITIES:
+        raise SystemExit("FAILED: bundle contract schema must enforce stable finding.severity enum labels")
+    if template.get("fixture_provenance") != {"required": False, "replay_type": "full_app"}:
+        raise SystemExit("FAILED: bundle contract template must omit empty full-app fixture provenance details")
+    ssrf_template = template.get("impact_tier", {}).get("ssrf", {})
+    if "artifact_backed_oracle" in ssrf_template:
+        raise SystemExit("FAILED: callback-only bundle contract template must omit empty SSRF artifact_backed_oracle")
+
+    if (root / "skills/zhulong/SKILL.md").exists():
+        skill_path = root / "skills/zhulong/SKILL.md"
+        template_path = root / "templates/claude-skill/SKILL.md"
+        if skill_path.read_bytes() != template_path.read_bytes():
+            raise SystemExit("FAILED: source skill and Claude skill template must be byte-identical")
+    else:
+        skill_path = root / "SKILL.md"
+
+    require_text(skill_path, "## Bundle Builder Path", "P8 skill bundle builder section")
+    require_text(skill_path, "Before creating `confirmed/<slug>`, validate", "P8 skill contract-first path")
+    require_text(skill_path, "Do not hand-create final", "P8 skill no hand-created final dirs")
+    require_text(skill_path, "`confirmed/.staging/<slug>`", "P8 skill staging path")
+    require_text(skill_path, "validate_report_bundle.py --all-errors", "P8 skill all-errors diagnostic path")
+    require_text(skill_path, "workflow gates only; Docker evidence and final bundle validation remain required", "P8 skill confirmation boundary")
+    require_text(skill_path, "validate_all_report_bundles.py", "P8 skill validate-all path")
+    require_text(skill_path, "seeded variant discovery", "P8 skill seeded variant closure")
+    require_text(skill_path, "finalization", "P8 skill finalization closure")
+
+    docs = [
+        root / "docs/WORKFLOW_DETAILS.md",
+        root / "docs/WORKFLOW_DETAILS.zh-CN.md",
+        root / "docs/RELEASE_CHECKLIST.md",
+        root / "assets/references/bundle-generation-checklist.md",
+    ]
+    for path in docs:
+        require_text(path, "bundle contract", f"P8 short-path contract wording in {path.name}")
+        require_text(path, "confirmed/.staging/<slug>", f"P8 staging path wording in {path.name}")
+        require_text(path, "validate_all_report_bundles.py", f"P8 validate-all wording in {path.name}")
+        require_text(path, "finalization", f"P8 finalization wording in {path.name}")
+        require_text(path, "severity", f"P8 severity policy wording in {path.name}")
+        require_text(path, "bug_class", f"P8 bug_class policy wording in {path.name}")
+
+    for phrase in RECOMMENDED_BUG_CLASS_TEXT:
+        require_text(
+            root / "assets/references/bundle-generation-checklist.md",
+            phrase,
+            f"bundle checklist recommended bug_class wording {phrase}",
+        )
+
+    require_text(root / "docs/WORKFLOW_DETAILS.md", "does not prove a vulnerability", "P8 English preflight boundary")
+    require_text(root / "docs/WORKFLOW_DETAILS.md", "diagnostic mode", "P8 English all-errors diagnostic boundary")
+    require_text(root / "docs/WORKFLOW_DETAILS.md", "failed staging directory", "P8 English failed staging boundary")
+    require_text(root / "docs/WORKFLOW_DETAILS.md", "Marker-only replay", "P8 English marker-only replay boundary")
+    require_text(root / "docs/WORKFLOW_DETAILS.md", "stays candidate-only", "P8 English seeded variant boundary")
+
+    require_text(root / "docs/WORKFLOW_DETAILS.zh-CN.md", "不能证明漏洞成立", "P8 Chinese preflight boundary")
+    require_text(root / "docs/WORKFLOW_DETAILS.zh-CN.md", "只是 staging", "P8 Chinese all-errors diagnostic boundary")
+    require_text(root / "docs/WORKFLOW_DETAILS.zh-CN.md", "不是 confirmed deliverable", "P8 Chinese failed staging boundary")
+    require_text(root / "docs/WORKFLOW_DETAILS.zh-CN.md", "marker-only replay log", "P8 Chinese marker-only replay boundary")
+    require_text(root / "docs/WORKFLOW_DETAILS.zh-CN.md", "始终保持候选态", "P8 Chinese seeded variant boundary")
+
+    forbidden_claims = [
+        "contract preflight proves a vulnerability",
+        "contract preflight confirms a vulnerability",
+        "staging validation proves a vulnerability",
+        "staging validation confirms a vulnerability",
+        "all-errors proves a vulnerability",
+        "all-errors confirms a vulnerability",
+        "preflight 证明漏洞",
+        "preflight 确认漏洞",
+        "all-errors 证明漏洞",
+        "all-errors 确认漏洞",
+    ]
+    for path in docs + [skill_path]:
+        for phrase in forbidden_claims:
+            forbid_text(path, phrase, f"P8 no diagnostic-confirmation claim in {path.name}")
+
+
+def exercise_p8_dogfood_metrics(root: Path) -> None:
+    require_files(root, P8_DOGFOOD_FILES, "P8 dogfood")
+    report_path = root / "assets/references/p8-bundle-generation-dogfood-report.md"
+    for heading in (
+        "## Fixtures Used",
+        "## Commands Represented",
+        "## Old Retry-Loop Failure Mode",
+        "## New P8 Flow Result",
+        "## Metrics",
+        "## Boundaries",
+        "## P8 Closure State",
+        "## Residual Risks",
+    ):
+        require_text(report_path, heading, f"P8 dogfood report heading {heading}")
+    for phrase in (
+        "does not execute Docker",
+        "do not prove a real vulnerability",
+        "replace Docker evidence",
+        "Final bundle validation remains mandatory",
+        "variant candidates as confirmed evidence",
+    ):
+        require_text(report_path, phrase, f"P8 dogfood report boundary {phrase}")
+
+    with tempfile.TemporaryDirectory() as tempdir:
+        temp_root = Path(tempdir)
+        output = run_capture_with_env(
+            [
+                sys.executable,
+                str(root / "scripts/p8_dogfood_metrics.py"),
+                "--json",
+            ],
+            root,
+            {"PYTHONPYCACHEPREFIX": str(temp_root / "pycache")},
+        )
+        metrics = json.loads(output)
+        required = {
+            "schema_version",
+            "validator_invocation_count",
+            "material_rewrite_count",
+            "unique_error_count_per_invocation",
+            "partial_confirmed_bundle_created",
+            "manual_marker_patch_detected_or_required",
+            "contract_preflight_caught_expected_issues",
+            "staging_promote_required_for_final",
+        }
+        missing = sorted(required - set(metrics))
+        if missing:
+            raise SystemExit(f"FAILED: P8 dogfood metrics missing fields: {missing}")
+        if metrics.get("schema_version") != 1:
+            raise SystemExit("FAILED: P8 dogfood metrics schema_version mismatch")
+        if metrics.get("validator_invocation_count", 0) <= 0:
+            raise SystemExit("FAILED: P8 dogfood metrics did not record validator invocations")
+        if metrics.get("material_rewrite_count") != 0:
+            raise SystemExit("FAILED: P8 dogfood metrics should not require material rewrites")
+        if metrics.get("partial_confirmed_bundle_created") is not False:
+            raise SystemExit("FAILED: P8 dogfood staging failure created a final confirmed bundle")
+        if metrics.get("manual_marker_patch_detected_or_required") is not False:
+            raise SystemExit("FAILED: P8 dogfood required manual marker patching")
+        if metrics.get("contract_preflight_caught_expected_issues") is not True:
+            raise SystemExit("FAILED: P8 dogfood bad contract did not catch expected issues")
+        if metrics.get("staging_promote_required_for_final") is not True:
+            raise SystemExit("FAILED: P8 dogfood did not prove staging-before-final promotion")
+        if max(metrics.get("unique_error_count_per_invocation") or [0]) < 3:
+            raise SystemExit("FAILED: P8 dogfood did not return multiple errors in one invocation")
+
+        cases = metrics.get("cases", {})
+        bad_codes = set(cases.get("bad_contract", {}).get("issue_codes", []))
+        for code in (
+            "REPLAY_LOG_UNREGISTERED",
+            "DIRECT_IMPACT_MARKER_DRIFT",
+            "SSRF_IMPACT_OVERCLAIM",
+            "FIXTURE_PROVENANCE_MISSING",
+            "BUNDLE_PATH_ESCAPE",
+            "FINAL_TARGET_EXISTS",
+        ):
+            if code not in bad_codes:
+                raise SystemExit(f"FAILED: P8 dogfood bad contract missing issue code {code}")
+        if cases.get("staging_build_failure", {}).get("final_bundle_created") is not False:
+            raise SystemExit("FAILED: P8 dogfood staging failure promoted a final bundle")
+        if cases.get("staging_build_failure", {}).get("failed_staging_preserved") is not True:
+            raise SystemExit("FAILED: P8 dogfood did not preserve failed staging for diagnostics")
+        marker_case = cases.get("marker_only_replay_log", {})
+        if marker_case.get("rejected") is not True or "REPLAY_LOG_MARKER_ONLY" not in marker_case.get("issue_codes", []):
+            raise SystemExit("FAILED: P8 dogfood marker-only replay log was not rejected")
+        if marker_case.get("called_confirmed") is not False:
+            raise SystemExit("FAILED: P8 dogfood marker-only case was described as confirmed")
+        happy = cases.get("valid_contract_happy_path", {})
+        if not (
+            happy.get("contract_preflight_valid") is True
+            and happy.get("promoted") is True
+            and happy.get("batch_validation_passed") is True
+        ):
+            raise SystemExit("FAILED: P8 dogfood valid path did not reach promote and batch validation")
+        comparison = metrics.get("comparison", {})
+        if comparison.get("validator_invocation_count_delta", 0) <= 0:
+            raise SystemExit("FAILED: P8 dogfood did not reduce validator invocation count")
+        if comparison.get("material_rewrite_count_delta", 0) <= 0:
+            raise SystemExit("FAILED: P8 dogfood did not reduce material rewrite count")
+
+        generated_report = temp_root / "dogfood-report.md"
+        generated_metrics = temp_root / "dogfood-metrics.json"
+        run_with_env(
+            [
+                sys.executable,
+                str(root / "scripts/p8_dogfood_metrics.py"),
+                "--output-json",
+                str(generated_metrics),
+                "--output-report",
+                str(generated_report),
+            ],
+            root,
+            {"PYTHONPYCACHEPREFIX": str(temp_root / "pycache-output")},
+        )
+        generated = json.loads(generated_metrics.read_text(encoding="utf-8"))
+        if generated.get("schema_version") != 1:
+            raise SystemExit("FAILED: generated P8 dogfood JSON has wrong schema_version")
+        require_text(generated_report, "## Old Retry-Loop Failure Mode", "generated P8 dogfood report")
+        require_text(generated_report, "## Boundaries", "generated P8 dogfood report boundaries")
+
+
+def exercise_p8_real_historical_dogfood(root: Path) -> None:
+    require_files(root, P8_REAL_HISTORICAL_DOGFOOD_FILES, "P8 real historical dogfood")
+    report_path = root / "assets/references/p8-real-historical-bundle-dogfood-report.md"
+    metrics_path = root / "assets/references/p8-real-historical-bundle-dogfood-metrics.json"
+    fixture_root = root / "assets/fixtures/p8-real-historical-bundle-dogfood"
+
+    for heading in (
+        "## Scope and Non-Claims",
+        "## Sample Table",
+        "## Metrics Table",
+        "## Per-Sample Findings",
+        "## Comparison With P8.6 Fixture Dogfood",
+        "## Follow-Up",
+    ):
+        require_text(report_path, heading, f"P8 real historical dogfood report heading {heading}")
+    for phrase in (
+        "local historical dogfood",
+        "did not execute Docker",
+        "does not confirm new vulnerabilities",
+        "not a production token-saving statistic",
+        "P8.6 fixture measurement",
+        "P8-post.4 historical dogfood measurement",
+        "Production token savings: not measured and not claimed",
+    ):
+        require_text(report_path, phrase, f"P8 real historical dogfood boundary {phrase}")
+    for phrase in (
+        "Validator invocations",
+        "Material rewrites during dogfood",
+        "Partial confirmed bundle created",
+        "historical-sample-01",
+    ):
+        require_text(report_path, phrase, f"P8 real historical dogfood metrics/sample text {phrase}")
+
+    metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
+    if metrics.get("schema_version") != 1:
+        raise SystemExit("FAILED: P8 real historical dogfood metrics schema_version mismatch")
+    if metrics.get("measurement_type") != "historical_dogfood":
+        raise SystemExit("FAILED: P8 real historical dogfood metrics measurement_type mismatch")
+    samples = metrics.get("samples")
+    if not isinstance(samples, list) or not samples:
+        raise SystemExit("FAILED: P8 real historical dogfood metrics must contain samples")
+    sample_ids = {str(sample.get("sample_id")) for sample in samples if isinstance(sample, dict)}
+    for expected in ("historical-sample-01", "historical-sample-02", "historical-sample-03"):
+        if expected not in sample_ids:
+            raise SystemExit(f"FAILED: P8 real historical dogfood metrics missing sample {expected}")
+    if metrics.get("validator_invocation_count") != 4:
+        raise SystemExit("FAILED: P8 real historical dogfood metrics validator invocation count mismatch")
+    if metrics.get("material_rewrite_count") != 0:
+        raise SystemExit("FAILED: P8 real historical dogfood should not rewrite materials")
+    if metrics.get("partial_confirmed_bundle_count") != 1:
+        raise SystemExit("FAILED: P8 real historical dogfood partial count mismatch")
+    if metrics.get("measurement_type") == "fixture_dogfood":
+        raise SystemExit("FAILED: P8 real historical dogfood metrics confused with fixture measurement")
+
+    combined = "\n".join(
+        path.read_text(encoding="utf-8", errors="ignore")
+        for path in [report_path, metrics_path, *fixture_root.rglob("*")]
+        if path.is_file()
+    )
+    forbidden_patterns = [
+        r"/Users/",
+        r"/home/",
+        r"oss-vulnerability-research",
+        r"security-research-\d{8}",
+        r"agent-studio",
+        r"agent-runtime",
+        r"nexent",
+        r"spectral",
+        r"linkding",
+        r"yargs-parser",
+    ]
+    for pattern in forbidden_patterns:
+        if re.search(pattern, combined, re.IGNORECASE):
+            raise SystemExit(f"FAILED: P8 real historical dogfood leaked forbidden text pattern: {pattern}")
+    forbidden_claims = [
+        "confirmed a new vulnerability",
+        "new vulnerability was confirmed",
+        "production token savings were",
+        "saved production tokens",
+        "token-saving percentage",
+    ]
+    lowered = combined.lower()
+    for phrase in forbidden_claims:
+        if phrase in lowered:
+            raise SystemExit(f"FAILED: P8 real historical dogfood contains forbidden claim: {phrase}")
+
+    def run_json(command: list[str], *, expected_returncode: int) -> dict[str, object]:
+        proc = subprocess.run(command, cwd=root, capture_output=True, text=True)
+        if proc.returncode != expected_returncode:
+            output = ((proc.stdout or "") + (proc.stderr or "")).strip()
+            raise SystemExit(
+                f"FAILED: P8 real historical dogfood command returned {proc.returncode}, "
+                f"expected {expected_returncode}: {' '.join(command)}\n{output}"
+            )
+        try:
+            return json.loads(proc.stdout)
+        except json.JSONDecodeError as exc:
+            raise SystemExit(f"FAILED: P8 real historical dogfood command did not emit JSON: {command}") from exc
+
+    sample01 = fixture_root / "workspaces/historical-sample-01"
+    sample01_payload = run_json(
+        [
+            sys.executable,
+            str(root / "scripts/validate_bundle_contract.py"),
+            "--workspace-dir",
+            str(sample01),
+            "--contract",
+            str(sample01 / "confirmed/.contracts/historical-sample-01.bundle-contract.json"),
+            "--all-errors",
+            "--json",
+        ],
+        expected_returncode=1,
+    )
+    sample01_codes = {str(issue.get("code")) for issue in sample01_payload.get("issues", []) if isinstance(issue, dict)}
+    for code in (
+        "FINAL_TARGET_EXISTS",
+        "REPLAY_LOG_UNREGISTERED",
+        "DIRECT_IMPACT_MARKER_DRIFT",
+        "CODE_CONTEXT_TOO_THIN",
+        "SSRF_IMPACT_OVERCLAIM",
+    ):
+        if code not in sample01_codes:
+            raise SystemExit(f"FAILED: P8 real historical sample 01 missing issue code {code}")
+
+    validator = load_validate_report_bundle_module(root)
+    placeholder = (sample01 / "placeholder-replay-output.log").read_text(encoding="utf-8")
+    classification = validator.classify_replay_transcript(placeholder)
+    issue_code = validator.REPLAY_CLASSIFICATION_ISSUE_CODES.get(classification.get("classification"))
+    if classification.get("classification") != "placeholder_log" or issue_code != "REPLAY_LOG_PLACEHOLDER":
+        raise SystemExit("FAILED: P8 real historical placeholder replay log was not rejected")
+
+    sample02 = fixture_root / "workspaces/historical-sample-02"
+    sample02_payload = run_json(
+        [
+            sys.executable,
+            str(root / "scripts/validate_all_report_bundles.py"),
+            "--confirmed-dir",
+            str(sample02 / "confirmed"),
+            "--language",
+            "zh-CN",
+            "--json",
+        ],
+        expected_returncode=1,
+    )
+    summary = sample02_payload.get("summary")
+    if not isinstance(summary, dict) or summary.get("partial_confirmed_bundle") != 1:
+        raise SystemExit("FAILED: P8 real historical sample 02 did not classify partial bundle")
+
+    sample03 = fixture_root / "workspaces/historical-sample-03"
+    sample03_payload = run_json(
+        [
+            sys.executable,
+            str(root / "scripts/validate_bundle_contract.py"),
+            "--workspace-dir",
+            str(sample03),
+            "--contract",
+            str(sample03 / "confirmed/.contracts/historical-sample-03.bundle-contract.json"),
+            "--all-errors",
+            "--json",
+        ],
+        expected_returncode=1,
+    )
+    sample03_codes = {str(issue.get("code")) for issue in sample03_payload.get("issues", []) if isinstance(issue, dict)}
+    if sample03_codes != {"REPLAY_LOG_UNREGISTERED"}:
+        raise SystemExit(f"FAILED: P8 real historical sample 03 issue-code mismatch: {sorted(sample03_codes)}")
 
 
 def valid_target_contract_yaml(*, runtime_type: str = "docker-compose", entrypoints: str | None = None) -> str:
@@ -653,6 +1500,638 @@ def json_clone(value: dict) -> dict:
 def write_json_fixture(path: Path, value: dict) -> Path:
     path.write_text(json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf-8")
     return path
+
+
+def valid_bundle_contract(overrides: dict | None = None) -> dict:
+    contract = {
+        "schema_version": 1,
+        "bundle": {
+            "slug": "example-ssrf-callback",
+            "language": "zh-CN",
+            "final_path": "confirmed/example-ssrf-callback",
+            "one_vulnerability_only": True,
+            "fail_if_final_path_exists": True,
+        },
+        "render": {
+            "source_findings_json": "confirmed/findings.json",
+            "finding_slug": "example-ssrf-callback",
+        },
+        "finding": {
+            "project_name": "example-project",
+            "vulnerability_name": "SSRF callback reachability",
+            "bug_class": "SSRF",
+            "severity": "Medium",
+            "attacker_condition": "Authenticated low-privilege user controls the import URL.",
+            "server_condition": "Default import feature is enabled and outbound requests are allowed.",
+            "security_impact": (
+                "Docker evidence confirms callback reachability only; response, configuration, "
+                "credential, and sensitive-data exposure are not claimed."
+            ),
+        },
+        "docker_evidence": {
+            "verification_status": "confirmed_in_docker",
+            "docker_required": True,
+            "docker_command": "docker compose -f attachments/poc/docker-compose.zhulong.yml up --abort-on-container-exit",
+            "oracle_token": "DIRECT_IMPACT_CONFIRMED",
+            "expected_observation": "Listener receives one request from the target container.",
+            "observed_observation": "Replay log contains DIRECT_IMPACT_CONFIRMED.",
+            "severity_escalation_attempted": True,
+        },
+        "replay": {
+            "root_script": {"path": "run-example-ssrf-callback-recording.sh"},
+            "log": {
+                "path": "attachments/evidence/replay-output.log",
+                "registration_targets": ["files.evidence_files", "files.reviewer_evidence_index"],
+            },
+        },
+        "direct_impact": {
+            "marker": "DIRECT_IMPACT_CONFIRMED",
+            "sync_targets": [
+                {"target": "replay.root_script", "marker": "DIRECT_IMPACT_CONFIRMED"},
+                {"target": "replay.log", "marker": "DIRECT_IMPACT_CONFIRMED"},
+                {"target": "files.verification_evidence", "marker": "DIRECT_IMPACT_CONFIRMED"},
+                {"target": "files.reviewer_evidence_index", "marker": "DIRECT_IMPACT_CONFIRMED"},
+                {"target": "reviewer_material", "marker": "DIRECT_IMPACT_CONFIRMED"},
+            ],
+        },
+        "files": {
+            "verification_evidence": "verification-evidence.json",
+            "reviewer_evidence_index": "attachments/reviewer-evidence-index.json",
+            "evidence_files": [
+                "attachments/evidence/replay-output.log",
+                "attachments/poc/reproduce.py",
+            ],
+            "attachments": [
+                "attachments/poc/docker-compose.zhulong.yml",
+                "attachments/poc/reproduce.py",
+                "attachments/evidence/replay-output.log",
+                "attachments/reviewer-evidence-index.json",
+            ],
+        },
+        "code_context": {
+            "entries": [
+                {
+                    "source_path": "src/importer.py",
+                    "line_range": "42-67",
+                    "input_to_sink_chain": "The user-controlled import URL reaches the server-side HTTP client.",
+                    "missing_guard": "No resolved-IP or private-range validation runs before the fetch.",
+                    "verified_impact_boundary": "Docker evidence proves callback reachability only.",
+                }
+            ]
+        },
+        "fixture_provenance": {
+            "required": False,
+            "replay_type": "full_app",
+        },
+        "impact_tier": {
+            "bug_class": "SSRF",
+            "ssrf": {
+                "tier": "callback_reachability",
+                "claimed_exposures": ["callback_reachability"],
+                "stronger_impacts_not_claimed": [
+                    "response_content_exposure",
+                    "configuration_exposure",
+                    "credential_exposure",
+                    "sensitive_data_exposure",
+                ],
+            },
+        },
+        "variant_seed_readiness": {
+            "run_after_promote": True,
+        },
+    }
+    if overrides:
+        for key, value in overrides.items():
+            contract[key] = value
+    return contract
+
+
+def run_bundle_contract_json(
+    plugin_root: Path,
+    workspace: Path,
+    contract_path: Path,
+    *,
+    expected_returncode: int,
+) -> dict:
+    validator = plugin_root / "scripts/validate_bundle_contract.py"
+    output = run_capture_with_env(
+        [
+            sys.executable,
+            str(validator),
+            "--workspace-dir",
+            str(workspace),
+            "--contract",
+            str(contract_path),
+            "--all-errors",
+            "--json",
+        ],
+        plugin_root,
+        {"PYTHONPYCACHEPREFIX": str(workspace / "pycache")},
+        expected_returncode=expected_returncode,
+    )
+    return json.loads(output)
+
+
+def require_bundle_issue(payload: dict, code: str) -> None:
+    codes = {issue.get("code") for issue in payload.get("issues", [])}
+    if code not in codes:
+        raise SystemExit(f"FAILED: expected bundle contract issue code {code}; got {sorted(codes)}")
+
+
+def run_report_bundle_all_errors_json(
+    plugin_root: Path,
+    bundle: Path,
+    *,
+    language: str = "zh-CN",
+    expected_returncode: int = 0,
+    output_errors: Path | None = None,
+) -> dict:
+    command = [
+        sys.executable,
+        str(plugin_root / "scripts/validate_report_bundle.py"),
+        "--bundle-dir",
+        str(bundle),
+        "--language",
+        language,
+        "--all-errors",
+        "--json",
+    ]
+    if output_errors is not None:
+        command.extend(["--output-errors", str(output_errors)])
+    merged_env = {**os.environ, "PYTHONPYCACHEPREFIX": str(bundle.parent.parent / ".pycache-selftest")}
+    proc = subprocess.run(
+        command,
+        cwd=plugin_root,
+        env=merged_env,
+        capture_output=True,
+        text=True,
+    )
+    stdout = (proc.stdout or "").strip()
+    stderr = (proc.stderr or "").strip()
+    if proc.returncode != expected_returncode:
+        raise SystemExit(
+            f"FAILED: {' '.join(command)}\n"
+            f"Expected exit code {expected_returncode}, got {proc.returncode}\n"
+            f"stdout:\n{stdout}\nstderr:\n{stderr}"
+        )
+    if output_errors is not None:
+        if not output_errors.is_file():
+            raise SystemExit("FAILED: --output-errors did not write a JSON file")
+        return json.loads(output_errors.read_text(encoding="utf-8"))
+    try:
+        return json.loads(stdout)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(
+            "FAILED: --all-errors --json stdout was not JSON\n"
+            f"stdout prefix={stdout[:500]!r}\n"
+            f"stderr prefix={stderr[:500]!r}"
+        ) from exc
+
+
+def require_report_issue(payload: dict, code: str) -> None:
+    codes = {issue.get("code") for issue in payload.get("issues", [])}
+    if code not in codes:
+        raise SystemExit(
+            f"FAILED: expected report bundle issue code {code}; got {sorted(codes)}\n"
+            + json.dumps(payload.get("issues", []), ensure_ascii=False, indent=2)
+        )
+
+
+def exercise_bundle_contract_validator(plugin_root: Path) -> None:
+    validator = plugin_root / "scripts/validate_bundle_contract.py"
+    template = plugin_root / "assets/references/bundle-contract-template.json"
+    schema = json.loads((plugin_root / "assets/schemas/bundle-contract.schema.json").read_text(encoding="utf-8"))
+    if schema.get("title") != "Zhulong Bundle Contract R1":
+        raise SystemExit("FAILED: bundle contract schema title mismatch")
+    if str(schema.get("$id", "")).startswith("https://zhulong.local/"):
+        raise SystemExit("FAILED: bundle contract schema must not use a placeholder $id URI")
+    if '"additionalProperties": true' in json.dumps(schema, sort_keys=True):
+        raise SystemExit("FAILED: bundle contract schema must not leave known contract objects open to arbitrary properties")
+    json.loads(template.read_text(encoding="utf-8"))
+
+    with tempfile.TemporaryDirectory() as tempdir:
+        root = Path(tempdir)
+
+        def new_workspace(name: str) -> Path:
+            workspace = root / name
+            (workspace / "confirmed" / ".contracts").mkdir(parents=True)
+            return workspace
+
+        def write_contract(workspace: Path, name: str, contract: dict) -> Path:
+            return write_json_fixture(workspace / "confirmed" / ".contracts" / f"{name}.bundle-contract.json", contract)
+
+        good_workspace = new_workspace("good")
+        good_contract = write_contract(good_workspace, "good", valid_bundle_contract())
+        good_payload = run_bundle_contract_json(plugin_root, good_workspace, good_contract, expected_returncode=0)
+        if not good_payload.get("valid") or good_payload.get("issues"):
+            raise SystemExit(f"FAILED: valid minimal bundle contract did not pass:\n{good_payload}")
+
+        callback_workspace = new_workspace("callback")
+        callback_contract = write_contract(callback_workspace, "callback", valid_bundle_contract())
+        callback_payload = run_bundle_contract_json(plugin_root, callback_workspace, callback_contract, expected_returncode=0)
+        if not callback_payload.get("valid"):
+            raise SystemExit("FAILED: bounded SSRF callback/reachability contract did not pass")
+
+        fixture_workspace = new_workspace("fixture")
+        fixture_doc = json_clone(valid_bundle_contract())
+        fixture_doc["fixture_provenance"] = {
+            "required": True,
+            "replay_type": "minimal_fixture",
+            "upstream_sources": ["src/importer.py"],
+            "preserved_behavior": "The fixture preserves URL parsing and the HTTP fetch sink.",
+            "sufficiency_reason": "The vulnerable source-to-sink boundary is independent of omitted UI code.",
+            "consumer_boundary": "The consuming application passes attacker-controlled URLs to the library API.",
+            "non_claims": ["No response content exposure is claimed."],
+        }
+        fixture_contract = write_contract(fixture_workspace, "fixture", fixture_doc)
+        fixture_payload = run_bundle_contract_json(plugin_root, fixture_workspace, fixture_contract, expected_returncode=0)
+        if not fixture_payload.get("valid"):
+            raise SystemExit("FAILED: fixture replay contract with provenance did not pass")
+
+        missing_registration = json_clone(valid_bundle_contract())
+        missing_registration["replay"]["log"]["registration_targets"] = ["files.reviewer_evidence_index"]
+        missing_registration["files"]["reviewer_evidence_index"] = ""
+        workspace = new_workspace("missing-registration")
+        payload = run_bundle_contract_json(
+            plugin_root,
+            workspace,
+            write_contract(workspace, "bad", missing_registration),
+            expected_returncode=1,
+        )
+        require_bundle_issue(payload, "REPLAY_LOG_UNREGISTERED")
+
+        marker_drift = json_clone(valid_bundle_contract())
+        marker_drift["direct_impact"]["sync_targets"][1]["marker"] = "DIFFERENT_MARKER"
+        workspace = new_workspace("marker-drift")
+        payload = run_bundle_contract_json(plugin_root, workspace, write_contract(workspace, "bad", marker_drift), expected_returncode=1)
+        require_bundle_issue(payload, "DIRECT_IMPACT_MARKER_DRIFT")
+
+        missing_provenance = json_clone(valid_bundle_contract())
+        missing_provenance["fixture_provenance"] = {
+            "required": True,
+            "replay_type": "minimal_fixture",
+            "upstream_sources": [],
+        }
+        workspace = new_workspace("missing-provenance")
+        payload = run_bundle_contract_json(plugin_root, workspace, write_contract(workspace, "bad", missing_provenance), expected_returncode=1)
+        require_bundle_issue(payload, "FIXTURE_PROVENANCE_MISSING")
+
+        ssrf_overclaim = json_clone(valid_bundle_contract())
+        ssrf_overclaim["impact_tier"]["ssrf"]["claimed_exposures"] = [
+            "callback_reachability",
+            "response_content_exposure",
+        ]
+        workspace = new_workspace("ssrf-overclaim")
+        payload = run_bundle_contract_json(plugin_root, workspace, write_contract(workspace, "bad", ssrf_overclaim), expected_returncode=1)
+        require_bundle_issue(payload, "SSRF_IMPACT_OVERCLAIM")
+
+        path_escape = json_clone(valid_bundle_contract())
+        path_escape["files"]["evidence_files"][0] = "../outside/replay-output.log"
+        workspace = new_workspace("path-escape")
+        payload = run_bundle_contract_json(plugin_root, workspace, write_contract(workspace, "bad", path_escape), expected_returncode=1)
+        require_bundle_issue(payload, "BUNDLE_PATH_ESCAPE")
+
+        code_context_thin = json_clone(valid_bundle_contract())
+        code_context_thin["code_context"]["entries"] = [{"source_path": "src/importer.py"}]
+        workspace = new_workspace("thin-code-context")
+        payload = run_bundle_contract_json(plugin_root, workspace, write_contract(workspace, "bad", code_context_thin), expected_returncode=1)
+        require_bundle_issue(payload, "CODE_CONTEXT_TOO_THIN")
+
+        invalid_severity = json_clone(valid_bundle_contract())
+        invalid_severity["finding"]["severity"] = "高危"
+        workspace = new_workspace("invalid-severity")
+        payload = run_bundle_contract_json(plugin_root, workspace, write_contract(workspace, "bad", invalid_severity), expected_returncode=1)
+        require_bundle_issue(payload, "SEVERITY_ENUM_INVALID")
+
+        open_bug_class = json_clone(valid_bundle_contract())
+        open_bug_class["finding"]["bug_class"] = "unsafe native plugin loading"
+        open_bug_class["impact_tier"] = {"bug_class": "unsafe native plugin loading"}
+        workspace = new_workspace("open-bug-class")
+        payload = run_bundle_contract_json(plugin_root, workspace, write_contract(workspace, "open", open_bug_class), expected_returncode=0)
+        if not payload.get("valid"):
+            raise SystemExit(f"FAILED: free-text bug_class bundle contract did not pass:\n{payload}")
+
+        existing_target = json_clone(valid_bundle_contract())
+        workspace = new_workspace("existing-target")
+        (workspace / "confirmed" / existing_target["bundle"]["slug"]).mkdir(parents=True)
+        payload = run_bundle_contract_json(plugin_root, workspace, write_contract(workspace, "bad", existing_target), expected_returncode=1)
+        require_bundle_issue(payload, "FINAL_TARGET_EXISTS")
+
+        outside_final = json_clone(valid_bundle_contract())
+        outside_final["bundle"]["final_path"] = "confirmed/other-slug"
+        workspace = new_workspace("outside-final")
+        payload = run_bundle_contract_json(plugin_root, workspace, write_contract(workspace, "bad", outside_final), expected_returncode=1)
+        require_bundle_issue(payload, "BUNDLE_PATH_ESCAPE")
+
+        multi_bad = json_clone(valid_bundle_contract())
+        multi_bad["docker_evidence"]["verification_status"] = "failed_timeout"
+        multi_bad["replay"]["log"]["registration_targets"] = []
+        multi_bad["direct_impact"]["sync_targets"][0]["marker"] = "DRIFTED"
+        multi_bad["code_context"]["entries"] = [{}]
+        workspace = new_workspace("multi-bad")
+        payload = run_bundle_contract_json(plugin_root, workspace, write_contract(workspace, "bad", multi_bad), expected_returncode=1)
+        if len(payload.get("issues", [])) < 3:
+            raise SystemExit(f"FAILED: bad bundle contract did not return 3+ JSON issues:\n{payload}")
+        require_bundle_issue(payload, "DOCKER_STATUS_NOT_CONFIRMED")
+        require_bundle_issue(payload, "REPLAY_LOG_UNREGISTERED")
+        require_bundle_issue(payload, "DIRECT_IMPACT_MARKER_DRIFT")
+        require_bundle_issue(payload, "CODE_CONTEXT_TOO_THIN")
+
+    output = run_capture([sys.executable, str(validator), "--workspace-dir", ".", "--contract", str(template)], plugin_root)
+    if "OK: bundle contract valid" not in output:
+        raise SystemExit(f"FAILED: bundle contract template did not pass human-readable preflight:\n{output}")
+
+
+def build_wrapper_source_finding(plugin_root: Path, repo_dir: Path, workspace: Path) -> str:
+    slug = "demo-app_Path_Traversal_高危漏洞报告"
+    (repo_dir / "docker").mkdir(parents=True, exist_ok=True)
+    (repo_dir / "poc").mkdir(parents=True, exist_ok=True)
+    (repo_dir / "evidence").mkdir(parents=True, exist_ok=True)
+    (repo_dir / "docker/docker-compose.attacker.yml").write_text(
+        "services:\n  attacker:\n    image: alpine:3.20\n",
+        encoding="utf-8",
+    )
+    (repo_dir / "poc/path_traversal.py").write_text("print('root:x:0:0:')\n", encoding="utf-8")
+    (repo_dir / "evidence/replay-output.log").write_text(
+        "Zhulong reviewer replay log\n"
+        "Generated at: 2026-06-24T00:00:00Z\n"
+        "COMMAND: docker compose -f attachments/docker/docker-compose.attacker.yml up --abort-on-container-exit\n"
+        "stdout: deterministic wrapper selftest replay completed\n"
+        "success marker verified with grep -Fq\n"
+        "root:x:0:0:\n"
+        "DIRECT_IMPACT_CONFIRMED\n",
+        encoding="utf-8",
+    )
+
+    finding = json.loads((plugin_root / "assets/examples/confirmed-findings.example.json").read_text(encoding="utf-8"))[0]
+    finding["filename"] = f"{slug}.docx"
+    finding["slug"] = "demo-app-path-traversal"
+    finding["project_root_dir"] = "."
+    finding.setdefault("verification_evidence", {})["finding_slug"] = finding["slug"]
+    evidence_files = finding["verification_evidence"].setdefault("evidence_files", [])
+    if "attachments/evidence/replay-output.log" not in evidence_files:
+        evidence_files.append("attachments/evidence/replay-output.log")
+    finding.setdefault("attachments", []).append(
+        {
+            "path": "evidence/replay-output.log",
+            "purpose": "真实 replay 日志，证明 wrapper 自测的 direct-impact 标记来自已存在附件。",
+        }
+    )
+    (workspace / "confirmed").mkdir(parents=True, exist_ok=True)
+    (workspace / "confirmed/findings.json").write_text(
+        json.dumps({"findings": [finding]}, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return slug
+
+
+def build_wrapper_contract(workspace: Path, slug: str, *, finding_slug: str = "demo-app-path-traversal") -> Path:
+    contract = valid_bundle_contract()
+    contract["bundle"]["slug"] = slug
+    contract["bundle"]["language"] = "zh-CN"
+    contract["bundle"]["final_path"] = f"confirmed/{slug}"
+    contract["render"] = {
+        "source_findings_json": "confirmed/findings.json",
+        "finding_slug": finding_slug,
+    }
+    contract["finding"] = {
+        "project_name": "demo-app",
+        "vulnerability_name": "目录遍历",
+        "bug_class": "Path Traversal",
+        "severity": "High",
+        "attacker_condition": "远程攻击者控制下载路径参数。",
+        "server_condition": "服务端启用受影响下载接口并从本地文件系统读取文件。",
+        "security_impact": "Docker 证据证明攻击者可读取容器内敏感文件内容。",
+    }
+    contract_path = workspace / "confirmed/.contracts" / f"{slug}.bundle-contract.json"
+    contract_path.parent.mkdir(parents=True, exist_ok=True)
+    return write_json_fixture(contract_path, contract)
+
+
+def new_build_wrapper_workspace(root: Path, name: str) -> tuple[Path, Path]:
+    repo_dir = root / name / "repo"
+    workspace = repo_dir / "security-research-wrapper"
+    (workspace / "confirmed/.contracts").mkdir(parents=True, exist_ok=True)
+    (workspace / "asr-config.json").write_text(
+        json.dumps(
+            {
+                "workspace_root": workspace.name,
+                "workspace_created_at": "2026-06-24T00:00:00Z",
+                "confirmed_output_dir": f"{workspace.name}/confirmed",
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return repo_dir, workspace
+
+
+def exercise_build_confirmed_bundle_wrapper(plugin_root: Path) -> None:
+    wrapper = plugin_root / "scripts/build_confirmed_bundle.py"
+    renderer = plugin_root / "scripts/render_confirmed_vuln_docx.py"
+    with tempfile.TemporaryDirectory() as tempdir:
+        root = Path(tempdir)
+
+        repo_dir, workspace = new_build_wrapper_workspace(root, "positive")
+        slug = build_wrapper_source_finding(plugin_root, repo_dir, workspace)
+        contract = build_wrapper_contract(workspace, slug)
+        run([
+            sys.executable,
+            str(wrapper),
+            "--workspace-dir",
+            str(workspace),
+            "--contract",
+            str(contract),
+            "--language",
+            "zh-CN",
+        ], plugin_root)
+        final_bundle = workspace / "confirmed" / slug
+        if not final_bundle.is_dir():
+            raise SystemExit("FAILED: build_confirmed_bundle.py did not promote the final bundle")
+        manifest_path = final_bundle / "bundle-build-manifest.json"
+        if not manifest_path.is_file():
+            raise SystemExit("FAILED: promoted bundle is missing bundle-build-manifest.json")
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        replay_logs = manifest.get("replay_logs")
+        if not isinstance(replay_logs, list) or not replay_logs:
+            raise SystemExit("FAILED: bundle-build-manifest.json must include replay_logs provenance")
+        replay_entry = replay_logs[0]
+        for key in ("path", "source_kind", "trust_classification", "sha256", "source_path", "provenance"):
+            if not str(replay_entry.get(key) or "").strip():
+                raise SystemExit(f"FAILED: replay log manifest entry missing {key}")
+        if replay_entry.get("path") != "attachments/evidence/replay-output.log":
+            raise SystemExit("FAILED: replay log manifest path mismatch")
+        if replay_entry.get("source_kind") != "copied_successful_transcript":
+            raise SystemExit("FAILED: replay log manifest source_kind mismatch")
+        if replay_entry.get("trust_classification") != "trusted_transcript":
+            raise SystemExit("FAILED: replay log manifest did not classify valid transcript as trusted")
+        for value in replay_entry.values():
+            if isinstance(value, str) and (value.startswith("/") or "/Users/" in value or "\\Users\\" in value):
+                raise SystemExit("FAILED: replay log manifest contains a local absolute path")
+        if (workspace / "confirmed/.staging" / slug).exists():
+            raise SystemExit("FAILED: staging bundle remained visible after promote")
+
+        direct_repo, direct_workspace = new_build_wrapper_workspace(root, "direct-renderer")
+        direct_slug = build_wrapper_source_finding(plugin_root, direct_repo, direct_workspace)
+        run([
+            sys.executable,
+            str(renderer),
+            "--input",
+            str(direct_workspace / "confirmed/findings.json"),
+            "--output-dir",
+            str(direct_workspace / "confirmed"),
+            "--language",
+            "zh-CN",
+        ], direct_repo)
+        if not (direct_workspace / "confirmed" / direct_slug).is_dir():
+            raise SystemExit("FAILED: old direct renderer command no longer creates the bundle")
+
+        invalid_repo, invalid_workspace = new_build_wrapper_workspace(root, "invalid-contract")
+        invalid_slug = build_wrapper_source_finding(plugin_root, invalid_repo, invalid_workspace)
+        invalid_contract_data = valid_bundle_contract()
+        invalid_contract_data["bundle"]["slug"] = invalid_slug
+        invalid_contract_data["bundle"]["final_path"] = f"confirmed/{invalid_slug}"
+        invalid_contract_data["render"] = {
+            "source_findings_json": "confirmed/findings.json",
+            "finding_slug": "demo-app-path-traversal",
+        }
+        invalid_contract_data["docker_evidence"]["verification_status"] = "failed_timeout"
+        invalid_contract = write_json_fixture(
+            invalid_workspace / "confirmed/.contracts/invalid.bundle-contract.json",
+            invalid_contract_data,
+        )
+        run_expect_fail([
+            sys.executable,
+            str(wrapper),
+            "--workspace-dir",
+            str(invalid_workspace),
+            "--contract",
+            str(invalid_contract),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "bundle contract preflight failed")
+        if (invalid_workspace / "confirmed" / invalid_slug).exists():
+            raise SystemExit("FAILED: invalid contract created a final bundle")
+
+        multi_repo, multi_workspace = new_build_wrapper_workspace(root, "multi-finding")
+        multi_slug = build_wrapper_source_finding(plugin_root, multi_repo, multi_workspace)
+        multi_data = json.loads((multi_workspace / "confirmed/findings.json").read_text(encoding="utf-8"))
+        multi_data["findings"].append(json.loads(json.dumps(multi_data["findings"][0])))
+        (multi_workspace / "confirmed/findings.json").write_text(
+            json.dumps(multi_data, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        multi_contract = build_wrapper_contract(multi_workspace, multi_slug)
+        run_expect_fail([
+            sys.executable,
+            str(wrapper),
+            "--workspace-dir",
+            str(multi_workspace),
+            "--contract",
+            str(multi_contract),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "selected 2 findings")
+        if (multi_workspace / "confirmed" / multi_slug).exists():
+            raise SystemExit("FAILED: multi-finding source promoted a final bundle")
+
+        validation_repo, validation_workspace = new_build_wrapper_workspace(root, "validation-failure")
+        validation_slug = build_wrapper_source_finding(plugin_root, validation_repo, validation_workspace)
+        (validation_repo / "evidence/replay-output.log").write_text(
+            "Zhulong reviewer replay log placeholder.\n"
+            "Run the bundle-root replay script to refresh this file with live reviewer output.\n"
+            "Replay contract direct-impact marker: DIRECT_IMPACT_CONFIRMED\n",
+            encoding="utf-8",
+        )
+        validation_contract = build_wrapper_contract(validation_workspace, validation_slug)
+        run_expect_fail([
+            sys.executable,
+            str(wrapper),
+            "--workspace-dir",
+            str(validation_workspace),
+            "--contract",
+            str(validation_contract),
+            "--language",
+            "zh-CN",
+            "--keep-failed-staging",
+        ], plugin_root, "validate_report_bundle.py")
+        if (validation_workspace / "confirmed" / validation_slug).exists():
+            raise SystemExit("FAILED: staging validation failure promoted a final bundle")
+        if not (validation_workspace / "confirmed/.staging" / validation_slug).is_dir():
+            raise SystemExit("FAILED: --keep-failed-staging did not preserve failed staging")
+
+        run_expect_fail([
+            sys.executable,
+            str(wrapper),
+            "--workspace-dir",
+            str(workspace),
+            "--contract",
+            str(contract),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "FINAL_TARGET_EXISTS")
+
+        run([
+            sys.executable,
+            str(wrapper),
+            "--workspace-dir",
+            str(workspace),
+            "--contract",
+            str(contract),
+            "--language",
+            "zh-CN",
+            "--replace-existing-validated-bundle",
+        ], plugin_root)
+        trash_entries = sorted((workspace / "confirmed/.staging/.trash").glob(f"{slug}-*"))
+        if not trash_entries:
+            raise SystemExit("FAILED: replacement did not move existing final bundle to .staging/.trash/")
+        if not (workspace / "confirmed" / slug / "bundle-build-manifest.json").is_file():
+            raise SystemExit("FAILED: replacement did not promote the new valid bundle")
+
+        stale_repo, stale_workspace = new_build_wrapper_workspace(root, "stale-staging")
+        stale_slug = build_wrapper_source_finding(plugin_root, stale_repo, stale_workspace)
+        stale_contract = build_wrapper_contract(stale_workspace, stale_slug)
+        (stale_workspace / "confirmed/.staging" / stale_slug).mkdir(parents=True)
+        run_expect_fail([
+            sys.executable,
+            str(wrapper),
+            "--workspace-dir",
+            str(stale_workspace),
+            "--contract",
+            str(stale_contract),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "staging target already exists")
+        if (stale_workspace / "confirmed" / stale_slug).exists():
+            raise SystemExit("FAILED: pre-existing staging directory promoted a final bundle")
+
+        escape_repo, escape_workspace = new_build_wrapper_workspace(root, "escape")
+        escape_slug = build_wrapper_source_finding(plugin_root, escape_repo, escape_workspace)
+        escape_contract_data = valid_bundle_contract()
+        escape_contract_data["bundle"]["slug"] = escape_slug
+        escape_contract_data["bundle"]["final_path"] = "confirmed/other-slug"
+        escape_contract_data["render"] = {
+            "source_findings_json": "confirmed/findings.json",
+            "finding_slug": "demo-app-path-traversal",
+        }
+        escape_contract = write_json_fixture(
+            escape_workspace / "confirmed/.contracts/escape.bundle-contract.json",
+            escape_contract_data,
+        )
+        run_expect_fail([
+            sys.executable,
+            str(wrapper),
+            "--workspace-dir",
+            str(escape_workspace),
+            "--contract",
+            str(escape_contract),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "bundle contract preflight failed")
+        if (escape_workspace / "confirmed" / escape_slug).exists():
+            raise SystemExit("FAILED: final path escape promoted a final bundle")
 
 
 def exercise_finding_contract_validators(plugin_root: Path) -> None:
@@ -3056,6 +4535,9 @@ def selftest_installed_skill(skill_root: Path) -> None:
          str(skill_root / "scripts/validate_target_contract.py"),
          str(skill_root / "scripts/validate_candidate.py"),
          str(skill_root / "scripts/validate_verifier_verdict.py"),
+         str(skill_root / "scripts/validate_bundle_contract.py"),
+         str(skill_root / "scripts/build_confirmed_bundle.py"),
+         str(skill_root / "scripts/p8_dogfood_metrics.py"),
          str(skill_root / "scripts/verify_candidate.py"),
          str(skill_root / "scripts/check_sandbox_preflight.py"),
          str(skill_root / "scripts/manage_docker_resources.py"),
@@ -3067,6 +4549,12 @@ def selftest_installed_skill(skill_root: Path) -> None:
          str(skill_root / "scripts/finalize_audit_workspace.py")], skill_root)
     exercise_target_contract_validator(skill_root)
     exercise_finding_contract_validators(skill_root)
+    exercise_bundle_contract_validator(skill_root)
+    exercise_build_confirmed_bundle_wrapper(skill_root)
+    exercise_p8_closure_contracts(skill_root)
+    exercise_replay_transcript_corpus(skill_root)
+    exercise_p8_dogfood_metrics(skill_root)
+    exercise_p8_real_historical_dogfood(skill_root)
     exercise_independent_verifier(skill_root)
     exercise_disposition_integration(skill_root)
     exercise_contract_fixture_chain(skill_root)
@@ -3291,8 +4779,14 @@ def main() -> None:
 
     exercise_agents_shim(plugin_root)
     exercise_p7_wording_closure(plugin_root)
+    exercise_p8_closure_contracts(plugin_root)
+    exercise_replay_transcript_corpus(plugin_root)
+    exercise_p8_dogfood_metrics(plugin_root)
+    exercise_p8_real_historical_dogfood(plugin_root)
     exercise_target_contract_validator(plugin_root)
     exercise_finding_contract_validators(plugin_root)
+    exercise_bundle_contract_validator(plugin_root)
+    exercise_build_confirmed_bundle_wrapper(plugin_root)
     exercise_independent_verifier(plugin_root)
     exercise_disposition_integration(plugin_root)
     exercise_contract_fixture_chain(plugin_root)
@@ -4156,6 +5650,9 @@ def main() -> None:
          str(plugin_root / "scripts/validate_target_contract.py"),
          str(plugin_root / "scripts/validate_candidate.py"),
          str(plugin_root / "scripts/validate_verifier_verdict.py"),
+         str(plugin_root / "scripts/validate_bundle_contract.py"),
+         str(plugin_root / "scripts/build_confirmed_bundle.py"),
+         str(plugin_root / "scripts/p8_dogfood_metrics.py"),
          str(plugin_root / "scripts/verify_candidate.py"),
          str(plugin_root / "scripts/check_sandbox_preflight.py"),
          str(plugin_root / "scripts/manage_docker_resources.py"),
@@ -5881,6 +7378,29 @@ def main() -> None:
             shutil.copytree(standard_bundle, copied)
             return copied
 
+        def write_replay_manifest(bundle: Path, *, with_provenance: bool = True, source_kind: str = "copied_successful_transcript") -> None:
+            payload = {
+                "schema_version": 1,
+                "validation_status": "passed",
+                "promote_status": "promoted",
+                "replay_logs": [
+                    {
+                        "path": "attachments/evidence/replay-output.log",
+                        "source_kind": source_kind,
+                        "trust_classification": "trusted_transcript",
+                        "sha256": "0" * 64,
+                        "notes": "Wrapper did not execute replay; transcript was validated from bundled evidence.",
+                    }
+                ],
+            }
+            if with_provenance:
+                payload["replay_logs"][0]["source_path"] = "confirmed/.staging/.inputs/selftest.renderer-input.json"
+                payload["replay_logs"][0]["provenance"] = "Copied from the selected renderer input evidence."
+            (bundle / "bundle-build-manifest.json").write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+
         bad_placeholder_replay_log = copy_standard_bundle("placeholder_replay_log")
         (bad_placeholder_replay_log / "attachments/evidence/replay-output.log").write_text(
             "Zhulong reviewer replay log placeholder.\n"
@@ -5896,6 +7416,57 @@ def main() -> None:
             "--language",
             "zh-CN",
         ], plugin_root, "placeholder-only")
+
+        good_copied_replay_log = copy_standard_bundle("copied_replay_with_provenance")
+        write_replay_manifest(good_copied_replay_log, with_provenance=True)
+        run([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(good_copied_replay_log),
+            "--language",
+            "zh-CN",
+        ], plugin_root)
+        shutil.rmtree(good_copied_replay_log)
+
+        replay_log_untrusted_cases = {
+            "empty": "",
+            "marker_only": "DIRECT_IMPACT_CONFIRMED\n",
+            "heading_marker_only": "Zhulong reviewer replay log\nGenerated at: 2026-06-16T00:00:00Z\nDIRECT_IMPACT_CONFIRMED\n",
+            "explanatory_only": (
+                "This file explains that the reviewer should run the bundle-root replay script.\n"
+                "When the command succeeds it should print DIRECT_IMPACT_CONFIRMED.\n"
+            ),
+            "marker_without_transcript_signals": (
+                "Zhulong reviewer replay log\n"
+                "DIRECT_IMPACT_CONFIRMED\n"
+                "The exploit should have succeeded here, but no command or raw output is included.\n"
+            ),
+        }
+        for suffix, log_text in replay_log_untrusted_cases.items():
+            bad_replay_log = copy_standard_bundle(f"untrusted_replay_log_{suffix}")
+            (bad_replay_log / "attachments/evidence/replay-output.log").write_text(log_text, encoding="utf-8")
+            run_expect_fail([
+                sys.executable,
+                str(plugin_root / "scripts/validate_report_bundle.py"),
+                "--bundle-dir",
+                str(bad_replay_log),
+                "--language",
+                "zh-CN",
+            ], plugin_root, "placeholder-only or marker-only")
+            shutil.rmtree(bad_replay_log)
+
+        bad_copied_without_provenance = copy_standard_bundle("copied_replay_without_provenance")
+        write_replay_manifest(bad_copied_without_provenance, with_provenance=False)
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_copied_without_provenance),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "lacks copied transcript provenance")
+        shutil.rmtree(bad_copied_without_provenance)
 
         good_ssrf_callback_bounded = copy_standard_bundle("ssrf_callback_bounded")
         ssrf_callback_supplement = next(good_ssrf_callback_bounded.glob("*_补充复现说明.md"))
@@ -7642,6 +9213,112 @@ def main() -> None:
             "--language",
             "zh-CN",
         ], plugin_root)
+        all_errors_valid = run_report_bundle_all_errors_json(plugin_root, good_reviewer_index, language="zh-CN")
+        if all_errors_valid.get("valid") is not True or all_errors_valid.get("issues") != []:
+            raise SystemExit(f"FAILED: valid bundle --all-errors --json did not return valid=true with no issues:\n{all_errors_valid}")
+        all_errors_output_path = good_reviewer_index / "bundle-validation-errors.json"
+        all_errors_output = run_report_bundle_all_errors_json(
+            plugin_root,
+            good_reviewer_index,
+            language="zh-CN",
+            output_errors=all_errors_output_path,
+        )
+        if all_errors_output.get("valid") is not True or all_errors_output.get("issues") != []:
+            raise SystemExit("FAILED: --output-errors JSON did not preserve valid=true empty issue list")
+        all_errors_output_path.unlink()
+
+        bad_all_errors_bundle = copy_standard_bundle("all_errors_malformed")
+        write_useful_reviewer_addendum(
+            bad_all_errors_bundle,
+            extra=(
+                "## malformed all-errors fixture\n\n"
+                "本包故意使用 minimal fixture replay 但没有说明来源依据。"
+                "同时故意写入 SSRF response content exposes credentials to target output 的过强声明，用于验证 all-errors collector。\n"
+            ),
+        )
+        write_standard_reviewer_index(
+            bad_all_errors_bundle,
+            artifact_paths=["attachments/evidence/missing-reviewer-artifact.log"],
+        )
+        bad_all_errors_evidence_path = bad_all_errors_bundle / "verification-evidence.json"
+        bad_all_errors_evidence = json.loads(bad_all_errors_evidence_path.read_text(encoding="utf-8"))
+        bad_all_errors_evidence["direct_impact_marker"] = "DIRECT_AVAILABILITY_IMPACT_CONFIRMED"
+        bad_all_errors_evidence_path.write_text(
+            json.dumps(bad_all_errors_evidence, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        bad_all_errors_log = bad_all_errors_bundle / "attachments/evidence/replay-output.log"
+        bad_all_errors_log.write_text(
+            "Zhulong reviewer replay log placeholder.\n"
+            "Run the bundle-root replay script to refresh this file with live reviewer output.\n",
+            encoding="utf-8",
+        )
+        bad_all_errors_script = bad_all_errors_bundle / "run-selftest-jwt-recording.sh"
+        bad_all_errors_script.write_text(
+            bad_all_errors_script.read_text(encoding="utf-8")
+            .replace('REPLAY_LOG="$EVIDENCE_DIR/replay-output.log"', 'REPLAY_LOG="$EVIDENCE_DIR/unregistered-output.log"')
+            .replace(
+                "    show_real_world_context\n",
+                "    show_real_world_context\n    run_logged_command 'python3 attachments/poc/jwt-forge-poc.py'\n",
+                1,
+            )
+            .replace("    verify_success_marker \"$SUCCESS_MARKER\"\n", ""),
+            encoding="utf-8",
+        )
+        replace_docx_section_with_one_line(
+            next(bad_all_errors_bundle.glob("*.docx")),
+            "关键代码上下文",
+            code_context_stop_headings,
+            "代码上下文 1",
+        )
+        bad_all_errors_supplement = next(bad_all_errors_bundle.glob("*_补充复现说明.md"))
+        bad_all_errors_supplement.write_text(
+            bad_all_errors_supplement.read_text(encoding="utf-8")
+            + "\n补充检查：如需复核，请执行 `bash ./missing-helper.sh`。\n"
+            + "\n调试泄漏：{'oracle_token': '认证绕过成功', 'impact': ['auth bypass'], 'confirmed': True}\n",
+            encoding="utf-8",
+        )
+        bad_all_errors_payload = run_report_bundle_all_errors_json(
+            plugin_root,
+            bad_all_errors_bundle,
+            language="zh-CN",
+            expected_returncode=1,
+        )
+        if bad_all_errors_payload.get("valid") is not False:
+            raise SystemExit("FAILED: malformed --all-errors payload must return valid=false")
+        if len(bad_all_errors_payload.get("issues", [])) < 5:
+            raise SystemExit(f"FAILED: malformed --all-errors payload returned fewer than 5 issues:\n{bad_all_errors_payload}")
+        require_report_issue(bad_all_errors_payload, "REVIEWER_INDEX_ARTIFACT_MISSING")
+        require_report_issue(bad_all_errors_payload, "REPLAY_LOG_UNREGISTERED")
+        require_report_issue(bad_all_errors_payload, "REPLAY_LOG_PLACEHOLDER")
+        require_report_issue(bad_all_errors_payload, "DIRECT_IMPACT_MARKER_MISMATCH")
+        require_report_issue(bad_all_errors_payload, "REPLAY_LOG_MARKER_MISSING")
+        require_report_issue(bad_all_errors_payload, "FIXTURE_PROVENANCE_MISSING")
+        require_report_issue(bad_all_errors_payload, "SSRF_IMPACT_OVERCLAIM")
+        require_report_issue(bad_all_errors_payload, "CODE_CONTEXT_MINIMUM_QUALITY")
+        require_report_issue(bad_all_errors_payload, "REPLAY_HELPER_PAUSE_CONTRACT")
+        if not (
+            any(issue.get("code") == "RAW_STRUCTURED_OBJECT_LEAK" for issue in bad_all_errors_payload.get("issues", []))
+            or any(issue.get("code") == "LOCAL_HELPER_MISSING" for issue in bad_all_errors_payload.get("issues", []))
+        ):
+            raise SystemExit("FAILED: malformed all-errors payload must include raw structured leakage or missing local helper")
+        bad_all_errors_output_path = bad_all_errors_bundle / "bundle-validation-errors.json"
+        bad_all_errors_output_payload = run_report_bundle_all_errors_json(
+            plugin_root,
+            bad_all_errors_bundle,
+            language="zh-CN",
+            expected_returncode=1,
+            output_errors=bad_all_errors_output_path,
+        )
+        require_report_issue(bad_all_errors_output_payload, "REVIEWER_INDEX_ARTIFACT_MISSING")
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_all_errors_bundle),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "VALIDATION FAILED")
 
         bad_index_variant_candidates_proof = copy_standard_bundle("reviewer_index_variant_candidates_proof")
         write_useful_reviewer_addendum(bad_index_variant_candidates_proof)
@@ -7984,6 +9661,7 @@ def main() -> None:
             poc_label_warning_bundle,
             stale_video_bundle,
             good_reviewer_index,
+            bad_all_errors_bundle,
             bad_index_missing_artifact,
             bad_index_outside_path,
             bad_index_local_path,

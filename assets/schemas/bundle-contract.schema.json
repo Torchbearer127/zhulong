@@ -1,0 +1,467 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Torchbearer127/zhulong/blob/main/assets/schemas/bundle-contract.schema.json",
+  "title": "Zhulong Bundle Contract R1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "bundle",
+    "render",
+    "finding",
+    "docker_evidence",
+    "replay",
+    "direct_impact",
+    "files",
+    "code_context",
+    "fixture_provenance",
+    "impact_tier",
+    "variant_seed_readiness"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "bundle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "slug",
+        "language",
+        "final_path",
+        "one_vulnerability_only"
+      ],
+      "properties": {
+        "slug": {
+          "type": "string",
+          "minLength": 1
+        },
+        "language": {
+          "enum": [
+            "zh-CN",
+            "en-US"
+          ]
+        },
+        "final_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "one_vulnerability_only": {
+          "const": true
+        },
+        "fail_if_final_path_exists": {
+          "type": "boolean",
+          "default": true
+        }
+      }
+    },
+    "render": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_findings_json",
+        "finding_slug"
+      ],
+      "properties": {
+        "source_findings_json": {
+          "type": "string",
+          "minLength": 1
+        },
+        "finding_slug": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "project_name",
+        "vulnerability_name",
+        "bug_class",
+        "severity",
+        "attacker_condition",
+        "server_condition",
+        "security_impact"
+      ],
+      "properties": {
+        "project_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "vulnerability_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bug_class": {
+          "type": "string",
+          "minLength": 1
+        },
+        "severity": {
+          "enum": [
+            "Critical",
+            "High",
+            "Medium",
+            "Low",
+            "Informational"
+          ]
+        },
+        "attacker_condition": {
+          "type": "string",
+          "minLength": 1
+        },
+        "server_condition": {
+          "type": "string",
+          "minLength": 1
+        },
+        "security_impact": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "docker_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "verification_status",
+        "docker_required",
+        "docker_command",
+        "oracle_token",
+        "expected_observation",
+        "observed_observation",
+        "severity_escalation_attempted"
+      ],
+      "properties": {
+        "verification_status": {
+          "const": "confirmed_in_docker"
+        },
+        "docker_required": {
+          "const": true
+        },
+        "docker_command": {
+          "type": "string",
+          "minLength": 1
+        },
+        "oracle_token": {
+          "type": "string",
+          "minLength": 1
+        },
+        "expected_observation": {
+          "type": "string",
+          "minLength": 1
+        },
+        "observed_observation": {
+          "type": "string",
+          "minLength": 1
+        },
+        "severity_escalation_attempted": {
+          "type": "boolean"
+        }
+      }
+    },
+    "replay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "root_script",
+        "log"
+      ],
+      "properties": {
+        "root_script": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "path"
+          ],
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "log": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "path",
+            "registration_targets"
+          ],
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "registration_targets": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "enum": [
+                  "files.evidence_files",
+                  "files.reviewer_evidence_index"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "direct_impact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "marker",
+        "sync_targets"
+      ],
+      "properties": {
+        "marker": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sync_targets": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "target",
+              "marker"
+            ],
+            "properties": {
+              "target": {
+                "enum": [
+                  "replay.root_script",
+                  "replay.log",
+                  "files.verification_evidence",
+                  "files.reviewer_evidence_index",
+                  "reviewer_material"
+                ]
+              },
+              "marker": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    "files": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "verification_evidence",
+        "reviewer_evidence_index",
+        "evidence_files",
+        "attachments"
+      ],
+      "properties": {
+        "verification_evidence": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reviewer_evidence_index": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidence_files": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "attachments": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "code_context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "entries"
+      ],
+      "properties": {
+        "entries": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "source_path": {
+                "type": "string",
+                "minLength": 1
+              },
+              "source_unavailable_reason": {
+                "type": "string",
+                "minLength": 1
+              },
+              "start_line": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "end_line": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "line_range": {
+                "type": "string",
+                "minLength": 1
+              },
+              "line_unavailable_reason": {
+                "type": "string",
+                "minLength": 1
+              },
+              "input_to_sink_chain": {
+                "type": "string",
+                "minLength": 1
+              },
+              "missing_guard": {
+                "type": "string",
+                "minLength": 1
+              },
+              "verified_impact_boundary": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    "fixture_provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "required",
+        "replay_type"
+      ],
+      "properties": {
+        "required": {
+          "type": "boolean"
+        },
+        "replay_type": {
+          "enum": [
+            "full_app",
+            "minimal_fixture",
+            "vendored_source",
+            "fixture",
+            "local_fixture"
+          ]
+        },
+        "upstream_sources": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "preserved_behavior": {
+          "type": "string"
+        },
+        "sufficiency_reason": {
+          "type": "string"
+        },
+        "consumer_boundary": {
+          "type": "string"
+        },
+        "non_claims": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "impact_tier": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bug_class"
+      ],
+      "properties": {
+        "bug_class": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ssrf": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tier"
+          ],
+          "properties": {
+            "tier": {
+              "enum": [
+                "callback_reachability",
+                "response_content_exposure",
+                "configuration_exposure",
+                "credential_exposure",
+                "sensitive_data_exposure"
+              ]
+            },
+            "claimed_exposures": {
+              "type": "array",
+              "items": {
+                "enum": [
+                  "callback_reachability",
+                  "response_content_exposure",
+                  "configuration_exposure",
+                  "credential_exposure",
+                  "sensitive_data_exposure"
+                ]
+              }
+            },
+            "stronger_impacts_not_claimed": {
+              "type": "array",
+              "items": {
+                "enum": [
+                  "response_content_exposure",
+                  "configuration_exposure",
+                  "credential_exposure",
+                  "sensitive_data_exposure"
+                ]
+              }
+            },
+            "artifact_backed_oracle": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "evidence_path": {
+                  "type": "string"
+                },
+                "oracle_token": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "variant_seed_readiness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "run_after_promote"
+      ],
+      "properties": {
+        "run_after_promote": {
+          "const": true
+        }
+      }
+    }
+  }
+}

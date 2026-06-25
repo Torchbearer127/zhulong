@@ -63,6 +63,30 @@ Use this checklist before publishing a tagged open-source release of Zhulong
 ## 4. Confirmed Bundle Contract
 
 - [ ] One confirmed bundle represents exactly one vulnerability.
+- [ ] bundle contract generation runs `validate_bundle_contract.py` on a
+  `confirmed/.contracts/<slug>.bundle-contract.json` preflight document before
+  final `confirmed/<slug>/` artifacts are created.
+- [ ] `assets/references/bundle-rule-mapping.md` exists, represents all
+  required contract fields, and maps each field to renderer output, a final
+  validator or batch gate, and a bundle evidence artifact.
+- [ ] New bundle contract fields are added to
+  `assets/references/bundle-rule-mapping.md` in the same change; fields that
+  cannot be mapped are not added to the contract.
+- [ ] Mapping and release wording do not describe contract preflight as
+  vulnerability confirmation. It remains a ready-to-render workflow gate.
+- [ ] `finding.severity` uses the stable contract enum
+  `Critical`/`High`/`Medium`/`Low`/`Informational`, while report renderers may
+  localize display labels.
+- [ ] `finding.bug_class` and `impact_tier.bug_class` remain documented free
+  text with recommended bug_class values rather than a strict schema enum.
+- [ ] `assets/references/bundle-contract-template.json` omits redundant empty
+  optional fields for full-app fixture provenance and callback-only SSRF oracle
+  material.
+- [ ] Confirmed bundles are built through `build_confirmed_bundle.py`, with
+  render output validated under `confirmed/.staging/<slug>` before atomic
+  promote into `confirmed/<slug>/`.
+- [ ] Failed staging builds stay under `confirmed/.staging/` and are not
+  described as confirmed deliverables.
 - [ ] Each bundle contains a finding-specific DOCX report, attachment index,
   reproduction supplement, `verification-evidence.json`, `attachments/`, and a
   reviewer-friendly bundle-root reproduction helper script.
@@ -74,13 +98,59 @@ Use this checklist before publishing a tagged open-source release of Zhulong
 - [ ] Bundle-root replay helpers expose reviewer pause overrides and preserve
   readable pauses around identity, code context, analysis, impact boundary,
   proof command/output transitions, and final evidence summary screens.
+- [ ] `assets/references/reviewer-readiness-validator-gates.md` exists and
+  classifies reviewer-readiness gate classification scope for SSRF impact
+  overclaim, code context minimum quality, and replay helper pause contract.
+- [ ] Each reviewer-readiness gate family has deterministic local-only positive
+  and negative fixture coverage in `scripts/selftest_plugin.py`.
+- [ ] New reviewer-readiness gates add classification, selftest fixture
+  coverage, and a release checklist entry in the same change.
+- [ ] Registered replay logs are real transcripts with command/output/oracle
+  signals, not placeholders or marker-only files; copied successful transcripts
+  carry portable provenance and direct-impact markers are not appended manually.
+- [ ] The replay transcript corpus under
+  `assets/fixtures/replay-transcript-corpus/` covers positive and negative
+  examples, and docs state that replay trust does not require a single rigid log format.
+- [ ] `validate_report_bundle.py --all-errors --json --output-errors` remains an
+  explicit diagnostic mode only; default final bundle validation stays
+  fail-fast and all-errors output does not repair bundles or confirm
+  vulnerabilities.
 - [ ] Report wording, CVSS, reproduction scripts, evidence JSON, and
   reviewer-facing artifacts do not contradict each other.
 - [ ] SSRF reports keep callback/reachability, response-content exposure,
   configuration leakage, and sensitive-data exposure in separate evidence tiers.
 - [ ] Bundle validation passes on all bundled confirmed findings.
 
-## 5. Validation Commands
+## 5. P8 Bundle Builder Closure
+
+- [ ] Source layout selftest passes: `python3 scripts/selftest_plugin.py`.
+- [ ] Claude installed layout selftest passes after `bash scripts/sync_to_claude_skill.sh`.
+- [ ] Codex installed layout selftest passes after `bash scripts/sync_to_codex_skill.sh`.
+- [ ] `skills/zhulong/SKILL.md` and `templates/claude-skill/SKILL.md` are byte-identical.
+- [ ] `assets/schemas/bundle-contract.schema.json` and
+  `assets/references/bundle-contract-template.json` are valid JSON.
+- [ ] `assets/references/bundle-rule-mapping.md` is present in source and
+  installed layouts, covers required contract fields, and preserves the
+  ready-to-render boundary.
+- [ ] Staging wrapper selftest covers contract preflight, staging validation,
+  `confirmed/.staging/<slug>`, promote, batch validation, and failed-staging
+  non-promotion.
+- [ ] Replay log trust selftest rejects placeholder, marker-only, and thin
+  transcripts.
+- [ ] Replay transcript corpus selftest passes for trusted positives,
+  marker-only, placeholder-only, thin explanatory, oracle-missing, and copied
+  transcript provenance-boundary samples without Docker, replay, network, or
+  package-manager execution.
+- [ ] All-errors selftest covers diagnostic JSON output without treating
+  all-errors as confirmation.
+- [ ] reviewer-readiness gate classification exists in source and installed
+  layouts, and the three gate families retain positive and negative fixture coverage.
+- [ ] No local path leak appears in public Markdown, Python, shell, or JSON
+  files.
+- [ ] No broad Docker prune appears as normal cleanup guidance.
+- [ ] No PID kill behavior is introduced for OMC teammate cleanup.
+
+## 6. Validation Commands
 
 Run from the plugin root:
 
@@ -107,7 +177,7 @@ contain confirmed findings:
 python3 scripts/validate_all_report_bundles.py --confirmed-dir <repo>/<audit-workspace>/confirmed --language zh-CN
 ```
 
-## 6. Release-Candidate Dogfood
+## 7. Release-Candidate Dogfood
 
 - [ ] At least five real-world pilot logs or workspace summaries are archived.
 - [ ] The pilot set covers a Docker-ready Web/API target, a medium/large
@@ -120,7 +190,7 @@ python3 scripts/validate_all_report_bundles.py --confirmed-dir <repo>/<audit-wor
 - [ ] Low-only wording, alias, or ergonomics issues are recorded as follow-up
   issues instead of restarting the hardening loop.
 
-## 7. Publish Decision
+## 8. Publish Decision
 
 Publish only when:
 

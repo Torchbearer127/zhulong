@@ -70,6 +70,55 @@ bash <audit-workspace>/bin/check_omc_runtime.sh --json
 
 更多细节见 [`../assets/references/docker-resource-hygiene.md`](../assets/references/docker-resource-hygiene.md) 和 [`../assets/references/omc-runtime-stability.md`](../assets/references/omc-runtime-stability.md)。
 
+## confirmed bundle 短路径
+
+P8 将 confirmed bundle 生成收束为一条固定短路径：
+
+```text
+bundle contract preflight
+-> staging build wrapper
+-> staging final validation
+-> promote
+-> validate all
+-> seeded variant discovery
+-> finalization
+```
+
+bundle contract preflight 只检查被选中的单个 finding 是否具备可移植、Docker
+已确认、面向审核材料生成所需的最低输入。它只是生成前门禁，不能证明漏洞成立，
+也不能替代 Docker 证据。
+
+contract 字段必须能对应到 renderer 输出、final validator 或 batch gate，以及
+confirmed bundle 内的证据产物。无法建立这些对应关系的字段，不应加入 contract。
+
+contract 中的 `finding.severity` 使用稳定枚举：`Critical`、`High`、`Medium`、
+`Low`、`Informational`；最终审核材料可以按输出语言本地化展示。`finding.bug_class`
+和 `impact_tier.bug_class` 保持 free text，并在 checklist 中给出 recommended values，
+因为真实项目中的漏洞类别可能是项目特定或复合分类。
+
+staging build wrapper 会先渲染到 `confirmed/.staging/<slug>`，并在该目录运行同一套
+最终 bundle validator；只有校验通过后才 promote 到 `confirmed/<slug>`。失败的
+staging 目录只能作为调试材料，不是 confirmed deliverable。promote 后还必须运行
+`validate_all_report_bundles.py`，再进入 seeded variant discovery 与 finalization。
+
+默认最终校验仍保持 fail-fast。`validate_report_bundle.py --all-errors` 只是 staging
+或最终校验失败时的诊断模式，用来一次性收集可处理问题；它不会修复 bundle，
+不会放宽 validator，也不能确认漏洞。
+
+replay log 必须是真实的命令、输出、oracle transcript。marker-only replay log
+无效，手工追加 direct-impact marker 的薄日志也无效。复制来的成功 transcript
+必须有可移植来源说明，例如 `bundle-build-manifest.json` 或面向审核的证据材料。
+
+`assets/fixtures/replay-transcript-corpus/` 中的 replay transcript corpus
+用静态正负样本固定这条信任边界。校验器不要求 single rigid log format：只要是真实
+命令、原始输出、oracle、退出/通过结果与 direct-impact 证据构成的 transcript，
+可以有不同日志形态；marker-only、placeholder-only、thin explanatory、缺少 oracle
+的薄日志，以及缺少 provenance 的 copied transcript 仍会被拒绝。
+
+seeded variant discovery 始终保持候选态。`seeds.jsonl` 与
+`variant-candidates.jsonl` 是 confirmed bundle 审计的收尾产物，但候选排序与种子相似度
+不能作为确认漏洞的证据。
+
 ## 报告质量门禁
 
 所有已确认 (Confirmed) 报告必须清晰说明：
@@ -105,6 +154,9 @@ bash <audit-workspace>/bin/check_omc_runtime.sh --json
 - DOCX 面向审核人的正文中泄漏 Python/JSON 风格的 dict/list/object 中间结构，而不是正常报告 prose。
 - 运行时/版本身份只使用 `latest`、浮动镜像 tag、`main`、`master` 或含糊的“current version/当前版本”，且没有稳定版本号、commit、digest 或测试日期。
 - DOCX、补充说明、replay helper、`verification-evidence.json`、reviewer evidence index 与已注册 replay `.log` 中的 direct-impact marker 不一致。
+- 已注册 replay `.log` 为空、占位、仅包含 marker，或缺少命令、原始输出、oracle
+  检查等真实转录信号；不得通过手工追加 direct-impact marker 让薄日志通过校验。
+- 复制或历史成功 replay transcript 缺少 `bundle-build-manifest.json` 或审核材料中的可移植来源说明。
 - SSRF 影响层级漂移，例如实际只证明 callback/请求可达，却在没有产物级
   oracle 的情况下声称响应内容、配置、凭据或敏感数据泄露。
 - 根 replay helper 的 readiness/health 检查指向与 PoC/proof 命令无关的 host/path。
@@ -114,6 +166,13 @@ bash <audit-workspace>/bin/check_omc_runtime.sh --json
 - severity / claim 矛盾，例如 High CVSS 与正文 Medium 冲突、webshell/HTTP 命令执行声明缺少对应 oracle，或容器逃逸/宿主机 RCE/匿名公开触发声明缺少明确非声明边界。
 
 这些检查刻意保持保守，目标是降低误报，并确保已确认漏洞包的契约稳定性。
+
+SSRF 影响过度声明、代码上下文最低质量、replay helper 暂停契约等
+reviewer-readiness gate 的分类说明见
+[`../assets/references/reviewer-readiness-validator-gates.md`](../assets/references/reviewer-readiness-validator-gates.md)。
+该参考文件记录每类 gate 的目的、误报边界、接受/拒绝示例、适用的稳定
+issue code，以及这些 gate 只会拒绝薄弱审核材料，不能证明漏洞成立，也不能替代
+Docker 证据。
 
 ## 基于已确认种子漏洞的同类漏洞扩展
 
@@ -194,6 +253,53 @@ python3 ~/.agents/skills/zhulong/scripts/selftest_plugin.py
 ```bash
 python3 scripts/validate_report_bundle.py --bundle-dir <bundle-dir>
 ```
+
+默认最终 bundle 校验保持 fail-fast。若 staging 或最终校验失败，需要一次性查看
+高频结构问题，可显式启用诊断型 all-errors collector：
+
+```bash
+python3 scripts/validate_report_bundle.py \
+  --bundle-dir <bundle-dir> \
+  --all-errors \
+  --json \
+  --output-errors <bundle-dir>/bundle-validation-errors.json
+```
+
+all-errors 报告只用于诊断，不会修复 bundle，也不能确认漏洞。应修正上游 contract、
+证据或审核材料后，再重新运行校验。
+
+生成最终 `confirmed/<slug>/` 产物之前，先根据
+`assets/references/bundle-contract-template.json` 填写
+`<audit-workspace>/confirmed/.contracts/<slug>.bundle-contract.json`，用
+`render` 字段指向被选中的源 finding，然后运行：
+
+```bash
+python3 scripts/validate_bundle_contract.py \
+  --workspace-dir <audit-workspace> \
+  --contract <contract> \
+  --all-errors
+```
+
+如果 preflight 失败，应修正 contract 或上游 Docker 证据，不要通过创建
+marker-only replay log 或反应式改 direct-impact marker 来绕过。这个 preflight
+只负责生成前门禁，最终仍必须运行已确认漏洞包校验。
+
+随后通过 staging wrapper 构建：
+
+```bash
+python3 scripts/build_confirmed_bundle.py \
+  --workspace-dir <audit-workspace> \
+  --contract <contract> \
+  --language <zh-CN|en-US>
+```
+
+不要手写最终 `confirmed/<slug>/` 目录。wrapper 会只渲染被 contract 选中的
+单个 finding 到 `confirmed/.staging/<slug>`，通过最终 bundle 校验后才 promote，
+并在 promote 后运行批量校验。失败构建只能留在 `confirmed/.staging/`，不得称为
+confirmed deliverable。最终审计完成仍必须通过既有的同类漏洞扩展和 finalization
+门禁。
+wrapper 默认不执行 replay。它会在可用时记录 bundled evidence 中 replay log 的
+provenance，最终由 bundle validator 判断已注册 replay log 是否是可信 transcript。
 
 批量验证工作区下的所有已确认漏洞包：
 

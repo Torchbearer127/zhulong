@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import zipfile
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Iterable
 
@@ -872,6 +873,77 @@ REPLAY_LOG_PLACEHOLDER_PATTERNS = [
         r"占位",
     )
 ]
+REPLAY_TRANSCRIPT_COMMAND_PATTERNS = [
+    re.compile(pattern, re.IGNORECASE | re.MULTILINE)
+    for pattern in (
+        r"^\s*(?:\[command\]|COMMAND:|Run command:|执行命令[:：]|命令[:：])",
+        r"^\s*(?:\$|\+)\s*(?:docker|python3?|node|php|bash|sh|curl|jq|grep)\b",
+        r"\brun_logged_command\b",
+    )
+]
+REPLAY_TRANSCRIPT_RAW_OUTPUT_PATTERNS = [
+    re.compile(pattern, re.IGNORECASE | re.MULTILINE)
+    for pattern in (
+        r"^\s*(?:RAW OUTPUT|stdout|stderr|command output|proof output|container logs?)\s*[:：]",
+        r"^\s*(?:原始输出|命令输出|证明输出|容器日志)\s*[:：]",
+    )
+]
+REPLAY_TRANSCRIPT_ORACLE_CHECK_PATTERNS = [
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"\bgrep\s+-[A-Za-z]*F?q[A-Za-z]*\b",
+        r"\bjq\s+-e\b",
+        r"\bsuccess marker verified\b",
+        r"\bdeterministic success marker verified\b",
+        r"\bverified\b.{0,80}\b(?:success|oracle|marker)\b",
+        r"确定性成功标记.{0,40}(?:验证|已验证)",
+        r"成功标记.{0,40}(?:验证|已验证)",
+        r"直接危害标记已写入|Direct-impact marker recorded",
+    )
+]
+REPLAY_TRANSCRIPT_EXIT_STATUS_PATTERNS = [
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"\b(?:exit(?:\s+status|\s+code)?|return\s+code|status)\s*[:=]\s*0\b",
+        r"\b(?:result|结果)\s*[:：]\s*(?:success|passed|ok|成功|通过)\b",
+    )
+]
+REPLAY_LOG_HEADING_PATTERNS = [
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"^Zhulong reviewer replay log$",
+        r"^Generated at:",
+        r"^Replay contract direct-impact marker:",
+        r"^#+\s*.*replay.*$",
+    )
+]
+REPLAY_LOG_UNTRUSTED_MESSAGE = (
+    "is placeholder-only or marker-only; run/copy a real replay transcript "
+    "with command/output/oracle evidence"
+)
+REPLAY_CLASSIFICATION_ISSUE_CODES = {
+    "empty_or_nearly_empty": "REPLAY_LOG_EMPTY",
+    "placeholder_log": "REPLAY_LOG_PLACEHOLDER",
+    "marker_only_log": "REPLAY_LOG_MARKER_ONLY",
+    "thin_or_explanatory_log": "REPLAY_LOG_THIN_TRANSCRIPT",
+}
+COLLECTABLE_ISSUE_CODES = {
+    "REVIEWER_INDEX_ARTIFACT_MISSING",
+    "REPLAY_LOG_UNREGISTERED",
+    "REPLAY_LOG_UNTRUSTED",
+    *REPLAY_CLASSIFICATION_ISSUE_CODES.values(),
+    "DIRECT_IMPACT_MARKER_MISMATCH",
+    "REPLAY_LOG_MARKER_MISSING",
+    "FIXTURE_PROVENANCE_MISSING",
+    "SSRF_IMPACT_OVERCLAIM",
+    "CODE_CONTEXT_MINIMUM_QUALITY",
+    "REPLAY_HELPER_PAUSE_CONTRACT",
+    "LOCAL_HELPER_MISSING",
+    "ROOT_SCRIPT_CONTEXT_MISSING",
+    "ROOT_SCRIPT_SUCCESS_CHECK_MISSING",
+    "RAW_STRUCTURED_OBJECT_LEAK",
+}
+COPIED_REPLAY_SOURCE_KINDS = {"copied_successful_transcript", "historical_successful_transcript"}
 ROOT_ARTIFACT_REFERENCE_PATTERNS = [
     re.compile(r"\bdocker\s+build\b[^\n;&|]*?(?:-f|--file)\s+(?P<path>[^\s'\";&|]+)", re.IGNORECASE),
     re.compile(r"\bdocker\s+compose\b[^\n;&|]*?-f\s+(?P<path>[^\s'\";&|]+)", re.IGNORECASE),
@@ -1104,15 +1176,219 @@ def parse_args() -> argparse.Namespace:
             "This is opt-in so standalone/offline bundle validation keeps its historical behavior."
         ),
     )
+    parser.add_argument(
+        "--all-errors",
+        action="store_true",
+        help="Collect focused high-churn final bundle issues instead of stopping at the first one.",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="With --all-errors, emit a machine-readable validation issue report.",
+    )
+    parser.add_argument(
+        "--output-errors",
+        help="With --all-errors, write the machine-readable validation issue report to this JSON path.",
+    )
     return parser.parse_args()
 
 
-def fail(message: str) -> None:
+@dataclass
+class ValidationIssue:
+    code: str
+    severity: str
+    path: str
+    message: str
+    fix: str
+
+    def as_dict(self) -> dict[str, str]:
+        return {
+            "code": self.code,
+            "severity": self.severity,
+            "path": self.path,
+            "message": self.message,
+            "fix": self.fix,
+        }
+
+
+class CollectedValidationFailure(Exception):
+    pass
+
+
+class IssueCollector:
+    def __init__(self, *, all_errors: bool) -> None:
+        self.all_errors = all_errors
+        self.issues: list[ValidationIssue] = []
+        self._seen: set[tuple[str, str, str]] = set()
+
+    def add(
+        self,
+        message: str,
+        *,
+        code: str | None = None,
+        path: str | None = None,
+        fix: str | None = None,
+        severity: str = "error",
+    ) -> ValidationIssue:
+        inferred_code, inferred_path, inferred_fix = infer_issue_details(message)
+        issue = ValidationIssue(
+            code=code or inferred_code,
+            severity=severity,
+            path=path or inferred_path,
+            message=message,
+            fix=fix or inferred_fix,
+        )
+        key = (issue.code, issue.path, issue.message)
+        if key not in self._seen:
+            self.issues.append(issue)
+            self._seen.add(key)
+        return issue
+
+
+ACTIVE_ISSUE_COLLECTOR: IssueCollector | None = None
+
+
+def first_match(pattern: str, text: str) -> str:
+    match = re.search(pattern, text)
+    return match.group(0) if match else "$"
+
+
+def infer_issue_details(message: str) -> tuple[str, str, str]:
+    lower = message.lower()
+    if "registered replay log" in lower and ("does not exist inside bundle" in lower or "must point to a file" in lower):
+        return (
+            "REVIEWER_INDEX_ARTIFACT_MISSING",
+            first_match(r"attachments/[^\s`'\"<>]+\.log", message),
+            "Fix replay log registration so every registered .log exists inside the delivered bundle.",
+        )
+    if "reviewer evidence index referenced artifact path does not exist" in lower:
+        return (
+            "REVIEWER_INDEX_ARTIFACT_MISSING",
+            first_match(r"(?:attachments|\.?\.?)/[^\s`'\"<>]+", message),
+            "Fix attachments/reviewer-evidence-index.json so every artifact path is bundle-relative and exists.",
+        )
+    if "replay .log evidence must be registered" in lower or ".log output is not registered" in lower or "must be registered" in lower:
+        return (
+            "REPLAY_LOG_UNREGISTERED",
+            first_match(r"attachments/[^\s`'\"<>]+\.log", message),
+            "Register the replay log in verification-evidence.json evidence_files or attachments/reviewer-evidence-index.json.",
+        )
+    if REPLAY_LOG_UNTRUSTED_MESSAGE in message:
+        return (
+            "REPLAY_LOG_UNTRUSTED",
+            first_match(r"attachments/[^\s`'\"<>]+\.log", message),
+            "Replace placeholder/thin replay output with a real command/output/oracle transcript.",
+        )
+    if "direct_impact_marker does not match" in lower or "direct-impact marker is inconsistent" in lower:
+        return (
+            "DIRECT_IMPACT_MARKER_MISMATCH",
+            "verification-evidence.json",
+            "Use the same direct-impact marker across the replay helper, evidence JSON, replay log, and reviewer material.",
+        )
+    if "does not contain the deterministic direct-impact marker" in lower:
+        return (
+            "REPLAY_LOG_MARKER_MISSING",
+            first_match(r"attachments/[^\s`'\"<>]+\.log", message),
+            "Regenerate the replay log from the root helper so it records the deterministic direct-impact marker.",
+        )
+    if "source-grounded provenance" in lower or "fixture-based or vendored-source replay" in lower:
+        return (
+            "FIXTURE_PROVENANCE_MISSING",
+            "reviewer-facing material",
+            "Document upstream source, preserved vulnerable behavior, sufficiency rationale, and non-claims for fixture replay.",
+        )
+    if "ssrf" in lower and ("overclaim" in lower or "callback/reachability" in lower or "response-exposure" in lower):
+        return (
+            "SSRF_IMPACT_OVERCLAIM",
+            "reviewer-facing material",
+            "Bound callback-only SSRF claims or add artifact-backed response/config/credential/sensitive-data oracle evidence.",
+        )
+    if "report " in lower and ("code context" in lower or "关键代码上下文" in message) and (
+        "placeholder-only" in lower
+        or "actual code-like snippet" in lower
+        or "at least two code-like lines" in lower
+        or "project-relative source path" in lower
+        or "line number/range" in lower
+        or "code-level explanation" in lower
+        or "too thin" in lower
+        or "too abbreviated" in lower
+    ):
+        return (
+            "CODE_CONTEXT_MINIMUM_QUALITY",
+            "report docx",
+            "Add project-relative source path, line metadata, multi-line snippet, input-to-sink explanation, missing guard, and impact boundary.",
+        )
+    if (
+        "fixed reviewer pause" in lower
+        or "reviewer pause settings" in lower
+        or "pause before proof command execution transitions" in lower
+        or "pause after proof command output transitions" in lower
+        or "pause after the code-context screen" in lower
+        or "pause after the code-level vulnerability analysis screen" in lower
+        or "pause after the realistic exploitability / impact-boundary screen" in lower
+        or "opening tested software/version identity screen" in lower
+        or "final evidence summary/conclusion screen" in lower
+    ):
+        return (
+            "REPLAY_HELPER_PAUSE_CONTRACT",
+            first_match(r"run-[A-Za-z0-9_.-]+\.sh", message),
+            "Keep overrideable reviewer pauses around identity, context, analysis, impact-boundary, proof output, and final summary screens.",
+        )
+    if "missing local helper" in lower or "references helper outside" in lower:
+        return (
+            "LOCAL_HELPER_MISSING",
+            first_match(r"\./[A-Za-z0-9_.-]+(?:\.(?:sh|bash|py|js|mjs|cjs|php))?", message),
+            "Include the referenced helper in the bundle or point reviewers to the bundle-root run-*.sh helper.",
+        )
+    if "reviewer-facing" in lower and (
+        "context" in lower
+        or "target software/package" in lower
+        or "code-context screen" in lower
+        or "code-level vulnerability analysis" in lower
+        or "impact-boundary" in lower
+        or "final evidence summary" in lower
+    ):
+        return (
+            "ROOT_SCRIPT_CONTEXT_MISSING",
+            first_match(r"run-[A-Za-z0-9_.-]+\.sh", message),
+            "Update the bundle-root replay helper to show target identity, code context, analysis, impact boundary, and final evidence summary screens.",
+        )
+    if "success-marker check" in lower or "concrete success oracle" in lower or "softens a success-oracle" in lower:
+        return (
+            "ROOT_SCRIPT_SUCCESS_CHECK_MISSING",
+            first_match(r"run-[A-Za-z0-9_.-]+\.sh", message),
+            "Fail closed with grep -q/grep -Fq/jq -e/test/case or a closed success-marker helper before final confirmation.",
+        )
+    if "raw serialized structured data" in lower:
+        return (
+            "RAW_STRUCTURED_OBJECT_LEAK",
+            first_match(r"(?:report docx|attachment note|reproduction supplement|reviewer evidence addendum)", message),
+            "Rewrite raw dict/list/object literals into reviewer-facing prose, bullets, code blocks, or JSON attachments.",
+        )
+    return (
+        "VALIDATION_FAILED",
+        "$",
+        "Fix the reported bundle validation failure and rerun validate_report_bundle.py.",
+    )
+
+
+def fail(
+    message: str,
+    *,
+    code: str | None = None,
+    path: str | None = None,
+    fix: str | None = None,
+) -> None:
+    if ACTIVE_ISSUE_COLLECTOR is not None:
+        issue = ACTIVE_ISSUE_COLLECTOR.add(message, code=code, path=path, fix=fix)
+        if ACTIVE_ISSUE_COLLECTOR.all_errors and issue.code in COLLECTABLE_ISSUE_CODES:
+            return
+        raise CollectedValidationFailure(message)
     raise SystemExit(f"VALIDATION FAILED: {message}")
 
 
 def warn(message: str) -> None:
-    print(f"WARN: {message}")
+    print(f"WARN: {message}", file=sys.stderr)
 
 
 def is_unknown_value(value: object) -> bool:
@@ -1773,6 +2049,8 @@ def validate_report_depth(lines: list[str], language: str) -> None:
 
 def validate_workspace_metadata(bundle_dir: Path) -> Path:
     confirmed_dir = bundle_dir.parent
+    if confirmed_dir.name == ".staging" and confirmed_dir.parent.name == "confirmed":
+        confirmed_dir = confirmed_dir.parent
     if confirmed_dir.name != "confirmed":
         fail(f"bundle must live under a confirmed/ directory, got: {bundle_dir}")
     workspace_dir = confirmed_dir.parent
@@ -2212,6 +2490,10 @@ def resolve_findings_path(bundle_dir: Path) -> Path | None:
     local_findings = bundle_dir / "findings.json"
     if local_findings.exists():
         return local_findings
+    if bundle_dir.parent.name == ".staging" and bundle_dir.parent.parent.name == "confirmed":
+        staging_confirmed_findings = bundle_dir.parent.parent / "findings.json"
+        if staging_confirmed_findings.exists():
+            return staging_confirmed_findings
     confirmed_findings = bundle_dir.parent / "findings.json"
     if confirmed_findings.exists():
         return confirmed_findings
@@ -2940,8 +3222,12 @@ def validate_replay_log_evidence_registration(
             "bundle-root replay script .log output is not registered as reviewer evidence: "
             + ", ".join(missing)
         )
+    manifest_entries = build_manifest_replay_entries(bundle_dir)
     for rel in sorted(registered_logs):
         validate_bundle_relative_file(rel, bundle_dir, f"registered replay log {rel}")
+        if not (bundle_dir / rel).is_file():
+            continue
+        validate_registered_replay_log_content(bundle_dir, rel, manifest_entries.get(rel))
 
 
 def shell_assignment_value(text: str, name: str) -> str:
@@ -3448,16 +3734,128 @@ def replay_log_is_placeholder(text: str) -> bool:
     return any(pattern.search(stripped) for pattern in REPLAY_LOG_PLACEHOLDER_PATTERNS)
 
 
-def validate_registered_replay_log_content(bundle_dir: Path, rel: str) -> None:
+def replay_log_substantive_lines(text: str) -> list[str]:
+    lines: list[str] = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if any(pattern.search(line) for pattern in REPLAY_LOG_HEADING_PATTERNS):
+            continue
+        if DIRECT_IMPACT_MARKER_TOKEN_PATTERN.fullmatch(line):
+            continue
+        lines.append(line)
+    return lines
+
+
+def replay_log_has_any(patterns: list[re.Pattern[str]], text: str) -> bool:
+    return any(pattern.search(text) for pattern in patterns)
+
+
+def classify_replay_transcript(text: str) -> dict[str, object]:
+    stripped = text.strip()
+    substantive_lines = replay_log_substantive_lines(text)
+    signals = {
+        "command": replay_log_has_any(REPLAY_TRANSCRIPT_COMMAND_PATTERNS, text),
+        "raw_output": replay_log_has_any(REPLAY_TRANSCRIPT_RAW_OUTPUT_PATTERNS, text),
+        "oracle_check": replay_log_has_any(REPLAY_TRANSCRIPT_ORACLE_CHECK_PATTERNS, text),
+        "exit_status": replay_log_has_any(REPLAY_TRANSCRIPT_EXIT_STATUS_PATTERNS, text),
+    }
+    direct_marker = bool(DIRECT_IMPACT_MARKER_TOKEN_PATTERN.search(text))
+    signal_count = sum(1 for present in signals.values() if present)
+    result: dict[str, object] = {
+        "classification": "trusted_transcript",
+        "direct_impact_marker": direct_marker,
+        "signals": signals,
+        "signal_count": signal_count,
+    }
+    if not stripped or len(stripped) < 40:
+        result["classification"] = "empty_or_nearly_empty"
+    elif replay_log_is_placeholder(text):
+        result["classification"] = "placeholder_log"
+    elif direct_marker and not substantive_lines:
+        result["classification"] = "marker_only_log"
+    elif signal_count < 2:
+        result["classification"] = "thin_or_explanatory_log"
+    return result
+
+
+def build_manifest_replay_entries(bundle_dir: Path) -> dict[str, dict[str, object]]:
+    path = bundle_dir / "bundle-build-manifest.json"
+    if not path.exists():
+        return {}
+    raw_text = path.read_text(encoding="utf-8", errors="ignore")
+    validate_no_absolute_paths(raw_text)
+    try:
+        data = json.loads(raw_text)
+    except json.JSONDecodeError as exc:
+        fail(f"bundle-build-manifest.json is invalid JSON: {exc}")
+    if not isinstance(data, dict):
+        fail("bundle-build-manifest.json must contain a JSON object")
+    entries = data.get("replay_logs", [])
+    if entries is None:
+        return {}
+    if not isinstance(entries, list):
+        fail("bundle-build-manifest.json replay_logs must be a list when present")
+    mapped: dict[str, dict[str, object]] = {}
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            fail(f"bundle-build-manifest.json replay_logs[{index}] must be an object")
+        rel = str(entry.get("path") or "").strip()
+        if not rel:
+            fail(f"bundle-build-manifest.json replay_logs[{index}].path must not be empty")
+        validate_reviewer_index_artifact_path(bundle_dir, rel, f"replay_logs[{index}].path")
+        mapped[Path(rel).as_posix()] = entry
+    return mapped
+
+
+def copied_replay_manifest_has_provenance(entry: dict[str, object]) -> bool:
+    provenance_keys = (
+        "provenance",
+        "source",
+        "source_path",
+        "source_bundle_path",
+        "source_evidence_path",
+        "copied_from",
+        "historical_source",
+    )
+    for key in provenance_keys:
+        value = entry.get(key)
+        if isinstance(value, str) and value.strip():
+            return True
+    return False
+
+
+def validate_replay_manifest_provenance(rel: str, manifest_entry: dict[str, object] | None) -> None:
+    if not manifest_entry:
+        return
+    source_kind = str(manifest_entry.get("source_kind") or "").strip()
+    if source_kind in COPIED_REPLAY_SOURCE_KINDS and not copied_replay_manifest_has_provenance(manifest_entry):
+        fail(
+            f"registered replay log {rel} is marked as {source_kind} in bundle-build-manifest.json "
+            "but lacks copied transcript provenance"
+        )
+
+
+def validate_registered_replay_log_content(
+    bundle_dir: Path,
+    rel: str,
+    manifest_entry: dict[str, object] | None = None,
+) -> None:
     path = bundle_dir / rel
     if path.suffix.lower() != ".log":
         return
     text = path.read_text(encoding="utf-8", errors="ignore")
-    if replay_log_is_placeholder(text):
+    classification = classify_replay_transcript(text)
+    if classification.get("classification") != "trusted_transcript":
+        classification_name = str(classification.get("classification") or "")
         fail(
-            f"registered replay log {rel} is placeholder-only; run the bundle-root replay script "
-            "and replace it with live reviewer output before bundle validation"
+            f"registered replay log {rel} {REPLAY_LOG_UNTRUSTED_MESSAGE}; classification={classification_name}",
+            code=REPLAY_CLASSIFICATION_ISSUE_CODES.get(classification_name, "REPLAY_LOG_UNTRUSTED"),
+            path=rel,
+            fix="Regenerate or copy a real replay transcript with command, raw output, oracle check, and exit-status evidence.",
         )
+    validate_replay_manifest_provenance(rel, manifest_entry)
 
 
 def validate_verification_evidence(bundle_dir: Path, finding: dict[str, object] | None = None) -> dict[str, object]:
@@ -5223,9 +5621,67 @@ def optional_markitdown_check(docx_path: Path) -> None:
         fail("MarkItDown extraction returned empty output")
 
 
+def display_bundle_path(bundle_dir: Path) -> str:
+    try:
+        return bundle_dir.resolve().relative_to(Path.cwd().resolve()).as_posix()
+    except ValueError:
+        return str(bundle_dir)
+
+
+def all_errors_payload(bundle_dir: Path, issues: list[ValidationIssue]) -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "valid": not any(issue.severity == "error" for issue in issues),
+        "bundle_dir": display_bundle_path(bundle_dir),
+        "issues": [issue.as_dict() for issue in issues],
+    }
+
+
+def write_all_errors_payload(path: Path, payload: dict[str, object]) -> None:
+    if not path.parent.exists():
+        raise SystemExit(f"VALIDATION FAILED: --output-errors parent directory does not exist: {path.parent}")
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def emit_all_errors_result(
+    args: argparse.Namespace,
+    bundle_dir: Path,
+    collector: IssueCollector,
+) -> None:
+    payload = all_errors_payload(bundle_dir, collector.issues)
+    if args.output_errors:
+        write_all_errors_payload(Path(args.output_errors).expanduser(), payload)
+    if args.json and not args.output_errors:
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+    elif not args.json:
+        if payload["valid"]:
+            print(f"OK: final bundle validation found no collected issues: {payload['bundle_dir']}")
+        else:
+            print(f"FAILED: final bundle validation found {len(collector.issues)} issue(s): {payload['bundle_dir']}")
+            for issue in collector.issues:
+                print(f"[{issue.severity}] {issue.code} at {issue.path}")
+                print(f"  {issue.message}")
+                print(f"  fix: {issue.fix}")
+
+
+def finish_all_errors_if_needed(args: argparse.Namespace, bundle_dir: Path, collector: IssueCollector | None) -> bool:
+    if collector is None:
+        return False
+    emit_all_errors_result(args, bundle_dir, collector)
+    if any(issue.severity == "error" for issue in collector.issues):
+        raise SystemExit(1)
+    return True
+
+
 def main() -> None:
+    global ACTIVE_ISSUE_COLLECTOR
     args = parse_args()
     variant_modes = [bool(args.variant_seed_card), bool(args.variant_candidates)]
+    if args.output_errors and not args.all_errors:
+        fail("--output-errors requires --all-errors")
+    if args.json and not args.all_errors and not any(variant_modes):
+        fail("--json for confirmed bundle validation requires --all-errors")
+    collector: IssueCollector | None = None
     if sum(1 for enabled in variant_modes if enabled) > 1:
         fail("use only one of --variant-seed-card or --variant-candidates")
     if args.variant_seed_draft and not args.variant_seed_card:
@@ -5247,181 +5703,136 @@ def main() -> None:
     if not args.bundle_dir:
         fail("--bundle-dir is required unless --variant-seed-card or --variant-candidates is used")
     bundle_dir = Path(args.bundle_dir).expanduser().resolve()
-    if not bundle_dir.exists() or not bundle_dir.is_dir():
-        fail(f"bundle directory does not exist: {bundle_dir}")
-    validate_bundle_cleanliness(bundle_dir)
-    workspace_dir = validate_workspace_metadata(bundle_dir)
+    if args.all_errors:
+        collector = IssueCollector(all_errors=True)
+        ACTIVE_ISSUE_COLLECTOR = collector
+    try:
+        if not bundle_dir.exists() or not bundle_dir.is_dir():
+            fail(f"bundle directory does not exist: {bundle_dir}")
+        validate_bundle_cleanliness(bundle_dir)
+        workspace_dir = validate_workspace_metadata(bundle_dir)
 
-    docx_path = find_single([p for p in bundle_dir.glob("*.docx") if p.is_file()], "report docx")
-    markdown_paths = [p for p in bundle_dir.glob("*.md") if p.is_file()]
-    expected_note_name = f"{docx_path.stem}{'_attachment_index.md' if args.language == 'en-US' else '_附件目录说明.md'}" if args.language != "auto" else None
-    if expected_note_name:
-        attachment_candidates = [p for p in markdown_paths if p.name == expected_note_name]
-    else:
-        attachment_candidates = [p for p in markdown_paths if p.name.endswith("_附件目录说明.md") or p.name.endswith("_attachment_index.md")]
-    note_path = find_single(attachment_candidates, "attachment note markdown")
+        docx_path = find_single([p for p in bundle_dir.glob("*.docx") if p.is_file()], "report docx")
+        markdown_paths = [p for p in bundle_dir.glob("*.md") if p.is_file()]
+        expected_note_name = f"{docx_path.stem}{'_attachment_index.md' if args.language == 'en-US' else '_附件目录说明.md'}" if args.language != "auto" else None
+        if expected_note_name:
+            attachment_candidates = [p for p in markdown_paths if p.name == expected_note_name]
+        else:
+            attachment_candidates = [p for p in markdown_paths if p.name.endswith("_附件目录说明.md") or p.name.endswith("_attachment_index.md")]
+        note_path = find_single(attachment_candidates, "attachment note markdown")
 
-    validate_docx_container(docx_path)
-    optional_file_and_unzip_checks(docx_path)
+        validate_docx_container(docx_path)
+        optional_file_and_unzip_checks(docx_path)
 
-    lines = docx_text(docx_path)
-    if not lines:
-        fail("report docx has no readable text paragraphs")
+        lines = docx_text(docx_path)
+        if not lines:
+            fail("report docx has no readable text paragraphs")
 
-    language = detect_language(docx_path, lines, note_path) if args.language == "auto" else args.language
-    validate_output_filenames(docx_path, note_path, language)
-    supplement_name = expected_supplement_filename(docx_path, language)
-    supplement_path = find_single([p for p in markdown_paths if p.name == supplement_name], "reproduction supplement markdown")
-    validate_required_headings(lines, language)
-    validate_quality_gate(lines, language)
-    supplement_text = validate_reproduction_supplement(supplement_path, language)
-    exploitability_text = validate_real_world_exploitability(lines, supplement_text, language)
-    validate_report_depth(lines, language)
-    validate_code_context_section(lines, language)
-    validate_docx_code_context_style(docx_path, language)
-    validate_bundle_identity(bundle_dir, lines, workspace_dir)
-    findings_path = resolve_findings_path(bundle_dir)
-    project_name = ""
-    title_tokens: list[str] = []
-    selected_finding: dict[str, object] | None = None
-    if findings_path is not None and findings_path.exists():
-        defaults, selected_finding = load_selected_finding(findings_path, bundle_dir.name, workspace_dir)
-        project_name, title_tokens, selected_finding = load_bundle_identity(findings_path, bundle_dir.name, workspace_dir)
-        validate_finding_vulnerability_name(selected_finding)
-        validate_severity_consistency(bundle_dir, docx_path, selected_finding, language)
-        validate_report_body_severity_consistency(bundle_dir, docx_path, lines, selected_finding, language)
-        validate_title_auth_cvss_consistency(bundle_dir, docx_path, lines, selected_finding)
-    verification_evidence = validate_verification_evidence(bundle_dir, selected_finding)
-    if selected_finding is not None:
-        validate_runtime_scope(defaults, selected_finding, verification_evidence, workspace_dir)
+        language = detect_language(docx_path, lines, note_path) if args.language == "auto" else args.language
+        validate_output_filenames(docx_path, note_path, language)
+        supplement_name = expected_supplement_filename(docx_path, language)
+        supplement_path = find_single([p for p in markdown_paths if p.name == supplement_name], "reproduction supplement markdown")
+        validate_required_headings(lines, language)
+        validate_quality_gate(lines, language)
+        supplement_text = validate_reproduction_supplement(supplement_path, language)
+        exploitability_text = validate_real_world_exploitability(lines, supplement_text, language)
+        validate_report_depth(lines, language)
+        validate_code_context_section(lines, language)
+        validate_docx_code_context_style(docx_path, language)
+        validate_bundle_identity(bundle_dir, lines, workspace_dir)
+        findings_path = resolve_findings_path(bundle_dir)
+        project_name = ""
+        title_tokens: list[str] = []
+        selected_finding: dict[str, object] | None = None
+        if findings_path is not None and findings_path.exists():
+            defaults, selected_finding = load_selected_finding(findings_path, bundle_dir.name, workspace_dir)
+            project_name, title_tokens, selected_finding = load_bundle_identity(findings_path, bundle_dir.name, workspace_dir)
+            validate_finding_vulnerability_name(selected_finding)
+            validate_severity_consistency(bundle_dir, docx_path, selected_finding, language)
+            validate_report_body_severity_consistency(bundle_dir, docx_path, lines, selected_finding, language)
+            validate_title_auth_cvss_consistency(bundle_dir, docx_path, lines, selected_finding)
+        verification_evidence = validate_verification_evidence(bundle_dir, selected_finding)
+        if selected_finding is not None:
+            validate_runtime_scope(defaults, selected_finding, verification_evidence, workspace_dir)
 
-    combined_text = "\n".join(lines)
-    if "CVSS 2.0" in combined_text:
-        fail("CVSS 2.0 is not allowed; use CVSS 4.0 by default or CVSS 3.1 when required")
-    validate_no_absolute_paths(combined_text)
-    validate_no_non_standalone_paths(combined_text, "report docx")
-    validate_no_placeholder_text(combined_text, language, "report docx")
-    validate_no_raw_structured_objects(combined_text, "report docx")
-    validate_mutable_runtime_identity(combined_text, "report docx")
-    validate_relative_attachment_refs(combined_text, bundle_dir)
-    reviewer_addendum_text = validate_reviewer_evidence_addendum(bundle_dir, language)
-    validate_attachment_note(note_path, language)
-    note_text = note_path.read_text(encoding="utf-8")
-    validate_no_raw_structured_objects(note_text, "attachment note")
-    validate_no_raw_structured_objects(supplement_text, "reproduction supplement")
-    validate_no_raw_structured_objects(reviewer_addendum_text, "reviewer evidence addendum")
-    validate_mutable_runtime_identity(note_text, "attachment note")
-    validate_mutable_runtime_identity(supplement_text, "reproduction supplement")
-    validate_mutable_runtime_identity(reviewer_addendum_text, "reviewer evidence addendum")
-    validate_no_untranslated_english_text(
-        lines,
-        [(path.name, path.read_text(encoding="utf-8")) for path in markdown_paths],
-        language,
-    )
-    validate_no_placeholder_text(note_text, language, "attachment note")
-    validate_no_placeholder_text(supplement_text, language, "reproduction supplement")
-    validate_no_non_standalone_paths(note_text, "attachment note")
-    validate_no_non_standalone_paths(supplement_text, "reproduction supplement")
-    root_scripts = validate_bundle_root_scripts(bundle_dir, note_text)
-    if project_name:
-        validate_material_identity(supplement_text, f"reproduction supplement {supplement_path.name}", project_name, title_tokens)
-        for script_name in root_scripts:
-            script_text = (bundle_dir / script_name).read_text(encoding="utf-8")
-            validate_material_identity(script_text, f"bundle root script {script_name}", project_name, title_tokens)
-            validate_language_consistency(
-                script_text,
-                f"bundle root script {script_name}",
-                language,
-                expected_markers=ZH_REVIEW_MARKERS if language == "zh-CN" else EN_REVIEW_MARKERS,
-                opposite_markers=EN_REVIEW_MARKERS if language == "zh-CN" else ZH_REVIEW_MARKERS,
-            )
-    validate_success_evidence(combined_text, language, label="report")
-    validate_success_evidence(supplement_text, language, label="reproduction supplement")
+        combined_text = "\n".join(lines)
+        if "CVSS 2.0" in combined_text:
+            fail("CVSS 2.0 is not allowed; use CVSS 4.0 by default or CVSS 3.1 when required")
+        validate_no_absolute_paths(combined_text)
+        validate_no_non_standalone_paths(combined_text, "report docx")
+        validate_no_placeholder_text(combined_text, language, "report docx")
+        validate_no_raw_structured_objects(combined_text, "report docx")
+        validate_mutable_runtime_identity(combined_text, "report docx")
+        validate_relative_attachment_refs(combined_text, bundle_dir)
+        reviewer_addendum_text = validate_reviewer_evidence_addendum(bundle_dir, language)
+        validate_attachment_note(note_path, language)
+        note_text = note_path.read_text(encoding="utf-8")
+        validate_no_raw_structured_objects(note_text, "attachment note")
+        validate_no_raw_structured_objects(supplement_text, "reproduction supplement")
+        validate_no_raw_structured_objects(reviewer_addendum_text, "reviewer evidence addendum")
+        validate_mutable_runtime_identity(note_text, "attachment note")
+        validate_mutable_runtime_identity(supplement_text, "reproduction supplement")
+        validate_mutable_runtime_identity(reviewer_addendum_text, "reviewer evidence addendum")
+        validate_no_untranslated_english_text(
+            lines,
+            [(path.name, path.read_text(encoding="utf-8")) for path in markdown_paths],
+            language,
+        )
+        validate_no_placeholder_text(note_text, language, "attachment note")
+        validate_no_placeholder_text(supplement_text, language, "reproduction supplement")
+        validate_no_non_standalone_paths(note_text, "attachment note")
+        validate_no_non_standalone_paths(supplement_text, "reproduction supplement")
+        root_scripts = validate_bundle_root_scripts(bundle_dir, note_text)
+        if project_name:
+            validate_material_identity(supplement_text, f"reproduction supplement {supplement_path.name}", project_name, title_tokens)
+            for script_name in root_scripts:
+                script_text = (bundle_dir / script_name).read_text(encoding="utf-8")
+                validate_material_identity(script_text, f"bundle root script {script_name}", project_name, title_tokens)
+                validate_language_consistency(
+                    script_text,
+                    f"bundle root script {script_name}",
+                    language,
+                    expected_markers=ZH_REVIEW_MARKERS if language == "zh-CN" else EN_REVIEW_MARKERS,
+                    opposite_markers=EN_REVIEW_MARKERS if language == "zh-CN" else ZH_REVIEW_MARKERS,
+                )
+        validate_success_evidence(combined_text, language, label="report")
+        validate_success_evidence(supplement_text, language, label="reproduction supplement")
 
-    attachments_dir = bundle_dir / "attachments"
-    if not attachments_dir.exists():
-        fail("confirmed bundle must include an attachments/ directory, even when the reproduction helper is at bundle root")
-    if not attachments_dir.is_dir():
-        fail("attachments exists but is not a directory")
-    if not any(path.is_file() for path in attachments_dir.rglob("*")):
-        fail("attachments/ must contain at least one evidence, PoC, Docker, or supporting file")
-    validate_attachment_shell_scripts(attachments_dir, bundle_dir)
-    validate_attachment_compose_files(attachments_dir, bundle_dir)
-    attachment_script_texts = [
-        path.read_text(encoding="utf-8", errors="ignore")
-        for path in sorted(attachments_dir.rglob("*"))
-        if path.is_file() and is_shell_script(path)
-    ]
-    root_script_paths = [bundle_dir / script_name for script_name in root_scripts]
-    root_script_texts = [
-        path.read_text(encoding="utf-8", errors="ignore")
-        for path in root_script_paths
-        if path.exists()
-    ]
-    reviewer_index_text, _reviewer_index = validate_reviewer_evidence_index(
-        bundle_dir,
-        verification_evidence,
-        combined_text,
-        note_text,
-        supplement_text,
-        reviewer_addendum_text,
-    )
-    validate_replay_log_evidence_registration(
-        bundle_dir,
-        root_script_paths,
-        verification_evidence,
-        _reviewer_index,
-    )
-    reviewer_story_text = "\n".join(
-        [
+        attachments_dir = bundle_dir / "attachments"
+        if not attachments_dir.exists():
+            fail("confirmed bundle must include an attachments/ directory, even when the reproduction helper is at bundle root")
+        if not attachments_dir.is_dir():
+            fail("attachments exists but is not a directory")
+        if not any(path.is_file() for path in attachments_dir.rglob("*")):
+            fail("attachments/ must contain at least one evidence, PoC, Docker, or supporting file")
+        validate_attachment_shell_scripts(attachments_dir, bundle_dir)
+        validate_attachment_compose_files(attachments_dir, bundle_dir)
+        attachment_script_texts = [
+            path.read_text(encoding="utf-8", errors="ignore")
+            for path in sorted(attachments_dir.rglob("*"))
+            if path.is_file() and is_shell_script(path)
+        ]
+        root_script_paths = [bundle_dir / script_name for script_name in root_scripts]
+        root_script_texts = [
+            path.read_text(encoding="utf-8", errors="ignore")
+            for path in root_script_paths
+            if path.exists()
+        ]
+        reviewer_index_text, _reviewer_index = validate_reviewer_evidence_index(
+            bundle_dir,
+            verification_evidence,
             combined_text,
             note_text,
             supplement_text,
             reviewer_addendum_text,
-            reviewer_index_text,
-            json.dumps(verification_evidence, ensure_ascii=False, sort_keys=True),
-            *root_script_texts,
-            *attachment_script_texts,
-        ]
-    )
-    reviewer_summary_text = "\n".join(
-        [
-            combined_text,
-            note_text,
-            supplement_text,
-            reviewer_addendum_text,
-            reviewer_index_text,
-            json.dumps(verification_evidence, ensure_ascii=False, sort_keys=True),
-        ]
-    )
-    validate_no_non_standalone_paths(reviewer_story_text, "reviewer-facing bundle material")
-    validate_mutable_runtime_identity(reviewer_story_text, "reviewer-facing bundle material")
-    validate_reviewer_story_gates(reviewer_story_text)
-    validate_direct_impact_evidence(
-        "\n".join(
-            [
-                reviewer_index_text,
-                json.dumps(verification_evidence, ensure_ascii=False, sort_keys=True),
-                *root_script_texts,
-                *attachment_script_texts,
-            ]
-        ),
-        exploitability_text,
-        language,
-    )
-    validate_ssrf_direct_impact_evidence(reviewer_story_text)
-    validate_claim_oracle_consistency(reviewer_story_text)
-    validate_marker_synchronization(
-        bundle_dir,
-        root_script_paths,
-        verification_evidence,
-        _reviewer_index,
-        reviewer_story_text,
-    )
-    validate_time_based_proof_drift(reviewer_summary_text)
-    validate_local_helper_references(bundle_dir, "\n".join([supplement_text, reviewer_index_text]))
-    validate_poc_attacker_capability_boundary(
-        "\n".join(
+        )
+        validate_replay_log_evidence_registration(
+            bundle_dir,
+            root_script_paths,
+            verification_evidence,
+            _reviewer_index,
+        )
+        reviewer_story_text = "\n".join(
             [
                 combined_text,
                 note_text,
@@ -5432,60 +5843,122 @@ def main() -> None:
                 *root_script_texts,
                 *attachment_script_texts,
             ]
-        ),
-        exploitability_text,
-        language,
-    )
-    warn_poc_label_consistency(
-        bundle_dir,
-        combined_text,
-        note_text,
-        supplement_text,
-        verification_evidence,
-        root_scripts,
-    )
-    warn_recording_video_staleness(
-        bundle_dir,
-        [docx_path, note_path, supplement_path, bundle_dir / "verification-evidence.json", *root_script_paths],
-    )
-    validate_structured_material_consistency(
-        bundle_dir,
-        selected_finding,
-        verification_evidence,
-        combined_text,
-        supplement_text,
-        root_scripts,
-    )
-    validate_exact_narrative_synchronization(
-        selected_finding,
-        verification_evidence,
-        reviewer_story_text,
-    )
-    warn_attachment_hygiene(bundle_dir, [combined_text, note_text, supplement_text], verification_evidence)
-
-    if args.with_libreoffice:
-        optional_libreoffice_check(docx_path)
-    if args.with_markitdown:
-        optional_markitdown_check(docx_path)
-
-    if args.write_audit_event:
-        write_bundle_validated_event(
-            workspace_dir,
-            bundle_dir,
-            language,
-            docx_path,
-            note_path,
-            supplement_path,
-            verification_evidence,
         )
+        reviewer_summary_text = "\n".join(
+            [
+                combined_text,
+                note_text,
+                supplement_text,
+                reviewer_addendum_text,
+                reviewer_index_text,
+                json.dumps(verification_evidence, ensure_ascii=False, sort_keys=True),
+            ]
+        )
+        validate_no_non_standalone_paths(reviewer_story_text, "reviewer-facing bundle material")
+        validate_mutable_runtime_identity(reviewer_story_text, "reviewer-facing bundle material")
+        validate_reviewer_story_gates(reviewer_story_text)
+        validate_direct_impact_evidence(
+            "\n".join(
+                [
+                    reviewer_index_text,
+                    json.dumps(verification_evidence, ensure_ascii=False, sort_keys=True),
+                    *root_script_texts,
+                    *attachment_script_texts,
+                ]
+            ),
+            exploitability_text,
+            language,
+        )
+        validate_ssrf_direct_impact_evidence(reviewer_story_text)
+        validate_claim_oracle_consistency(reviewer_story_text)
+        validate_marker_synchronization(
+            bundle_dir,
+            root_script_paths,
+            verification_evidence,
+            _reviewer_index,
+            reviewer_story_text,
+        )
+        validate_time_based_proof_drift(reviewer_summary_text)
+        validate_local_helper_references(bundle_dir, "\n".join([supplement_text, reviewer_index_text]))
+        validate_poc_attacker_capability_boundary(
+            "\n".join(
+                [
+                    combined_text,
+                    note_text,
+                    supplement_text,
+                    reviewer_addendum_text,
+                    reviewer_index_text,
+                    json.dumps(verification_evidence, ensure_ascii=False, sort_keys=True),
+                    *root_script_texts,
+                    *attachment_script_texts,
+                ]
+            ),
+            exploitability_text,
+            language,
+        )
+        warn_poc_label_consistency(
+            bundle_dir,
+            combined_text,
+            note_text,
+            supplement_text,
+            verification_evidence,
+            root_scripts,
+        )
+        warn_recording_video_staleness(
+            bundle_dir,
+            [docx_path, note_path, supplement_path, bundle_dir / "verification-evidence.json", *root_script_paths],
+        )
+        validate_structured_material_consistency(
+            bundle_dir,
+            selected_finding,
+            verification_evidence,
+            combined_text,
+            supplement_text,
+            root_scripts,
+        )
+        validate_exact_narrative_synchronization(
+            selected_finding,
+            verification_evidence,
+            reviewer_story_text,
+        )
+        warn_attachment_hygiene(bundle_dir, [combined_text, note_text, supplement_text], verification_evidence)
 
-    print(f"VALIDATION PASSED: {bundle_dir}")
-    print(f"language={language}")
-    print(f"docx={docx_path.name}")
-    print(f"attachment_note={note_path.name}")
-    print(f"reproduction_supplement={supplement_path.name}")
-    print(f"attachments_present={'yes' if attachments_dir.exists() else 'no'}")
-    print(f"bundle_root_scripts={','.join(root_scripts) if root_scripts else 'none'}")
+        if args.all_errors:
+            if collector is None:
+                collector = IssueCollector(all_errors=True)
+            emit_all_errors_result(args, bundle_dir, collector)
+            if any(issue.severity == "error" for issue in collector.issues):
+                raise SystemExit(1)
+            return
+
+        if args.with_libreoffice:
+            optional_libreoffice_check(docx_path)
+        if args.with_markitdown:
+            optional_markitdown_check(docx_path)
+
+        if args.write_audit_event:
+            write_bundle_validated_event(
+                workspace_dir,
+                bundle_dir,
+                language,
+                docx_path,
+                note_path,
+                supplement_path,
+                verification_evidence,
+            )
+
+        print(f"VALIDATION PASSED: {bundle_dir}")
+        print(f"language={language}")
+        print(f"docx={docx_path.name}")
+        print(f"attachment_note={note_path.name}")
+        print(f"reproduction_supplement={supplement_path.name}")
+        print(f"attachments_present={'yes' if attachments_dir.exists() else 'no'}")
+        print(f"bundle_root_scripts={','.join(root_scripts) if root_scripts else 'none'}")
+    except CollectedValidationFailure:
+        finish_all_errors_if_needed(args, bundle_dir, collector)
+        raise SystemExit(1)
+    finally:
+        ACTIVE_ISSUE_COLLECTOR = None
 
 
 if __name__ == "__main__":
