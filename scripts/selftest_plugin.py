@@ -762,10 +762,14 @@ def exercise_reviewer_readiness_gate_classification(root: Path) -> None:
     require_text(validator, "SSRF_IMPACT_OVERCLAIM", "SSRF final validator collectable issue code")
     require_text(validator, "CODE_CONTEXT_MINIMUM_QUALITY", "code context minimum quality issue code")
     require_text(validator, "REPLAY_HELPER_PAUSE_CONTRACT", "replay helper pause contract issue code")
+    require_text(validator, "REPLAY_HELPER_READINESS_PAUSE_SEPARATION", "replay helper readiness pause separation issue code")
+    require_text(validator, "REPLAY_HELPER_ABSOLUTE_EVIDENCE_PATH", "replay helper bundle-relative evidence path issue code")
     require_text(validator, "ROOT_SCRIPT_CONTEXT_MISSING", "replay helper context issue code")
     require_text(validator, "report {heading} section contains placeholder-only code context", "code context placeholder rejection")
     require_text(validator, "must pause before proof command execution transitions", "replay pre-command pause rejection")
     require_text(validator, "must pause after proof command output transitions", "replay post-command pause rejection")
+    require_text(validator, "Functional waits must use independent READY_/RETRY_/BACKOFF variables", "readiness pause separation rejection")
+    require_text(validator, "bundle-relative replay log path", "absolute evidence path output rejection")
 
     # These fixtures are deterministic local file rewrites in the report-bundle
     # selftest section. They do not execute Docker, replay scripts, scanners,
@@ -778,6 +782,10 @@ def exercise_reviewer_readiness_gate_classification(root: Path) -> None:
         "Code context negative": "bad_placeholder_code_context",
         "Replay pause positive": "standard_bundle",
         "Replay pause negative": "bad_missing_pre_command_pause",
+        "Readiness pause separation positive": "READY_WAIT_SECONDS",
+        "Readiness pause separation negative": "bad_readiness_pause_reuse",
+        "Bundle-relative evidence path positive": "REPLAY_LOG_REL",
+        "Bundle-relative evidence path negative": "bad_absolute_evidence_log_output",
     }
     for label, needle in fixture_pairs.items():
         if needle not in fixture_text:
@@ -1062,7 +1070,7 @@ def exercise_p8_real_historical_dogfood(root: Path) -> None:
     forbidden_patterns = [
         r"/Users/",
         r"/home/",
-        r"oss-vulnerability-research",
+        r"oss-vulnerability-" r"research",
         r"security-research-\d{8}",
         r"agent-studio",
         r"agent-runtime",
@@ -7340,7 +7348,11 @@ def main() -> None:
             "gothinkster/node-express-realworld-example-app",
             "default configuration",
             "REPLAY_LOG",
+            "REPLAY_LOG_REL=\"attachments/evidence/replay-output.log\"",
             "replay-output.log",
+            "READY_WAIT_SECONDS=\"${ZHULONG_READY_WAIT_SECONDS:-1}\"",
+            "READY_RETRY_COUNT=\"${ZHULONG_READY_RETRY_COUNT:-30}\"",
+            "ready_sleep()",
             "run_logged_command",
             "verify_success_marker",
             "SUCCESS_MARKER",
@@ -7363,6 +7375,17 @@ def main() -> None:
         ):
             if expected not in standard_script_text:
                 raise SystemExit(f"FAILED: generated recording script is missing target identity marker: {expected}")
+        if re.search(
+            r"READY_[A-Z0-9_]+\s*=\s*['\"]?\$?\{?(?:REVIEWER_PAUSE_SHORT|REVIEWER_PAUSE_LONG|PAUSE_SHORT|PAUSE_LONG)\}?",
+            standard_script_text,
+        ):
+            raise SystemExit("FAILED: generated recording script derives functional readiness waits from reviewer pause variables")
+        quick_case_match = re.search(r"quick\)\n(?P<body>.*?)\n\s*;;", standard_script_text, re.DOTALL)
+        if not quick_case_match:
+            raise SystemExit("FAILED: generated quick mode case is missing from recording script")
+        quick_case_body = quick_case_match.group("body")
+        if "READY_WAIT_SECONDS" in quick_case_body or "READY_RETRY_COUNT" in quick_case_body:
+            raise SystemExit("FAILED: quick mode must not rewrite functional readiness wait variables")
         if "find \"$ATTACH_DIR\" -maxdepth 4 -type f" not in standard_script_text:
             raise SystemExit("FAILED: generated recording script must discover Compose files under nested attachments/")
         standard_evidence = json.loads((standard_bundle / "verification-evidence.json").read_text(encoding="utf-8"))
@@ -8648,7 +8671,7 @@ def main() -> None:
             str(bad_missing_replay_log),
             "--language",
             "zh-CN",
-        ], plugin_root, "bundle-local .log replay evidence")
+        ], plugin_root, "must write reviewer replay output")
 
         bad_unregistered_replay_log = copy_standard_bundle("unregistered_replay_log")
         unregistered_evidence_path = bad_unregistered_replay_log / "verification-evidence.json"
@@ -8907,6 +8930,47 @@ def main() -> None:
             "--language",
             "zh-CN",
         ], plugin_root, "not used by proof commands")
+
+        bad_readiness_pause_reuse = copy_standard_bundle("readiness_pause_reuse")
+        readiness_pause_script = bad_readiness_pause_reuse / "run-selftest-jwt-recording.sh"
+        readiness_pause_script.write_text(
+            readiness_pause_script.read_text(encoding="utf-8")
+            + "\nwait_for_service_readiness() {\n"
+              "    retry_count=0\n"
+              "    while [ \"$retry_count\" -lt 3 ]; do\n"
+              "        sleep \"$PAUSE_SHORT\"\n"
+              "        retry_count=$((retry_count + 1))\n"
+              "    done\n"
+              "}\n",
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_readiness_pause_reuse),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "readiness/startup/retry/backoff")
+
+        bad_absolute_evidence_log_output = copy_standard_bundle("absolute_evidence_log_output")
+        absolute_evidence_script = bad_absolute_evidence_log_output / "run-selftest-jwt-recording.sh"
+        absolute_evidence_script.write_text(
+            absolute_evidence_script.read_text(encoding="utf-8").replace(
+                '"$REPLAY_LOG_REL" >&2',
+                '"$REPLAY_LOG" >&2',
+                1,
+            ),
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_report_bundle.py"),
+            "--bundle-dir",
+            str(bad_absolute_evidence_log_output),
+            "--language",
+            "zh-CN",
+        ], plugin_root, "bundle-relative replay log path")
 
         bad_displayed_command_only = copy_standard_bundle("displayed_command_only")
         displayed_only_script = bad_displayed_command_only / "run-selftest-jwt-recording.sh"
@@ -9646,6 +9710,8 @@ def main() -> None:
             bad_direct_marker_mismatch,
             bad_replay_log_marker_missing,
             bad_unrelated_readiness,
+            bad_readiness_pause_reuse,
+            bad_absolute_evidence_log_output,
             bad_displayed_command_only,
             bad_missing_helper_reference,
             bad_pause_overwrite,

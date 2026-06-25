@@ -85,29 +85,43 @@ shape, or confirmed-only routing.
 ## Replay Helper Pause Contract
 
 Purpose: keep the bundle-root replay helper readable for human reviewers and
-screen recordings, not just machine automation.
+screen recordings, not just machine automation, while keeping visual pauses
+separate from functional readiness timing.
 
 What it prevents: helpers that rush through identity, code context, analysis,
 impact boundary, proof output, or evidence summary screens without readable
-checkpoints.
+checkpoints; helpers that reuse reviewer pause variables for service readiness,
+health polling, process startup, retry, or backoff waits; helpers that print a
+machine-local evidence log path when a bundle-relative path is available.
 
 False-positive boundary: quick mode may shorten pauses, and reviewers may set
 `REVIEWER_PAUSE_SHORT=0 REVIEWER_PAUSE_LONG=0`, but the helper must still expose
 overrideable pause variables and keep pause calls around reviewer-relevant
-checkpoints.
+checkpoints. Functional waits may be shortened only through independent
+readiness/backoff variables such as `READY_WAIT_SECONDS` or
+`READY_RETRY_COUNT`.
 
 Accepted example: the root helper defines `REVIEWER_PAUSE_SHORT` and
 `REVIEWER_PAUSE_LONG`, derives `PAUSE_SHORT` and `PAUSE_LONG` from those
 overrides, and calls `pause_step "$PAUSE_SHORT"` or `pause_step "$PAUSE_LONG"`
 after the identity screen, code context, vulnerability analysis, impact-boundary
-screen, proof command/output transitions, and final evidence summary.
+screen, proof command/output transitions, and final evidence summary. The same
+helper defines independent readiness variables, for example
+`READY_WAIT_SECONDS="${ZHULONG_READY_WAIT_SECONDS:-1}"`, and prints
+`attachments/evidence/replay-output.log` instead of an absolute `$REPLAY_LOG`
+path in reviewer-facing messages.
 
 Rejected example: fixed `sleep 0`, hardcoded `pause_step 1`, quick mode that
 overwrites reviewer pause settings, no pause around proof output, or no pause
-after critical screens.
+after critical screens; a readiness loop that runs `sleep "$PAUSE_SHORT"` or
+`sleep "$REVIEWER_PAUSE_SHORT"`; a failure message that prints `$REPLAY_LOG`
+when that variable expands to a machine-local absolute path.
 
 Stable issue codes: `REPLAY_HELPER_PAUSE_CONTRACT` for pause-specific failures
 and `ROOT_SCRIPT_CONTEXT_MISSING` for missing context-screen failures.
+`REPLAY_HELPER_READINESS_PAUSE_SEPARATION` covers readiness/backoff reuse of
+reviewer pause variables. `REPLAY_HELPER_ABSOLUTE_EVIDENCE_PATH` covers
+reviewer-facing evidence path messages that should be bundle-relative.
 
 Why it does not weaken confirmed-bundle gates: it only rejects unreadable
 reviewer replay helpers. It does not execute replay, manufacture evidence, or

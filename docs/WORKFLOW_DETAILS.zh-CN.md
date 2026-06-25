@@ -149,6 +149,9 @@ seeded variant discovery 始终保持候选态。`seeds.jsonl` 与
 - 复现脚本缺少可覆盖的 `REVIEWER_PAUSE_SHORT` / `REVIEWER_PAUSE_LONG`，
   在 quick 模式中改用固定短暂停顿，或缺少代码上下文、代码级分析、影响边界、
   proof 命令/输出、最终证据汇总之后的审核停顿。
+- 复现脚本把 reviewer pause 变量复用于服务 readiness、health polling、启动重试或
+  backoff；reviewer pause 只用于录屏视觉停留，功能性等待必须使用独立的
+  readiness/backoff 变量。
 - 补充复现说明或证据索引引用了 bundle 中不存在的本地 helper 脚本。
 - 缺少 direct-impact replay 证据，例如 `DIRECT_IMPACT_CONFIRMED`、`DIRECT_AVAILABILITY_IMPACT_CONFIRMED` 或等价的程序化危害判据。
 - DOCX 面向审核人的正文中泄漏 Python/JSON 风格的 dict/list/object 中间结构，而不是正常报告 prose。

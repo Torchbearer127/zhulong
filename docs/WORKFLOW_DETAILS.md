@@ -194,6 +194,9 @@ The validator also checks for common contradiction patterns, including:
   `REVIEWER_PAUSE_LONG`, replace quick-mode pauses with fixed short sleeps, or
   skip pauses after code context, code-level analysis, impact-boundary, proof
   command/output, or final summary screens
+- replay helpers that reuse reviewer pause variables for service readiness,
+  health polling, startup retries, or backoff; reviewer pauses are visual only,
+  and functional waits must use independent readiness/backoff variables
 - reproduction supplements or evidence indexes that reference missing
   bundle-local helper scripts
 - missing direct-impact replay evidence, such as `DIRECT_IMPACT_CONFIRMED`,

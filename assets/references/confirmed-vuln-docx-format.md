@@ -244,6 +244,11 @@ The helper must capture raw command stdout/stderr to at least one bundle-local `
 `attachments/evidence/replay-output.log` is valid only after a real reviewer replay or quick replay refreshes it. Placeholder text such as `Zhulong reviewer replay log placeholder`, `Run the bundle-root replay script to refresh this file`, generic `placeholder`, `待补充`, or `占位` is invalid for confirmed bundles even if the placeholder mentions a direct-impact marker.
 Bundle-root helpers must be helper-closed: helper-like calls such as `run_*`, `verify_*`, `assert_*`, `show_*`, `print_*`, or `require_*` must be defined in the same script unless they are normal shell/system commands.
 If the helper includes reviewer pauses, it must honor `REVIEWER_PAUSE_SHORT` and `REVIEWER_PAUSE_LONG`; reviewer automation should be able to run `REVIEWER_PAUSE_SHORT=0 REVIEWER_PAUSE_LONG=0 ./run-*.sh quick docker` without fixed sleeps.
+Reviewer pauses are visual-only holds for recording readability. Service
+readiness, health polling, process startup, retry, and backoff waits must use
+independent variables such as `READY_WAIT_SECONDS` or `READY_RETRY_COUNT`, and
+quick mode must not derive functional waits from `REVIEWER_PAUSE_*` or
+`PAUSE_*`.
 The helper must not recursively invoke itself from the proof path; call the underlying Docker/Docker Compose proof command directly.
 If a PoC uses a non-zero exit code as its expected "vulnerability confirmed" result, the root helper must normalize that expected result into script-level success evidence before printing final confirmation.
 For time-based availability or performance proofs, store exact timings in fresh logs and use thresholds, ranges, order-of-magnitude wording, or latest-log references in reviewer-facing DOCX/Markdown/JSON summaries.

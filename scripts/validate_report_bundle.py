@@ -938,6 +938,8 @@ COLLECTABLE_ISSUE_CODES = {
     "SSRF_IMPACT_OVERCLAIM",
     "CODE_CONTEXT_MINIMUM_QUALITY",
     "REPLAY_HELPER_PAUSE_CONTRACT",
+    "REPLAY_HELPER_READINESS_PAUSE_SEPARATION",
+    "REPLAY_HELPER_ABSOLUTE_EVIDENCE_PATH",
     "LOCAL_HELPER_MISSING",
     "ROOT_SCRIPT_CONTEXT_MISSING",
     "ROOT_SCRIPT_SUCCESS_CHECK_MISSING",
@@ -973,6 +975,22 @@ STRUCTURED_NARRATIVE_FIELDS = (
 SHELL_ASSIGNMENT_PATTERN_TEMPLATE = r"^\s*{name}=(?:'([^']*)'|\"([^\"]*)\"|([^#\s]+))"
 URL_HOST_PATTERN = re.compile(r"https?://([^/\s'\"`$)]+)", re.IGNORECASE)
 READINESS_CHECK_LINE_PATTERN = re.compile(r"\b(?:readiness|ready|health|healthcheck|健康|就绪)\b", re.IGNORECASE)
+FUNCTIONAL_WAIT_SCOPE_PATTERN = re.compile(
+    r"(?:readiness|ready|health|healthcheck|startup|retry|backoff|poll|wait|启动|重试|退避|健康|就绪)",
+    re.IGNORECASE,
+)
+FUNCTIONAL_WAIT_VARIABLE_ASSIGNMENT_PATTERN = re.compile(
+    r"\b(?:READY|READINESS|HEALTH|STARTUP|RETRY|BACKOFF|WAIT|POLL)[A-Z0-9_]*\s*="
+)
+REVIEWER_PAUSE_VARIABLE_REFERENCE_PATTERN = re.compile(
+    r"(?:\$\{?(?:REVIEWER_PAUSE_SHORT|REVIEWER_PAUSE_LONG|PAUSE_SHORT|PAUSE_LONG)\}?|"
+    r"\b(?:REVIEWER_PAUSE_SHORT|REVIEWER_PAUSE_LONG|PAUSE_SHORT|PAUSE_LONG)\b)"
+)
+SLEEP_COMMAND_PATTERN = re.compile(r"(?<![A-Za-z0-9_-])sleep\s+")
+REVIEWER_OUTPUT_ABSOLUTE_EVIDENCE_VAR_PATTERN = re.compile(
+    r"(?:\$\{(?:REPLAY_LOG|EVIDENCE_DIR|ATTACH_DIR)\}|"
+    r"\$(?:REPLAY_LOG|EVIDENCE_DIR|ATTACH_DIR)(?![A-Za-z0-9_]))"
+)
 DISPLAYED_REPLAY_COMMAND_PATTERN = re.compile(
     r"\b(?:docker\s+(?:run|compose|exec|logs|build|cp)|"
     r"(?:python3?|node|php|bash|sh)\s+(?:attachments/|\./|\$\{?(?:SCRIPT_DIR|ATTACH_DIR|BUNDLE_ROOT)\}?/))",
@@ -1333,6 +1351,18 @@ def infer_issue_details(message: str) -> tuple[str, str, str]:
             "REPLAY_HELPER_PAUSE_CONTRACT",
             first_match(r"run-[A-Za-z0-9_.-]+\.sh", message),
             "Keep overrideable reviewer pauses around identity, context, analysis, impact-boundary, proof output, and final summary screens.",
+        )
+    if "readiness/startup/retry/backoff" in lower or "functional readiness" in lower:
+        return (
+            "REPLAY_HELPER_READINESS_PAUSE_SEPARATION",
+            first_match(r"run-[A-Za-z0-9_.-]+\.sh", message),
+            "Use READY_/RETRY_/BACKOFF variables for functional waits; reserve REVIEWER_PAUSE_*/PAUSE_* for visual reviewer holds.",
+        )
+    if "absolute evidence path" in lower or "bundle-relative replay log path" in lower:
+        return (
+            "REPLAY_HELPER_ABSOLUTE_EVIDENCE_PATH",
+            first_match(r"run-[A-Za-z0-9_.-]+\.sh", message),
+            "Print bundle-relative evidence paths such as attachments/evidence/replay-output.log in reviewer-facing output.",
         )
     if "missing local helper" in lower or "references helper outside" in lower:
         return (
@@ -4724,6 +4754,56 @@ def validate_root_script_readiness_relevance(script_path: Path, bundle_dir: Path
             )
 
 
+def validate_root_script_readiness_pause_separation(script_path: Path, bundle_dir: Path, text: str) -> None:
+    rel = script_path.relative_to(bundle_dir).as_posix()
+    for line, scope in shell_lines_with_function_scope(text):
+        stripped = strip_shell_inline_comment(line).strip()
+        if not stripped:
+            continue
+        has_pause_reference = bool(REVIEWER_PAUSE_VARIABLE_REFERENCE_PATTERN.search(stripped))
+        if not has_pause_reference:
+            continue
+        in_functional_scope = bool(
+            FUNCTIONAL_WAIT_SCOPE_PATTERN.search(scope)
+            or FUNCTIONAL_WAIT_SCOPE_PATTERN.search(stripped)
+        )
+        assigns_functional_wait = bool(FUNCTIONAL_WAIT_VARIABLE_ASSIGNMENT_PATTERN.search(stripped))
+        sleeps_with_pause_var = bool(SLEEP_COMMAND_PATTERN.search(stripped))
+        if assigns_functional_wait or (in_functional_scope and sleeps_with_pause_var):
+            fail(
+                f"{rel} uses reviewer pause variables for readiness/startup/retry/backoff timing: "
+                f"{stripped}. Functional waits must use independent READY_/RETRY_/BACKOFF variables.",
+                code="REPLAY_HELPER_READINESS_PAUSE_SEPARATION",
+                path=rel,
+                fix=(
+                    "Keep REVIEWER_PAUSE_SHORT/REVIEWER_PAUSE_LONG and PAUSE_SHORT/PAUSE_LONG for visual "
+                    "recording holds only; use READY_WAIT_SECONDS, READY_RETRY_COUNT, or equivalent "
+                    "functional wait variables for service readiness and backoff."
+                ),
+            )
+
+
+def validate_root_script_reviewer_output_paths(script_path: Path, bundle_dir: Path, text: str) -> None:
+    rel = script_path.relative_to(bundle_dir).as_posix()
+    for line in logical_shell_lines(text):
+        stripped = line.strip()
+        if not (
+            line_is_display_only_shell(stripped)
+            or re.match(r"^(?:log_line|highlight_success|highlight_note|highlight_danger|print_banner|focus_line)\b", stripped)
+        ):
+            continue
+        message_text = re.sub(r"(?:>>?|2>>?)\s*\"?\$\{?REPLAY_LOG\}?\"?", "", stripped)
+        if not REVIEWER_OUTPUT_ABSOLUTE_EVIDENCE_VAR_PATTERN.search(message_text):
+            continue
+        fail(
+            f"{rel} prints a bundle-local evidence path through an absolute evidence path variable: "
+            f"{stripped}. Use a bundle-relative replay log path in reviewer-facing output.",
+            code="REPLAY_HELPER_ABSOLUTE_EVIDENCE_PATH",
+            path=rel,
+            fix="Print attachments/evidence/replay-output.log or another bundle-relative path instead of $REPLAY_LOG/$EVIDENCE_DIR/$ATTACH_DIR.",
+        )
+
+
 def normalize_replay_log_path(raw: str) -> str:
     value = str(raw or "").strip().strip("'\"")
     value = value.replace("${ATTACH_DIR}", "attachments")
@@ -4923,6 +5003,8 @@ def validate_bundle_root_scripts(bundle_dir: Path, note_text: str) -> list[str]:
         validate_root_script_target_identity(script_path, bundle_dir, text)
         validate_root_script_reviewer_context(script_path, bundle_dir, text)
         validate_root_script_readiness_relevance(script_path, bundle_dir, text)
+        validate_root_script_readiness_pause_separation(script_path, bundle_dir, text)
+        validate_root_script_reviewer_output_paths(script_path, bundle_dir, text)
         validate_root_script_final_summary_pause(script_path, bundle_dir, text)
         validate_root_script_replay_log_contract(script_path, bundle_dir, text)
         validate_root_script_displayed_command_execution(script_path, bundle_dir, text)

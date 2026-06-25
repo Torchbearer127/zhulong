@@ -299,6 +299,10 @@ default contract even when the user does not restate them:
   impact-boundary screen, proof command/output transitions, and final evidence
   summary. Do not ship fixed `sleep 0`, `sleep 1`, or hardcoded short pauses
   that cannot be overridden.
+- Reviewer pause variables are visual-only recording holds. Do not use
+  `REVIEWER_PAUSE_SHORT`, `REVIEWER_PAUSE_LONG`, `PAUSE_SHORT`, or `PAUSE_LONG`
+  for service readiness, health polling, process startup, retry, or backoff
+  timing; use independent readiness/backoff variables instead.
 - Bundle-root replay helpers must be helper-closed: helper-like calls such as
   `run_*`, `verify_*`, `assert_*`, `show_*`, `print_*`, or `require_*` must be
   defined in the same script unless they are normal shell/system commands.

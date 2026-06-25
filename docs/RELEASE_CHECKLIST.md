@@ -98,6 +98,10 @@ Use this checklist before publishing a tagged open-source release of Zhulong
 - [ ] Bundle-root replay helpers expose reviewer pause overrides and preserve
   readable pauses around identity, code context, analysis, impact boundary,
   proof command/output transitions, and final evidence summary screens.
+- [ ] Bundle-root replay helpers keep reviewer pauses visual-only: service
+  readiness, health polling, startup retries, and backoff use independent
+  readiness/backoff variables, and reviewer-facing evidence path messages are
+  bundle-relative.
 - [ ] `assets/references/reviewer-readiness-validator-gates.md` exists and
   classifies reviewer-readiness gate classification scope for SSRF impact
   overclaim, code context minimum quality, and replay helper pause contract.
