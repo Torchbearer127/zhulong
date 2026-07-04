@@ -856,7 +856,7 @@ def write_jsonl(path: Path, records: list[dict[str, object]], *, force: bool) ->
     path.write_text(payload, encoding="utf-8")
 
 
-def load_selected_seed(seed_card_path: Path, seed_id: str) -> dict[str, Any]:
+def load_selected_seed(seed_card_path: Path, seed_id: str, workspace_dir: Path) -> dict[str, Any]:
     cards = load_variant_seed_cards(seed_card_path)
     matches = [card for card in cards if card.get("seed_id") == seed_id]
     if not matches:
@@ -864,7 +864,7 @@ def load_selected_seed(seed_card_path: Path, seed_id: str) -> dict[str, Any]:
     if len(matches) > 1:
         fail(f"seed_id appears multiple times in seed-card file: {seed_id}")
     seed = dict(matches[0])
-    validate_variant_seed_card(seed, final=True)
+    validate_variant_seed_card(seed, final=True, workspace_dir=workspace_dir, seed_card_path=seed_card_path)
     scope = seed.get("search_scope")
     if not isinstance(scope, dict) or scope.get("repository") != "same-target-repository":
         fail("seed search_scope.repository must be same-target-repository")
@@ -892,26 +892,6 @@ def validate_boundaries(args: argparse.Namespace) -> tuple[Path, Path, Path, Pat
     if not is_relative_to(output_path, variant_dir):
         fail("output must be inside workspace evidence/variant-analysis/")
     return repo_root, workspace_dir, seed_card_path, output_path
-
-
-def validate_seed_bundle(seed: dict[str, Any], workspace_dir: Path) -> None:
-    raw_path = scalar_text(seed.get("confirmed_bundle_path")).strip()
-    if not raw_path:
-        fail("seed confirmed_bundle_path is empty")
-    bundle_dir = (workspace_dir / raw_path).resolve()
-    confirmed_dir = (workspace_dir / "confirmed").resolve()
-    if not is_relative_to(bundle_dir, confirmed_dir) or bundle_dir == confirmed_dir:
-        fail("seed confirmed_bundle_path must resolve inside workspace confirmed/")
-    if not bundle_dir.is_dir():
-        fail(f"seed confirmed_bundle_path does not exist: {raw_path}")
-    verification_path = bundle_dir / "verification-evidence.json"
-    if not verification_path.is_file():
-        fail("seed confirmed bundle is missing verification-evidence.json")
-    verification = load_json(verification_path)
-    if not isinstance(verification, dict):
-        fail("seed verification-evidence.json must be a JSON object")
-    if verification.get("verification_status") != "confirmed_in_docker":
-        fail("seed confirmed bundle verification_status must be confirmed_in_docker")
 
 
 def find_candidates(args: argparse.Namespace, repo_root: Path, workspace_dir: Path, seed: dict[str, Any]) -> list[CandidateDraft]:
@@ -948,8 +928,7 @@ def main() -> None:
     if args.limit < 0:
         fail("--limit must be non-negative")
     repo_root, workspace_dir, seed_card_path, output_path = validate_boundaries(args)
-    seed = load_selected_seed(seed_card_path, args.seed_id)
-    validate_seed_bundle(seed, workspace_dir)
+    seed = load_selected_seed(seed_card_path, args.seed_id, workspace_dir)
     drafts = find_candidates(args, repo_root, workspace_dir, seed)
     records = [draft_to_record(seed, draft, rank=index + 1) for index, draft in enumerate(drafts)]
     write_jsonl(output_path, records, force=args.force)

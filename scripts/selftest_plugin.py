@@ -2963,7 +2963,7 @@ def exercise_extract_variant_seed(plugin_root: Path, workspace: Path) -> None:
     positive_bundle = confirmed_dir / "ssrf-import-url"
     fixture_local_path = "/" + "Users" + "/" + "fixture" + "/private/repo"
     write_extractor_fixture_bundle(positive_bundle, local_path_text=fixture_local_path)
-    final_output = output_dir / "seeds.jsonl"
+    final_output = output_dir / "positive-seed.jsonl"
     run(
         [
             sys.executable,
@@ -3394,7 +3394,16 @@ def write_variant_candidates_jsonl(path: Path, records: list[dict]) -> None:
 def write_finalization_variant_artifacts(workspace: Path) -> None:
     variant_dir = workspace / "evidence" / "variant-analysis"
     variant_dir.mkdir(parents=True, exist_ok=True)
-    write_variant_seed_card(variant_dir / "seeds.jsonl")
+    confirmed_bundles = sorted(
+        path for path in (workspace / "confirmed").iterdir()
+        if path.is_dir() and not path.name.startswith(".")
+    )
+    if not confirmed_bundles:
+        raise SystemExit("FAILED: cannot write finalization seed fixture without a confirmed bundle")
+    write_variant_seed_card(
+        variant_dir / "seeds.jsonl",
+        {"confirmed_bundle_path": f"confirmed/{confirmed_bundles[0].name}"},
+    )
     write_variant_candidates_jsonl(
         variant_dir / "variant-candidates.jsonl",
         [valid_variant_candidate_record()],
@@ -3527,21 +3536,38 @@ def assert_no_forbidden_candidate_language(record: dict) -> None:
                 raise SystemExit(f"FAILED: candidate field {key} contains forbidden confirmation wording: {record}")
 
 
-def exercise_find_variant_candidates(plugin_root: Path, workspace: Path) -> None:
+def exercise_find_variant_candidates(plugin_root: Path, workspace: Path, seed_bundle_source: Path) -> None:
     finder = plugin_root / "scripts/find_variant_candidates.py"
     fixture_root = workspace / "variant-candidate-fixtures"
     repo_root = fixture_root / "repo"
     temp_root = fixture_root
     fixture_workspace = repo_root / "security-research-variant"
     fixture_workspace.mkdir(parents=True, exist_ok=True)
+    (fixture_workspace / "asr-config.json").write_text(
+        json.dumps(
+            {
+                "workspace_root": fixture_workspace.name,
+                "workspace_created_at": "2026-06-20T00:00:00Z",
+                "confirmed_output_dir": f"{fixture_workspace.name}/confirmed",
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     write_variant_candidate_fixture_sources(repo_root, temp_root)
 
-    seed_bundle = fixture_workspace / "confirmed/ssrf-import-url"
-    write_extractor_fixture_bundle(seed_bundle)
+    seed_bundle = fixture_workspace / "confirmed" / seed_bundle_source.name
+    seed_bundle.parent.mkdir(parents=True, exist_ok=True)
+    if seed_bundle.exists():
+        shutil.rmtree(seed_bundle)
+    shutil.copytree(seed_bundle_source, seed_bundle)
     variant_dir = fixture_workspace / "evidence/variant-analysis"
     variant_dir.mkdir(parents=True, exist_ok=True)
     seed_card = variant_dir / "seeds.jsonl"
-    write_variant_seed_card(seed_card)
+    write_variant_seed_card(seed_card, {"confirmed_bundle_path": f"confirmed/{seed_bundle.name}"})
     output = variant_dir / "variant-candidates.jsonl"
     command = [
         sys.executable,
@@ -3640,7 +3666,13 @@ def exercise_find_variant_candidates(plugin_root: Path, workspace: Path) -> None
     )
 
     other_scope_seed = variant_dir / "other-scope-seed.jsonl"
-    write_variant_seed_card(other_scope_seed, {"search_scope": {"repository": "different-target-repository"}})
+    write_variant_seed_card(
+        other_scope_seed,
+        {
+            "confirmed_bundle_path": f"confirmed/{seed_bundle.name}",
+            "search_scope": {"repository": "different-target-repository"},
+        },
+    )
     run_expect_fail(
         [
             sys.executable,
@@ -3678,7 +3710,7 @@ def exercise_find_variant_candidates(plugin_root: Path, workspace: Path) -> None
             str(variant_dir / "outside-bundle-output.jsonl"),
         ],
         plugin_root,
-        "confirmed_bundle_path must resolve inside workspace confirmed",
+        "confirmed_bundle_path must be a normalized workspace-relative confirmed/<bundle> path",
     )
 
     outside_workspace = temp_root / "outside-audit-workspace"
@@ -3701,6 +3733,94 @@ def exercise_find_variant_candidates(plugin_root: Path, workspace: Path) -> None
         plugin_root,
         "workspace-dir must be inside repo-root",
     )
+
+
+def exercise_variant_seed_confirmed_bundle_gate(plugin_root: Path, workspace: Path, valid_bundle: Path) -> None:
+    validator = plugin_root / "scripts/validate_report_bundle.py"
+    gate_dir = workspace / "evidence" / "variant-analysis"
+    gate_dir.mkdir(parents=True, exist_ok=True)
+    seed_path = gate_dir / "seeds.jsonl"
+
+    def validate_seed(overrides: dict | None = None, *, expected: str | None = None, draft: bool = False) -> None:
+        write_variant_seed_card(
+            seed_path,
+            {"confirmed_bundle_path": f"confirmed/{valid_bundle.name}", **(overrides or {})},
+        )
+        command = [
+            sys.executable,
+            str(validator),
+            "--workspace-dir",
+            str(workspace),
+            "--variant-seed-card",
+            str(seed_path),
+        ]
+        if draft:
+            command.append("--variant-seed-draft")
+        if expected is None:
+            run(command, plugin_root)
+        else:
+            run_expect_fail(command, plugin_root, expected)
+
+    validate_seed()
+
+    bad_paths = [
+        ("candidate-findings.md#C02", "markdown row or anchor"),
+        ("manual-notes/seed.md", "candidate/manual/evidence-only material"),
+        ("evidence/docker/ssrf-import-url", "candidate/manual/evidence-only material"),
+        ("docker/ssrf-import-url", "candidate/manual/evidence-only material"),
+        ("evidence/variant-analysis/manual-seed.jsonl", "candidate/manual/evidence-only material"),
+    ]
+    for bad_path, expected in bad_paths:
+        validate_seed({"confirmed_bundle_path": bad_path}, expected=expected)
+
+    zero_workspace = workspace / "issue17-zero-confirmed-workspace"
+    zero_seed = zero_workspace / "evidence" / "variant-analysis" / "seeds.jsonl"
+    zero_seed.parent.mkdir(parents=True, exist_ok=True)
+    write_variant_seed_card(zero_seed, {"confirmed_bundle_path": f"confirmed/{valid_bundle.name}"})
+    run_expect_fail(
+        [
+            sys.executable,
+            str(validator),
+            "--workspace-dir",
+            str(zero_workspace),
+            "--variant-seed-card",
+            str(zero_seed),
+        ],
+        plugin_root,
+        "confirmed bundle directory does not exist",
+    )
+
+    partial_bundle = workspace / "confirmed" / "issue17-partial-bundle"
+    if partial_bundle.exists():
+        shutil.rmtree(partial_bundle)
+    partial_bundle.mkdir(parents=True)
+    (partial_bundle / "verification-evidence.json").write_text(
+        json.dumps({"verification_status": "confirmed_in_docker"}, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    validate_seed(
+        {"confirmed_bundle_path": "confirmed/issue17-partial-bundle"},
+        expected="must reference a validated confirmed bundle",
+    )
+
+    validation_failed_bundle = workspace / "confirmed" / "issue17-validation-failed-bundle"
+    if validation_failed_bundle.exists():
+        shutil.rmtree(validation_failed_bundle)
+    shutil.copytree(valid_bundle, validation_failed_bundle)
+    verification_path = validation_failed_bundle / "verification-evidence.json"
+    verification = json.loads(verification_path.read_text(encoding="utf-8"))
+    verification["verification_status"] = "blocked_docker_unavailable"
+    verification_path.write_text(json.dumps(verification, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    validate_seed(
+        {"confirmed_bundle_path": "confirmed/issue17-validation-failed-bundle"},
+        expected="must reference a validated confirmed bundle",
+    )
+
+    validate_seed({"root_cause": "unknown"}, expected="must not use unknown")
+    validate_seed({"root_cause": "unknown"}, draft=True)
+    for transient in (partial_bundle, validation_failed_bundle):
+        if transient.exists():
+            shutil.rmtree(transient)
 
 
 def iter_json_strings(value) -> list[str]:
@@ -5758,7 +5878,6 @@ def main() -> None:
                 raise SystemExit(f"FAILED: bootstrapped workspace is missing scripts/{variant_helper}")
         exercise_variant_seed_card_validation(plugin_root, workspace)
         exercise_extract_variant_seed(plugin_root, workspace)
-        exercise_find_variant_candidates(plugin_root, workspace)
         exercise_variant_candidate_validation(plugin_root, workspace)
         if not (workspace / "bin/audit_disposition.py").exists():
             raise SystemExit("FAILED: bootstrapped workspace is missing audit_disposition.py")
@@ -7295,6 +7414,8 @@ def main() -> None:
             "--language",
             "zh-CN",
         ], plugin_root)
+        exercise_variant_seed_confirmed_bundle_gate(plugin_root, workspace, standard_bundle)
+        exercise_find_variant_candidates(plugin_root, workspace, standard_bundle)
         standard_lines = docx_text(standard_docx)
         if not standard_lines or "硬编码 JWT 密钥导致身份认证绕过" not in standard_lines[0]:
             raise SystemExit("FAILED: standard vulnerability_name fixture rendered a generic DOCX title")

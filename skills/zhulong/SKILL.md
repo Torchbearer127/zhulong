@@ -180,6 +180,12 @@ default contract even when the user does not restate them:
   that is bundle-relative or workspace-relative, keep search scope bounded to the
   same target repository, and must not use `unknown` for root cause, source,
   sink, or Docker success oracle.
+- Formal final seed cards must set `confirmed_bundle_path` to a real
+  `<audit-workspace>/confirmed/<bundle>/` directory that passes
+  `validate_report_bundle.py`. Candidate ids, markdown rows, ad hoc notes,
+  Docker evidence directories, partial bundles, and validation-failed bundles
+  must fail closed and may only remain manual/draft/unverified notes outside
+  `evidence/variant-analysis/seeds.jsonl`.
 - To bridge an existing confirmed bundle into the seed-card contract, use
   `scripts/extract_variant_seed.py` offline. It reads existing bundle evidence
   only; it does not execute PoCs, run Docker, search the repository, rank
@@ -617,6 +623,7 @@ python3 <audit-workspace>/bin/extract_variant_seed.py \
   --bundle-dir <audit-workspace>/confirmed/<confirmed-bundle> \
   --output <audit-workspace>/evidence/variant-analysis/seeds.jsonl
 python3 <audit-workspace>/bin/validate-report-bundle.py \
+  --workspace-dir <audit-workspace> \
   --variant-seed-card <audit-workspace>/evidence/variant-analysis/seeds.jsonl
 python3 <audit-workspace>/bin/find_variant_candidates.py \
   --repo-root <repo-root> \
@@ -625,6 +632,7 @@ python3 <audit-workspace>/bin/find_variant_candidates.py \
   --seed-id <seed-id> \
   --output <audit-workspace>/evidence/variant-analysis/variant-candidates.jsonl
 python3 <audit-workspace>/bin/validate-report-bundle.py \
+  --workspace-dir <audit-workspace> \
   --variant-candidates <audit-workspace>/evidence/variant-analysis/variant-candidates.jsonl
 ```
 

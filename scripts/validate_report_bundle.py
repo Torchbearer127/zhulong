@@ -1162,6 +1162,13 @@ def parse_args() -> argparse.Namespace:
         help="Validate one P6.2 Variant Seed Card JSON object or JSONL file instead of a confirmed bundle.",
     )
     parser.add_argument(
+        "--workspace-dir",
+        help=(
+            "Audit workspace root for variant seed confirmed-bundle gating. "
+            "When omitted, formal evidence/variant-analysis/seeds.jsonl paths are inferred fail-closed."
+        ),
+    )
+    parser.add_argument(
         "--variant-candidates",
         help="Validate one P6.4 variant-candidates JSONL file or JSON array instead of a confirmed bundle.",
     )
@@ -1451,7 +1458,96 @@ def validate_variant_seed_path(value: str) -> None:
         fail("variant seed confirmed_bundle_path must not contain an operator-local absolute path")
 
 
-def validate_variant_seed_card(card: dict[str, object], *, final: bool = True) -> None:
+def is_relative_to_path(path: Path, parent: Path) -> bool:
+    try:
+        path.relative_to(parent)
+        return True
+    except ValueError:
+        return False
+
+
+def infer_workspace_from_variant_seed_path(path: Path) -> Path | None:
+    resolved = path.expanduser().resolve()
+    if (
+        resolved.name == "seeds.jsonl"
+        and resolved.parent.name == "variant-analysis"
+        and resolved.parent.parent.name == "evidence"
+    ):
+        return resolved.parent.parent.parent
+    return None
+
+
+def require_variant_seed_workspace(workspace_dir: Path | None, seed_card_path: Path | None) -> Path | None:
+    if workspace_dir is not None:
+        workspace = workspace_dir.expanduser().resolve()
+        if not workspace.is_dir():
+            fail(f"variant seed workspace-dir does not exist: {workspace}")
+        return workspace
+    if seed_card_path is None:
+        return None
+    inferred = infer_workspace_from_variant_seed_path(seed_card_path)
+    if inferred is None:
+        return None
+    if not inferred.is_dir():
+        fail(f"variant seed inferred workspace does not exist: {inferred}")
+    return inferred
+
+
+def validate_variant_seed_confirmed_bundle_gate(card: dict[str, object], workspace_dir: Path) -> None:
+    raw_path = require_variant_seed_text(card, "confirmed_bundle_path")
+    if "#" in raw_path:
+        fail("variant seed confirmed_bundle_path must point to a bundle directory, not a markdown row or anchor")
+    if "\\" in raw_path:
+        fail("variant seed confirmed_bundle_path must be a POSIX workspace-relative path")
+    path = PurePosixPath(raw_path)
+    if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
+        fail("variant seed confirmed_bundle_path must be a normalized workspace-relative confirmed/<bundle> path")
+    lowered_parts = [part.lower() for part in path.parts]
+    forbidden_parts = {
+        "candidate-findings.md",
+        "candidate-findings",
+        "false-positives.md",
+        "unverified-leads.md",
+        "unverified",
+        "evidence",
+        "docker",
+        "variant-analysis",
+    }
+    if any(part in forbidden_parts for part in lowered_parts) or raw_path.lower().endswith(".md"):
+        fail("variant seed confirmed_bundle_path must not point to candidate/manual/evidence-only material")
+    if len(path.parts) != 2 or path.parts[0] != "confirmed" or path.parts[1].startswith("."):
+        fail("variant seed confirmed_bundle_path must identify a final confirmed/<bundle> directory")
+
+    bundle_dir = (workspace_dir / Path(*path.parts)).resolve()
+    confirmed_dir = (workspace_dir / "confirmed").resolve()
+    if not is_relative_to_path(bundle_dir, confirmed_dir) or bundle_dir == confirmed_dir:
+        fail("variant seed confirmed_bundle_path must resolve inside workspace confirmed/")
+    if not bundle_dir.is_dir():
+        fail(f"variant seed confirmed bundle directory does not exist: {raw_path}")
+
+    validator = Path(__file__).resolve()
+    proc = subprocess.run(
+        [sys.executable, str(validator), "--bundle-dir", str(bundle_dir)],
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        output = ((proc.stdout or "") + (proc.stderr or "")).strip()
+        if len(output) > 600:
+            output = output[:600] + "..."
+        fail(
+            "variant seed confirmed_bundle_path must reference a validated confirmed bundle; "
+            f"validator failed for {raw_path}: {output or 'no validator output'}"
+        )
+
+
+def validate_variant_seed_card(
+    card: dict[str, object],
+    *,
+    final: bool = True,
+    workspace_dir: Path | None = None,
+    seed_card_path: Path | None = None,
+) -> None:
     if not isinstance(card, dict):
         fail("variant seed card must be a JSON object")
     missing = [field for field in VARIANT_SEED_REQUIRED_FIELDS if field not in card]
@@ -1514,6 +1610,10 @@ def validate_variant_seed_card(card: dict[str, object], *, final: bool = True) -
             fail("variant seed negative_filters must contain only strings")
     elif not isinstance(negative_filters, str):
         fail("variant seed negative_filters must be a string or list of strings")
+
+    workspace = require_variant_seed_workspace(workspace_dir, seed_card_path) if final else None
+    if workspace is not None:
+        validate_variant_seed_confirmed_bundle_gate(card, workspace)
 
 
 def load_variant_seed_cards(path: Path) -> list[dict[str, object]]:
@@ -5769,9 +5869,16 @@ def main() -> None:
     if args.variant_seed_draft and not args.variant_seed_card:
         fail("--variant-seed-draft is only valid with --variant-seed-card")
     if args.variant_seed_card:
-        cards = load_variant_seed_cards(Path(args.variant_seed_card).expanduser())
+        seed_card_path = Path(args.variant_seed_card).expanduser()
+        workspace_dir = Path(args.workspace_dir).expanduser() if args.workspace_dir else None
+        cards = load_variant_seed_cards(seed_card_path)
         for card in cards:
-            validate_variant_seed_card(card, final=not args.variant_seed_draft)
+            validate_variant_seed_card(
+                card,
+                final=not args.variant_seed_draft,
+                workspace_dir=workspace_dir,
+                seed_card_path=seed_card_path,
+            )
         print(f"VARIANT SEED VALIDATION PASSED: {args.variant_seed_card}")
         print(f"cards={len(cards)}")
         print(f"mode={'draft' if args.variant_seed_draft else 'final'}")

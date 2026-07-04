@@ -189,6 +189,7 @@ Docker 证据。
 本流程设有多条硬性约束边界：
 
 - P6.1 确立同类漏洞扩展的流程边界。P6.2 定义 Variant Seed Card 字段，但不实现自动种子提取或候选发现。
+- 最终 Variant Seed Card 只有在 `confirmed_bundle_path` 解析到当前审计工作区内真实的 `confirmed/<bundle>/` 目录，且该 bundle 通过 `validate_report_bundle.py` 时才会被接受。指向 candidate id、markdown 行、临时备注、Docker evidence 目录、partial bundle 或 validation-failed bundle 的种子必须 fail closed；人工同类备注只能保留在正式 `evidence/variant-analysis/seeds.jsonl` 之外。
 - P6.4 增加 `scripts/find_variant_candidates.py`，这是一个离线 helper，只读取最终 Variant Seed Card，并在同一目标仓库内对候选进行排序；它仅使用本地 Python 文件系统遍历，不调用扫描器、`rg`、`grep`、`git`、网络 API、LLM、Docker、PoC、DOCX 渲染或确认漏洞包生成。
 - 种子卡与候选列表仅作为辅助研判资料，无法替代 `verification-evidence.json`、findings JSON、DOCX 报告、补充复现说明、附件索引、replay 日志、Docker 核验材料以及确认漏洞包的校验结果。
 - 同类候选漏洞禁止在补充说明、确认漏洞包、审阅备注、最终摘要里标注为已确认漏洞。候选漏洞只有完成独立 Docker 或 Docker Compose 环境复现，且通过确认漏洞包校验流程后，才可升级判定为已确认同类漏洞。
@@ -200,8 +201,8 @@ Docker 证据。
 推荐复核操作顺序：首先校验种子卡是否精准描述已确认漏洞可稳定复现的根因；其次核查候选列表内所有条目是否均维持候选状态；最后针对有跟进价值的候选漏洞，单独搭建 Docker 环境完成复现验证。配套校验命令如下：
 
 ```bash
-python3 scripts/validate_report_bundle.py --variant-seed-card <seed-card.json>
-python3 scripts/validate_report_bundle.py --variant-candidates <variant-candidates.jsonl>
+python3 scripts/validate_report_bundle.py --workspace-dir <audit-workspace> --variant-seed-card <seed-card.json>
+python3 scripts/validate_report_bundle.py --workspace-dir <audit-workspace> --variant-candidates <variant-candidates.jsonl>
 ```
 
 若某一条同类候选漏洞最终核验确认成立，它仍需和常规已确认漏洞保持一致标准：具备独立 Docker 复现流程、replay/直接影响佐证文件、`verification-evidence.json` 凭证，以及校验合格的确认漏洞包。

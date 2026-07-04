@@ -11,7 +11,7 @@ from typing import Any, NamedTuple
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
-from validate_report_bundle import validate_variant_seed_card  # type: ignore
+from validate_report_bundle import infer_workspace_from_variant_seed_path, validate_variant_seed_card  # type: ignore
 
 
 FINAL_REQUIRED_FIELDS = ("root_cause", "source_pattern", "sink_pattern", "docker_success_oracle")
@@ -635,6 +635,15 @@ def validate_final(card: dict[str, Any]) -> tuple[bool, str]:
     return True, ""
 
 
+def output_is_formal_seed_card(path: Path, workspace_dir: Path) -> bool:
+    try:
+        resolved = path.expanduser().resolve()
+    except OSError:
+        resolved = path.expanduser().parent.resolve() / path.name
+    inferred = infer_workspace_from_variant_seed_path(resolved)
+    return inferred is not None and inferred == workspace_dir.resolve()
+
+
 def write_jsonl(path: Path, records: list[dict[str, Any]], *, force: bool) -> None:
     if path.exists() and not force:
         fail(f"refusing to overwrite existing file without --force: {path}")
@@ -728,6 +737,13 @@ def main() -> None:
     final_ok, final_reason = validate_final(card)
 
     output_path = Path(args.output).expanduser()
+    if final_ok and output_is_formal_seed_card(output_path, workspace_dir):
+        try:
+            validate_variant_seed_card(card, final=True, workspace_dir=workspace_dir, seed_card_path=output_path)
+        except SystemExit as exc:
+            final_ok = False
+            final_reason = str(exc)
+
     if final_ok:
         write_jsonl(output_path, [card], force=args.force)
         print(f"VARIANT SEED EXTRACTION PASSED: {output_path}")

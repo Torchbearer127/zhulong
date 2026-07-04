@@ -31,4 +31,4 @@ Before creating a final `confirmed/<slug>/` bundle:
 - Do not patch the direct-impact marker in one file to silence drift; keep the marker aligned across helper, log, evidence JSON, and reviewer material.
 - Run final confirmed bundle validation after generation. Contract preflight does not replace `validate_report_bundle.py` or `validate_all_report_bundles.py`.
 - If staging or final validation fails, use `validate_report_bundle.py --bundle-dir <bundle> --all-errors --json --output-errors <bundle>/bundle-validation-errors.json` only to diagnose multiple actionable issues. Default validation remains fail-fast; all-errors reports do not repair bundles or confirm vulnerabilities.
-- After promote, run seeded variant discovery and finalization. Candidate output from seeded variant discovery remains candidate-only until independently Docker-confirmed and bundle-validated.
+- After promote, run seeded variant discovery only from a `confirmed/<bundle>/` directory that passes `validate_report_bundle.py`, then run finalization. Candidate output from seeded variant discovery remains candidate-only until independently Docker-confirmed and bundle-validated.

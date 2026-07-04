@@ -124,7 +124,7 @@ def run_single_report_validator(workspace: Path, flag: str, path: Path) -> dict[
     if validator is None:
         return {"ok": False, "error": "validate_report_bundle.py not found"}
     proc = subprocess.run(
-        [sys.executable, str(validator), flag, str(path)],
+        [sys.executable, str(validator), "--workspace-dir", str(workspace), flag, str(path)],
         capture_output=True,
         text=True,
     )

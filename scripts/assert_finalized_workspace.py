@@ -100,7 +100,7 @@ def run_report_validator(workspace: Path, flag: str, path: Path) -> tuple[bool, 
     if validator is None:
         return False, "validate_report_bundle.py not found"
     proc = subprocess.run(
-        [sys.executable, str(validator), flag, str(path)],
+        [sys.executable, str(validator), "--workspace-dir", str(workspace), flag, str(path)],
         capture_output=True,
         text=True,
     )

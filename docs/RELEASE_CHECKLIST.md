@@ -119,6 +119,9 @@ Use this checklist before publishing a tagged open-source release of Zhulong
   explicit diagnostic mode only; default final bundle validation stays
   fail-fast and all-errors output does not repair bundles or confirm
   vulnerabilities.
+- [ ] Formal seeded variant discovery accepts only seed cards backed by a
+  validated `confirmed/<bundle>/`; candidate/manual/evidence-only pointers fail
+  closed and remain outside `evidence/variant-analysis/seeds.jsonl`.
 - [ ] Report wording, CVSS, reproduction scripts, evidence JSON, and
   reviewer-facing artifacts do not contradict each other.
 - [ ] SSRF reports keep callback/reachability, response-content exposure,

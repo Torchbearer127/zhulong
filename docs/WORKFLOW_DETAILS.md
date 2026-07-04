@@ -260,6 +260,12 @@ vulnerabilities or replace Docker evidence.
   existing confirmed bundle and extracts a Variant Seed Card. It does not
   execute PoCs, run Docker, search the repository, rank candidates, or confirm
   variants.
+- Final Variant Seed Cards are accepted only when `confirmed_bundle_path`
+  resolves to a real `confirmed/<bundle>/` directory in the current audit
+  workspace and that bundle passes `validate_report_bundle.py`. Candidate ids,
+  markdown rows, ad hoc notes, Docker evidence directories, partial bundles, and
+  validation-failed bundles fail closed; manual same-pattern notes must stay
+  outside formal `evidence/variant-analysis/seeds.jsonl`.
 - P6.4 adds `scripts/find_variant_candidates.py`, an offline helper that reads
   one final Variant Seed Card and ranks same-repository candidates. It uses
   local Python filesystem traversal only; it does not call scanners, `rg`,
