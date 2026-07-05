@@ -3,6 +3,7 @@
   "candidate_id": "CAND-0001",
   "verdict": "confirmed_in_docker",
   "verification_status": "confirmed_in_docker",
+  "evidence_level": "entrypoint_reproduced",
   "target_ref": {
     "target_config": "zhulong-target.yaml",
     "tested_ref": "git-sha-or-local-state"
@@ -27,6 +28,18 @@
     "type": "callback_observed",
     "success": true,
     "summary": "Callback server received request from target container."
+  },
+  "attacker_entrypoint": {
+    "id": "import-url",
+    "kind": "http",
+    "route": "POST /api/import",
+    "input_shape": "JSON body field url controlled by a low-privilege user.",
+    "entrypoint_to_sink_path": "POST /api/import parses url and passes it to the server-side HTTP fetch helper.",
+    "deterministic_impact_oracle": "Callback server receives a request from the target container."
+  },
+  "replay_material": {
+    "description": "Reviewer-facing Docker Compose callback replay transcript.",
+    "path": "verifier/CAND-0001/logs/poc.log"
   },
   "disposition_recommendation": "confirmed_in_docker",
   "negative_checks": [

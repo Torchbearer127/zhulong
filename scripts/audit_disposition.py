@@ -346,6 +346,8 @@ def disposition_record_from_candidate(
     }
     if verdict_path is not None:
         record["verdict_path"] = workspace_relative(workspace, verdict_path)
+    if isinstance(verdict_doc, dict) and verdict_doc.get("evidence_level"):
+        record["evidence_level"] = str(verdict_doc.get("evidence_level") or "").strip()
     return record
 
 

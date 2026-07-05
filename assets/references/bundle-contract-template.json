@@ -29,6 +29,17 @@
     "observed_observation": "The replay log contains DIRECT_IMPACT_CONFIRMED after the listener receives the callback.",
     "severity_escalation_attempted": true
   },
+  "entrypoint_evidence": {
+    "evidence_level": "entrypoint_reproduced",
+    "attacker_controlled_entrypoint": "POST /api/import",
+    "input_shape": "JSON body field url controlled by a low-privilege user.",
+    "entrypoint_to_sink_path": "POST /api/import parses the url parameter and reaches the server-side HTTP fetch helper inside Docker Compose.",
+    "deterministic_impact_oracle": "The listener records one request from the target container and the replay log contains DIRECT_IMPACT_CONFIRMED.",
+    "replay_material": {
+      "description": "Bundle-root helper and replay log reproduce the attacker-entrypoint path.",
+      "path": "attachments/evidence/replay-output.log"
+    }
+  },
   "replay": {
     "root_script": {
       "path": "run-example-ssrf-callback-recording.sh"

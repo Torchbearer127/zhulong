@@ -1,5 +1,6 @@
 {
   "candidate_path": "candidates/CAND-CONTRACT-BLOCKED/candidate.json",
+  "evidence_level": "blocked_entrypoint_verification",
   "claim": {
     "impact": "native plugin loading could affect process integrity if reproduced",
     "missing_constraint": "plugin origin is not constrained before load",

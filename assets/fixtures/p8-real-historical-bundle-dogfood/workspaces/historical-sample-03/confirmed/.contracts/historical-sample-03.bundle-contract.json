@@ -29,6 +29,17 @@
     "observed_observation": "The historical trace had a replay evidence file present but not registered in all expected material.",
     "severity_escalation_attempted": true
   },
+  "entrypoint_evidence": {
+    "evidence_level": "entrypoint_reproduced",
+    "attacker_controlled_entrypoint": "POST /sanitized/auth",
+    "input_shape": "Request metadata controlled by a remote user in the historical trace.",
+    "entrypoint_to_sink_path": "The sanitized request metadata reaches the authorization decision without trusted identity proof.",
+    "deterministic_impact_oracle": "The replay transcript and reviewer index should reference DIRECT_IMPACT_CONFIRMED.",
+    "replay_material": {
+      "description": "Historical replay material is intentionally unregistered elsewhere in this fixture.",
+      "path": "attachments/evidence/replay-output.log"
+    }
+  },
   "replay": {
     "root_script": {
       "path": "run-historical-sample-03-recording.sh"
@@ -98,4 +109,3 @@
     "run_after_promote": true
   }
 }
-

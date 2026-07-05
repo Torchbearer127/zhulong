@@ -161,6 +161,18 @@ default contract even when the user does not restate them:
 - Confirm vulnerabilities only with Docker evidence. After the first
   confirmation, run one explicit severity-escalation pass in Docker before final
   scoring, and only upgrade severity when stronger impact is verified.
+- Treat function-level, source-level, or container-local reproduction as
+  `code_level_reproduced` supporting evidence only. It can explain the dangerous
+  code path, but it must not be written as `confirmed_in_docker` or used for
+  confirmed bundle generation until a real attacker-controlled API/CLI/UI/RPC or
+  library entrypoint is reproduced in Docker or Docker Compose.
+- A `confirmed_in_docker` verdict or bundle-ready contract must name the
+  attacker-controlled entrypoint, accepted input shape, entrypoint-to-sink path,
+  deterministic impact oracle, and reviewer-facing replay material. If
+  deployment, dependency, health check, permission, or external-service blockers
+  prevent entrypoint verification, record
+  `blocked_entrypoint_verification` under blocked/unverified material instead
+  of unqualified confirmed status.
 - Before finalizing `completed_with_confirmed_bundles`, run one explicit seeded
   variant-discovery pass in the same repository using a confirmed seed that
   already has a valid confirmed bundle and Docker success oracle.

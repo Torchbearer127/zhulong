@@ -3,6 +3,7 @@
   "candidate_id": "CAND-CONTRACT-FP",
   "commands": [],
   "disposition_recommendation": "false_positive",
+  "evidence_level": "blocked_entrypoint_verification",
   "environment": {
     "credential_paths_mounted": false,
     "docker_socket_mounted": false,

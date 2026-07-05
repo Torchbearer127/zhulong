@@ -272,6 +272,13 @@ BUNDLE_RULE_MAPPING_REQUIRED_FIELDS = [
     "docker_evidence.expected_observation",
     "docker_evidence.observed_observation",
     "docker_evidence.severity_escalation_attempted",
+    "entrypoint_evidence",
+    "entrypoint_evidence.evidence_level",
+    "entrypoint_evidence.attacker_controlled_entrypoint",
+    "entrypoint_evidence.input_shape",
+    "entrypoint_evidence.entrypoint_to_sink_path",
+    "entrypoint_evidence.deterministic_impact_oracle",
+    "entrypoint_evidence.replay_material",
     "replay",
     "replay.root_script.path",
     "replay.log.path",
@@ -1461,6 +1468,7 @@ def valid_verifier_verdict(overrides: dict | None = None) -> dict:
         "candidate_id": "CAND-0001",
         "verdict": "confirmed_in_docker",
         "verification_status": "confirmed_in_docker",
+        "evidence_level": "entrypoint_reproduced",
         "target_ref": {
             "target_config": "zhulong-target.yaml",
             "tested_ref": "git-sha-or-local-state",
@@ -1485,6 +1493,18 @@ def valid_verifier_verdict(overrides: dict | None = None) -> dict:
             "type": "callback_observed",
             "success": True,
             "summary": "Callback server received request from target container.",
+        },
+        "attacker_entrypoint": {
+            "id": "import-url",
+            "kind": "http",
+            "route": "POST /api/import",
+            "input_shape": "JSON body field url controlled by a low-privilege user.",
+            "entrypoint_to_sink_path": "POST /api/import parses url and reaches the server-side HTTP fetch helper.",
+            "deterministic_impact_oracle": "Callback server receives request from target container.",
+        },
+        "replay_material": {
+            "description": "Reviewer-facing verifier replay log.",
+            "path": "verifier/CAND-0001/logs/poc.log",
         },
         "disposition_recommendation": "confirmed_in_docker",
         "negative_checks": [
@@ -1544,6 +1564,17 @@ def valid_bundle_contract(overrides: dict | None = None) -> dict:
             "expected_observation": "Listener receives one request from the target container.",
             "observed_observation": "Replay log contains DIRECT_IMPACT_CONFIRMED.",
             "severity_escalation_attempted": True,
+        },
+        "entrypoint_evidence": {
+            "evidence_level": "entrypoint_reproduced",
+            "attacker_controlled_entrypoint": "POST /api/import",
+            "input_shape": "JSON body field url controlled by a low-privilege user.",
+            "entrypoint_to_sink_path": "POST /api/import parses url and reaches the server-side HTTP fetch helper.",
+            "deterministic_impact_oracle": "Callback listener receives a request and replay log contains DIRECT_IMPACT_CONFIRMED.",
+            "replay_material": {
+                "description": "Bundle-root helper and replay log reproduce the attacker-entrypoint path.",
+                "path": "attachments/evidence/replay-output.log",
+            },
         },
         "replay": {
             "root_script": {"path": "run-example-ssrf-callback-recording.sh"},
@@ -1804,6 +1835,36 @@ def exercise_bundle_contract_validator(plugin_root: Path) -> None:
         workspace = new_workspace("thin-code-context")
         payload = run_bundle_contract_json(plugin_root, workspace, write_contract(workspace, "bad", code_context_thin), expected_returncode=1)
         require_bundle_issue(payload, "CODE_CONTEXT_TOO_THIN")
+
+        code_level_only = json_clone(valid_bundle_contract())
+        code_level_only["entrypoint_evidence"]["evidence_level"] = "code_level_reproduced"
+        workspace = new_workspace("code-level-only")
+        payload = run_bundle_contract_json(plugin_root, workspace, write_contract(workspace, "bad", code_level_only), expected_returncode=1)
+        require_bundle_issue(payload, "CODE_LEVEL_ONLY_NOT_BUNDLE_READY")
+
+        blocked_entrypoint = json_clone(valid_bundle_contract())
+        blocked_entrypoint["entrypoint_evidence"]["evidence_level"] = "blocked_entrypoint_verification"
+        workspace = new_workspace("blocked-entrypoint")
+        payload = run_bundle_contract_json(plugin_root, workspace, write_contract(workspace, "bad", blocked_entrypoint), expected_returncode=1)
+        require_bundle_issue(payload, "ENTRYPOINT_EVIDENCE_MISSING")
+
+        missing_entrypoint_path = json_clone(valid_bundle_contract())
+        missing_entrypoint_path["entrypoint_evidence"]["entrypoint_to_sink_path"] = ""
+        workspace = new_workspace("missing-entrypoint-path")
+        payload = run_bundle_contract_json(plugin_root, workspace, write_contract(workspace, "bad", missing_entrypoint_path), expected_returncode=1)
+        require_bundle_issue(payload, "ENTRYPOINT_TO_SINK_PATH_MISSING")
+
+        missing_impact_oracle = json_clone(valid_bundle_contract())
+        missing_impact_oracle["entrypoint_evidence"]["deterministic_impact_oracle"] = ""
+        workspace = new_workspace("missing-impact-oracle")
+        payload = run_bundle_contract_json(plugin_root, workspace, write_contract(workspace, "bad", missing_impact_oracle), expected_returncode=1)
+        require_bundle_issue(payload, "IMPACT_ORACLE_MISSING")
+
+        missing_replay_material = json_clone(valid_bundle_contract())
+        missing_replay_material["entrypoint_evidence"]["replay_material"] = {"description": ""}
+        workspace = new_workspace("missing-replay-material")
+        payload = run_bundle_contract_json(plugin_root, workspace, write_contract(workspace, "bad", missing_replay_material), expected_returncode=1)
+        require_bundle_issue(payload, "REPLAY_MATERIAL_MISSING")
 
         invalid_severity = json_clone(valid_bundle_contract())
         invalid_severity["finding"]["severity"] = "高危"
@@ -2257,6 +2318,12 @@ def exercise_finding_contract_validators(plugin_root: Path) -> None:
             ("credential-paths-mounted", ("environment", "credential_paths_mounted"), True, "credential_paths_mounted=false"),
             ("oracle-success-false", ("oracle_result", "success"), False, "oracle_result.success=true"),
             ("empty-artifacts", ("artifacts",), [], "non-empty artifacts"),
+            ("code-level-only", ("evidence_level",), "code_level_reproduced", "code_level_reproduced evidence is supporting evidence only"),
+            ("blocked-entrypoint", ("evidence_level",), "blocked_entrypoint_verification", "blocked_entrypoint_verification cannot produce confirmed_in_docker"),
+            ("missing-input-shape", ("attacker_entrypoint", "input_shape"), "", "$.attacker_entrypoint.input_shape"),
+            ("missing-entrypoint-path", ("attacker_entrypoint", "entrypoint_to_sink_path"), "", "$.attacker_entrypoint.entrypoint_to_sink_path"),
+            ("missing-impact-oracle", ("attacker_entrypoint", "deterministic_impact_oracle"), "", "$.attacker_entrypoint.deterministic_impact_oracle"),
+            ("missing-replay-path", ("replay_material", "path"), "", "$.replay_material requires path or generation_command"),
         ]
         for name, path_keys, value, expected in confirmed_failure_cases:
             bad_verdict = json_clone(valid_verifier_verdict())
@@ -2277,6 +2344,7 @@ def exercise_finding_contract_validators(plugin_root: Path) -> None:
             non_confirmed["disposition_recommendation"] = verdict_name
             non_confirmed["commands"] = []
             non_confirmed["artifacts"] = []
+            non_confirmed["evidence_level"] = "blocked_entrypoint_verification" if verdict_name == "blocked" else "code_level_reproduced"
             non_confirmed["oracle_result"]["success"] = False
             non_confirmed["oracle_result"]["summary"] = f"{verdict_name} decision has a clear selftest reason."
             non_confirmed["reason"] = f"{verdict_name} selftest reason"
@@ -2420,18 +2488,18 @@ def exercise_independent_verifier(plugin_root: Path) -> None:
             candidate,
             out_confirmed,
             run_id="fixture-confirmed",
-            expected_returncode=0,
+            expected_returncode=1,
             extra=["--dry-run-result", "confirmed_in_docker"],
         )
-        if "verdict=confirmed_in_docker" not in confirmed_output:
-            raise SystemExit(f"FAILED: fixture confirmed verifier did not report confirmed:\n{confirmed_output}")
+        if "verdict=blocked" not in confirmed_output:
+            raise SystemExit(f"FAILED: fixture confirmed verifier did not report blocked entrypoint verification:\n{confirmed_output}")
         confirmed_doc = assert_valid_verdict(candidate, out_confirmed)
-        if confirmed_doc["verdict"] != "confirmed_in_docker":
-            raise SystemExit("FAILED: fixture confirmed verdict did not validate as confirmed_in_docker")
+        if confirmed_doc["verdict"] != "blocked" or confirmed_doc.get("evidence_level") != "blocked_entrypoint_verification":
+            raise SystemExit("FAILED: fixture confirmed dry-run did not stay blocked_entrypoint_verification")
         if "SIMULATED dry-run fixture" not in confirmed_doc["oracle_result"]["summary"]:
-            raise SystemExit("FAILED: fixture confirmed verdict is not clearly marked simulated")
+            raise SystemExit("FAILED: fixture blocked verdict is not clearly marked simulated")
         if not confirmed_doc["artifacts"]:
-            raise SystemExit("FAILED: fixture confirmed verdict must include fixture artifacts")
+            raise SystemExit("FAILED: fixture blocked verdict must preserve fixture artifacts as supporting evidence")
 
         invalid_target = write_target(
             "invalid-target.yaml",
@@ -2530,6 +2598,7 @@ def exercise_disposition_integration(plugin_root: Path) -> None:
                 doc["environment"]["fresh_container"] = False
                 doc["commands"] = []
                 doc["artifacts"] = []
+                doc["evidence_level"] = "blocked_entrypoint_verification" if status == "blocked" else "code_level_reproduced"
                 doc["oracle_result"]["success"] = False
                 doc["oracle_result"]["summary"] = f"{status} selftest disposition reason."
                 doc["reason"] = f"{status} selftest disposition reason"

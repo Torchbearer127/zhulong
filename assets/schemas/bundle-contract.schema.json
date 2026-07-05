@@ -10,6 +10,7 @@
     "render",
     "finding",
     "docker_evidence",
+    "entrypoint_evidence",
     "replay",
     "direct_impact",
     "files",
@@ -158,6 +159,75 @@
         },
         "severity_escalation_attempted": {
           "type": "boolean"
+        }
+      }
+    },
+    "entrypoint_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "evidence_level",
+        "attacker_controlled_entrypoint",
+        "input_shape",
+        "entrypoint_to_sink_path",
+        "deterministic_impact_oracle",
+        "replay_material"
+      ],
+      "properties": {
+        "evidence_level": {
+          "enum": [
+            "entrypoint_reproduced",
+            "confirmed_in_docker"
+          ]
+        },
+        "attacker_controlled_entrypoint": {
+          "type": "string",
+          "minLength": 1
+        },
+        "input_shape": {
+          "type": "string",
+          "minLength": 1
+        },
+        "entrypoint_to_sink_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "deterministic_impact_oracle": {
+          "type": "string",
+          "minLength": 1
+        },
+        "replay_material": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "description"
+          ],
+          "properties": {
+            "description": {
+              "type": "string",
+              "minLength": 1
+            },
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "generation_command": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "anyOf": [
+            {
+              "required": [
+                "path"
+              ]
+            },
+            {
+              "required": [
+                "generation_command"
+              ]
+            }
+          ]
         }
       }
     },

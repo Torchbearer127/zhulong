@@ -56,9 +56,16 @@ that state.
 - the verifier verdict cross-checks against the same `candidate_id`;
 - the verifier verdict cross-checks against the same `target_ref`;
 - the verifier verdict is exactly `confirmed_in_docker`.
+- the verifier verdict has `evidence_level=entrypoint_reproduced` or
+  `confirmed_in_docker`, attacker-entrypoint metadata, input shape,
+  entrypoint-to-sink path, deterministic oracle, and replay material.
 
 Invalid verifier verdicts fail closed. The script exits nonzero before writing a
 new disposition ledger.
+
+`code_level_reproduced` and `blocked_entrypoint_verification` verdict material
+may be written to candidate or blocked/unverified records, but it must not map
+to `confirmed_in_docker`.
 
 ## Non-Authoritative Notes
 

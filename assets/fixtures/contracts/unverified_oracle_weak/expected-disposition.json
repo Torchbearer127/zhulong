@@ -1,5 +1,6 @@
 {
   "candidate_path": "candidates/CAND-CONTRACT-UNVERIFIED/candidate.json",
+  "evidence_level": "code_level_reproduced",
   "claim": {
     "impact": "log content may be misleading, but no security boundary impact is proven",
     "missing_constraint": "task name is logged without escaping",

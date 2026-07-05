@@ -49,8 +49,8 @@ Optional flags:
 - `--allow-execute`: reserved for explicit Docker-only execution support.
 - `--run-id`: names the verifier run directory.
 - `--dry-run-result`: fixture-only selftest simulation. Simulated confirmed
-  verdicts are clearly marked as dry-run fixtures and are not real bundle
-  evidence.
+  results are downgraded to blocked entrypoint verification because dry-run
+  fixtures do not prove attacker-entrypoint reachability.
 
 By default, R1 avoids surprising execution. It never falls back to host-side PoC
 execution.
@@ -96,7 +96,11 @@ The verdict records:
 
 Any `confirmed_in_docker` verdict must have a fresh Docker-backed environment,
 no host network, no privileged mode, no Docker socket mount, no credential path
-mounts, successful oracle output, and non-empty command and artifact records.
+mounts, successful oracle output, non-empty command and artifact records,
+`evidence_level=entrypoint_reproduced` or `confirmed_in_docker`, an
+attacker-controlled entrypoint with input shape and entrypoint-to-sink path, a
+deterministic impact oracle, and reviewer-facing replay material. Code-level or
+function-level reproduction remains supporting evidence only.
 
 The verifier relies on the existing target, candidate, and verdict validators
 to reject local absolute paths, parent traversal, privileged runtime text, host

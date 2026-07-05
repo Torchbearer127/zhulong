@@ -182,13 +182,19 @@ def base_verdict(
     target_valid: bool = True,
     candidate_valid: bool = True,
     target_ref_matches: bool = True,
+    evidence_level: str | None = None,
+    attacker_entrypoint: dict[str, Any] | None = None,
+    replay_material: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     runtime_type = target_runtime_type(target_doc)
-    return {
+    if evidence_level is None:
+        evidence_level = "confirmed_in_docker" if verdict == "confirmed_in_docker" else "blocked_entrypoint_verification"
+    doc: dict[str, Any] = {
         "schema_version": 1,
         "candidate_id": candidate["candidate_id"],
         "verdict": verdict,
         "verification_status": verdict,
+        "evidence_level": evidence_level,
         "target_ref": candidate["target_ref"],
         "environment": {
             "fresh_container": verdict == "confirmed_in_docker",
@@ -216,6 +222,11 @@ def base_verdict(
         "reason": reason,
         "verified_at": utc_now(),
     }
+    if attacker_entrypoint is not None:
+        doc["attacker_entrypoint"] = attacker_entrypoint
+    if replay_material is not None:
+        doc["replay_material"] = replay_material
+    return doc
 
 
 def write_log(run_dir: Path, message: str) -> Path:
@@ -293,25 +304,19 @@ def build_verdict(
         fixture_artifact = write_fixture_artifact(run_dir, args.dry_run_result, oracle_type)
         log_path = write_log(run_dir, f"dry-run fixture result selected: {args.dry_run_result}")
         if args.dry_run_result == "confirmed_in_docker":
-            reason = "SIMULATED dry-run fixture confirmation; no Docker, PoC, replay, or network execution occurred"
+            reason = (
+                "SIMULATED dry-run fixture reached a code-level oracle only; no attacker entrypoint, "
+                "Docker, PoC, replay, or network execution occurred, so this is blocked entrypoint verification"
+            )
             return base_verdict(
                 candidate=candidate,
                 target_doc=target_doc,
-                verdict="confirmed_in_docker",
+                verdict="blocked",
                 oracle_type=oracle_type,
-                oracle_success=True,
+                oracle_success=False,
                 reason=reason,
-                commands=[
-                    {
-                        "name": "dry-run-fixture",
-                        "command": "dry-run fixture simulation; real Docker execution disabled",
-                        "exit_code": 0,
-                    }
-                ],
-                artifacts=[
-                    workspace_rel(log_path, workspace),
-                    workspace_rel(fixture_artifact, workspace),
-                ],
+                artifacts=[workspace_rel(log_path, workspace), workspace_rel(fixture_artifact, workspace)],
+                evidence_level="blocked_entrypoint_verification",
             )
         reason = f"dry-run fixture produced {args.dry_run_result}; no Docker, PoC, replay, or network execution occurred"
         return base_verdict(

@@ -18,16 +18,26 @@ from validate_candidate import (
 
 
 VERDICTS = {"blocked", "false_positive", "unverified", "confirmed_in_docker"}
+EVIDENCE_LEVELS = {
+    "code_level_reproduced",
+    "entrypoint_reproduced",
+    "confirmed_in_docker",
+    "blocked_entrypoint_verification",
+}
+CONFIRMED_EVIDENCE_LEVELS = {"entrypoint_reproduced", "confirmed_in_docker"}
 RUNTIME_TYPES = {"docker", "docker-compose", "manual-blocked"}
 TOP_LEVEL_KEYS = {
     "schema_version",
     "candidate_id",
     "verdict",
     "verification_status",
+    "evidence_level",
     "target_ref",
     "environment",
     "commands",
     "oracle_result",
+    "attacker_entrypoint",
+    "replay_material",
     "disposition_recommendation",
     "negative_checks",
     "artifacts",
@@ -98,6 +108,46 @@ def require_int(parent: dict[str, Any], key: str, path: str) -> int:
     return value
 
 
+def validate_attacker_entrypoint(verdict_doc: dict[str, Any]) -> None:
+    entrypoint = require_mapping(verdict_doc, "attacker_entrypoint", "$")
+    reject_unknown(
+        entrypoint,
+        {
+            "id",
+            "kind",
+            "route",
+            "input_shape",
+            "entrypoint_to_sink_path",
+            "deterministic_impact_oracle",
+        },
+        "$.attacker_entrypoint",
+    )
+    for key in (
+        "id",
+        "kind",
+        "route",
+        "input_shape",
+        "entrypoint_to_sink_path",
+        "deterministic_impact_oracle",
+    ):
+        require_nonempty_string(entrypoint, key, "$.attacker_entrypoint")
+
+
+def validate_replay_material(verdict_doc: dict[str, Any]) -> None:
+    replay = require_mapping(verdict_doc, "replay_material", "$")
+    reject_unknown(replay, {"description", "path", "generation_command"}, "$.replay_material")
+    require_nonempty_string(replay, "description", "$.replay_material")
+    path = replay.get("path")
+    generation_command = replay.get("generation_command")
+    if not (
+        isinstance(path, str)
+        and path.strip()
+        or isinstance(generation_command, str)
+        and generation_command.strip()
+    ):
+        fail("$.replay_material requires path or generation_command for reviewer-facing replay material")
+
+
 def walk_strings(value: Any, path: str = "$", key: str = "") -> None:
     if isinstance(value, dict):
         for child_key, child in value.items():
@@ -127,6 +177,17 @@ def validate_verdict(verdict_doc: dict[str, Any]) -> dict[str, str]:
     verification_status = require_nonempty_string(verdict_doc, "verification_status", "$")
     if verification_status != verdict:
         fail("$.verification_status must be consistent with verdict")
+    evidence_level = str(verdict_doc.get("evidence_level") or "").strip()
+    if evidence_level:
+        if evidence_level not in EVIDENCE_LEVELS:
+            fail(
+                "$.evidence_level must be one of: blocked_entrypoint_verification, "
+                "code_level_reproduced, entrypoint_reproduced, confirmed_in_docker"
+            )
+        if evidence_level == "code_level_reproduced" and verdict == "confirmed_in_docker":
+            fail("code_level_reproduced evidence is supporting evidence only and cannot produce confirmed_in_docker")
+        if evidence_level == "blocked_entrypoint_verification" and verdict == "confirmed_in_docker":
+            fail("blocked_entrypoint_verification cannot produce confirmed_in_docker")
     disposition = require_nonempty_string(verdict_doc, "disposition_recommendation", "$")
     if disposition != verdict:
         fail("$.disposition_recommendation must equal the safe disposition derived from verdict")
@@ -197,6 +258,10 @@ def validate_verdict(verdict_doc: dict[str, Any]) -> dict[str, str]:
     require_nonempty_string(verdict_doc, "verified_at", "$")
 
     if verdict == "confirmed_in_docker":
+        if evidence_level not in CONFIRMED_EVIDENCE_LEVELS:
+            fail("confirmed_in_docker requires evidence_level=entrypoint_reproduced or confirmed_in_docker")
+        validate_attacker_entrypoint(verdict_doc)
+        validate_replay_material(verdict_doc)
         if runtime_type == "manual-blocked":
             fail("confirmed_in_docker requires a Docker-backed runtime")
         if not fresh_container:

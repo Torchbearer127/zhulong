@@ -33,6 +33,11 @@ Required fields include:
 Static locations may be empty. When present, each location must use a
 repository-relative path and valid line numbers.
 
+The candidate `entrypoint` field is a claim about where verification should
+look. It is not proof that the attacker can reach the sink. Entrypoint proof
+must come from the verifier verdict and, for bundle generation, the bundle
+contract.
+
 Validate locally:
 
 ```bash
@@ -52,8 +57,23 @@ Allowed verdicts are:
 - `unverified`
 - `confirmed_in_docker`
 
+Verifier verdicts also carry `evidence_level`:
+
+- `code_level_reproduced`: a container-local, function-level, or source-level
+  proof succeeded, but attacker entrypoint reachability is not proven.
+- `entrypoint_reproduced`: Docker or Docker Compose evidence reached the sink
+  through a real attacker-controlled entrypoint and oracle.
+- `confirmed_in_docker`: the evidence is entrypoint-backed and ready for
+  confirmed-bundle gates.
+- `blocked_entrypoint_verification`: code-level or partial evidence exists, but
+  API/CLI/UI/RPC/library entrypoint verification is blocked.
+
 `confirmed_in_docker` requires strong Docker evidence:
 
+- `evidence_level=entrypoint_reproduced` or `confirmed_in_docker`
+- `attacker_entrypoint.id`, `kind`, `route`, `input_shape`,
+  `entrypoint_to_sink_path`, and `deterministic_impact_oracle`
+- `replay_material.path` or `replay_material.generation_command`
 - `environment.fresh_container=true`
 - `environment.host_network=false`
 - `environment.privileged=false`
@@ -62,6 +82,9 @@ Allowed verdicts are:
 - `oracle_result.success=true`
 - non-empty `commands`
 - non-empty `artifacts`
+
+`code_level_reproduced` can be retained as supporting evidence, but it cannot
+produce `confirmed_in_docker` or satisfy confirmed bundle readiness by itself.
 
 `blocked`, `false_positive`, and `unverified` verdicts must include a reason or
 summary explaining the non-confirmed decision.

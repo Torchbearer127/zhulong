@@ -1,5 +1,6 @@
 {
   "candidate_path": "candidates/CAND-CONTRACT-FP/candidate.json",
+  "evidence_level": "blocked_entrypoint_verification",
   "claim": {
     "impact": "attacker could make the server fetch an internal URL",
     "missing_constraint": "debug importer appears to accept arbitrary URLs",

@@ -122,6 +122,9 @@ Use this checklist before publishing a tagged open-source release of Zhulong
 - [ ] Formal seeded variant discovery accepts only seed cards backed by a
   validated `confirmed/<bundle>/`; candidate/manual/evidence-only pointers fail
   closed and remain outside `evidence/variant-analysis/seeds.jsonl`.
+- [ ] Evidence-level gates reject code-level-only or blocked-entrypoint material
+  as bundle-ready; `confirmed_in_docker` requires attacker-entrypoint evidence,
+  input shape, entrypoint-to-sink path, and deterministic impact oracle.
 - [ ] Report wording, CVSS, reproduction scripts, evidence JSON, and
   reviewer-facing artifacts do not contradict each other.
 - [ ] SSRF reports keep callback/reachability, response-content exposure,

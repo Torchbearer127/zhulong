@@ -29,6 +29,16 @@
     "observed_observation": "Replay log contains DIRECT_IMPACT_CONFIRMED.",
     "severity_escalation_attempted": true
   },
+  "entrypoint_evidence": {
+    "evidence_level": "code_level_reproduced",
+    "attacker_controlled_entrypoint": "",
+    "input_shape": "",
+    "entrypoint_to_sink_path": "",
+    "deterministic_impact_oracle": "",
+    "replay_material": {
+      "description": ""
+    }
+  },
   "replay": {
     "root_script": {
       "path": "run-p8-dogfood-recording.sh"

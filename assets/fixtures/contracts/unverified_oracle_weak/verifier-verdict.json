@@ -5,6 +5,7 @@
   "candidate_id": "CAND-CONTRACT-UNVERIFIED",
   "commands": [],
   "disposition_recommendation": "unverified",
+  "evidence_level": "code_level_reproduced",
   "environment": {
     "credential_paths_mounted": false,
     "docker_socket_mounted": false,

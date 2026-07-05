@@ -29,6 +29,17 @@
     "observed_observation": "The historical trace initially kept a placeholder replay note instead of a real command/output transcript.",
     "severity_escalation_attempted": true
   },
+  "entrypoint_evidence": {
+    "evidence_level": "entrypoint_reproduced",
+    "attacker_controlled_entrypoint": "POST /sanitized/import",
+    "input_shape": "URL-like request field controlled by a low-privilege user in the historical trace.",
+    "entrypoint_to_sink_path": "The sanitized import route propagates the URL-like field to the server-side fetch helper.",
+    "deterministic_impact_oracle": "A registered replay transcript should show the bounded impact oracle.",
+    "replay_material": {
+      "description": "Historical replay material is intentionally malformed elsewhere in this fixture.",
+      "path": "attachments/evidence/replay-output.log"
+    }
+  },
   "replay": {
     "root_script": {
       "path": "run-historical-sample-01-recording.sh"
@@ -98,4 +109,3 @@
     "run_after_promote": true
   }
 }
-

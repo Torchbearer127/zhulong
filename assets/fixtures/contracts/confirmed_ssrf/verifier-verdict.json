@@ -11,6 +11,7 @@
     }
   ],
   "disposition_recommendation": "confirmed_in_docker",
+  "evidence_level": "entrypoint_reproduced",
   "environment": {
     "credential_paths_mounted": false,
     "docker_socket_mounted": false,
@@ -34,6 +35,18 @@
     "success": true,
     "summary": "Callback server observed a request from the target container for the attacker-controlled import URL.",
     "type": "callback_observed"
+  },
+  "attacker_entrypoint": {
+    "id": "import-url",
+    "kind": "http",
+    "route": "POST /api/import",
+    "input_shape": "Import URL field controlled by the candidate attacker.",
+    "entrypoint_to_sink_path": "POST /api/import accepts the import URL and reaches the server-side HTTP fetch helper.",
+    "deterministic_impact_oracle": "Callback server observed a request from the target container."
+  },
+  "replay_material": {
+    "description": "Verifier callback replay log for the attacker-controlled import URL.",
+    "path": "verifier/CAND-CONTRACT-SSRF/logs/callback.log"
   },
   "reason": "Docker Compose verifier fixture observed the expected callback and no negative check overturned the claim.",
   "schema_version": 1,

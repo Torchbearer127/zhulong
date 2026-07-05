@@ -1,5 +1,6 @@
 {
   "candidate_path": "candidates/CAND-CONTRACT-SSRF/candidate.json",
+  "evidence_level": "entrypoint_reproduced",
   "claim": {
     "impact": "server-side request reaches an attacker-controlled callback endpoint",
     "missing_constraint": "URL host is fetched before private-network deny rules are enforced",

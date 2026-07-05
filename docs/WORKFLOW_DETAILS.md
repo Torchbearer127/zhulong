@@ -241,6 +241,14 @@ rejected examples, stable issue-code expectations where applicable, and the rule
 that these gates only reject weak reviewer material rather than prove
 vulnerabilities or replace Docker evidence.
 
+Evidence-level terms such as `code_level_reproduced`,
+`entrypoint_reproduced`, `blocked_entrypoint_verification`, and
+`confirmed_in_docker` are defined in
+[`runner-contracts/finding-contract-r1.md`](runner-contracts/finding-contract-r1.md).
+Code-level or function-level reproduction is supporting evidence only; bundle
+readiness requires attacker-entrypoint reproduction with an input shape,
+entrypoint-to-sink path, and deterministic impact oracle.
+
 ## Seeded Variant Discovery (P6)
 
 - A confirmed seed is a confirmed finding that already has a valid confirmed

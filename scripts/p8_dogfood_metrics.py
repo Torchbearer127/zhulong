@@ -110,6 +110,17 @@ def valid_bundle_contract(slug: str) -> dict[str, Any]:
             "observed_observation": "Replay log contains root:x:0:0: and DIRECT_IMPACT_CONFIRMED.",
             "severity_escalation_attempted": True,
         },
+        "entrypoint_evidence": {
+            "evidence_level": "entrypoint_reproduced",
+            "attacker_controlled_entrypoint": "GET /download",
+            "input_shape": "Query parameter file controlled by a remote attacker.",
+            "entrypoint_to_sink_path": "GET /download receives file and reaches sendFile after path.join.",
+            "deterministic_impact_oracle": "Replay log contains root:x:0:0: and DIRECT_IMPACT_CONFIRMED.",
+            "replay_material": {
+                "description": "Dogfood bundle replay log for the attacker-controlled download route.",
+                "path": "attachments/evidence/replay-output.log",
+            },
+        },
         "replay": {
             "root_script": {"path": f"run-{slug}-recording.sh"},
             "log": {

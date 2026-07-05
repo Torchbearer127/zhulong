@@ -177,6 +177,12 @@ reviewer-readiness gate 的分类说明见
 issue code，以及这些 gate 只会拒绝薄弱审核材料，不能证明漏洞成立，也不能替代
 Docker 证据。
 
+`code_level_reproduced`、`entrypoint_reproduced`、
+`blocked_entrypoint_verification` 与 `confirmed_in_docker` 等证据等级定义见
+[`runner-contracts/finding-contract-r1.md`](runner-contracts/finding-contract-r1.md)。
+代码级或函数级复现只能作为辅助证据；进入 bundle-ready 需要攻击者入口复现、
+入口输入形态、入口到危险汇聚点的路径，以及稳定的直接影响判据。
+
 ## 基于已确认种子漏洞的同类漏洞扩展
 
 当一份漏洞产出合规可用的确认漏洞包后，烛龙可将其视作**种子漏洞**，提取根因、攻击者可控输入、传播路径、危险汇聚点、缺失约束与 Docker 成功判据，依托这些特征在同一个目标仓库中检索相似候选漏洞。该机制仅用于提升后续人工复核与 Docker 验证的处理优先级，不会将相似度本身视作漏洞成立的有效凭证。

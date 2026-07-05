@@ -10,6 +10,7 @@
     "candidate_id",
     "verdict",
     "verification_status",
+    "evidence_level",
     "target_ref",
     "environment",
     "commands",
@@ -33,6 +34,9 @@
     },
     "verification_status": {
       "$ref": "#/definitions/verdict"
+    },
+    "evidence_level": {
+      "$ref": "#/definitions/evidence_level"
     },
     "target_ref": {
       "$ref": "#/definitions/target_ref"
@@ -126,6 +130,76 @@
         }
       }
     },
+    "attacker_entrypoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "route",
+        "input_shape",
+        "entrypoint_to_sink_path",
+        "deterministic_impact_oracle"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "route": {
+          "type": "string",
+          "minLength": 1
+        },
+        "input_shape": {
+          "type": "string",
+          "minLength": 1
+        },
+        "entrypoint_to_sink_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "deterministic_impact_oracle": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "replay_material": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "description"
+      ],
+      "properties": {
+        "description": {
+          "type": "string",
+          "minLength": 1
+        },
+        "path": {
+          "$ref": "#/definitions/repo_relative_path"
+        },
+        "generation_command": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "anyOf": [
+        {
+          "required": [
+            "path"
+          ]
+        },
+        {
+          "required": [
+            "generation_command"
+          ]
+        }
+      ]
+    },
     "disposition_recommendation": {
       "$ref": "#/definitions/verdict"
     },
@@ -210,12 +284,31 @@
           },
           "artifacts": {
             "minItems": 1
+          },
+          "evidence_level": {
+            "enum": [
+              "entrypoint_reproduced",
+              "confirmed_in_docker"
+            ]
           }
-        }
+        },
+        "required": [
+          "attacker_entrypoint",
+          "replay_material"
+        ]
       }
     }
   ],
   "definitions": {
+    "evidence_level": {
+      "type": "string",
+      "enum": [
+        "code_level_reproduced",
+        "entrypoint_reproduced",
+        "confirmed_in_docker",
+        "blocked_entrypoint_verification"
+      ]
+    },
     "verdict": {
       "type": "string",
       "enum": [

@@ -35,6 +35,7 @@ SSRF_STRONG_TIERS = {
 }
 SSRF_CALLBACK_TIER = "callback_reachability"
 SEVERITY_LABELS = {"Critical", "High", "Medium", "Low", "Informational"}
+ENTRYPOINT_BUNDLE_READY_LEVELS = {"entrypoint_reproduced", "confirmed_in_docker"}
 
 ABSOLUTE_POSIX_RE = re.compile(r"^/")
 ABSOLUTE_WINDOWS_RE = re.compile(r"^[A-Za-z]:[\\/]")
@@ -284,6 +285,78 @@ def check_docker_evidence(contract: dict[str, Any], issues: IssueCollector) -> N
         )
 
 
+def check_entrypoint_evidence(contract: dict[str, Any], issues: IssueCollector) -> None:
+    evidence = as_mapping(contract.get("entrypoint_evidence"))
+    if not evidence:
+        issues.add(
+            "ENTRYPOINT_EVIDENCE_MISSING",
+            "entrypoint_evidence",
+            "Bundle-ready proof must describe attacker-entrypoint reproduction.",
+            "Add entrypoint_evidence with evidence_level, attacker-controlled entrypoint, input shape, entrypoint-to-sink path, impact oracle, and replay material.",
+        )
+        return
+    evidence_level = str(evidence.get("evidence_level") or "").strip()
+    if evidence_level == "code_level_reproduced":
+        issues.add(
+            "CODE_LEVEL_ONLY_NOT_BUNDLE_READY",
+            "entrypoint_evidence.evidence_level",
+            "Code-level or function-level reproduction is supporting evidence only.",
+            "Keep the code-level run as supporting evidence and verify a real attacker-controlled entrypoint before bundle generation.",
+        )
+    elif evidence_level == "blocked_entrypoint_verification":
+        issues.add(
+            "ENTRYPOINT_EVIDENCE_MISSING",
+            "entrypoint_evidence.evidence_level",
+            "Entrypoint verification is blocked, so this finding is not bundle-ready.",
+            "Route the finding to blocked or unverified notes until Docker/Compose entrypoint verification succeeds.",
+        )
+    elif evidence_level not in ENTRYPOINT_BUNDLE_READY_LEVELS:
+        issues.add(
+            "ENTRYPOINT_EVIDENCE_MISSING",
+            "entrypoint_evidence.evidence_level",
+            "Missing or unknown evidence level for attacker-entrypoint reproduction.",
+            "Use entrypoint_reproduced or confirmed_in_docker only when Docker/Compose evidence reaches the attacker-controlled entrypoint.",
+        )
+
+    for key in ("attacker_controlled_entrypoint", "input_shape"):
+        check_required_string(evidence, key, "entrypoint_evidence", issues, "ENTRYPOINT_EVIDENCE_MISSING")
+    if not nonempty_string(evidence.get("entrypoint_to_sink_path")):
+        issues.add(
+            "ENTRYPOINT_TO_SINK_PATH_MISSING",
+            "entrypoint_evidence.entrypoint_to_sink_path",
+            "Bundle-ready proof must explain how the attacker entrypoint reaches the sink.",
+            "Record the route/API/CLI/RPC/UI path, propagation step, and sink reached in the Docker/Compose proof.",
+        )
+    if not nonempty_string(evidence.get("deterministic_impact_oracle")):
+        issues.add(
+            "IMPACT_ORACLE_MISSING",
+            "entrypoint_evidence.deterministic_impact_oracle",
+            "Bundle-ready proof must name a deterministic impact oracle.",
+            "Record the response, log, callback, file, crash, or marker that proves impact in Docker/Compose.",
+        )
+    replay = evidence.get("replay_material")
+    if isinstance(replay, dict):
+        replay_path = replay.get("path")
+        replay_generation = replay.get("generation_command")
+        replay_description = replay.get("description")
+        if not nonempty_string(replay_description) or not (
+            nonempty_string(replay_path) or nonempty_string(replay_generation)
+        ):
+            issues.add(
+                "REPLAY_MATERIAL_MISSING",
+                "entrypoint_evidence.replay_material",
+                "Reviewer-facing replay material is incomplete.",
+                "Provide a replay path or generation command plus a short description.",
+            )
+    else:
+        issues.add(
+            "REPLAY_MATERIAL_MISSING",
+            "entrypoint_evidence.replay_material",
+            "Bundle-ready proof must include reviewer-facing replay material.",
+            "Register a replay log/helper path or a command that can generate reviewer replay material.",
+        )
+
+
 def contract_file_values(files: dict[str, Any], target_name: str) -> set[str]:
     values: set[str] = set()
     value = files.get(target_name)
@@ -496,6 +569,7 @@ def validate_contract(contract: dict[str, Any], workspace_dir: Path, issues: Iss
     check_final_path(contract, workspace_dir, issues)
     check_render(contract, issues)
     check_docker_evidence(contract, issues)
+    check_entrypoint_evidence(contract, issues)
     check_replay_registration(contract, issues)
     check_direct_impact(contract, issues)
     check_files(contract, issues)
