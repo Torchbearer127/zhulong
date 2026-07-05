@@ -13,6 +13,36 @@
 - **流程演进**：维护者可以通过优化脚本、参考契约和校验器来演进工作流，而不是不断膨胀启动提示词。
 - **结果复核**：审核员可以直接审查已确认漏洞包，无需重新拼接证据、命令、Payload 与报告结论之间的对应关系。
 
+## handoff/status 机械一致性
+
+`handoff-summary.md` 是运行接力包。它必须描述机械化工作区状态，而不是把备注或
+部分证据解释成最乐观结论。
+
+renderer 和完成门禁共用 `scripts/workspace_state.py` 作为状态检查层：
+
+- `confirmed_bundle_dirs_total` 统计 `confirmed/` 下非隐藏目录数量。
+- `validated_confirmed_bundle_count` 只统计通过
+  `validate_all_report_bundles.py` 调用现有 confirmed-bundle validator 的目录。
+- `invalid_or_partial_confirmed_bundle_count` 统计被 validator 判定为 partial
+  或 validation-failed 的 bundle-like 目录。
+- `docker_evidence_only_count` 统计工作区 evidence 路径下的 Docker 或 verification
+  证据；这些证据尚不是已验证 confirmed bundle。
+- `formal_variant_analysis_status` 只有在至少存在一个已验证 confirmed bundle，且
+  `evidence/variant-analysis/seeds.jsonl` 与 `variant-candidates.jsonl`
+  都通过各自 validator 时才是 `completed`。
+
+当没有已验证 confirmed bundle 时，handoff 必须写 `Confirmed bundles: 0`。如果
+存在 Docker 证据但没有已验证 bundle，保守状态是
+`docker_evidence_collected_but_no_bundle`。在这个状态下，Docker 证据可以作为
+有用核验材料，但它不是 confirmed deliverable，不能表示 bundle-ready，也不能表示
+正式 seeded variant discovery 已完成或已就绪。
+
+人工同类备注、草稿 seed note、candidate 行、代码级证据、partial bundle 和
+validation-failed 目录，都只能保留为 manual/unverified workspace material，直到真实
+`confirmed/<bundle>/` 通过最终校验为止。`validate_workspace_state.py`、
+`assert_finalized_workspace.py` 和 finalization gate 会拒绝声称相反结论的 stale
+handoff/status 文案。
+
 ## 运行时残留与清理机制
 
 烛龙会把 Docker 残留资源和 OMC/PID 运行时残留分开处理。二者都会出现在工作区产物和交接摘要中，但安全策略不同：

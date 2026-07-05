@@ -21,6 +21,42 @@ being trapped in a long chat transcript or raw scanner output.
 - Reviewers can inspect confirmed bundles without reconstructing which
   evidence, command, payload, and report claim belong together.
 
+## Handoff Status Consistency
+
+`handoff-summary.md` is an operational continuation packet. It must describe the
+mechanical workspace state, not the most optimistic interpretation of notes or
+partial evidence.
+
+The renderer and completion checks use `scripts/workspace_state.py` as the
+shared inspection layer:
+
+- `confirmed_bundle_dirs_total` counts non-hidden directories under
+  `confirmed/`.
+- `validated_confirmed_bundle_count` counts only directories that pass the
+  existing confirmed-bundle validator through
+  `validate_all_report_bundles.py`.
+- `invalid_or_partial_confirmed_bundle_count` counts bundle-like directories
+  classified as partial or validation-failed by that validator.
+- `docker_evidence_only_count` counts Docker or verification evidence under
+  workspace evidence paths that is not a validated confirmed bundle.
+- `formal_variant_analysis_status` is `completed` only when at least one
+  validated confirmed bundle exists and both
+  `evidence/variant-analysis/seeds.jsonl` and
+  `variant-candidates.jsonl` pass their validators.
+
+When no validated confirmed bundle exists, the handoff must say
+`Confirmed bundles: 0`. If Docker evidence exists without a validated bundle,
+the conservative state is `docker_evidence_collected_but_no_bundle`. In that
+state, Docker evidence may be useful verification material, but it is not a
+confirmed deliverable, does not make the workspace bundle-ready, and cannot make
+formal seeded variant discovery completed or ready.
+
+Manual same-pattern notes, draft seed notes, candidate rows, code-level evidence,
+partial bundles, and validation-failed directories remain manual or unverified
+workspace material until a real `confirmed/<bundle>/` passes final validation.
+`validate_workspace_state.py`, `assert_finalized_workspace.py`, and the
+finalization gate reject stale handoff/status text that claims otherwise.
+
 ## Runtime Residue And Cleanup
 
 Zhulong separates Docker residue from OMC/PID runtime residue. Both are surfaced

@@ -14,6 +14,7 @@ from audit_disposition import (
     validate_disposition_ledger,
 )
 from blocked_verification import detect_blocked_verification
+from workspace_state import inspect_workspace_state
 
 
 MAX_ROWS = 5
@@ -220,7 +221,7 @@ def completion_claimed(status: dict[str, Any]) -> bool:
     )
 
 
-def finalization_integrity_lines(workspace: Path, status: dict[str, Any]) -> list[str]:
+def finalization_integrity_lines(workspace: Path, status: dict[str, Any], workspace_state: dict[str, Any]) -> list[str]:
     events = read_jsonl(workspace / "audit-events.jsonl")
     latest = latest_finalization(events)
     success = latest_success(events)
@@ -246,6 +247,11 @@ def finalization_integrity_lines(workspace: Path, status: dict[str, Any]) -> lis
     result = str(event_details(success).get("result") or status.get("result") or "").strip()
     if result == "completed_no_confirmed_findings" and blocked_summary.get("blocked"):
         issues.append("blocked Docker/runtime verification exists; no-confirmed completion is not terminal")
+    if result == "completed_with_confirmed_bundles":
+        if int(workspace_state.get("validated_confirmed_bundle_count") or 0) == 0:
+            issues.append("completion claims confirmed bundles but validated confirmed bundle count is zero")
+        if workspace_state.get("formal_variant_analysis_status") != "completed":
+            issues.append("completion claims confirmed bundles but formal seeded variant discovery is not completed")
     if claimed:
         disposition_validation = validate_disposition_ledger(workspace, result=result, language="auto")
         if not disposition_validation.get("ok"):
@@ -274,19 +280,26 @@ def finalization_integrity_lines(workspace: Path, status: dict[str, Any]) -> lis
     ]
 
 
-def confirmed_bundle_lines(workspace: Path) -> list[str]:
+def confirmed_bundle_lines(workspace: Path, workspace_state: dict[str, Any]) -> list[str]:
     confirmed_dir = workspace / "confirmed"
     lines = [f"- Directory: {file_status(confirmed_dir, workspace)}"]
+    total = int(workspace_state.get("confirmed_bundle_dirs_total") or 0)
+    validated = int(workspace_state.get("validated_confirmed_bundle_count") or 0)
+    invalid_or_partial = int(workspace_state.get("invalid_or_partial_confirmed_bundle_count") or 0)
+    docker_evidence_only = int(workspace_state.get("docker_evidence_only_count") or 0)
+    lines.append(f"- Confirmed bundles: {validated}")
+    lines.append(f"- Bundle-like directories: {total}")
+    lines.append(f"- Invalid or partial bundle directories: {invalid_or_partial}")
+    lines.append(f"- State: `{workspace_state.get('handoff_state') or 'unknown'}`")
+    if docker_evidence_only:
+        lines.append(f"- Docker evidence-only directories: {docker_evidence_only}")
     if not confirmed_dir.exists():
-        lines.append("- Bundles: 0")
         lines.append("- No confirmed vulnerabilities.")
         return lines
     bundles = sorted(path for path in confirmed_dir.iterdir() if path.is_dir() and not path.name.startswith("."))
     if not bundles:
-        lines.append("- Bundles: 0")
         lines.append("- No confirmed vulnerabilities.")
         return lines
-    lines.append(f"- Bundle-like directories: {len(bundles)}")
     lines.append("- Treat a directory as a confirmed deliverable only after `validate-all-report-bundles.py` passes.")
     for bundle in bundles[:MAX_ROWS]:
         evidence = bundle / "verification-evidence.json"
@@ -311,6 +324,27 @@ def confirmed_bundle_lines(workspace: Path) -> list[str]:
             lines.append(f"- `{rel_workspace(bundle, workspace)}` ({status}; bundle artifacts present, validation still required)")
     if len(bundles) > MAX_ROWS:
         lines.append(f"- ... {len(bundles) - MAX_ROWS} more bundle(s) omitted.")
+    return lines
+
+
+def formal_variant_lines(workspace_state: dict[str, Any]) -> list[str]:
+    status = str(workspace_state.get("formal_variant_analysis_status") or "unknown")
+    lines = [
+        f"- Status: `{status}`",
+        f"- Seeds: `{workspace_state.get('seed_count', 0)}`",
+        f"- Candidates: `{workspace_state.get('candidate_count', 0)}`",
+    ]
+    if status == "completed":
+        lines.append("- Formal seeded variant discovery completed from a validated confirmed bundle.")
+    elif status in {"not_applicable_no_validated_confirmed_bundle", "invalid_no_validated_confirmed_bundle"}:
+        lines.append("- Formal seeded variant discovery: not ready; no validated confirmed bundle is available.")
+        lines.append("- Manual same-pattern notes, if any, remain unverified notes outside the formal variant-analysis artifacts.")
+    else:
+        lines.append("- Formal seeded variant discovery: not completed.")
+    errors = workspace_state.get("errors")
+    if isinstance(errors, list) and errors:
+        first = str(errors[0])
+        lines.append(f"- Reason: {first}")
     return lines
 
 
@@ -414,6 +448,7 @@ def runtime_hygiene_lines(workspace: Path) -> list[str]:
 
 def render(workspace: Path, repo_root: Path, output: Path) -> str:
     status = read_json(workspace / "stage-status.json")
+    workspace_state = inspect_workspace_state(workspace)
     events_path = workspace / "audit-events.jsonl"
     events = read_jsonl_tail(events_path)
     attack_surface = workspace / "attack-surface.md"
@@ -454,7 +489,7 @@ def render(workspace: Path, repo_root: Path, output: Path) -> str:
         f"- Last message: {last_message or '_none_'}",
         f"- Blocker: {blocker or '_none_'}",
         f"- Resume step: {resume_step or '_none_'}",
-        *finalization_integrity_lines(workspace, status),
+        *finalization_integrity_lines(workspace, status, workspace_state),
         "",
         "## Recommended First Reads",
         "",
@@ -514,7 +549,11 @@ def render(workspace: Path, repo_root: Path, output: Path) -> str:
         "",
         "## Confirmed Bundle Pointers",
         "",
-        *confirmed_bundle_lines(workspace),
+        *confirmed_bundle_lines(workspace, workspace_state),
+        "",
+        "## Formal Seeded Variant Discovery",
+        "",
+        *formal_variant_lines(workspace_state),
         "",
         "## Recent Audit Events",
         "",

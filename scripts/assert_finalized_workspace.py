@@ -10,6 +10,7 @@ from typing import Any
 
 from audit_disposition import LEDGER_FILENAME, validate_disposition_ledger
 from blocked_verification import detect_blocked_verification
+from workspace_state import inspect_workspace_state, validate_handoff_status_consistency
 
 
 SUCCESS_EVENT = "finalization_succeeded"
@@ -140,6 +141,7 @@ def validate_finalization(workspace: Path) -> tuple[bool, list[str], dict[str, A
     events = read_events(workspace / "audit-events.jsonl")
     docker_status = load_json(workspace / "docker" / "docker-cleanliness-status.json")
     blocked_summary = detect_blocked_verification(workspace)
+    inspected_state = inspect_workspace_state(workspace)
     latest = latest_finalization(events)
     success = latest_success(events)
     success_index = success[0] if success else None
@@ -186,10 +188,38 @@ def validate_finalization(workspace: Path) -> tuple[bool, list[str], dict[str, A
         )
     variant_summary: dict[str, Any] = {}
     if result == "completed_with_confirmed_bundles":
-        variant_ok, variant_errors, variant_summary = validate_seeded_variant_discovery(workspace)
+        if int(inspected_state.get("validated_confirmed_bundle_count") or 0) == 0:
+            errors.append(
+                "completed_with_confirmed_bundles requires at least one validated confirmed bundle; validated_confirmed_bundle_count=0."
+            )
+        variant_summary = {
+            "formal_variant_analysis_status": inspected_state.get("formal_variant_analysis_status"),
+            "variant_dir": inspected_state.get("variant_dir"),
+            "seeds": inspected_state.get("seeds"),
+            "variant_candidates": inspected_state.get("variant_candidates"),
+        }
+        variant_ok = inspected_state.get("formal_variant_analysis_status") == "completed"
+        variant_errors = inspected_state.get("errors", [])
         if not variant_ok:
             for error in variant_errors:
                 errors.append(f"seeded variant discovery gate: {error}")
+            if not variant_errors:
+                errors.append(
+                    "seeded variant discovery gate: formal seeded variant discovery is not completed."
+                )
+    if result == "completed_no_confirmed_findings" and int(inspected_state.get("validated_confirmed_bundle_count") or 0) > 0:
+        errors.append(
+            "completed_no_confirmed_findings conflicts with validated confirmed bundles present in confirmed/."
+        )
+
+    consistency = validate_handoff_status_consistency(
+        workspace,
+        status=status,
+        state=inspected_state,
+    )
+    if not consistency.get("ok"):
+        for error in consistency.get("errors", []):
+            errors.append(f"handoff/status consistency: {error}")
 
     disposition_validation = validate_disposition_ledger(workspace, result=result, language="auto")
     if not disposition_validation.get("ok"):
@@ -222,6 +252,14 @@ def validate_finalization(workspace: Path) -> tuple[bool, list[str], dict[str, A
         "docker_strict": docker_strict,
         "blocked_verification": blocked_summary,
         "seeded_variant_discovery": variant_summary,
+        "workspace_state": {
+            "confirmed_bundle_dirs_total": inspected_state.get("confirmed_bundle_dirs_total"),
+            "validated_confirmed_bundle_count": inspected_state.get("validated_confirmed_bundle_count"),
+            "invalid_or_partial_confirmed_bundle_count": inspected_state.get("invalid_or_partial_confirmed_bundle_count"),
+            "docker_evidence_only_count": inspected_state.get("docker_evidence_only_count"),
+            "formal_variant_analysis_status": inspected_state.get("formal_variant_analysis_status"),
+            "handoff_state": inspected_state.get("handoff_state"),
+        },
         "audit_disposition": disposition_validation.get("summary", {}),
     }
     return not errors, errors, summary

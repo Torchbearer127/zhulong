@@ -253,6 +253,17 @@ default contract even when the user does not restate them:
   packet for new agent sessions. It is a context-slimming index over lightweight
   files, not a report, not raw scanner output, and not a source for DOCX
   generation or confirmed findings.
+- Handoff/status text must be mechanically consistent with the workspace. A
+  confirmed deliverable exists only when `validate_all_report_bundles.py`
+  counts a validated `confirmed/<bundle>/` directory. If the validated count is
+  zero, write `Confirmed bundles: 0`; Docker evidence may be reported only as
+  evidence, and code-level/function-level evidence, partial bundles, or
+  validation-failed directories must not be called bundle-ready or completed
+  confirmed bundles. Formal seeded variant discovery is completed only when at
+  least one validated confirmed bundle exists and both `seeds.jsonl` and
+  `variant-candidates.jsonl` pass their validators. If Docker evidence exists
+  without a validated bundle, use the conservative state
+  `docker_evidence_collected_but_no_bundle`.
 - False positives, non-security defects, unverified leads, and
   high-confidence-but-not-Docker-confirmed leads are workspace records only.
   Keep them in `candidate-findings.md`, `false-positives.md`,

@@ -17,6 +17,10 @@ from audit_disposition import (
     write_disposition_ledger,
 )
 from blocked_verification import detect_blocked_verification
+from workspace_state import (
+    inspect_workspace_state,
+    validate_handoff_status_consistency,
+)
 
 
 VALID_RESULTS = {
@@ -359,41 +363,20 @@ def main() -> int:
                 expected_result=result)
 
     # --- Step 1: Bundle validation ---
-    bundle_summary: dict[str, Any] = {}
-    validated_count = 0
-    partial_count = 0
-    failed_count = 0
-
-    if confirmed_dir.exists() and confirmed_dir.is_dir():
-        has_bundle_dirs = any(
-            p.is_dir() and not p.name.startswith(".")
-            and p.name not in {"findings.example.json", "confirmed-vuln-report-template.docx"}
-            for p in confirmed_dir.iterdir()
-        )
-        if has_bundle_dirs:
-            bundle_summary = run_bundle_validator(workspace, confirmed_dir, language)
-        else:
-            bundle_summary = {"summary": {
-                "bundle_validated": 0,
-                "partial_confirmed_bundle": 0,
-                "validation_failed": 0,
-                "ignored_helper_file": 0,
-            }}
-    else:
-        bundle_summary = {"summary": {
-            "bundle_validated": 0,
-            "partial_confirmed_bundle": 0,
-            "validation_failed": 0,
-            "ignored_helper_file": 0,
-        }}
-
-    if "error" in bundle_summary:
-        errors.append(f"Bundle validation error: {bundle_summary['error']}")
-    else:
-        counts = bundle_summary.get("summary", {})
-        validated_count = counts.get("bundle_validated", 0)
-        partial_count = counts.get("partial_confirmed_bundle", 0)
-        failed_count = counts.get("validation_failed", 0)
+    inspected_state = inspect_workspace_state(
+        workspace,
+        confirmed_dir=confirmed_dir,
+        language=language,
+    )
+    bundle_summary: dict[str, Any] = {
+        "summary": inspected_state.get("validator_summary", {}),
+        "results": inspected_state.get("results", []),
+    }
+    validated_count = int(inspected_state.get("validated_confirmed_bundle_count") or 0)
+    partial_count = int(inspected_state.get("partial_confirmed_bundle_count") or 0)
+    failed_count = int(inspected_state.get("validation_failed_bundle_count") or 0)
+    if inspected_state.get("validator_error"):
+        errors.append(f"Bundle validation error: {inspected_state['validator_error']}")
 
     write_event(workspace, "bundle_validation_outcome", "finalization", "running",
                 "ok" if not errors else "warning",
@@ -418,7 +401,15 @@ def main() -> int:
                 "Fix or remove them before finalizing."
             )
         if validated_count > 0 and partial_count == 0 and failed_count == 0:
-            variant_summary = validate_seeded_variant_discovery(workspace)
+            variant_summary = {
+                "ok": inspected_state.get("formal_variant_analysis_status") == "completed",
+                "errors": inspected_state.get("errors", []),
+                "variant_dir": inspected_state.get("variant_dir"),
+                "seeds": inspected_state.get("seeds"),
+                "variant_candidates": inspected_state.get("variant_candidates"),
+                "seed_validation": inspected_state.get("seed_validation", {}),
+                "candidate_validation": inspected_state.get("candidate_validation", {}),
+            }
             if not variant_summary.get("ok"):
                 for error in variant_summary.get("errors", []):
                     errors.append(f"Seeded variant discovery gate: {error}")
@@ -563,8 +554,37 @@ def main() -> int:
         language=language,
     )
 
-    # --- Step 7: Refresh handoff-summary.md ---
-    refresh_handoff(workspace, repo_root)
+    # --- Step 7: Refresh and validate handoff-summary.md ---
+    refreshed = refresh_handoff(workspace, repo_root)
+    refreshed_state = inspect_workspace_state(
+        workspace,
+        confirmed_dir=confirmed_dir,
+        language=language,
+    )
+    consistency = validate_handoff_status_consistency(
+        workspace,
+        state=refreshed_state,
+        language=language,
+    )
+    if not refreshed or not consistency.get("ok"):
+        consistency_errors = consistency.get("errors") or []
+        error_text = (
+            "handoff-summary.md refresh failed"
+            if not refreshed
+            else "; ".join(str(error) for error in consistency_errors)
+        )
+        write_event(
+            workspace,
+            "finalization_failed",
+            "finalization",
+            "running",
+            "failed",
+            f"Completion gate failed after handoff consistency check: {error_text}",
+            errors=[error_text],
+            expected_result=result,
+        )
+        print(f"FINALIZATION FAILED: {error_text}", file=sys.stderr)
+        return 1
 
     # --- Output ---
     print(f"result={result}")

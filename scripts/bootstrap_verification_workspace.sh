@@ -350,6 +350,9 @@ copy_file \
   "$SKILL_DIR/scripts/render_handoff_summary.py" \
   "$WORKSPACE_DIR/bin/render-handoff-summary.py"
 chmod +x "$WORKSPACE_DIR/bin/render-handoff-summary.py"
+copy_file \
+  "$SKILL_DIR/scripts/workspace_state.py" \
+  "$WORKSPACE_DIR/bin/workspace_state.py"
 write_text_file "$WORKSPACE_DIR/scripts/render-handoff-summary.py" '#!/usr/bin/env bash
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -440,6 +443,9 @@ copy_file \
   "$SKILL_DIR/scripts/validate_workspace_state.py" \
   "$WORKSPACE_DIR/bin/validate-workspace-state.py"
 chmod +x "$WORKSPACE_DIR/bin/validate-workspace-state.py"
+copy_file \
+  "$SKILL_DIR/scripts/workspace_state.py" \
+  "$WORKSPACE_DIR/bin/workspace_state.py"
 write_text_file "$WORKSPACE_DIR/scripts/validate-workspace-state.py" '#!/usr/bin/env bash
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

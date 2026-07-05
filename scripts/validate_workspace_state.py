@@ -7,6 +7,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from workspace_state import validate_handoff_status_consistency
+
 
 REQUIRED_STATUS_FIELDS = {
     "schema_version",
@@ -139,6 +141,16 @@ def main() -> None:
             fail("blocked/paused stage-status.json must include blocker")
         if not str(status.get("resume_step") or "").strip():
             fail("blocked/paused stage-status.json must include resume_step")
+
+    consistency = validate_handoff_status_consistency(
+        workspace,
+        status=status,
+        language="auto",
+    )
+    if not consistency.get("ok"):
+        errors = consistency.get("errors") or []
+        first = str(errors[0]) if errors else "unknown handoff/status consistency error"
+        fail(f"handoff/status consistency failed: {first}")
 
     print(f"WORKSPACE STATE OK: {workspace} ({event_count} events)")
 

@@ -59,6 +59,10 @@ Use this checklist before publishing a tagged open-source release of Zhulong
   unattributed Docker residue.
 - [ ] Finalization recomputes strict Docker cleanliness and does not trust stale
   `docker-cleanliness-status.json`.
+- [ ] Handoff/status consistency is mechanically checked: zero validated
+  confirmed bundles cannot be described as confirmed-bundle completion, formal
+  seeded variant completion/readiness, or bundle-ready Docker/code-level
+  evidence.
 
 ## 4. Confirmed Bundle Contract
 

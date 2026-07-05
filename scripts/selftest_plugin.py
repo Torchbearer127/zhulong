@@ -77,6 +77,7 @@ REQUIRED_FILES = [
     "scripts/run_initial_probes.sh",
     "scripts/run_verification_case.sh",
     "scripts/manage_docker_resources.py",
+    "scripts/workspace_state.py",
     "scripts/render_handoff_summary.py",
     "scripts/assert_finalized_workspace.py",
     "scripts/audit_disposition.py",
@@ -177,6 +178,7 @@ INSTALLED_SKILL_REQUIRED_FILES = [
     "scripts/run_initial_probes.sh",
     "scripts/run_verification_case.sh",
     "scripts/manage_docker_resources.py",
+    "scripts/workspace_state.py",
     "scripts/render_confirmed_vuln_docx.py",
     "scripts/extract_variant_seed.py",
     "scripts/find_variant_candidates.py",
@@ -4723,6 +4725,7 @@ def selftest_installed_skill(skill_root: Path) -> None:
 
     run([sys.executable, "-m", "py_compile",
          str(skill_root / "scripts/plan_security_toolchain.py"),
+         str(skill_root / "scripts/workspace_state.py"),
          str(skill_root / "scripts/render_handoff_summary.py"),
          str(skill_root / "scripts/assert_finalized_workspace.py"),
          str(skill_root / "scripts/audit_disposition.py"),
@@ -5838,6 +5841,7 @@ def main() -> None:
 
     run([sys.executable, "-m", "py_compile",
          str(plugin_root / "scripts/plan_security_toolchain.py"),
+         str(plugin_root / "scripts/workspace_state.py"),
          str(plugin_root / "scripts/render_handoff_summary.py"),
          str(plugin_root / "scripts/assert_finalized_workspace.py"),
          str(plugin_root / "scripts/audit_disposition.py"),
@@ -5925,6 +5929,8 @@ def main() -> None:
             raise SystemExit("FAILED: bootstrapped workspace is missing manage-docker-resources.py")
         if not (workspace / "bin/render-handoff-summary.py").exists():
             raise SystemExit("FAILED: bootstrapped workspace is missing render-handoff-summary.py")
+        if not (workspace / "bin/workspace_state.py").exists():
+            raise SystemExit("FAILED: bootstrapped workspace is missing workspace_state.py")
         if not (workspace / "bin/assert-finalized-workspace.py").exists():
             raise SystemExit("FAILED: bootstrapped workspace is missing assert-finalized-workspace.py")
         if not (workspace / "bin/blocked_verification.py").exists():
@@ -10767,6 +10773,270 @@ def main() -> None:
         if integrity_json.get("ok") is not True:
             raise SystemExit("FAILED: finalization integrity JSON did not pass for valid completion fixture")
 
+        def write_issue19_workspace(
+            name: str,
+            *,
+            result: str = "",
+            status_stage: str = "verification",
+            status_value: str = "running",
+            handoff: str = "",
+            copy_bundle: bool = False,
+            partial_bundle: bool = False,
+            docker_evidence: bool = False,
+        ) -> Path:
+            fixture = repo_dir / name
+            if fixture.exists():
+                shutil.rmtree(fixture)
+            (fixture / "confirmed").mkdir(parents=True, exist_ok=True)
+            (fixture / "docker").mkdir(parents=True, exist_ok=True)
+            (fixture / "asr-config.json").write_text(
+                json.dumps({
+                    "workspace_root": fixture.name,
+                    "workspace_created_at": "2026-05-06T00:00:00Z",
+                    "confirmed_output_dir": f"{fixture.name}/confirmed",
+                }, indent=2),
+                encoding="utf-8",
+            )
+            status_doc = {
+                "schema_version": 1,
+                "plugin": "zhulong",
+                "plugin_version": "selftest",
+                "stage": status_stage,
+                "status": status_value,
+                "last_event_at": "2026-05-06T00:00:00Z",
+                "blocker": "",
+                "resume_step": "",
+                "workspace": fixture.name,
+                "target_repo": str(repo_dir),
+            }
+            if result:
+                status_doc["result"] = result
+            (fixture / "stage-status.json").write_text(
+                json.dumps(status_doc, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            (fixture / "audit-events.jsonl").write_text(
+                json.dumps({
+                    "ts": "2026-05-06T00:00:00Z",
+                    "event": "selftest_fixture",
+                    "stage": status_stage,
+                    "status": status_value,
+                    "message": "Issue 19 handoff consistency fixture.",
+                }, ensure_ascii=False, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            for filename, heading in (
+                ("candidate-findings.md", "# Candidate Findings\n\n"),
+                ("false-positives.md", "# False Positives\n\n"),
+                ("unverified-leads.md", "# Unverified Leads\n\n"),
+                ("attack-surface.md", "# Attack Surface Handoff\n\n"),
+            ):
+                (fixture / filename).write_text(heading, encoding="utf-8")
+            if handoff:
+                (fixture / "handoff-summary.md").write_text(handoff, encoding="utf-8")
+            if copy_bundle:
+                shutil.copytree(zh_bundle, fixture / "confirmed" / zh_bundle.name)
+            if partial_bundle:
+                partial = fixture / "confirmed" / "partial-docker-evidence"
+                partial.mkdir()
+                (partial / "verification-evidence.json").write_text(
+                    json.dumps({"verification_status": "confirmed_in_docker"}, indent=2),
+                    encoding="utf-8",
+                )
+            if docker_evidence:
+                evidence_dir = fixture / "evidence" / "docker-evidence" / "case-1"
+                evidence_dir.mkdir(parents=True, exist_ok=True)
+                (evidence_dir / "verification-evidence.json").write_text(
+                    json.dumps({"verification_status": "confirmed_in_docker"}, indent=2),
+                    encoding="utf-8",
+                )
+            return fixture
+
+        contradictory_handoff_workspace = write_issue19_workspace(
+            "security-research-issue19-contradictory-handoff",
+            handoff=(
+                "# Handoff Summary\n\n"
+                "- Confirmed bundles: 1\n"
+                "- Formal seeded variant discovery completed and ready.\n"
+                "- Docker evidence directory is a completed confirmed bundle.\n"
+            ),
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_workspace_state.py"),
+            "--workspace-dir",
+            str(contradictory_handoff_workspace),
+            "--repo-root",
+            str(repo_dir),
+            "--skip-latest-check",
+        ], plugin_root, "handoff/status consistency failed")
+        run([
+            sys.executable,
+            str(plugin_root / "scripts/render_handoff_summary.py"),
+            "--workspace-dir",
+            str(contradictory_handoff_workspace),
+            "--repo-root",
+            str(repo_dir),
+        ], plugin_root)
+        require_text(
+            contradictory_handoff_workspace / "handoff-summary.md",
+            "Confirmed bundles: 0",
+            "Issue 19 renderer rewrites zero-bundle count",
+        )
+        require_text(
+            contradictory_handoff_workspace / "handoff-summary.md",
+            "Status: `not_applicable_no_validated_confirmed_bundle`",
+            "Issue 19 renderer makes formal variant not applicable",
+        )
+        forbid_text(
+            contradictory_handoff_workspace / "handoff-summary.md",
+            "Formal seeded variant discovery completed and ready",
+            "Issue 19 renderer removes stale formal variant completion claim",
+        )
+
+        status_claim_workspace = write_issue19_workspace(
+            "security-research-issue19-status-claim",
+            result="completed_with_confirmed_bundles",
+            status_stage="completed",
+            status_value="completed",
+            handoff="# Handoff Summary\n\n- State: completed_with_confirmed_bundles\n",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_workspace_state.py"),
+            "--workspace-dir",
+            str(status_claim_workspace),
+            "--repo-root",
+            str(repo_dir),
+            "--skip-latest-check",
+        ], plugin_root, "validated_confirmed_bundle_count=0")
+
+        docker_evidence_workspace = write_issue19_workspace(
+            "security-research-issue19-docker-evidence-only",
+            docker_evidence=True,
+        )
+        run([
+            sys.executable,
+            str(plugin_root / "scripts/render_handoff_summary.py"),
+            "--workspace-dir",
+            str(docker_evidence_workspace),
+            "--repo-root",
+            str(repo_dir),
+        ], plugin_root)
+        require_text(
+            docker_evidence_workspace / "handoff-summary.md",
+            "State: `docker_evidence_collected_but_no_bundle`",
+            "Issue 19 Docker evidence-only state",
+        )
+        require_text(
+            docker_evidence_workspace / "handoff-summary.md",
+            "Confirmed bundles: 0",
+            "Issue 19 Docker evidence-only does not count as bundle",
+        )
+
+        partial_issue19_workspace = write_issue19_workspace(
+            "security-research-issue19-partial-confirmed",
+            partial_bundle=True,
+        )
+        run([
+            sys.executable,
+            str(plugin_root / "scripts/render_handoff_summary.py"),
+            "--workspace-dir",
+            str(partial_issue19_workspace),
+            "--repo-root",
+            str(repo_dir),
+        ], plugin_root)
+        require_text(
+            partial_issue19_workspace / "handoff-summary.md",
+            "Confirmed bundles: 0",
+            "Issue 19 partial bundle is not validated",
+        )
+        require_text(
+            partial_issue19_workspace / "handoff-summary.md",
+            "Invalid or partial bundle directories: 1",
+            "Issue 19 partial bundle count",
+        )
+
+        code_level_only_workspace = write_issue19_workspace(
+            "security-research-issue19-code-level-only",
+            handoff="# Handoff Summary\n\n- Code-level evidence reproduced; bundle-ready for confirmed output.\n",
+        )
+        (code_level_only_workspace / "evidence" / "code-level").mkdir(parents=True, exist_ok=True)
+        (code_level_only_workspace / "evidence" / "code-level" / "verification-evidence.json").write_text(
+            json.dumps({"verification_status": "code_level_reproduced"}, indent=2),
+            encoding="utf-8",
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/validate_workspace_state.py"),
+            "--workspace-dir",
+            str(code_level_only_workspace),
+            "--repo-root",
+            str(repo_dir),
+            "--skip-latest-check",
+        ], plugin_root, "bundle readiness")
+        run([
+            sys.executable,
+            str(plugin_root / "scripts/render_handoff_summary.py"),
+            "--workspace-dir",
+            str(code_level_only_workspace),
+            "--repo-root",
+            str(repo_dir),
+        ], plugin_root)
+        require_text(
+            code_level_only_workspace / "handoff-summary.md",
+            "Confirmed bundles: 0",
+            "Issue 19 code-level-only handoff remains no bundle",
+        )
+
+        valid_variant_workspace = write_issue19_workspace(
+            "security-research-issue19-valid-variant",
+            copy_bundle=True,
+        )
+        write_finalization_variant_artifacts(valid_variant_workspace)
+        run([
+            sys.executable,
+            str(plugin_root / "scripts/render_handoff_summary.py"),
+            "--workspace-dir",
+            str(valid_variant_workspace),
+            "--repo-root",
+            str(repo_dir),
+        ], plugin_root)
+        require_text(
+            valid_variant_workspace / "handoff-summary.md",
+            "Confirmed bundles: 1",
+            "Issue 19 valid bundle counted",
+        )
+        require_text(
+            valid_variant_workspace / "handoff-summary.md",
+            "Status: `completed`",
+            "Issue 19 valid formal variant analysis can report completed",
+        )
+
+        invalid_variant_workspace = write_issue19_workspace(
+            "security-research-issue19-invalid-variant",
+            copy_bundle=True,
+        )
+        invalid_variant_dir = invalid_variant_workspace / "evidence" / "variant-analysis"
+        invalid_variant_dir.mkdir(parents=True, exist_ok=True)
+        write_variant_seed_card(
+            invalid_variant_dir / "seeds.jsonl",
+            {"confirmed_bundle_path": "evidence/docker-evidence/case-1"},
+        )
+        write_variant_candidates_jsonl(
+            invalid_variant_dir / "variant-candidates.jsonl",
+            [valid_variant_candidate_record()],
+        )
+        run_expect_fail([
+            sys.executable,
+            str(plugin_root / "scripts/finalize_audit_workspace.py"),
+            "--workspace-dir",
+            str(invalid_variant_workspace),
+            "--result",
+            "completed_with_confirmed_bundles",
+        ], plugin_root, "variant seed confirmed_bundle_path must not point to candidate/manual/evidence-only material",
+           extra_env=SKIP_DOCKER_ENV)
+
         blocked_finalization_workspace = repo_dir / "security-research-blocked-verification"
         blocked_finalization_workspace.mkdir(parents=True, exist_ok=True)
         (blocked_finalization_workspace / "confirmed").mkdir()
@@ -11283,6 +11553,7 @@ def main() -> None:
         isolated_finalizer_dir.mkdir(parents=True, exist_ok=True)
         isolated_finalizer = isolated_finalizer_dir / "finalize_audit_workspace.py"
         shutil.copy2(plugin_root / "scripts/finalize_audit_workspace.py", isolated_finalizer)
+        shutil.copy2(plugin_root / "scripts/workspace_state.py", isolated_finalizer_dir / "workspace_state.py")
         shutil.copy2(plugin_root / "scripts/blocked_verification.py", isolated_finalizer_dir / "blocked_verification.py")
         shutil.copy2(plugin_root / "scripts/validate_candidate.py", isolated_finalizer_dir / "validate_candidate.py")
         shutil.copy2(plugin_root / "scripts/validate_verifier_verdict.py", isolated_finalizer_dir / "validate_verifier_verdict.py")
@@ -11354,6 +11625,8 @@ def main() -> None:
             raise SystemExit("FAILED: Claude skill sync did not copy check_sandbox_preflight.py")
         if not (installed_skill / "scripts/render_handoff_summary.py").exists():
             raise SystemExit("FAILED: Claude skill sync did not copy render_handoff_summary.py")
+        if not (installed_skill / "scripts/workspace_state.py").exists():
+            raise SystemExit("FAILED: Claude skill sync did not copy workspace_state.py")
         if not (installed_skill / "scripts/asr_start.sh").exists():
             raise SystemExit("FAILED: Claude skill sync did not copy asr_start.sh")
         if not (installed_skill / "scripts/resolve_skill_root.sh").exists():
