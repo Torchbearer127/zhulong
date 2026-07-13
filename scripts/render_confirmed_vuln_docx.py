@@ -471,6 +471,8 @@ def severity_cn_from_any(value: Any) -> str:
         return "中危"
     if "low" in lowered or "低危" in text:
         return "低危"
+    if "informational" in lowered or "info" == lowered or "信息" in text:
+        return "信息"
     return "中危"
 
 
@@ -487,6 +489,8 @@ def severity_en_from_any(value: Any) -> str:
         return "Medium"
     if "low" in lowered or "低危" in text:
         return "Low"
+    if "informational" in lowered or "info" == lowered or "信息" in text:
+        return "Informational"
     return "Medium"
 
 
@@ -1781,10 +1785,156 @@ def write_verification_evidence(
         ),
         "severity_escalation_result": severity_result,
     }
+    for field in (
+        "source_binding",
+        "fixture_provenance",
+        "impact_claims",
+        "deployment_prerequisites",
+        "validity_review",
+    ):
+        if field in finding:
+            evidence[field] = finding[field]
     (output_path.parent / "verification-evidence.json").write_text(
         json.dumps(evidence, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+
+
+def render_validity_review(doc: Document, finding: dict[str, Any], language: str) -> None:
+    review = ensure_mapping(finding.get("validity_review"))
+    if not review:
+        return
+    claims = [item for item in finding.get("impact_claims", []) if isinstance(item, dict)] if isinstance(finding.get("impact_claims"), list) else []
+    prerequisites = [item for item in finding.get("deployment_prerequisites", []) if isinstance(item, dict)] if isinstance(finding.get("deployment_prerequisites"), list) else []
+    if language == "zh-CN":
+        doc.add_heading("源码绑定有效性与分类结论", level=1)
+        labels = (
+            ("有效性结论", review.get("validity_verdict")),
+            ("分类决定", review.get("classification_decision")),
+            ("最终漏洞类型", review.get("final_bug_class")),
+            ("最终严重性", review.get("final_severity")),
+            ("最终 CWE", review.get("final_cwe") or "不适用"),
+            ("审查依据", review.get("rationale")),
+        )
+        condition_heading = "经源码绑定的部署条件"
+        claim_heading = "已支持的影响声明"
+        nonclaim_heading = "不声称的更强影响"
+    else:
+        doc.add_heading("Source-Bound Validity and Classification Decision", level=1)
+        labels = (
+            ("Validity Verdict", review.get("validity_verdict")),
+            ("Classification Decision", review.get("classification_decision")),
+            ("Final Bug Class", review.get("final_bug_class")),
+            ("Final Severity", review.get("final_severity")),
+            ("Final CWE", review.get("final_cwe") or "Not applicable"),
+            ("Rationale", review.get("rationale")),
+        )
+        condition_heading = "Source-Bound Deployment Prerequisites"
+        claim_heading = "Supported Impact Claims"
+        nonclaim_heading = "Unsupported Stronger Impacts / Non-Claims"
+    for label, value in labels:
+        if str(value or "").strip():
+            doc.add_paragraph(f"{label}: {value}")
+    supported = {str(item) for item in review.get("supported_impact_claim_ids", [])} if isinstance(review.get("supported_impact_claim_ids"), list) else set()
+    doc.add_heading(claim_heading, level=2)
+    for claim in claims:
+        if str(claim.get("id") or "") in supported:
+            doc.add_paragraph(f"{claim.get('id')}: {claim.get('statement')}", style="List Bullet")
+    prerequisite_ids = {str(item) for item in review.get("deployment_prerequisite_ids", [])} if isinstance(review.get("deployment_prerequisite_ids"), list) else set()
+    doc.add_heading(condition_heading, level=2)
+    if prerequisite_ids:
+        for prerequisite in prerequisites:
+            if str(prerequisite.get("id") or "") in prerequisite_ids:
+                doc.add_paragraph(f"{prerequisite.get('id')}: {prerequisite.get('description')}", style="List Bullet")
+    else:
+        doc.add_paragraph("无额外部署条件。" if language == "zh-CN" else "No additional deployment prerequisites.")
+    doc.add_heading(nonclaim_heading, level=2)
+    for item in review.get("stronger_impacts_not_claimed", []) if isinstance(review.get("stronger_impacts_not_claimed"), list) else []:
+        doc.add_paragraph(str(item), style="List Bullet")
+
+
+def write_source_bound_materials(bundle_dir: Path, bundle_finding: dict[str, Any]) -> None:
+    required_fields = (
+        "source_binding",
+        "fixture_provenance",
+        "impact_claims",
+        "deployment_prerequisites",
+        "validity_review",
+    )
+    if not all(field in bundle_finding for field in required_fields):
+        return
+    portable_finding = dict(bundle_finding)
+    portable_finding.pop("project_root", None)
+    portable_finding.pop("project_root_dir", None)
+    (bundle_dir / "findings.json").write_text(
+        json.dumps({"findings": [portable_finding]}, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    review_payload = {
+        "schema_version": 1,
+        **{field: portable_finding[field] for field in required_fields},
+    }
+    (bundle_dir / "validity-review.json").write_text(
+        json.dumps(review_payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    reviewer_index_path = bundle_dir / "attachments/reviewer-evidence-index.json"
+    if not reviewer_index_path.is_file():
+        root_scripts = sorted(path.name for path in bundle_dir.glob("run-*.sh") if path.is_file())
+        if not root_scripts and isinstance(portable_finding.get("bundle_root_artifacts"), list):
+            root_scripts = [
+                str(item.get("output_name") or "").strip()
+                for item in portable_finding["bundle_root_artifacts"]
+                if isinstance(item, dict) and str(item.get("output_name") or "").startswith("run-")
+            ]
+        claims = portable_finding.get("impact_claims") if isinstance(portable_finding.get("impact_claims"), list) else []
+        evidence_paths = []
+        oracle_tokens = []
+        for claim in claims:
+            if not isinstance(claim, dict):
+                continue
+            oracle = claim.get("deterministic_oracle")
+            if isinstance(oracle, dict):
+                if str(oracle.get("evidence_path") or "").strip():
+                    evidence_paths.append(str(oracle["evidence_path"]))
+                if str(oracle.get("token") or "").strip():
+                    oracle_tokens.append(str(oracle["token"]))
+        reviewer_index_path.parent.mkdir(parents=True, exist_ok=True)
+        reviewer_index_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "replay_command": (
+                        f"REVIEWER_PAUSE_SHORT=0 REVIEWER_PAUSE_LONG=0 ./{root_scripts[0]} quick docker"
+                        if root_scripts else ""
+                    ),
+                    "evidence_artifacts": [{"path": item} for item in evidence_paths],
+                    "oracle_tokens": oracle_tokens,
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+    if reviewer_index_path.is_file():
+        try:
+            reviewer_index = json.loads(reviewer_index_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise SystemExit(f"reviewer evidence index is invalid JSON: {exc}") from exc
+        if not isinstance(reviewer_index, dict):
+            raise SystemExit("reviewer evidence index must contain a JSON object")
+        reviewer_index["source_binding"] = portable_finding["source_binding"]
+        reviewer_index["fixture_provenance"] = portable_finding["fixture_provenance"]
+        reviewer_index["impact_claims"] = portable_finding["impact_claims"]
+        reviewer_index["deployment_prerequisites"] = portable_finding["deployment_prerequisites"]
+        reviewer_index["validity_review"] = portable_finding["validity_review"]
+        reviewer_index["validity_review_path"] = "validity-review.json"
+        reviewer_index_path.write_text(
+            json.dumps(reviewer_index, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
 
 
 def rewrite_value(value: Any, path_map: dict[str, str], project_root: Path) -> Any:
@@ -2443,6 +2593,8 @@ def severity_label_from_score(score_text: str, language: str = "zh-CN") -> str:
         return "High" if language == "en-US" else "高危"
     if score >= 4:
         return "Medium" if language == "en-US" else "中危"
+    if score == 0:
+        return "Informational" if language == "en-US" else "信息"
     return "Low" if language == "en-US" else "低危"
 
 
@@ -2815,6 +2967,7 @@ def render_finding(
     raw_steps = bundle_finding.get("reproduction")
     reproduction_steps = [step for step in raw_steps if isinstance(step, dict)] if isinstance(raw_steps, list) else []
     render_reproduction(doc, reproduction_steps, language)
+    render_validity_review(doc, bundle_finding, language)
     doc.add_heading(tr(language, "final_verdict"), level=2)
     add_paragraphs(doc, localized_list(bundle_finding, "final_verdict", language) or default_final_verdict(bundle_finding, language))
     doc.save(output_path)
@@ -2822,6 +2975,7 @@ def render_finding(
     write_attachment_notes(output_path, finding, path_map, project_root, language, bundle_root_artifacts)
     write_reproduction_supplement(output_path, bundle_finding, language, path_map, bundle_root_artifacts)
     write_verification_evidence(output_path, finding, bundle_finding, path_map, language, bundle_root_artifacts)
+    write_source_bound_materials(output_path.parent, bundle_finding)
 
 
 def parse_args() -> argparse.Namespace:

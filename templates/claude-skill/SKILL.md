@@ -99,6 +99,23 @@ and finalization. See
 [`bundle-generation-checklist.md`](./assets/references/bundle-generation-checklist.md)
 for the one-page operational checklist.
 
+New confirmed-bundle promotion is source-bound. Pass the real target repository
+as `--repo-root` to both contract preflight and the builder. The preflight reads
+the checked-out Git ref, target contract, verifier verdict, and exact
+repository-relative source snippets without executing target code. Exact or
+composed replay entrypoints must resolve from those source tokens and bind a
+sink or missing guard; unverifiable dynamic routes stay blocked or conditional.
+
+Record upstream-backed and synthetic fixture security properties separately.
+Fixture-created privilege, identity, session, secret, sensitive objects,
+ownership, or deployment properties cannot support stronger real-world impact.
+A synthetic deterministic marker may be oracle-only when its non-support
+boundary is explicit. Final validity uses generic impact claims and source-bound
+deployment prerequisites. `not_valid` and `withdrawn` never promote;
+`conditionally_confirmed` retains every condition and an evidence-bounded
+severity in `validity-review.json`, bundle-local findings/evidence/index files,
+the DOCX, and the build manifest.
+
 ## Plugin-Owned Hard Constraints
 
 The user's launch prompt should stay short. Treat the rules below as the skill's
@@ -289,9 +306,9 @@ default contract even when the user does not restate them:
 - Do not hand-create final `confirmed/<slug>/` directories. Before creating
   final artifacts, fill or derive
   `<audit-workspace>/confirmed/.contracts/<slug>.bundle-contract.json` and run
-  `scripts/validate_bundle_contract.py --workspace-dir <audit-workspace> --contract <contract> --all-errors`.
+  `scripts/validate_bundle_contract.py --repo-root <repo-root> --workspace-dir <audit-workspace> --contract <contract> --all-errors`.
   Then build through
-  `scripts/build_confirmed_bundle.py --workspace-dir <audit-workspace> --contract <contract> --language <zh-CN|en-US>`.
+  `scripts/build_confirmed_bundle.py --repo-root <repo-root> --workspace-dir <audit-workspace> --contract <contract> --language <zh-CN|en-US>`.
   The wrapper renders into `confirmed/.staging/<slug>`, validates, promotes, and
   runs batch validation. Contract preflight does not replace final bundle
   validation. Failed builds stay under `confirmed/.staging/` and must not be

@@ -70,6 +70,11 @@ Use this checklist before publishing a tagged open-source release of Zhulong
 - [ ] bundle contract generation runs `validate_bundle_contract.py` on a
   `confirmed/.contracts/<slug>.bundle-contract.json` preflight document before
   final `confirmed/<slug>/` artifacts are created.
+- [ ] Contract preflight and builder require the real `--repo-root`, verify the
+  checked-out tested ref against target/verifier material, and reject source
+  path, symlink, line-range, token, or SHA-256 drift.
+- [ ] Exact/composed attacker entrypoints are derived from real source tokens;
+  unprovable dynamic routes remain blocked or conditional.
 - [ ] `assets/references/bundle-rule-mapping.md` exists, represents all
   required contract fields, and maps each field to renderer output, a final
   validator or batch gate, and a bundle evidence artifact.
@@ -96,6 +101,18 @@ Use this checklist before publishing a tagged open-source release of Zhulong
   reviewer-friendly bundle-root reproduction helper script.
 - [ ] Confirmed reports include attacker condition, server condition, and
   concrete CIA or equivalent security impact.
+- [ ] Fixture security properties distinguish upstream-backed from synthetic;
+  synthetic privilege, identity, session, secret, ownership, or sensitivity
+  never supports stronger real-world impact, while oracle-only markers disclose
+  their non-support boundary.
+- [ ] Generic impact claims bind deterministic oracle, source/config
+  prerequisites, property dependencies, bug-class support, severity ceiling,
+  deployment prerequisites, and unsupported stronger impacts.
+- [ ] `not_valid` and `withdrawn` never promote; conditional findings retain
+  source-bound conditions and narrowed severity in all reviewer-facing material.
+- [ ] `validity-review.json`, bundle-local `findings.json`,
+  `verification-evidence.json`, reviewer index, DOCX, and build-manifest hashes
+  agree on validity, classification, severity, tested ref, and conditions.
 - [ ] DOCX key code context includes project-relative paths, line metadata or an
   explicit unavailable-line reason, vulnerable-chain snippets, compact
   monospace formatting, and code-level analysis tied to the snippet.

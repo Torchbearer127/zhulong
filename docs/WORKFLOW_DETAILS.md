@@ -151,6 +151,22 @@ portable, Docker-confirmed, reviewer-facing inputs needed for generation. It is
 a generation gate only; it does not prove a vulnerability and does not replace
 Docker evidence.
 
+Source-bound confirmation is stricter than structural completeness. Preflight
+receives the real target `--repo-root`, verifies the checked-out Git ref, reads
+the target contract and verifier verdict, and hashes exact repository-relative
+source ranges for the attacker entrypoint and sink or missing guard. Exact and
+composed entrypoints are accepted only when their normalized replay value is
+mechanically derived from those source tokens; unresolved dynamic routes remain
+blocked or conditional.
+
+Fixture-created roles, sessions, secrets, sensitive objects, ownership, or
+deployment boundaries cannot support stronger real-world impact claims. An
+ordinary synthetic marker may serve only as a deterministic oracle and must
+state which impact claims it cannot support. Conditional findings retain every
+source-bound deployment prerequisite, use an evidence-bounded severity, and
+repeat the conditions in `validity-review.json`, bundle-local `findings.json`,
+`verification-evidence.json`, the reviewer index, and the DOCX.
+
 Contract fields must map to renderer output, a final validator or batch gate,
 and a bundle evidence artifact. Fields that cannot be mapped should not be
 added to the contract.
@@ -452,6 +468,7 @@ the selected source finding, and run:
 
 ```bash
 python3 scripts/validate_bundle_contract.py \
+  --repo-root <target-repository> \
   --workspace-dir <audit-workspace> \
   --contract <contract> \
   --all-errors
@@ -466,6 +483,7 @@ Then build through staging:
 
 ```bash
 python3 scripts/build_confirmed_bundle.py \
+  --repo-root <target-repository> \
   --workspace-dir <audit-workspace> \
   --contract <contract> \
   --language <zh-CN|en-US>

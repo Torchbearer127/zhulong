@@ -24,6 +24,7 @@ def parse_args() -> argparse.Namespace:
         description="Build one confirmed bundle through staging, validation, and atomic promote."
     )
     parser.add_argument("--workspace-dir", required=True, help="Audit workspace directory containing confirmed/.")
+    parser.add_argument("--repo-root", required=True, help="Target repository root containing the audit workspace.")
     parser.add_argument("--contract", required=True, help="confirmed/.contracts/<slug>.bundle-contract.json")
     parser.add_argument("--language", choices=["zh-CN", "en-US"], default="zh-CN")
     parser.add_argument(
@@ -77,6 +78,7 @@ def resolve_under(base: Path, value: str, label: str) -> Path:
 def validate_contract_for_build(
     contract_path: Path,
     workspace_dir: Path,
+    repo_root: Path,
     *,
     allow_existing_final: bool,
 ) -> dict[str, Any]:
@@ -84,7 +86,7 @@ def validate_contract_for_build(
     try:
         contract = load_json(contract_path, issues)
         if contract:
-            validate_contract(contract, workspace_dir, issues)
+            validate_contract(contract, workspace_dir, repo_root, issues)
     except StopValidation:
         contract = {}
     effective_issues = issues.issues
@@ -190,6 +192,79 @@ def write_one_finding_input(
     input_path.parent.mkdir(parents=True, exist_ok=True)
     input_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return input_path
+
+
+def canonical_json_sha256(value: Any) -> str:
+    payload = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def localized_severity(label: str, language: str) -> str:
+    if language == "en-US":
+        return label
+    return {
+        "Critical": "严重",
+        "High": "高危",
+        "Medium": "中危",
+        "Low": "低危",
+        "Informational": "信息",
+    }.get(label, label)
+
+
+def apply_contract_decision_to_finding(
+    finding: dict[str, Any],
+    contract: dict[str, Any],
+    *,
+    language: str,
+) -> dict[str, Any]:
+    finding = dict(finding)
+    review = contract.get("validity_review")
+    source_binding = contract.get("source_binding")
+    impact_claims = contract.get("impact_claims")
+    prerequisites = contract.get("deployment_prerequisites")
+    fixture_provenance = contract.get("fixture_provenance")
+    if not all(isinstance(item, (dict, list)) for item in (review, source_binding, impact_claims, prerequisites, fixture_provenance)):
+        raise BuildError("source-bound validity contract material is incomplete")
+    final_class = str(review.get("final_bug_class") or "").strip()
+    final_severity = str(review.get("final_severity") or "").strip()
+    if not final_class or not final_severity:
+        raise BuildError("validity_review final bug class and severity are required")
+    finding["bug_class"] = final_class
+    finding["vuln_type"] = final_class
+    finding["severity"] = final_severity
+    finding["severity_cn"] = localized_severity(final_severity, "zh-CN")
+    finding["cwe"] = review.get("final_cwe")
+    finding["source_binding"] = source_binding
+    finding["fixture_provenance"] = fixture_provenance
+    finding["impact_claims"] = impact_claims
+    finding["deployment_prerequisites"] = prerequisites
+    finding["validity_review"] = review
+    review_cvss = review.get("cvss") if isinstance(review, dict) else None
+    existing_cvss = finding.get("cvss")
+    if isinstance(review_cvss, dict):
+        merged_cvss = dict(existing_cvss) if isinstance(existing_cvss, dict) else {}
+        merged_cvss.update(
+            {
+                "version": review_cvss.get("version"),
+                "vector": review_cvss.get("vector"),
+                "score": str(review_cvss.get("score")),
+                "severity": localized_severity(final_severity, language),
+            }
+        )
+        finding["cvss"] = merged_cvss
+    elif isinstance(existing_cvss, dict) and any(existing_cvss.get(key) for key in ("vector", "score")):
+        raise BuildError("source finding uses CVSS but validity_review.cvss is missing")
+    verification = dict(finding.get("verification_evidence")) if isinstance(finding.get("verification_evidence"), dict) else {}
+    verification.update(
+        {
+            "validity_review": review,
+            "source_binding": source_binding,
+            "impact_claims": impact_claims,
+            "deployment_prerequisites": prerequisites,
+        }
+    )
+    finding["verification_evidence"] = verification
+    return finding
 
 
 def run_command(command: list[str], cwd: Path) -> str:
@@ -329,7 +404,9 @@ def write_manifest(
     final_path: Path,
     validation_status: str,
     promote_status: str,
+    contract: dict[str, Any],
 ) -> None:
+    source_binding = contract.get("source_binding") if isinstance(contract.get("source_binding"), dict) else {}
     payload = {
         "schema_version": 1,
         "contract_path": rel(contract_path, workspace_dir),
@@ -338,6 +415,9 @@ def write_manifest(
         "renderer_input_path": rel(renderer_input_path, workspace_dir),
         "validation_status": validation_status,
         "promote_status": promote_status,
+        "contract_sha256": sha256_file(contract_path),
+        "tested_ref": str(source_binding.get("tested_ref") or ""),
+        "source_binding_sha256": canonical_json_sha256(source_binding),
         "docker_replay_note": "The staging build wrapper did not execute Docker, replay scripts, PoCs, scanners, network calls, or package managers.",
         "replay_logs": replay_log_manifest_entries(
             staging_path,
@@ -393,10 +473,12 @@ def move_existing_to_trash(final_path: Path, staging_dir: Path) -> Path:
 def build(args: argparse.Namespace) -> dict[str, Any]:
     script_dir = Path(__file__).resolve().parent
     workspace_dir = Path(args.workspace_dir).expanduser().resolve()
+    repo_root = Path(args.repo_root).expanduser().resolve()
     contract_path = Path(args.contract).expanduser().resolve()
     contract = validate_contract_for_build(
         contract_path,
         workspace_dir,
+        repo_root,
         allow_existing_final=args.replace_existing_validated_bundle,
     )
     slug, confirmed_dir, final_path = final_path_from_contract(contract, workspace_dir)
@@ -416,6 +498,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
     work_confirmed.mkdir(parents=True, exist_ok=False)
 
     defaults, finding = select_one_finding(source_findings_path, finding_slug)
+    finding = apply_contract_decision_to_finding(finding, contract, language=args.language)
     renderer_input_path = write_one_finding_input(
         staging_dir / ".inputs" / f"{slug}-{utc_timestamp()}.renderer-input.json",
         defaults,
@@ -458,6 +541,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
             final_path=final_path,
             validation_status="pending",
             promote_status="not_promoted",
+            contract=contract,
         )
         run_command(
             [
@@ -478,7 +562,24 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
             final_path=final_path,
             validation_status="passed",
             promote_status="not_promoted",
+            contract=contract,
         )
+        existing_bundle_dirs = [
+            path for path in confirmed_dir.iterdir()
+            if path.is_dir() and not path.name.startswith(".")
+        ]
+        if existing_bundle_dirs:
+            run_command(
+                [
+                    sys.executable,
+                    str(script_dir / "validate_all_report_bundles.py"),
+                    "--confirmed-dir",
+                    str(confirmed_dir),
+                    "--language",
+                    args.language,
+                ],
+                script_dir.parent,
+            )
         if args.replace_existing_validated_bundle and final_path.exists():
             classify_existing_final(final_path, confirmed_dir, language=args.language, script_dir=script_dir)
             trashed_existing = str(move_existing_to_trash(final_path, staging_dir))
@@ -494,6 +595,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
             final_path=final_path,
             validation_status="passed",
             promote_status="promoted",
+            contract=contract,
         )
         run_command(
             [
@@ -516,6 +618,16 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
             "trashed_existing": trashed_existing,
         }
     except Exception:
+        if promoted and final_path.exists():
+            staging_path.parent.mkdir(parents=True, exist_ok=True)
+            if staging_path.exists():
+                shutil.rmtree(staging_path, ignore_errors=True)
+            shutil.move(str(final_path), str(staging_path))
+            promoted = False
+            if trashed_existing:
+                trashed_path = Path(trashed_existing)
+                if trashed_path.exists() and not final_path.exists():
+                    shutil.move(str(trashed_path), str(final_path))
         if staging_path.exists() and not promoted:
             try:
                 write_manifest(
@@ -526,6 +638,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
                     final_path=final_path,
                     validation_status="failed",
                     promote_status="failed",
+                    contract=contract,
                 )
             except Exception:
                 pass

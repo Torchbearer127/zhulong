@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -944,6 +945,13 @@ COLLECTABLE_ISSUE_CODES = {
     "ROOT_SCRIPT_CONTEXT_MISSING",
     "ROOT_SCRIPT_SUCCESS_CHECK_MISSING",
     "RAW_STRUCTURED_OBJECT_LEAK",
+    "IMPACT_CLAIM_UNSUPPORTED",
+    "DEPLOYMENT_PREREQUISITE_OMITTED",
+    "BUG_CLASS_EVIDENCE_MISMATCH",
+    "SEVERITY_EVIDENCE_MISMATCH",
+    "VALIDITY_VERDICT_NOT_PROMOTABLE",
+    "SOURCE_BINDING_MISSING",
+    "SOURCE_REF_MISMATCH",
 }
 COPIED_REPLAY_SOURCE_KINDS = {"copied_successful_transcript", "historical_successful_transcript"}
 ROOT_ARTIFACT_REFERENCE_PATTERNS = [
@@ -2585,6 +2593,8 @@ def severity_cn_from_any(value: object) -> str:
         return "中危"
     if "low" in lowered or "低危" in text:
         return "低危"
+    if "informational" in lowered or "info" == lowered or "信息" in text:
+        return "信息"
     return "中危"
 
 
@@ -2599,6 +2609,8 @@ def severity_en_from_any(value: object) -> str:
         return "Medium"
     if "low" in lowered or "低危" in text:
         return "Low"
+    if "informational" in lowered or "info" == lowered or "信息" in text:
+        return "Informational"
     return "Medium"
 
 
@@ -2613,6 +2625,8 @@ def severity_label_from_score(score_text: object, language: str) -> str:
         return "High" if language == "en-US" else "高危"
     if score >= 4:
         return "Medium" if language == "en-US" else "中危"
+    if score == 0:
+        return "Informational" if language == "en-US" else "信息"
     return "Low" if language == "en-US" else "低危"
 
 
@@ -4056,6 +4070,168 @@ def validate_verification_evidence(bundle_dir: Path, finding: dict[str, object] 
         seen.add(rel)
         validate_registered_replay_log_content(bundle_dir, rel)
     return evidence
+
+
+def canonical_json_sha256(value: object) -> str:
+    payload = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def load_json_object(path: Path, label: str, *, code: str) -> dict[str, object]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        fail(f"{label} is missing, unreadable, or invalid JSON: {exc}", code=code, path=path.name)
+        return {}
+    if not isinstance(data, dict):
+        fail(f"{label} must contain one JSON object", code=code, path=path.name)
+        return {}
+    return data
+
+
+def validate_source_bound_validity_material(
+    bundle_dir: Path,
+    finding: dict[str, object] | None,
+    evidence: dict[str, object],
+    reviewer_index: dict[str, object] | None,
+    docx_text_value: str,
+) -> None:
+    manifest_path = bundle_dir / "bundle-build-manifest.json"
+    manifest = load_json_object(manifest_path, "bundle-build-manifest.json", code="SOURCE_BINDING_MISSING") if manifest_path.is_file() else {}
+    source_bound = bool(manifest.get("source_binding_sha256")) or (bundle_dir / "validity-review.json").exists()
+    if not source_bound:
+        return
+    for field in ("contract_sha256", "tested_ref", "source_binding_sha256"):
+        if not str(manifest.get(field) or "").strip():
+            fail(
+                f"bundle-build-manifest.json is missing source-bound manifest field {field}",
+                code="SOURCE_BINDING_MISSING",
+                path=f"bundle-build-manifest.json.{field}",
+                fix="Rebuild through build_confirmed_bundle.py with --repo-root after source-bound preflight.",
+            )
+    local_findings = bundle_dir / "findings.json"
+    if not local_findings.is_file() or finding is None:
+        fail(
+            "source-bound bundle must contain one bundle-local findings.json",
+            code="SOURCE_BINDING_MISSING",
+            path="findings.json",
+            fix="Render the selected finding into the staged bundle; do not rely only on shared workspace findings.",
+        )
+        return
+    review_path = bundle_dir / "validity-review.json"
+    payload = load_json_object(review_path, "validity-review.json", code="VALIDITY_VERDICT_NOT_PROMOTABLE")
+    if payload.get("schema_version") != 1:
+        fail("validity-review.json schema_version must be 1", code="VALIDITY_VERDICT_NOT_PROMOTABLE", path="validity-review.json.schema_version")
+    if reviewer_index is None:
+        fail(
+            "source-bound bundle requires attachments/reviewer-evidence-index.json",
+            code="SOURCE_BINDING_MISSING",
+            path="attachments/reviewer-evidence-index.json",
+        )
+        reviewer_index = {}
+    structured_fields = (
+        "source_binding",
+        "fixture_provenance",
+        "impact_claims",
+        "deployment_prerequisites",
+        "validity_review",
+    )
+    for field in structured_fields:
+        expected = payload.get(field)
+        if expected is None:
+            fail(f"validity-review.json is missing {field}", code="SOURCE_BINDING_MISSING", path=f"validity-review.json.{field}")
+            continue
+        for label, material in (
+            ("findings.json", finding),
+            ("verification-evidence.json", evidence),
+            ("attachments/reviewer-evidence-index.json", reviewer_index),
+        ):
+            if material.get(field) != expected:
+                issue_code = "SOURCE_REF_MISMATCH" if field == "source_binding" else "VALIDITY_VERDICT_NOT_PROMOTABLE"
+                fail(
+                    f"{field} differs between validity-review.json and {label}",
+                    code=issue_code,
+                    path=f"{label}.{field}",
+                    fix="Regenerate all reviewer-facing structures from the same source-bound contract decision.",
+                )
+    source_binding = payload.get("source_binding")
+    if not isinstance(source_binding, dict):
+        fail("validity-review.json source_binding must be an object", code="SOURCE_BINDING_MISSING", path="validity-review.json.source_binding")
+        return
+    if canonical_json_sha256(source_binding) != str(manifest.get("source_binding_sha256") or ""):
+        fail(
+            "bundle source binding hash does not match bundle-build-manifest.json",
+            code="SOURCE_REF_MISMATCH",
+            path="bundle-build-manifest.json.source_binding_sha256",
+            fix="Discard the staged output and rebuild from the validated contract.",
+        )
+    if str(source_binding.get("tested_ref") or "") != str(manifest.get("tested_ref") or ""):
+        fail("tested ref differs between source binding and build manifest", code="SOURCE_REF_MISMATCH", path="bundle-build-manifest.json.tested_ref")
+    review = payload.get("validity_review")
+    if not isinstance(review, dict):
+        fail("validity_review must be an object", code="VALIDITY_VERDICT_NOT_PROMOTABLE", path="validity-review.json.validity_review")
+        return
+    verdict = str(review.get("validity_verdict") or "")
+    if verdict not in {"confirmed", "conditionally_confirmed"}:
+        fail(
+            f"validity verdict is not promotable: {verdict or '<missing>'}",
+            code="VALIDITY_VERDICT_NOT_PROMOTABLE",
+            path="validity-review.json.validity_review.validity_verdict",
+        )
+    final_class = str(review.get("final_bug_class") or "").strip()
+    final_severity = str(review.get("final_severity") or "").strip()
+    finding_class = str(finding.get("bug_class") or finding.get("vuln_type") or "").strip()
+    finding_severity = severity_en_from_any(finding.get("severity") or finding.get("severity_cn"))
+    if not final_class or finding_class != final_class:
+        fail("final bug class differs between validity review and findings.json", code="BUG_CLASS_EVIDENCE_MISMATCH", path="findings.json")
+    if not final_severity or finding_severity != final_severity:
+        fail("final severity differs between validity review and findings.json", code="SEVERITY_EVIDENCE_MISMATCH", path="findings.json")
+    if finding.get("cwe") != review.get("final_cwe"):
+        fail("final CWE differs between validity review and findings.json", code="BUG_CLASS_EVIDENCE_MISMATCH", path="findings.json.cwe")
+    review_cvss = review.get("cvss")
+    finding_cvss = finding.get("cvss")
+    if isinstance(review_cvss, dict):
+        if not isinstance(finding_cvss, dict):
+            fail("validity review CVSS is missing from findings.json", code="SEVERITY_EVIDENCE_MISMATCH", path="findings.json.cvss")
+        else:
+            try:
+                score_matches = float(finding_cvss.get("score")) == float(review_cvss.get("score"))
+            except (TypeError, ValueError):
+                score_matches = False
+            if (
+                finding_cvss.get("version") != review_cvss.get("version")
+                or finding_cvss.get("vector") != review_cvss.get("vector")
+                or not score_matches
+            ):
+                fail("CVSS differs between validity review and findings.json", code="SEVERITY_EVIDENCE_MISMATCH", path="findings.json.cvss")
+    elif isinstance(finding_cvss, dict) and any(finding_cvss.get(key) for key in ("version", "vector", "score")):
+        fail("findings.json claims CVSS absent from validity review", code="SEVERITY_EVIDENCE_MISMATCH", path="findings.json.cvss")
+    supported_ids = {str(item) for item in review.get("supported_impact_claim_ids", [])} if isinstance(review.get("supported_impact_claim_ids"), list) else set()
+    claims = payload.get("impact_claims") if isinstance(payload.get("impact_claims"), list) else []
+    claim_map = {str(item.get("id")): item for item in claims if isinstance(item, dict)}
+    if not supported_ids or any(item not in claim_map for item in supported_ids):
+        fail("validity review cites unsupported impact claim ids", code="IMPACT_CLAIM_UNSUPPORTED", path="validity-review.json.validity_review.supported_impact_claim_ids")
+    prerequisites = payload.get("deployment_prerequisites") if isinstance(payload.get("deployment_prerequisites"), list) else []
+    prerequisite_map = {str(item.get("id")): item for item in prerequisites if isinstance(item, dict)}
+    prerequisite_ids = {str(item) for item in review.get("deployment_prerequisite_ids", [])} if isinstance(review.get("deployment_prerequisite_ids"), list) else set()
+    if verdict == "conditionally_confirmed" and not prerequisite_ids:
+        fail("conditional validity omits deployment prerequisites", code="DEPLOYMENT_PREREQUISITE_OMITTED", path="validity-review.json.validity_review.deployment_prerequisite_ids")
+    if any(item not in prerequisite_map for item in prerequisite_ids):
+        fail("validity review cites unknown deployment prerequisites", code="DEPLOYMENT_PREREQUISITE_OMITTED", path="validity-review.json.validity_review.deployment_prerequisite_ids")
+
+    required_docx_values = [verdict, str(review.get("classification_decision") or ""), final_class, final_severity, str(review.get("rationale") or "")]
+    required_docx_values.extend(str(claim_map[item].get("statement") or "") for item in supported_ids if item in claim_map)
+    required_docx_values.extend(str(prerequisite_map[item].get("description") or "") for item in prerequisite_ids if item in prerequisite_map)
+    required_docx_values.extend(str(item) for item in review.get("stronger_impacts_not_claimed", []) if str(item).strip())
+    missing_docx = [value for value in required_docx_values if value and value not in docx_text_value]
+    if missing_docx:
+        issue_code = "DEPLOYMENT_PREREQUISITE_OMITTED" if any(value == str(prerequisite_map[item].get("description") or "") for value in missing_docx for item in prerequisite_ids if item in prerequisite_map) else "VALIDITY_VERDICT_NOT_PROMOTABLE"
+        fail(
+            "DOCX omits final validity/classification/severity/condition material: " + "; ".join(missing_docx[:3]),
+            code=issue_code,
+            path="report docx",
+            fix="Render the source-bound validity decision and all conditional prerequisites into the report.",
+        )
 
 
 def validate_attachment_note(note_path: Path, language: str) -> None:
@@ -6014,6 +6190,13 @@ def main() -> None:
             note_text,
             supplement_text,
             reviewer_addendum_text,
+        )
+        validate_source_bound_validity_material(
+            bundle_dir,
+            selected_finding,
+            verification_evidence,
+            _reviewer_index,
+            combined_text,
         )
         validate_replay_log_evidence_registration(
             bundle_dir,

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -163,13 +164,125 @@ def valid_bundle_contract(slug: str) -> dict[str, Any]:
                 }
             ]
         },
+        "source_binding": {
+            "tested_ref": "SELFTEST_REF",
+            "attacker_entrypoint": "GET /download",
+            "replay_observed_entrypoint": "GET /download",
+            "binding_mode": "exact",
+            "target_entrypoint_id": "download-file",
+            "source_defined_entrypoint": "GET /download",
+            "materials": {
+                "target_config": "target/zhulong-target.yaml",
+                "verifier_verdict": "verifier/verifier-verdict.json",
+            },
+            "source_references": [
+                {"id": "SRC-ENTRY", "role": "entrypoint", "path": "src/routes/download.js", "start_line": 1, "end_line": 1, "hash_kind": "snippet", "sha256": "0" * 64, "exact_token": "GET /download"},
+                {"id": "SRC-SINK", "role": "sink", "path": "src/routes/download.js", "start_line": 2, "end_line": 2, "hash_kind": "snippet", "sha256": "0" * 64, "exact_token": "sendFile(path.join(root, file))"},
+                {"id": "SRC-CONFIG", "role": "prerequisite", "path": "src/routes/download.js", "start_line": 3, "end_line": 3, "hash_kind": "snippet", "sha256": "0" * 64, "exact_token": "DOWNLOAD_ENABLED = true"},
+            ],
+        },
         "fixture_provenance": {
             "required": False,
             "replay_type": "full_app",
+            "synthetic_security_properties_present": False,
+            "security_properties": [],
+        },
+        "deployment_prerequisites": [
+            {"id": "DEP-DOWNLOAD", "description": "The tested deployment enables the download route.", "source_reference_ids": ["SRC-CONFIG"], "reviewer_material_required": True}
+        ],
+        "impact_claims": [
+            {
+                "id": "IMPACT-READ",
+                "category": "unauthorized_read",
+                "statement": "The tested entrypoint reads a file outside the intended directory boundary.",
+                "deterministic_oracle": {"token": "DIRECT_IMPACT_CONFIRMED", "evidence_path": "attachments/evidence/replay-output.log"},
+                "source_bound_prerequisite_ids": ["SRC-ENTRY", "SRC-SINK"],
+                "depends_on_security_property_ids": [],
+                "verified_deployment_prerequisite_ids": ["DEP-DOWNLOAD"],
+                "supported_bug_classes": ["Path Traversal"],
+                "severity_ceiling": "High",
+                "unsupported_stronger_impacts": ["Arbitrary file write and code execution are not proven."],
+            }
+        ],
+        "validity_review": {
+            "validity_verdict": "conditionally_confirmed",
+            "classification_decision": "unchanged",
+            "original_bug_class": "Path Traversal",
+            "original_severity": "High",
+            "final_bug_class": "Path Traversal",
+            "final_cwe": "CWE-22",
+            "final_severity": "High",
+            "supported_impact_claim_ids": ["IMPACT-READ"],
+            "deployment_prerequisite_ids": ["DEP-DOWNLOAD"],
+            "rationale": "Source-bound entrypoint and sink evidence support only the verified file-read boundary.",
+            "stronger_impacts_not_claimed": ["Arbitrary file write and code execution are not proven."],
+            "cvss": {"version": "4.0", "vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N", "score": 8.7},
         },
         "impact_tier": {"bug_class": "Path Traversal"},
         "variant_seed_readiness": {"run_after_promote": True},
     }
+
+
+def bind_contract_to_source(repo_dir: Path, workspace: Path, contract: dict[str, Any]) -> None:
+    source_path = repo_dir / "src/routes/download.js"
+    source_path.parent.mkdir(parents=True, exist_ok=True)
+    source_text = (
+        'const entrypoint = "GET /download";\n'
+        "sendFile(path.join(root, file));\n"
+        "const DOWNLOAD_ENABLED = true;\n"
+    )
+    source_path.write_text(source_text, encoding="utf-8")
+    run_command(["git", "init", "-q", str(repo_dir)], repo_dir.parent, env_root=workspace)
+    run_command(["git", "-C", str(repo_dir), "add", "src/routes/download.js"], repo_dir, env_root=workspace)
+    run_command(
+        [
+            "git", "-C", str(repo_dir),
+            "-c", "user.name=Zhulong Dogfood",
+            "-c", "user.email=dogfood@example.invalid",
+            "commit", "-q", "-m", "source-bound dogfood fixture",
+        ],
+        repo_dir,
+        env_root=workspace,
+    )
+    ref_proc = run_command(["git", "-C", str(repo_dir), "rev-parse", "HEAD"], repo_dir, env_root=workspace)
+    tested_ref = (ref_proc.stdout or "").strip()
+    binding = contract["source_binding"]
+    binding["tested_ref"] = tested_ref
+    lines = source_text.splitlines(keepends=True)
+    for source_ref in binding["source_references"]:
+        start = int(source_ref["start_line"])
+        end = int(source_ref["end_line"])
+        source_ref["sha256"] = hashlib.sha256("".join(lines[start - 1:end]).encode("utf-8")).hexdigest()
+    target_path = workspace / binding["materials"]["target_config"]
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    target_path.write_text(
+        "schema_version: 1\n"
+        "target:\n"
+        "  name: demo-app\n"
+        "  repo_root: .\n"
+        f"  tested_ref: {tested_ref}\n"
+        "  language_hint: [javascript]\n"
+        "runtime:\n  type: docker\n"
+        "verify:\n  mode: local\n"
+        "scope:\n"
+        "  entrypoints:\n"
+        "    - id: download-file\n"
+        "      kind: http\n"
+        "      route: GET /download\n"
+        "  trust_boundaries: []\n"
+        "  in_scope_bug_classes: [Path Traversal]\n"
+        "  out_of_scope: []\n",
+        encoding="utf-8",
+    )
+    verdict_path = workspace / binding["materials"]["verifier_verdict"]
+    verdict_path.parent.mkdir(parents=True, exist_ok=True)
+    write_json(
+        verdict_path,
+        {
+            "target_ref": {"target_config": binding["materials"]["target_config"], "tested_ref": tested_ref},
+            "attacker_entrypoint": {"route": "GET /download"},
+        },
+    )
 
 
 def create_source_workspace(
@@ -226,7 +339,9 @@ def create_source_workspace(
         json.dumps({"findings": [finding]}, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-    contract = write_json(workspace / "confirmed/.contracts" / f"{slug}.bundle-contract.json", valid_bundle_contract(slug))
+    contract_data = valid_bundle_contract(slug)
+    bind_contract_to_source(repo_dir, workspace, contract_data)
+    contract = write_json(workspace / "confirmed/.contracts" / f"{slug}.bundle-contract.json", contract_data)
     return repo_dir, workspace, contract
 
 
@@ -264,6 +379,8 @@ def run_dogfood(plugin_root: Path, temp_root: Path) -> dict[str, Any]:
             str(plugin_root / "scripts/validate_bundle_contract.py"),
             "--workspace-dir",
             str(bad_workspace),
+            "--repo-root",
+            str(temp_root),
             "--contract",
             str(bad_contract),
             "--all-errors",
@@ -305,6 +422,8 @@ def run_dogfood(plugin_root: Path, temp_root: Path) -> dict[str, Any]:
             str(plugin_root / "scripts/build_confirmed_bundle.py"),
             "--workspace-dir",
             str(failure_workspace),
+            "--repo-root",
+            str(failure_workspace.parent),
             "--contract",
             str(failure_contract),
             "--language",
@@ -335,6 +454,8 @@ def run_dogfood(plugin_root: Path, temp_root: Path) -> dict[str, Any]:
             str(plugin_root / "scripts/build_confirmed_bundle.py"),
             "--workspace-dir",
             str(marker_workspace),
+            "--repo-root",
+            str(marker_workspace.parent),
             "--contract",
             str(marker_contract),
             "--language",
@@ -388,6 +509,8 @@ def run_dogfood(plugin_root: Path, temp_root: Path) -> dict[str, Any]:
             str(plugin_root / "scripts/validate_bundle_contract.py"),
             "--workspace-dir",
             str(valid_workspace),
+            "--repo-root",
+            str(valid_workspace.parent),
             "--contract",
             str(valid_contract),
             "--all-errors",
@@ -407,6 +530,8 @@ def run_dogfood(plugin_root: Path, temp_root: Path) -> dict[str, Any]:
             str(plugin_root / "scripts/build_confirmed_bundle.py"),
             "--workspace-dir",
             str(valid_workspace),
+            "--repo-root",
+            str(valid_workspace.parent),
             "--contract",
             str(valid_contract),
             "--language",

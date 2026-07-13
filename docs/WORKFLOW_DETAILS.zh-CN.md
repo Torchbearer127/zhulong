@@ -118,6 +118,18 @@ bundle contract preflight 只检查被选中的单个 finding 是否具备可移
 已确认、面向审核材料生成所需的最低输入。它只是生成前门禁，不能证明漏洞成立，
 也不能替代 Docker 证据。
 
+源码绑定确认比结构完整性更严格。preflight 必须接收真实目标仓库的 `--repo-root`，
+核验当前 Git ref，读取 target contract 与 verifier verdict，并对攻击入口、sink 或
+关键缺失 guard 的仓库相对源码范围做 SHA-256 核验。`exact` 与 `composed` 入口只有在
+replay 入口能由真实源码 token 机械解析得到时才能通过；无法机械证明的动态入口必须
+保持 blocked 或 conditional。
+
+fixture 制造的角色、session、secret、敏感对象、租户归属或部署边界，不能支撑更强的
+真实影响声明。普通 synthetic marker 只能用于确定性 oracle，并必须明确它不能支持哪些
+影响声明。条件性 finding 必须保留全部源码绑定部署条件，按证据收窄严重性，并把条件同步
+写入 `validity-review.json`、bundle 内 `findings.json`、`verification-evidence.json`、
+reviewer index 与 DOCX。
+
 contract 字段必须能对应到 renderer 输出、final validator 或 batch gate，以及
 confirmed bundle 内的证据产物。无法建立这些对应关系的字段，不应加入 contract。
 
@@ -315,6 +327,7 @@ all-errors 报告只用于诊断，不会修复 bundle，也不能确认漏洞�
 
 ```bash
 python3 scripts/validate_bundle_contract.py \
+  --repo-root <目标仓库> \
   --workspace-dir <audit-workspace> \
   --contract <contract> \
   --all-errors
@@ -328,6 +341,7 @@ marker-only replay log 或反应式改 direct-impact marker 来绕过。这个 p
 
 ```bash
 python3 scripts/build_confirmed_bundle.py \
+  --repo-root <目标仓库> \
   --workspace-dir <audit-workspace> \
   --contract <contract> \
   --language <zh-CN|en-US>

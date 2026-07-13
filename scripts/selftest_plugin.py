@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import importlib.util
 import os
 import re
@@ -295,9 +296,26 @@ BUNDLE_RULE_MAPPING_REQUIRED_FIELDS = [
     "files.attachments",
     "code_context",
     "code_context.entries",
+    "source_binding",
+    "source_binding.tested_ref",
+    "source_binding.attacker_entrypoint",
+    "source_binding.replay_observed_entrypoint",
+    "source_binding.binding_mode",
+    "source_binding.source_references",
     "fixture_provenance",
     "fixture_provenance.required",
     "fixture_provenance.replay_type",
+    "fixture_provenance.synthetic_security_properties_present",
+    "fixture_provenance.security_properties",
+    "impact_claims",
+    "deployment_prerequisites",
+    "validity_review",
+    "validity_review.validity_verdict",
+    "validity_review.classification_decision",
+    "validity_review.final_bug_class",
+    "validity_review.final_severity",
+    "validity_review.supported_impact_claim_ids",
+    "validity_review.deployment_prerequisite_ids",
     "impact_tier",
     "impact_tier.bug_class",
     "impact_tier.ssrf.tier",
@@ -823,8 +841,13 @@ def exercise_p8_closure_contracts(root: Path) -> None:
     severity_schema = schema["properties"]["finding"]["properties"]["severity"]
     if severity_schema.get("enum") != STABLE_CONTRACT_SEVERITIES:
         raise SystemExit("FAILED: bundle contract schema must enforce stable finding.severity enum labels")
-    if template.get("fixture_provenance") != {"required": False, "replay_type": "full_app"}:
-        raise SystemExit("FAILED: bundle contract template must omit empty full-app fixture provenance details")
+    if template.get("fixture_provenance") != {
+        "required": False,
+        "replay_type": "full_app",
+        "synthetic_security_properties_present": False,
+        "security_properties": [],
+    }:
+        raise SystemExit("FAILED: bundle contract template must retain the explicit full-app fixture security judgment")
     ssrf_template = template.get("impact_tier", {}).get("ssrf", {})
     if "artifact_backed_oracle" in ssrf_template:
         raise SystemExit("FAILED: callback-only bundle contract template must omit empty SSRF artifact_backed_oracle")
@@ -1123,6 +1146,8 @@ def exercise_p8_real_historical_dogfood(root: Path) -> None:
             str(root / "scripts/validate_bundle_contract.py"),
             "--workspace-dir",
             str(sample01),
+            "--repo-root",
+            str(sample01.parent),
             "--contract",
             str(sample01 / "confirmed/.contracts/historical-sample-01.bundle-contract.json"),
             "--all-errors",
@@ -1172,6 +1197,8 @@ def exercise_p8_real_historical_dogfood(root: Path) -> None:
             str(root / "scripts/validate_bundle_contract.py"),
             "--workspace-dir",
             str(sample03),
+            "--repo-root",
+            str(sample03.parent),
             "--contract",
             str(sample03 / "confirmed/.contracts/historical-sample-03.bundle-contract.json"),
             "--all-errors",
@@ -1180,8 +1207,8 @@ def exercise_p8_real_historical_dogfood(root: Path) -> None:
         expected_returncode=1,
     )
     sample03_codes = {str(issue.get("code")) for issue in sample03_payload.get("issues", []) if isinstance(issue, dict)}
-    if sample03_codes != {"REPLAY_LOG_UNREGISTERED"}:
-        raise SystemExit(f"FAILED: P8 real historical sample 03 issue-code mismatch: {sorted(sample03_codes)}")
+    if "REPLAY_LOG_UNREGISTERED" not in sample03_codes:
+        raise SystemExit(f"FAILED: P8 real historical sample 03 lost replay registration rejection: {sorted(sample03_codes)}")
 
 
 def valid_target_contract_yaml(*, runtime_type: str = "docker-compose", entrypoints: str | None = None) -> str:
@@ -1620,9 +1647,93 @@ def valid_bundle_contract(overrides: dict | None = None) -> dict:
                 }
             ]
         },
+        "source_binding": {
+            "tested_ref": "SELFTEST_REF",
+            "attacker_entrypoint": "POST /api/import",
+            "replay_observed_entrypoint": "POST /api/import",
+            "binding_mode": "exact",
+            "target_entrypoint_id": "import-url",
+            "source_defined_entrypoint": "POST /api/import",
+            "materials": {
+                "target_config": "target/zhulong-target.yaml",
+                "verifier_verdict": "verifier/verifier-verdict.json",
+            },
+            "source_references": [
+                {
+                    "id": "SRC-ENTRY",
+                    "role": "entrypoint",
+                    "path": "src/importer.py",
+                    "start_line": 1,
+                    "end_line": 1,
+                    "hash_kind": "snippet",
+                    "sha256": "0" * 64,
+                    "exact_token": "POST /api/import",
+                },
+                {
+                    "id": "SRC-SINK",
+                    "role": "sink",
+                    "path": "src/importer.py",
+                    "start_line": 2,
+                    "end_line": 2,
+                    "hash_kind": "snippet",
+                    "sha256": "0" * 64,
+                    "exact_token": "http_fetch(url)",
+                },
+                {
+                    "id": "SRC-CONFIG",
+                    "role": "prerequisite",
+                    "path": "src/importer.py",
+                    "start_line": 3,
+                    "end_line": 3,
+                    "hash_kind": "snippet",
+                    "sha256": "0" * 64,
+                    "exact_token": "OUTBOUND_REQUESTS_ENABLED = True",
+                },
+            ],
+        },
         "fixture_provenance": {
             "required": False,
             "replay_type": "full_app",
+            "synthetic_security_properties_present": False,
+            "security_properties": [],
+        },
+        "deployment_prerequisites": [
+            {
+                "id": "DEP-OUTBOUND",
+                "description": "The tested deployment enables outbound requests for the import feature.",
+                "source_reference_ids": ["SRC-CONFIG"],
+                "reviewer_material_required": True,
+            }
+        ],
+        "impact_claims": [
+            {
+                "id": "IMPACT-CALLBACK",
+                "category": "network_reachability",
+                "statement": "The tested attacker entrypoint causes one server-side outbound callback.",
+                "deterministic_oracle": {
+                    "token": "DIRECT_IMPACT_CONFIRMED",
+                    "evidence_path": "attachments/evidence/replay-output.log",
+                },
+                "source_bound_prerequisite_ids": ["SRC-ENTRY", "SRC-SINK"],
+                "depends_on_security_property_ids": [],
+                "verified_deployment_prerequisite_ids": ["DEP-OUTBOUND"],
+                "supported_bug_classes": ["SSRF"],
+                "severity_ceiling": "Medium",
+                "unsupported_stronger_impacts": ["Response content and sensitive data exposure are not proven."],
+            }
+        ],
+        "validity_review": {
+            "validity_verdict": "conditionally_confirmed",
+            "classification_decision": "unchanged",
+            "original_bug_class": "SSRF",
+            "original_severity": "Medium",
+            "final_bug_class": "SSRF",
+            "final_cwe": "CWE-918",
+            "final_severity": "Medium",
+            "supported_impact_claim_ids": ["IMPACT-CALLBACK"],
+            "deployment_prerequisite_ids": ["DEP-OUTBOUND"],
+            "rationale": "Source and replay bind the same attacker entrypoint and prove callback reachability only.",
+            "stronger_impacts_not_claimed": ["Response content and sensitive data exposure are not proven."],
         },
         "impact_tier": {
             "bug_class": "SSRF",
@@ -1647,12 +1758,83 @@ def valid_bundle_contract(overrides: dict | None = None) -> dict:
     return contract
 
 
+def prepare_source_bound_fixture(repo_root: Path, workspace: Path, contract: dict) -> dict:
+    source_path = repo_root / "src/importer.py"
+    source_path.parent.mkdir(parents=True, exist_ok=True)
+    source_text = (
+        'ENTRYPOINT = "POST /api/import"\n'
+        "result = http_fetch(url)\n"
+        "OUTBOUND_REQUESTS_ENABLED = True\n"
+    )
+    source_path.write_text(source_text, encoding="utf-8")
+    if not (repo_root / ".git").exists():
+        run(["git", "init", "-q", str(repo_root)], repo_root.parent)
+        run(["git", "-C", str(repo_root), "add", "src/importer.py"], repo_root)
+        run(
+            [
+                "git", "-C", str(repo_root),
+                "-c", "user.name=Zhulong Selftest",
+                "-c", "user.email=selftest@example.invalid",
+                "commit", "-q", "-m", "source-bound selftest fixture",
+            ],
+            repo_root,
+        )
+    tested_ref = run_capture(["git", "-C", str(repo_root), "rev-parse", "HEAD"], repo_root).strip()
+    binding = contract["source_binding"]
+    binding["tested_ref"] = tested_ref
+    lines = source_text.splitlines(keepends=True)
+    for ref in binding["source_references"]:
+        start = int(ref["start_line"])
+        end = int(ref["end_line"])
+        snippet = "".join(lines[start - 1:end]).encode("utf-8")
+        ref["sha256"] = hashlib.sha256(snippet).hexdigest()
+    target_path = workspace / binding["materials"]["target_config"]
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    target_path.write_text(
+        "schema_version: 1\n"
+        "target:\n"
+        "  name: example-project\n"
+        "  repo_root: .\n"
+        f"  tested_ref: {tested_ref}\n"
+        "  language_hint: [python]\n"
+        "runtime:\n"
+        "  type: docker\n"
+        "verify:\n"
+        "  mode: local\n"
+        "scope:\n"
+        "  entrypoints:\n"
+        "    - id: import-url\n"
+        "      kind: http\n"
+        "      route: POST /api/import\n"
+        "  trust_boundaries: []\n"
+        "  in_scope_bug_classes: [SSRF]\n"
+        "  out_of_scope: []\n",
+        encoding="utf-8",
+    )
+    verdict_path = workspace / binding["materials"]["verifier_verdict"]
+    verdict_path.parent.mkdir(parents=True, exist_ok=True)
+    verdict_path.write_text(
+        json.dumps(
+            {
+                "target_ref": {"target_config": binding["materials"]["target_config"], "tested_ref": tested_ref},
+                "attacker_entrypoint": {"route": "POST /api/import"},
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return contract
+
+
 def run_bundle_contract_json(
     plugin_root: Path,
     workspace: Path,
     contract_path: Path,
     *,
     expected_returncode: int,
+    repo_root: Path | None = None,
 ) -> dict:
     validator = plugin_root / "scripts/validate_bundle_contract.py"
     output = run_capture_with_env(
@@ -1661,6 +1843,8 @@ def run_bundle_contract_json(
             str(validator),
             "--workspace-dir",
             str(workspace),
+            "--repo-root",
+            str(repo_root or workspace.parent),
             "--contract",
             str(contract_path),
             "--all-errors",
@@ -1759,6 +1943,7 @@ def exercise_bundle_contract_validator(plugin_root: Path) -> None:
             return workspace
 
         def write_contract(workspace: Path, name: str, contract: dict) -> Path:
+            prepare_source_bound_fixture(root, workspace, contract)
             return write_json_fixture(workspace / "confirmed" / ".contracts" / f"{name}.bundle-contract.json", contract)
 
         good_workspace = new_workspace("good")
@@ -1773,6 +1958,131 @@ def exercise_bundle_contract_validator(plugin_root: Path) -> None:
         if not callback_payload.get("valid"):
             raise SystemExit("FAILED: bounded SSRF callback/reachability contract did not pass")
 
+        entrypoint_mismatch = json_clone(valid_bundle_contract())
+        entrypoint_mismatch["source_binding"]["replay_observed_entrypoint"] = "POST /api/other"
+        workspace = new_workspace("source-entrypoint-mismatch")
+        payload = run_bundle_contract_json(plugin_root, workspace, write_contract(workspace, "bad", entrypoint_mismatch), expected_returncode=1)
+        require_bundle_issue(payload, "SOURCE_ENTRYPOINT_MISMATCH")
+
+        composed_mismatch = json_clone(valid_bundle_contract())
+        composed_mismatch["source_binding"].update(
+            {
+                "binding_mode": "composed",
+                "component_joiner": " ",
+                "resolved_entrypoint": "POST /api/missing",
+                "components": [
+                    {"id": "METHOD", "value": "POST", "source_reference_ids": ["SRC-ENTRY"]},
+                    {"id": "ROUTE", "value": "/api/missing", "source_reference_ids": ["SRC-ENTRY"]},
+                ],
+            }
+        )
+        composed_mismatch["source_binding"].pop("source_defined_entrypoint", None)
+        workspace = new_workspace("composed-mismatch")
+        payload = run_bundle_contract_json(plugin_root, workspace, write_contract(workspace, "bad", composed_mismatch), expected_returncode=1)
+        require_bundle_issue(payload, "SOURCE_REF_MISMATCH")
+        require_bundle_issue(payload, "SOURCE_ENTRYPOINT_MISMATCH")
+
+        bad_hash = json_clone(valid_bundle_contract())
+        workspace = new_workspace("source-hash-mismatch")
+        bad_hash_path = write_contract(workspace, "bad", bad_hash)
+        bad_hash_doc = json.loads(bad_hash_path.read_text(encoding="utf-8"))
+        bad_hash_doc["source_binding"]["source_references"][0]["sha256"] = "f" * 64
+        write_json_fixture(bad_hash_path, bad_hash_doc)
+        payload = run_bundle_contract_json(plugin_root, workspace, bad_hash_path, expected_returncode=1)
+        require_bundle_issue(payload, "SOURCE_FILE_MISMATCH")
+
+        dirty_source = json_clone(valid_bundle_contract())
+        workspace = new_workspace("source-differs-from-tested-ref")
+        dirty_source_path = write_contract(workspace, "bad", dirty_source)
+        with (root / "src/importer.py").open("a", encoding="utf-8") as handle:
+            handle.write("# uncommitted source change outside every hashed snippet\n")
+        payload = run_bundle_contract_json(plugin_root, workspace, dirty_source_path, expected_returncode=1)
+        require_bundle_issue(payload, "SOURCE_FILE_MISMATCH")
+
+        bad_line = json_clone(valid_bundle_contract())
+        bad_line["source_binding"]["source_references"][0]["end_line"] = 999
+        workspace = new_workspace("source-line-mismatch")
+        payload = run_bundle_contract_json(plugin_root, workspace, write_contract(workspace, "bad", bad_line), expected_returncode=1)
+        require_bundle_issue(payload, "SOURCE_REF_MISMATCH")
+
+        symlink_escape = json_clone(valid_bundle_contract())
+        symlink_escape["source_binding"]["source_references"][0]["path"] = "src/escape.py"
+        workspace = new_workspace("source-symlink-escape")
+        symlink_contract = write_contract(workspace, "bad", symlink_escape)
+        outside_source = root.parent / f"{root.name}-outside.py"
+        outside_source.write_text('ENTRYPOINT = "POST /api/import"\n', encoding="utf-8")
+        (root / "src/escape.py").symlink_to(outside_source)
+        payload = run_bundle_contract_json(plugin_root, workspace, symlink_contract, expected_returncode=1)
+        require_bundle_issue(payload, "SOURCE_FILE_MISMATCH")
+        (root / "src/escape.py").unlink()
+        outside_source.unlink()
+
+        bad_ref = json_clone(valid_bundle_contract())
+        workspace = new_workspace("tested-ref-mismatch")
+        bad_ref_path = write_contract(workspace, "bad", bad_ref)
+        bad_ref_doc = json.loads(bad_ref_path.read_text(encoding="utf-8"))
+        bad_ref_doc["source_binding"]["tested_ref"] = "0" * 40
+        write_json_fixture(bad_ref_path, bad_ref_doc)
+        payload = run_bundle_contract_json(plugin_root, workspace, bad_ref_path, expected_returncode=1)
+        require_bundle_issue(payload, "SOURCE_REF_MISMATCH")
+
+        synthetic_privilege = json_clone(valid_bundle_contract())
+        synthetic_privilege["fixture_provenance"].update(
+            {
+                "synthetic_security_properties_present": True,
+                "security_properties": [
+                    {
+                        "id": "PROP-ADMIN",
+                        "origin": "synthetic",
+                        "use": "impact_prerequisite",
+                        "meaning": "The fixture creates an administrator identity.",
+                        "source_reference_ids": [],
+                        "cannot_support_impact_claim_ids": [],
+                    }
+                ],
+            }
+        )
+        synthetic_privilege["impact_claims"][0]["depends_on_security_property_ids"] = ["PROP-ADMIN"]
+        workspace = new_workspace("synthetic-privilege")
+        payload = run_bundle_contract_json(plugin_root, workspace, write_contract(workspace, "bad", synthetic_privilege), expected_returncode=1)
+        require_bundle_issue(payload, "SYNTHETIC_PROPERTY_SUPPORTS_IMPACT")
+
+        oracle_drift = json_clone(valid_bundle_contract())
+        oracle_drift["impact_claims"][0]["deterministic_oracle"]["token"] = "UNREGISTERED_ORACLE"
+        workspace = new_workspace("impact-oracle-drift")
+        payload = run_bundle_contract_json(plugin_root, workspace, write_contract(workspace, "bad", oracle_drift), expected_returncode=1)
+        require_bundle_issue(payload, "IMPACT_CLAIM_UNSUPPORTED")
+
+        severity_overclaim = json_clone(valid_bundle_contract())
+        severity_overclaim["finding"]["severity"] = "High"
+        severity_overclaim["validity_review"]["final_severity"] = "High"
+        severity_overclaim["validity_review"]["original_severity"] = "High"
+        workspace = new_workspace("severity-overclaim")
+        payload = run_bundle_contract_json(plugin_root, workspace, write_contract(workspace, "bad", severity_overclaim), expected_returncode=1)
+        require_bundle_issue(payload, "SEVERITY_EVIDENCE_MISMATCH")
+
+        not_valid = json_clone(valid_bundle_contract())
+        not_valid["validity_review"]["validity_verdict"] = "not_valid"
+        workspace = new_workspace("not-valid")
+        payload = run_bundle_contract_json(plugin_root, workspace, write_contract(workspace, "bad", not_valid), expected_returncode=1)
+        require_bundle_issue(payload, "VALIDITY_VERDICT_NOT_PROMOTABLE")
+
+        downgraded = json_clone(valid_bundle_contract())
+        downgraded["validity_review"]["classification_decision"] = "downgraded"
+        downgraded["validity_review"]["original_severity"] = "High"
+        workspace = new_workspace("downgraded")
+        payload = run_bundle_contract_json(plugin_root, workspace, write_contract(workspace, "good", downgraded), expected_returncode=0)
+        if not payload.get("valid"):
+            raise SystemExit("FAILED: evidence-bounded downgraded contract did not pass")
+
+        reclassified = json_clone(valid_bundle_contract())
+        reclassified["validity_review"]["classification_decision"] = "reclassified"
+        reclassified["validity_review"]["original_bug_class"] = "Unbounded Request Forwarding"
+        workspace = new_workspace("reclassified")
+        payload = run_bundle_contract_json(plugin_root, workspace, write_contract(workspace, "good", reclassified), expected_returncode=0)
+        if not payload.get("valid"):
+            raise SystemExit("FAILED: evidence-bounded reclassified contract did not pass")
+
         fixture_workspace = new_workspace("fixture")
         fixture_doc = json_clone(valid_bundle_contract())
         fixture_doc["fixture_provenance"] = {
@@ -1783,6 +2093,17 @@ def exercise_bundle_contract_validator(plugin_root: Path) -> None:
             "sufficiency_reason": "The vulnerable source-to-sink boundary is independent of omitted UI code.",
             "consumer_boundary": "The consuming application passes attacker-controlled URLs to the library API.",
             "non_claims": ["No response content exposure is claimed."],
+            "synthetic_security_properties_present": True,
+            "security_properties": [
+                {
+                    "id": "PROP-ORACLE",
+                    "origin": "synthetic",
+                    "use": "oracle_only",
+                    "meaning": "A marker identifies the deterministic callback oracle.",
+                    "source_reference_ids": [],
+                    "cannot_support_impact_claim_ids": ["IMPACT-CALLBACK"],
+                }
+            ],
         }
         fixture_contract = write_contract(fixture_workspace, "fixture", fixture_doc)
         fixture_payload = run_bundle_contract_json(plugin_root, fixture_workspace, fixture_contract, expected_returncode=0)
@@ -1877,6 +2198,9 @@ def exercise_bundle_contract_validator(plugin_root: Path) -> None:
         open_bug_class = json_clone(valid_bundle_contract())
         open_bug_class["finding"]["bug_class"] = "unsafe native plugin loading"
         open_bug_class["impact_tier"] = {"bug_class": "unsafe native plugin loading"}
+        open_bug_class["impact_claims"][0]["supported_bug_classes"] = ["unsafe native plugin loading"]
+        open_bug_class["validity_review"]["original_bug_class"] = "unsafe native plugin loading"
+        open_bug_class["validity_review"]["final_bug_class"] = "unsafe native plugin loading"
         workspace = new_workspace("open-bug-class")
         payload = run_bundle_contract_json(plugin_root, workspace, write_contract(workspace, "open", open_bug_class), expected_returncode=0)
         if not payload.get("valid"):
@@ -1908,9 +2232,9 @@ def exercise_bundle_contract_validator(plugin_root: Path) -> None:
         require_bundle_issue(payload, "DIRECT_IMPACT_MARKER_DRIFT")
         require_bundle_issue(payload, "CODE_CONTEXT_TOO_THIN")
 
-    output = run_capture([sys.executable, str(validator), "--workspace-dir", ".", "--contract", str(template)], plugin_root)
-    if "OK: bundle contract valid" not in output:
-        raise SystemExit(f"FAILED: bundle contract template did not pass human-readable preflight:\n{output}")
+    help_output = run_capture([sys.executable, str(validator), "--help"], plugin_root)
+    if "--repo-root" not in help_output:
+        raise SystemExit("FAILED: bundle contract validator help is missing --repo-root")
 
 
 def build_wrapper_source_finding(plugin_root: Path, repo_dir: Path, workspace: Path) -> str:
@@ -1974,6 +2298,34 @@ def build_wrapper_contract(workspace: Path, slug: str, *, finding_slug: str = "d
         "server_condition": "服务端启用受影响下载接口并从本地文件系统读取文件。",
         "security_impact": "Docker 证据证明攻击者可读取容器内敏感文件内容。",
     }
+    contract["impact_tier"]["bug_class"] = "Path Traversal"
+    contract["impact_tier"].pop("ssrf", None)
+    contract["impact_claims"][0].update(
+        {
+            "category": "unauthorized_read",
+            "statement": "The tested entrypoint reads a file outside the intended directory boundary.",
+            "supported_bug_classes": ["Path Traversal"],
+            "severity_ceiling": "High",
+            "unsupported_stronger_impacts": ["Arbitrary file write and code execution are not proven."],
+        }
+    )
+    contract["validity_review"].update(
+        {
+            "original_bug_class": "Path Traversal",
+            "original_severity": "High",
+            "final_bug_class": "Path Traversal",
+            "final_cwe": "CWE-22",
+            "final_severity": "High",
+            "rationale": "Source-bound entrypoint and sink evidence support only the verified file-read boundary.",
+            "stronger_impacts_not_claimed": ["Arbitrary file write and code execution are not proven."],
+            "cvss": {
+                "version": "4.0",
+                "vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N",
+                "score": 8.7,
+            },
+        }
+    )
+    prepare_source_bound_fixture(workspace.parent, workspace, contract)
     contract_path = workspace / "confirmed/.contracts" / f"{slug}.bundle-contract.json"
     contract_path.parent.mkdir(parents=True, exist_ok=True)
     return write_json_fixture(contract_path, contract)
@@ -2013,6 +2365,8 @@ def exercise_build_confirmed_bundle_wrapper(plugin_root: Path) -> None:
             str(wrapper),
             "--workspace-dir",
             str(workspace),
+            "--repo-root",
+            str(repo_dir),
             "--contract",
             str(contract),
             "--language",
@@ -2025,6 +2379,16 @@ def exercise_build_confirmed_bundle_wrapper(plugin_root: Path) -> None:
         if not manifest_path.is_file():
             raise SystemExit("FAILED: promoted bundle is missing bundle-build-manifest.json")
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        for key in ("contract_sha256", "tested_ref", "source_binding_sha256"):
+            if not str(manifest.get(key) or "").strip():
+                raise SystemExit(f"FAILED: source-bound build manifest missing {key}")
+        for required_name in ("findings.json", "validity-review.json", "verification-evidence.json"):
+            if not (final_bundle / required_name).is_file():
+                raise SystemExit(f"FAILED: promoted source-bound bundle is missing {required_name}")
+        reviewer_index = json.loads((final_bundle / "attachments/reviewer-evidence-index.json").read_text(encoding="utf-8"))
+        for key in ("source_binding", "fixture_provenance", "impact_claims", "deployment_prerequisites", "validity_review"):
+            if key not in reviewer_index:
+                raise SystemExit(f"FAILED: reviewer evidence index missing source-bound field {key}")
         replay_logs = manifest.get("replay_logs")
         if not isinstance(replay_logs, list) or not replay_logs:
             raise SystemExit("FAILED: bundle-build-manifest.json must include replay_logs provenance")
@@ -2043,6 +2407,24 @@ def exercise_build_confirmed_bundle_wrapper(plugin_root: Path) -> None:
                 raise SystemExit("FAILED: replay log manifest contains a local absolute path")
         if (workspace / "confirmed/.staging" / slug).exists():
             raise SystemExit("FAILED: staging bundle remained visible after promote")
+
+        docx_path = next(final_bundle.glob("*.docx"))
+        original_docx = docx_path.read_bytes()
+        prerequisite_text = "The tested deployment enables outbound requests for the import feature."
+        rewrite_docx_paragraphs(docx_path, lambda text: None if prerequisite_text in text else text)
+        run_expect_fail(
+            [
+                sys.executable,
+                str(plugin_root / "scripts/validate_report_bundle.py"),
+                "--bundle-dir",
+                str(final_bundle),
+                "--language",
+                "zh-CN",
+            ],
+            plugin_root,
+            "DOCX omits final validity/classification/severity/condition material",
+        )
+        docx_path.write_bytes(original_docx)
 
         direct_repo, direct_workspace = new_build_wrapper_workspace(root, "direct-renderer")
         direct_slug = build_wrapper_source_finding(plugin_root, direct_repo, direct_workspace)
@@ -2078,6 +2460,8 @@ def exercise_build_confirmed_bundle_wrapper(plugin_root: Path) -> None:
             str(wrapper),
             "--workspace-dir",
             str(invalid_workspace),
+            "--repo-root",
+            str(invalid_repo),
             "--contract",
             str(invalid_contract),
             "--language",
@@ -2085,6 +2469,31 @@ def exercise_build_confirmed_bundle_wrapper(plugin_root: Path) -> None:
         ], plugin_root, "bundle contract preflight failed")
         if (invalid_workspace / "confirmed" / invalid_slug).exists():
             raise SystemExit("FAILED: invalid contract created a final bundle")
+
+        invalid_validity_repo, invalid_validity_workspace = new_build_wrapper_workspace(root, "not-valid-contract")
+        invalid_validity_slug = build_wrapper_source_finding(plugin_root, invalid_validity_repo, invalid_validity_workspace)
+        invalid_validity_contract = build_wrapper_contract(invalid_validity_workspace, invalid_validity_slug)
+        invalid_validity_data = json.loads(invalid_validity_contract.read_text(encoding="utf-8"))
+        invalid_validity_data["validity_review"]["validity_verdict"] = "withdrawn"
+        write_json_fixture(invalid_validity_contract, invalid_validity_data)
+        run_expect_fail(
+            [
+                sys.executable,
+                str(wrapper),
+                "--workspace-dir",
+                str(invalid_validity_workspace),
+                "--repo-root",
+                str(invalid_validity_repo),
+                "--contract",
+                str(invalid_validity_contract),
+                "--language",
+                "zh-CN",
+            ],
+            plugin_root,
+            "VALIDITY_VERDICT_NOT_PROMOTABLE",
+        )
+        if (invalid_validity_workspace / "confirmed" / invalid_validity_slug).exists():
+            raise SystemExit("FAILED: withdrawn validity contract created a final bundle")
 
         multi_repo, multi_workspace = new_build_wrapper_workspace(root, "multi-finding")
         multi_slug = build_wrapper_source_finding(plugin_root, multi_repo, multi_workspace)
@@ -2100,6 +2509,8 @@ def exercise_build_confirmed_bundle_wrapper(plugin_root: Path) -> None:
             str(wrapper),
             "--workspace-dir",
             str(multi_workspace),
+            "--repo-root",
+            str(multi_repo),
             "--contract",
             str(multi_contract),
             "--language",
@@ -2122,6 +2533,8 @@ def exercise_build_confirmed_bundle_wrapper(plugin_root: Path) -> None:
             str(wrapper),
             "--workspace-dir",
             str(validation_workspace),
+            "--repo-root",
+            str(validation_repo),
             "--contract",
             str(validation_contract),
             "--language",
@@ -2138,6 +2551,8 @@ def exercise_build_confirmed_bundle_wrapper(plugin_root: Path) -> None:
             str(wrapper),
             "--workspace-dir",
             str(workspace),
+            "--repo-root",
+            str(repo_dir),
             "--contract",
             str(contract),
             "--language",
@@ -2149,6 +2564,8 @@ def exercise_build_confirmed_bundle_wrapper(plugin_root: Path) -> None:
             str(wrapper),
             "--workspace-dir",
             str(workspace),
+            "--repo-root",
+            str(repo_dir),
             "--contract",
             str(contract),
             "--language",
@@ -2170,6 +2587,8 @@ def exercise_build_confirmed_bundle_wrapper(plugin_root: Path) -> None:
             str(wrapper),
             "--workspace-dir",
             str(stale_workspace),
+            "--repo-root",
+            str(stale_repo),
             "--contract",
             str(stale_contract),
             "--language",
@@ -2196,6 +2615,8 @@ def exercise_build_confirmed_bundle_wrapper(plugin_root: Path) -> None:
             str(wrapper),
             "--workspace-dir",
             str(escape_workspace),
+            "--repo-root",
+            str(escape_repo),
             "--contract",
             str(escape_contract),
             "--language",

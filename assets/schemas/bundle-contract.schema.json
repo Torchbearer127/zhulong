@@ -15,7 +15,11 @@
     "direct_impact",
     "files",
     "code_context",
+    "source_binding",
     "fixture_provenance",
+    "impact_claims",
+    "deployment_prerequisites",
+    "validity_review",
     "impact_tier",
     "variant_seed_readiness"
   ],
@@ -415,7 +419,9 @@
       "additionalProperties": false,
       "required": [
         "required",
-        "replay_type"
+        "replay_type",
+        "synthetic_security_properties_present",
+        "security_properties"
       ],
       "properties": {
         "required": {
@@ -451,6 +457,186 @@
           "items": {
             "type": "string",
             "minLength": 1
+          }
+        },
+        "synthetic_security_properties_present": {
+          "type": "boolean"
+        },
+        "security_properties": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "origin",
+              "use",
+              "meaning",
+              "source_reference_ids",
+              "cannot_support_impact_claim_ids"
+            ],
+            "properties": {
+              "id": {"type": "string", "minLength": 1},
+              "origin": {"enum": ["upstream_backed", "synthetic"]},
+              "use": {"enum": ["impact_prerequisite", "oracle_only"]},
+              "meaning": {"type": "string", "minLength": 1},
+              "source_reference_ids": {
+                "type": "array",
+                "items": {"type": "string", "minLength": 1}
+              },
+              "cannot_support_impact_claim_ids": {
+                "type": "array",
+                "items": {"type": "string", "minLength": 1}
+              }
+            }
+          }
+        }
+      }
+    },
+    "source_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tested_ref",
+        "attacker_entrypoint",
+        "replay_observed_entrypoint",
+        "binding_mode",
+        "target_entrypoint_id",
+        "materials",
+        "source_references"
+      ],
+      "properties": {
+        "tested_ref": {"type": "string", "minLength": 1},
+        "attacker_entrypoint": {"type": "string", "minLength": 1},
+        "replay_observed_entrypoint": {"type": "string", "minLength": 1},
+        "binding_mode": {"enum": ["exact", "composed"]},
+        "target_entrypoint_id": {"type": "string", "minLength": 1},
+        "source_defined_entrypoint": {"type": "string", "minLength": 1},
+        "component_joiner": {"type": "string"},
+        "resolved_entrypoint": {"type": "string", "minLength": 1},
+        "materials": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["target_config", "verifier_verdict"],
+          "properties": {
+            "target_config": {"type": "string", "minLength": 1},
+            "verifier_verdict": {"type": "string", "minLength": 1}
+          }
+        },
+        "source_references": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "role", "path", "start_line", "end_line", "hash_kind", "sha256", "exact_token"],
+            "properties": {
+              "id": {"type": "string", "minLength": 1},
+              "role": {"enum": ["entrypoint", "sink", "missing_guard", "prerequisite", "security_property"]},
+              "path": {"type": "string", "minLength": 1},
+              "start_line": {"type": "integer", "minimum": 1},
+              "end_line": {"type": "integer", "minimum": 1},
+              "hash_kind": {"enum": ["file", "snippet"]},
+              "sha256": {"type": "string", "pattern": "^[0-9a-fA-F]{64}$"},
+              "exact_token": {"type": "string", "minLength": 1}
+            }
+          }
+        },
+        "components": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "value", "source_reference_ids"],
+            "properties": {
+              "id": {"type": "string", "minLength": 1},
+              "value": {"type": "string", "minLength": 1},
+              "source_reference_ids": {
+                "type": "array",
+                "minItems": 1,
+                "items": {"type": "string", "minLength": 1}
+              }
+            }
+          }
+        }
+      }
+    },
+    "impact_claims": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id", "category", "statement", "deterministic_oracle", "source_bound_prerequisite_ids",
+          "depends_on_security_property_ids", "verified_deployment_prerequisite_ids", "supported_bug_classes",
+          "severity_ceiling", "unsupported_stronger_impacts"
+        ],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "category": {"enum": ["unauthorized_read", "unauthorized_write", "auth_bypass", "code_execution", "sensitive_data_exposure", "availability_impact", "network_reachability", "privilege_escalation", "security_boundary_bypass", "other_bounded_impact"]},
+          "statement": {"type": "string", "minLength": 1},
+          "deterministic_oracle": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["token", "evidence_path"],
+            "properties": {
+              "token": {"type": "string", "minLength": 1},
+              "evidence_path": {"type": "string", "minLength": 1}
+            }
+          },
+          "source_bound_prerequisite_ids": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+          "depends_on_security_property_ids": {"type": "array", "items": {"type": "string", "minLength": 1}},
+          "verified_deployment_prerequisite_ids": {"type": "array", "items": {"type": "string", "minLength": 1}},
+          "supported_bug_classes": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+          "severity_ceiling": {"enum": ["Critical", "High", "Medium", "Low", "Informational"]},
+          "unsupported_stronger_impacts": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}}
+        }
+      }
+    },
+    "deployment_prerequisites": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "description", "source_reference_ids", "reviewer_material_required"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "description": {"type": "string", "minLength": 1},
+          "source_reference_ids": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+          "reviewer_material_required": {"const": true}
+        }
+      }
+    },
+    "validity_review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "validity_verdict", "classification_decision", "original_bug_class", "original_severity",
+        "final_bug_class", "final_cwe", "final_severity", "supported_impact_claim_ids",
+        "deployment_prerequisite_ids", "rationale", "stronger_impacts_not_claimed"
+      ],
+      "properties": {
+        "validity_verdict": {"enum": ["confirmed", "conditionally_confirmed", "not_valid", "withdrawn"]},
+        "classification_decision": {"enum": ["unchanged", "downgraded", "reclassified"]},
+        "original_bug_class": {"type": "string", "minLength": 1},
+        "original_severity": {"enum": ["Critical", "High", "Medium", "Low", "Informational"]},
+        "final_bug_class": {"type": "string", "minLength": 1},
+        "final_cwe": {"type": ["string", "null"]},
+        "final_severity": {"enum": ["Critical", "High", "Medium", "Low", "Informational"]},
+        "supported_impact_claim_ids": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "deployment_prerequisite_ids": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "rationale": {"type": "string", "minLength": 1},
+        "stronger_impacts_not_claimed": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "cvss": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["version", "vector", "score"],
+          "properties": {
+            "version": {"enum": ["4.0", "3.1"]},
+            "vector": {"type": "string", "minLength": 1},
+            "score": {"type": "number", "minimum": 0, "maximum": 10}
           }
         }
       }

@@ -102,9 +102,115 @@
       }
     ]
   },
+  "source_binding": {
+    "tested_ref": "0123456789abcdef0123456789abcdef01234567",
+    "attacker_entrypoint": "POST /api/import",
+    "replay_observed_entrypoint": "POST /api/import",
+    "binding_mode": "exact",
+    "target_entrypoint_id": "import-url",
+    "source_defined_entrypoint": "POST /api/import",
+    "materials": {
+      "target_config": "target/zhulong-target.yaml",
+      "verifier_verdict": "verifier/CAND-0001/verifier-verdict.json"
+    },
+    "source_references": [
+      {
+        "id": "SRC-ENTRY",
+        "role": "entrypoint",
+        "path": "src/importer.py",
+        "start_line": 42,
+        "end_line": 45,
+        "hash_kind": "snippet",
+        "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "exact_token": "POST /api/import"
+      },
+      {
+        "id": "SRC-SINK",
+        "role": "sink",
+        "path": "src/importer.py",
+        "start_line": 58,
+        "end_line": 67,
+        "hash_kind": "snippet",
+        "sha256": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+        "exact_token": "http_client.fetch(url)"
+      },
+      {
+        "id": "SRC-DEPLOYMENT",
+        "role": "prerequisite",
+        "path": "config/defaults.py",
+        "start_line": 10,
+        "end_line": 12,
+        "hash_kind": "snippet",
+        "sha256": "123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0",
+        "exact_token": "IMPORT_FEATURE_ENABLED = True"
+      }
+    ]
+  },
   "fixture_provenance": {
     "required": false,
-    "replay_type": "full_app"
+    "replay_type": "full_app",
+    "synthetic_security_properties_present": false,
+    "security_properties": []
+  },
+  "deployment_prerequisites": [
+    {
+      "id": "DEP-IMPORT-ENABLED",
+      "description": "The tested deployment enables the import feature and permits outbound requests.",
+      "source_reference_ids": [
+        "SRC-DEPLOYMENT"
+      ],
+      "reviewer_material_required": true
+    }
+  ],
+  "impact_claims": [
+    {
+      "id": "IMPACT-CALLBACK",
+      "category": "network_reachability",
+      "statement": "The tested attacker entrypoint causes one server-side outbound callback.",
+      "deterministic_oracle": {
+        "token": "DIRECT_IMPACT_CONFIRMED",
+        "evidence_path": "attachments/evidence/replay-output.log"
+      },
+      "source_bound_prerequisite_ids": [
+        "SRC-ENTRY",
+        "SRC-SINK"
+      ],
+      "depends_on_security_property_ids": [],
+      "verified_deployment_prerequisite_ids": [
+        "DEP-IMPORT-ENABLED"
+      ],
+      "supported_bug_classes": [
+        "SSRF"
+      ],
+      "severity_ceiling": "Medium",
+      "unsupported_stronger_impacts": [
+        "Response content, credentials, and sensitive data exposure are not proven."
+      ]
+    }
+  ],
+  "validity_review": {
+    "validity_verdict": "conditionally_confirmed",
+    "classification_decision": "unchanged",
+    "original_bug_class": "SSRF",
+    "original_severity": "Medium",
+    "final_bug_class": "SSRF",
+    "final_cwe": "CWE-918",
+    "final_severity": "Medium",
+    "supported_impact_claim_ids": [
+      "IMPACT-CALLBACK"
+    ],
+    "deployment_prerequisite_ids": [
+      "DEP-IMPORT-ENABLED"
+    ],
+    "rationale": "Source and replay bind the same attacker entrypoint and prove callback reachability only.",
+    "stronger_impacts_not_claimed": [
+      "Response content, credentials, and sensitive data exposure are not proven."
+    ],
+    "cvss": {
+      "version": "4.0",
+      "vector": "CVSS:4.0/AV:N/AC:L/AT:P/PR:L/UI:N/VC:L/VI:N/VA:N/SC:N/SI:N/SA:N",
+      "score": 5.3
+    }
   },
   "impact_tier": {
     "bug_class": "SSRF",
