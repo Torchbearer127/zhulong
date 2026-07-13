@@ -520,3 +520,73 @@ cat docs/RELEASE_CHECKLIST.md
 - Zhulong does not clean uncertain Docker resources or OMC teammate PIDs.
 - Zhulong does not run a hosted backend, dashboard, database, vector store, or
   RAG service.
+
+## Optional final recording workflow (Issue #21)
+
+The ordinary confirmed-bundle path ends at Docker/report validation. Final
+screen recording is a separate opt-in path and does not turn an ordinary
+confirmed finding into a recording-ready or submission-ready artifact.
+
+Use the public repository implementation:
+
+```bash
+python3 scripts/auto_record_bundle.py confirmed/<slug> \
+  --repo-root . \
+  --mode record \
+  --engine docker
+```
+
+The recorder resolves canonical identity from bundle-local `findings.json`,
+`validity-review.json`, `verification-evidence.json`, and Issue #20
+source-bound material. It requires the generated root helper's
+`identity`, `code_or_trigger_context`, and `final_impact` checkpoint protocol.
+The helper writes events only into a recorder-owned temporary directory; the
+adapter verifies the OBS source/window, captures live checkpoint images outside
+the bundle, and acknowledges each event. A helper without this protocol fails
+closed in recording mode. When recording variables are absent, ordinary replay
+does not wait for an acknowledgement. Acknowledgements are parsed as JSON
+semantics, not compact-text fragments: the helper requires an ordinary,
+recorder-owned ack file whose object has the exact protocol version, `ack`
+status, stage, integer sequence, and expected marker. Pretty or compact JSON,
+whitespace, and key order do not change that protocol.
+
+The recording validator extracts frames from the final encoded video, checks
+non-black content, timestamps/holds, and conservative similarity to the live
+source images. Each stage's `recording_time_observations` is a recorder-supplied
+consistency claim that can fail closed or improve an error diagnosis, but is not
+independent visual proof of encoded content. It creates exactly:
+
+```text
+attachments/evidence/screenshots/01-target-identity.png
+attachments/evidence/screenshots/02-code-or-trigger-context.png
+attachments/evidence/screenshots/03-final-impact.png
+```
+
+It recomputes screenshot hashes/dimensions and requires registration in
+`verification-evidence.json`, `attachments/reviewer-evidence-index.json`, and
+the attachment inventory. The final `recording-evidence.json` is strict and
+records identity, media, replay, OBS/window, checkpoint, registration, and
+archive-readiness fields.
+
+`--finalize` requires `--checkpoint-dir` and performs full recording-time
+validation: it recomputes the live-checkpoint/final-frame relationship before
+recording promotion authority. A later invocation without the checkpoint
+directory is deliberately `artifact_only` revalidation; it can recheck hashes,
+inventory, screenshots, and archive consistency, but cannot establish a new
+recording-time content proof.
+
+Promotion is transactional. OBS output and staging remain outside the final
+bundle; the staged bundle is checked by `validate_report_bundle.py` and
+`validate_recording_evidence.py`; a temporary UTF-8 ZIP passes `testzip()` and
+required-entry checks; only then are the bundle directory and ZIP atomically
+promoted. Replay, frame, archive, or promotion failure leaves the original
+bundle/video/screenshots/ZIP byte-identical and retains a labelled unpromoted
+recorder session. The older local recording skill is compatibility-only and is
+not the source of truth.
+
+`--keep-unpromoted-archive DIR` is optional and never writes a final-named ZIP.
+Only if a later promotion failure occurs after the staged ZIP has fully passed
+validation does it copy that unpromoted diagnostic archive to the explicit
+bundle-external directory; it never overwrites an existing diagnostic copy.
+The legacy `--zip-on-fail` flag emits a deprecation warning and creates no
+failure archive.

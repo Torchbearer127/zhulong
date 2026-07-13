@@ -374,3 +374,62 @@ cat docs/RELEASE_CHECKLIST.md
 - 烛龙不会自动登录镜像仓库 (Registry)，也不会静默替换非等效的 Docker 镜像。
 - 烛龙不会清理归属不确定的 Docker 资源或 OMC 多 Agent 工作进程。
 - 烛龙不提供托管的后端服务、数据看板、数据库、向量存储或 RAG 服务。
+
+## 可选最终录屏流程（Issue #21）
+
+普通 confirmed bundle 流程在 Docker/报告校验通过后结束。最终审核录屏是单独的
+显式 opt-in，不会因为普通 bundle 已确认就自动获得 recording-ready 或
+submission-ready 状态。
+
+使用仓库内的公共实现：
+
+```bash
+python3 scripts/auto_record_bundle.py confirmed/<slug> \
+  --repo-root . \
+  --mode record \
+  --engine docker
+```
+
+录制器从 bundle-local 的 `findings.json`、`validity-review.json`、
+`verification-evidence.json` 以及 Issue #20 源码绑定材料解析 canonical identity。
+它要求根脚本实现 `identity`、`code_or_trigger_context`、`final_impact` 三阶段
+checkpoint 协议。根脚本只向 recorder-owned 临时目录写事件；adapter 校验 OBS
+source/window，临时保存 bundle 外的 live checkpoint 图片，并写入 ack。缺少协议的
+手写 helper 在录制模式下 fail-closed；没有录制环境变量时，普通 replay 不会等待
+ack。ack 按 JSON 语义而非 compact 文本片段解析：helper 要求它是位于
+recorder-owned 目录内的普通文件，并且 JSON 对象中的协议版本、`ack` 状态、阶段、
+整数 sequence 和 expected marker 都准确匹配。pretty/compact JSON、空白和键顺序
+不会改变协议判断。
+
+录制证据校验器从最终编码视频中提取帧，检查非黑内容、时间戳/hold，以及与 live
+source 图片的保守相似度。各阶段的 `recording_time_observations` 是 recorder 提供的
+一致性声明，可以 fail-closed 或帮助定位错误，但不是编码视频可见内容的独立证明。
+它只生成以下三个截图：
+
+```text
+attachments/evidence/screenshots/01-target-identity.png
+attachments/evidence/screenshots/02-code-or-trigger-context.png
+attachments/evidence/screenshots/03-final-impact.png
+```
+
+它会重算截图哈希/尺寸，并要求截图同时注册在 `verification-evidence.json`、
+`attachments/reviewer-evidence-index.json` 和附件 inventory 中。严格的
+`recording-evidence.json` 记录身份、媒体、replay、OBS/window、checkpoint、注册
+关系及 archive readiness。
+
+`--finalize` 必须同时给出 `--checkpoint-dir`，并执行完整的录制时校验：在写入
+promotion authority 前重算 live checkpoint 与最终帧之间的关系。之后不提供
+checkpoint directory 的调用明确属于 `artifact_only` 复核；它可复核哈希、inventory、
+截图和 archive 一致性，但不能重新建立录制时内容证明。
+
+promotion 使用事务流程：OBS 输出和 staging 保持在最终 bundle 外；staging 同时
+通过 `validate_report_bundle.py` 与 `validate_recording_evidence.py`；临时 UTF-8 ZIP
+通过 `testzip()` 和必需条目校验后，bundle 目录与 ZIP 才会原子 promotion。replay、
+帧、归档或 promotion 失败时，原 bundle/video/screenshots/ZIP 保持字节不变，并保留
+带标签的未 promotion 录制会话。旧的本地录制 skill 仅作兼容包装，不是 source of
+truth。
+
+`--keep-unpromoted-archive DIR` 为可选参数，绝不写入 final-named ZIP。只有 staged ZIP
+已完整通过校验、随后 promotion 失败时，才会向用户显式指定且位于 bundle 外的目录复制
+未 promotion 的诊断归档；它不会覆盖已有诊断副本。旧 `--zip-on-fail` 仅输出弃用警告，
+不会生成 failure archive。

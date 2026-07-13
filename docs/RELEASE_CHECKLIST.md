@@ -231,3 +231,18 @@ Publish only when:
 - [ ] No local absolute paths or stale package names remain in public docs.
 - [ ] No broad Docker prune or PID signaling path is present.
 - [ ] Release notes summarize the P5 gates and real-world dogfood status.
+
+## 9. Final Recording Gate (Issue #21)
+
+- [ ] Final recording is explicitly requested; ordinary confirmed status is not treated as recording-ready.
+- [ ] The public source files exist: `scripts/recording_identity.py`, `scripts/auto_record_bundle.py`, `scripts/validate_recording_evidence.py`, the strict recording schema, and sanitized fixtures.
+- [ ] `skills/zhulong/SKILL.md` and `templates/claude-skill/SKILL.md` are byte-identical, and neither delegates authority to the old local recording skill.
+- [ ] The generated helper has identity/context/impact checkpoint events and fails closed when the recorder-owned protocol is incomplete.
+- [ ] Checkpoint acknowledgements use exact JSON semantics (ordinary recorder-owned file, protocol version, status, stage, integer sequence, and marker), not serialization-dependent text matching.
+- [ ] Final encoded video frames are non-black, correctly timed, source/window-bound, and identity/oracle/direct-impact observations are present.
+- [ ] `recording_time_observations` are documented and emitted only as non-authoritative consistency claims; `--finalize` requires live checkpoints for full validation, while later no-checkpoint revalidation reports artifact-only consistency.
+- [ ] The three canonical screenshots are derived from the final encoded video, hashed, non-duplicate, and registered in all three evidence/inventory targets.
+- [ ] `recording-evidence.json` passes `scripts/validate_recording_evidence.py` only after finalization; the ordinary report validator also passes.
+- [ ] Temporary ZIP passes UTF-8/readability, `testzip()`, required-entry, and manifest-hash checks before atomic promotion.
+- [ ] Optional diagnostic archive retention uses `--keep-unpromoted-archive DIR` only after a verified staged archive and a later promotion failure; it stays external, diagnostic-named, and non-overwriting. Deprecated `--zip-on-fail` creates no archive.
+- [ ] A forced replay/archive/promotion failure leaves the original bundle, video, screenshots, and ZIP byte-identical; failed raw output remains outside the final path with an owned staging marker.

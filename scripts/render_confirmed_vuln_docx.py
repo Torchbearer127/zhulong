@@ -37,6 +37,11 @@ LANGUAGE_ALIASES = {
 
 REPLAY_LOG_RELATIVE_PATH = "attachments/evidence/replay-output.log"
 
+try:
+    from recording_identity import canonical_identity_from_documents
+except ImportError:  # pragma: no cover - direct package imports use the script directory.
+    canonical_identity_from_documents = None  # type: ignore[assignment]
+
 
 L10N = {
     "zh-CN": {
@@ -905,6 +910,53 @@ def localized_target_version_for_script(finding: dict[str, Any], language: str) 
     )
 
 
+def canonical_recording_identity_for_script(finding: dict[str, Any]) -> dict[str, str]:
+    """Return the source-bound values embedded in the generated helper.
+
+    Rendering is allowed to proceed for legacy findings that predate the
+    recording gate, so the fallback keeps normal report generation compatible.
+    Recording mode itself is fail-closed in the public validator when the bundle
+    does not contain the complete source-bound identity.
+    """
+
+    if canonical_identity_from_documents is not None:
+        try:
+            return canonical_identity_from_documents([{"findings": [finding]}])
+        except Exception:
+            pass
+    verification = ensure_mapping(finding.get("verification_evidence"))
+    source_binding = ensure_mapping(finding.get("source_binding"))
+    code_items = finding.get("code_context") if isinstance(finding.get("code_context"), list) else []
+    first_code = ensure_mapping(code_items[0]) if code_items else {}
+    location = first_nonempty(first_code.get("location"), first_code.get("path"), "code-context")
+    source = first_nonempty(first_code.get("source"), first_code.get("attacker_input"), first_code.get("summary"), "attacker-controlled input")
+    sink = first_nonempty(first_code.get("sink"), first_code.get("dangerous_operation"), first_code.get("explanation"), "dangerous operation")
+    trigger = first_nonempty(
+        finding.get("trigger_context"),
+        finding.get("trigger_path"),
+        finding.get("entrypoint"),
+        finding.get("attacker_condition"),
+        source_binding.get("entrypoint"),
+        "recorded trigger context",
+    )
+    ref = first_nonempty(
+        source_binding.get("tested_ref"),
+        source_binding.get("source_bound_ref"),
+        source_binding.get("tested_version"),
+        finding.get("version_affected"),
+    )
+    return {
+        "software_name": first_nonempty(finding.get("project_name"), finding.get("software_name"), "target-project"),
+        "tested_ref": ref or localized_target_version_for_script(finding, "en-US"),
+        "tested_ref_kind": "version",
+        "finding_slug": first_nonempty(verification.get("finding_slug"), finding.get("slug"), "finding"),
+        "direct_impact_marker": first_nonempty(finding.get("direct_impact_marker"), verification.get("direct_impact_marker"), "DIRECT_IMPACT_CONFIRMED"),
+        "oracle_marker": first_nonempty(verification.get("oracle_token"), finding.get("oracle_token"), "ORACLE_CONFIRMED"),
+        "code_context_identity": f"location={location};source={source};sink={sink}",
+        "trigger_context_identity": trigger,
+    }
+
+
 def localized_component_for_script(finding: dict[str, Any], language: str) -> str:
     impact = ensure_mapping(finding.get("impact"))
     return first_nonempty(
@@ -1021,7 +1073,9 @@ def build_generated_recording_shell(
     finding: dict[str, Any], language: str, path_map: dict[str, str], artifact: dict[str, Any]
 ) -> str:
     project_name = str(finding.get("project_name", "target-project")).strip() or "target-project"
-    target_version = localized_target_version_for_script(finding, language)
+    recording_identity = canonical_recording_identity_for_script(finding)
+    project_name = recording_identity.get("software_name") or project_name
+    target_version = recording_identity.get("tested_ref") or localized_target_version_for_script(finding, language)
     target_component = localized_component_for_script(finding, language)
     target_repo_url = localized_repo_url_for_script(finding)
     vuln_type = localized_vuln_type(finding, language)
@@ -1031,6 +1085,7 @@ def build_generated_recording_shell(
     evidence_lines = collect_balanced_reproduction_evidence_lines(finding, language, limit=4)
     success_marker = success_marker_for_script(finding, language, evidence_lines)
     direct_impact_marker = direct_impact_marker_for_script(finding, evidence_lines)
+    recording_identity["direct_impact_marker"] = direct_impact_marker
     supported_modes = generator_modes_for_artifact(artifact)
     usage_modes = "|".join(supported_modes)
     code_items = finding.get("code_context")
@@ -1043,6 +1098,12 @@ def build_generated_recording_shell(
     code_explanation = localized_string(first_code, "explanation", language)
     analysis_items = [localize_analysis_marker(item, language) for item in localized_list(finding, "analysis", language)]
     real_world_items = real_world_exploitability_lines(finding, language)
+
+    recording_stage_markers = {
+        "identity": f"{project_name} {target_version}",
+        "code_or_trigger_context": recording_identity["code_context_identity"],
+        "final_impact": direct_impact_marker,
+    }
 
     strings = {
         "zh-CN": {
@@ -1220,6 +1281,13 @@ def build_generated_recording_shell(
         'PAUSE_LONG="$REVIEWER_PAUSE_LONG"',
         'READY_WAIT_SECONDS="${ZHULONG_READY_WAIT_SECONDS:-1}"',
         'READY_RETRY_COUNT="${ZHULONG_READY_RETRY_COUNT:-30}"',
+        'ZHULONG_RECORDING_ROOT="${ZHULONG_RECORDING_ROOT:-}"',
+        'ZHULONG_RECORDING_STAGE_DIR="${ZHULONG_RECORDING_STAGE_DIR:-}"',
+        'ZHULONG_RECORDING_STAGE_ACK_DIR="${ZHULONG_RECORDING_STAGE_ACK_DIR:-}"',
+        'ZHULONG_RECORDING_OWNER_MARKER="${ZHULONG_RECORDING_OWNER_MARKER:-}"',
+        'ZHULONG_RECORDING_ACK_TIMEOUT_SECONDS="${ZHULONG_RECORDING_ACK_TIMEOUT_SECONDS:-20}"',
+        'ZHULONG_RECORDING_ACK_POLL_SECONDS="${ZHULONG_RECORDING_ACK_POLL_SECONDS:-0.1}"',
+        'RECORDING_SEQUENCE=0',
         'SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"',
         'ATTACH_DIR="$SCRIPT_DIR/attachments"',
         'EVIDENCE_DIR="$ATTACH_DIR/evidence"',
@@ -1318,6 +1386,139 @@ def build_generated_recording_shell(
         "    marker=\"$1\"",
         f"    highlight_success {shell_quote(strings['direct_impact_marker_seen'])}' '\"$marker\"",
         "    log_line \"$marker\"",
+        "}",
+        "",
+        "recording_paths_owned() {",
+        "    [ -n \"$ZHULONG_RECORDING_ROOT\" ] || return 1",
+        "    [ -n \"$ZHULONG_RECORDING_STAGE_DIR\" ] || return 1",
+        "    [ -n \"$ZHULONG_RECORDING_STAGE_ACK_DIR\" ] || return 1",
+        "    [ -n \"$ZHULONG_RECORDING_OWNER_MARKER\" ] || return 1",
+        "    case \"$ZHULONG_RECORDING_ROOT\" in /*) ;; *) return 1 ;; esac",
+        "    case \"$ZHULONG_RECORDING_STAGE_DIR\" in \"$ZHULONG_RECORDING_ROOT\"/*) ;; *) return 1 ;; esac",
+        "    case \"$ZHULONG_RECORDING_STAGE_ACK_DIR\" in \"$ZHULONG_RECORDING_ROOT\"/*) ;; *) return 1 ;; esac",
+        "    case \"$ZHULONG_RECORDING_OWNER_MARKER\" in \"$ZHULONG_RECORDING_ROOT\"/*) ;; *) return 1 ;; esac",
+        "    [ -d \"$ZHULONG_RECORDING_STAGE_DIR\" ] && [ ! -L \"$ZHULONG_RECORDING_STAGE_DIR\" ] || return 1",
+        "    [ -d \"$ZHULONG_RECORDING_STAGE_ACK_DIR\" ] && [ ! -L \"$ZHULONG_RECORDING_STAGE_ACK_DIR\" ] || return 1",
+        "    [ -f \"$ZHULONG_RECORDING_OWNER_MARKER\" ] && [ ! -L \"$ZHULONG_RECORDING_OWNER_MARKER\" ] || return 1",
+        "    return 0",
+        "}",
+        "",
+        "recording_checkpoint() {",
+        "    stage=\"$1\"",
+        "    expected_marker=\"$2\"",
+        "    if [ -z \"$ZHULONG_RECORDING_ROOT$ZHULONG_RECORDING_STAGE_DIR$ZHULONG_RECORDING_STAGE_ACK_DIR$ZHULONG_RECORDING_OWNER_MARKER\" ]; then",
+        "        return 0",
+        "    fi",
+        "    if ! recording_paths_owned; then",
+        "        printf '%s\\n' 'Recording checkpoint paths are not recorder-owned; refusing to continue.' >&2",
+        "        return 1",
+        "    fi",
+        "    case \"$stage\" in identity|code_or_trigger_context|final_impact) ;; *) return 1 ;; esac",
+        "    RECORDING_SEQUENCE=$((RECORDING_SEQUENCE + 1))",
+        "    RECORDING_EVENT_EPOCH=\"$(date +%s)\"",
+        "    event_path=\"$ZHULONG_RECORDING_STAGE_DIR/${RECORDING_SEQUENCE}-${stage}.event.json\"",
+        "    ack_path=\"$ZHULONG_RECORDING_STAGE_ACK_DIR/${RECORDING_SEQUENCE}-${stage}.ack.json\"",
+        "    if ! python3 - \"$event_path\" \"$stage\" \"$RECORDING_SEQUENCE\" \"$RECORDING_EVENT_EPOCH\" \"$expected_marker\" "
+        + ""
+        + shell_quote(recording_identity["software_name"])
+        + " "
+        + shell_quote(recording_identity["tested_ref"])
+        + " "
+        + shell_quote(recording_identity["finding_slug"])
+        + " "
+        + shell_quote(recording_identity["direct_impact_marker"])
+        + " "
+        + shell_quote(recording_identity["oracle_marker"])
+        + " "
+        + shell_quote(recording_identity["code_context_identity"])
+        + " "
+        + shell_quote(recording_identity["trigger_context_identity"])
+        + " <<'PY'",
+        "import json",
+        "import os",
+        "import sys",
+        "path, stage, sequence, event_timestamp, marker, software, tested_ref, slug, direct_marker, oracle, code_context, trigger_context = sys.argv[1:]",
+        "payload = {",
+        "    'protocol_version': 1,",
+        "    'stage': stage,",
+        "    'sequence': int(sequence),",
+        "    'event_timestamp': int(event_timestamp),",
+        "    'expected_marker': marker,",
+        "    'canonical_identity': {",
+        "        'software_name': software, 'tested_ref': tested_ref, 'finding_slug': slug,",
+        "        'direct_impact_marker': direct_marker, 'oracle_marker': oracle,",
+        "        'code_context_identity': code_context, 'trigger_context_identity': trigger_context,",
+        "    },",
+        "}",
+        "temporary = path + '.tmp'",
+        "with open(temporary, 'x', encoding='utf-8') as handle:",
+        "    json.dump(payload, handle, ensure_ascii=False, separators=(',', ':'))",
+        "    handle.write('\\n')",
+        "os.replace(temporary, path)",
+        "PY",
+        "    then",
+        "        printf '%s\\n' 'Recording checkpoint event generation failed.' >&2",
+        "        return 1",
+        "    fi",
+        "    deadline=$(( $(date +%s) + ZHULONG_RECORDING_ACK_TIMEOUT_SECONDS ))",
+        "    while :; do",
+        "        if python3 - \"$ack_path\" \"$ZHULONG_RECORDING_STAGE_ACK_DIR\" \"$stage\" \"$RECORDING_SEQUENCE\" \"$expected_marker\" <<'PY'",
+        "import json",
+        "import os",
+        "import stat",
+        "import sys",
+        "",
+        "ack_path, ack_dir, stage, sequence_text, expected_marker = sys.argv[1:]",
+        "",
+        "def reject_duplicate_keys(pairs):",
+        "    value = {}",
+        "    for key, item in pairs:",
+        "        if key in value:",
+        "            raise ValueError('duplicate JSON key')",
+        "        value[key] = item",
+        "    return value",
+        "",
+        "try:",
+        "    ack_dir_real = os.path.realpath(ack_dir)",
+        "    ack_path_real = os.path.realpath(ack_path)",
+        "    if os.path.dirname(ack_path_real) != ack_dir_real:",
+        "        raise ValueError('ack path escapes recorder-owned directory')",
+        "    metadata = os.lstat(ack_path)",
+        "    if not stat.S_ISREG(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode):",
+        "        raise ValueError('ack is not an ordinary file')",
+        "    descriptor = os.open(ack_path, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0))",
+        "    try:",
+        "        if not stat.S_ISREG(os.fstat(descriptor).st_mode):",
+        "            raise ValueError('ack is not an ordinary file')",
+        "        with os.fdopen(descriptor, 'r', encoding='utf-8') as handle:",
+        "            descriptor = -1",
+        "            payload = json.load(handle, object_pairs_hook=reject_duplicate_keys)",
+        "    finally:",
+        "        if descriptor >= 0:",
+        "            os.close(descriptor)",
+        "except (OSError, UnicodeError, ValueError, json.JSONDecodeError):",
+        "    raise SystemExit(1)",
+        "",
+        "if not isinstance(payload, dict):",
+        "    raise SystemExit(1)",
+        "if not (",
+        "    type(payload.get('protocol_version')) is int and payload['protocol_version'] == 1",
+        "    and payload.get('status') == 'ack'",
+        "    and payload.get('stage') == stage",
+        "    and type(payload.get('sequence')) is int and payload['sequence'] == int(sequence_text)",
+        "    and payload.get('expected_marker') == expected_marker",
+        "):",
+        "    raise SystemExit(1)",
+        "PY",
+        "        then",
+        "            return 0",
+        "        fi",
+        "        if [ \"$(date +%s)\" -ge \"$deadline\" ]; then",
+        "            printf '%s\\n' \"Recording checkpoint acknowledgement timed out: $stage\" >&2",
+        "            return 1",
+        "        fi",
+        "        sleep \"$ZHULONG_RECORDING_ACK_POLL_SECONDS\"",
+        "    done",
         "}",
         "",
         "print_banner() {",
@@ -1494,9 +1695,11 @@ def build_generated_recording_shell(
         "    init_replay_log",
         "    print_target_identity",
         "    pause_step \"$PAUSE_SHORT\"",
+        f"    recording_checkpoint identity {shell_quote(recording_stage_markers['identity'])}",
         "    show_code_hint",
         "    show_vulnerability_analysis",
         "    show_real_world_context",
+        f"    recording_checkpoint code_or_trigger_context {shell_quote(recording_stage_markers['code_or_trigger_context'])}",
     ])
     for container in required_containers:
         script_lines.append(f"    require_container_running {shell_quote(container)}")
@@ -1528,12 +1731,14 @@ def build_generated_recording_shell(
         script_lines.append("    pause_step \"$PAUSE_SHORT\"")
         script_lines.append("    verify_success_marker \"$SUCCESS_MARKER\"")
         script_lines.append("    record_direct_impact_marker \"$DIRECT_IMPACT_MARKER\"")
+        script_lines.append(f"    recording_checkpoint final_impact {shell_quote(recording_stage_markers['final_impact'])}")
         script_lines.append(f"    highlight_success {shell_quote(strings['final_confirmed'])}")
         script_lines.append("    show_evidence_summary")
         script_lines.append("    pause_step \"$PAUSE_LONG\"")
     else:
         script_lines.append("    verify_success_marker \"$SUCCESS_MARKER\"")
         script_lines.append("    record_direct_impact_marker \"$DIRECT_IMPACT_MARKER\"")
+        script_lines.append(f"    recording_checkpoint final_impact {shell_quote(recording_stage_markers['final_impact'])}")
         script_lines.append(f"    highlight_success {shell_quote(strings['final_confirmed'])}")
         script_lines.append("    show_evidence_summary")
         script_lines.append("    pause_step \"$PAUSE_LONG\"")

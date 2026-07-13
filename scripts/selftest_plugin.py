@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import zipfile
 from pathlib import Path
 from xml.etree import ElementTree as ET
@@ -56,6 +57,9 @@ REQUIRED_FILES = [
     "assets/schemas/zhulong-target.schema.json",
     "assets/schemas/candidate.schema.json",
     "assets/schemas/verifier-verdict.schema.json",
+    "assets/schemas/recording-evidence.schema.json",
+    "assets/fixtures/recording-evidence/README.md",
+    "assets/fixtures/recording-evidence/manifest.template.json",
     "assets/references/java-web-audit-playbook.md",
     "assets/references/go-web-audit-playbook.md",
     "assets/references/nodejs-library-audit-playbook.md",
@@ -97,6 +101,9 @@ REQUIRED_FILES = [
     "scripts/verify_candidate.py",
     "scripts/plan_security_toolchain.py",
     "scripts/render_confirmed_vuln_docx.py",
+    "scripts/recording_identity.py",
+    "scripts/auto_record_bundle.py",
+    "scripts/validate_recording_evidence.py",
     "scripts/scaffold_bilingual_findings.py",
     "scripts/extract_variant_seed.py",
     "scripts/find_variant_candidates.py",
@@ -159,6 +166,9 @@ INSTALLED_SKILL_REQUIRED_FILES = [
     "assets/schemas/zhulong-target.schema.json",
     "assets/schemas/candidate.schema.json",
     "assets/schemas/verifier-verdict.schema.json",
+    "assets/schemas/recording-evidence.schema.json",
+    "assets/fixtures/recording-evidence/README.md",
+    "assets/fixtures/recording-evidence/manifest.template.json",
     "assets/examples/zhulong-target.example.yaml",
     "assets/examples/candidate.example.json",
     "assets/examples/verifier-verdict.example.json",
@@ -181,6 +191,9 @@ INSTALLED_SKILL_REQUIRED_FILES = [
     "scripts/manage_docker_resources.py",
     "scripts/workspace_state.py",
     "scripts/render_confirmed_vuln_docx.py",
+    "scripts/recording_identity.py",
+    "scripts/auto_record_bundle.py",
+    "scripts/validate_recording_evidence.py",
     "scripts/extract_variant_seed.py",
     "scripts/find_variant_candidates.py",
     "scripts/validate_report_bundle.py",
@@ -5134,6 +5147,666 @@ def exercise_sandbox_ledger_guard(workspace: Path, plugin_root: Path) -> None:
         raise SystemExit(f"FAILED: rejected_unsafe_sandbox must stay blocked/unverified: {matches}")
 
 
+def exercise_recording_evidence_gate(plugin_root: Path) -> None:
+    """Exercise the public offline recording identity/media/transaction gate."""
+
+    try:
+        from PIL import Image, ImageDraw
+    except ImportError as exc:
+        raise SystemExit(f"FAILED: recording selftest requires Pillow: {exc}") from exc
+
+    validator_path = plugin_root / "scripts/validate_recording_evidence.py"
+    auto_recorder_path = plugin_root / "scripts/auto_record_bundle.py"
+    if str(plugin_root / "scripts") not in sys.path:
+        sys.path.insert(0, str(plugin_root / "scripts"))
+    required = [
+        "scripts/recording_identity.py",
+        "scripts/validate_recording_evidence.py",
+        "scripts/auto_record_bundle.py",
+        "assets/schemas/recording-evidence.schema.json",
+        "assets/fixtures/recording-evidence/README.md",
+        "assets/fixtures/recording-evidence/manifest.template.json",
+    ]
+    require_files(plugin_root, required, "recording evidence gate")
+    if (plugin_root / "skills/zhulong/SKILL.md").is_file():
+        if (plugin_root / "skills/zhulong/SKILL.md").read_bytes() != (plugin_root / "templates/claude-skill/SKILL.md").read_bytes():
+            raise SystemExit("FAILED: Claude and Codex public skill source files drifted")
+
+    validator_spec = importlib.util.spec_from_file_location("zhulong_recording_validator_selftest", validator_path)
+    if validator_spec is None or validator_spec.loader is None:
+        raise SystemExit("FAILED: cannot load recording validator")
+    validator_module = importlib.util.module_from_spec(validator_spec)
+    sys.modules[validator_spec.name] = validator_module
+    validator_spec.loader.exec_module(validator_module)
+
+    def finding() -> dict[str, object]:
+        return {
+            "slug": "example-finding",
+            "project_name": "example-project",
+            "vuln_type": "Example finding",
+            "source_binding": {
+                "tested_ref": "v0.0.0-test",
+                "source_bound_ref": "v0.0.0-test",
+                "entrypoint": "example trigger context",
+            },
+            "attacker_condition": "example trigger context",
+            "code_context": [{
+                "location": "src/example.py:1",
+                "summary": "example input",
+                "explanation": "example operation",
+            }],
+            "verification_evidence": {
+                "finding_slug": "example-finding",
+                "oracle_token": "EXAMPLE_ORACLE_CONFIRMED",
+                "direct_impact_marker": "DIRECT_IMPACT_CONFIRMED",
+            },
+        }
+
+    code_context = "location=src/example.py:1;source=example input;sink=example operation"
+    canonical = {
+        "software_name": "example-project",
+        "tested_ref": "v0.0.0-test",
+        "tested_ref_kind": "version",
+        "finding_slug": "example-finding",
+        "direct_impact_marker": "DIRECT_IMPACT_CONFIRMED",
+        "oracle_marker": "EXAMPLE_ORACLE_CONFIRMED",
+        "code_context_identity": code_context,
+        "trigger_context_identity": "example trigger context",
+    }
+    screenshot_paths = [
+        "attachments/evidence/screenshots/01-target-identity.png",
+        "attachments/evidence/screenshots/02-code-or-trigger-context.png",
+        "attachments/evidence/screenshots/03-final-impact.png",
+    ]
+    stages = ["identity", "code_or_trigger_context", "final_impact"]
+    timestamps = [0.5, 1.5, 2.5]
+    stage_markers = [
+        "example-project v0.0.0-test",
+        code_context,
+        "DIRECT_IMPACT_CONFIRMED",
+    ]
+
+    def fixture(root: Path) -> tuple[Path, Path]:
+        bundle = root / "example-finding"
+        checkpoint_dir = root / "checkpoint-images"
+        (bundle / "attachments/evidence/screenshots").mkdir(parents=True)
+        checkpoint_dir.mkdir()
+        source_finding = finding()
+        (bundle / "findings.json").write_text(json.dumps({"findings": [source_finding]}, indent=2) + "\n", encoding="utf-8")
+        (bundle / "validity-review.json").write_text(json.dumps({
+            "schema_version": 1,
+            "finding_slug": "example-finding",
+            "project_name": "example-project",
+            "source_binding": source_finding["source_binding"],
+            "trigger_context": "example trigger context",
+            "code_context": source_finding["code_context"],
+            "oracle_token": "EXAMPLE_ORACLE_CONFIRMED",
+            "direct_impact_marker": "DIRECT_IMPACT_CONFIRMED",
+        }, indent=2) + "\n", encoding="utf-8")
+        proof = bundle / "attachments/evidence/example-proof.txt"
+        proof.write_text("EXAMPLE_ORACLE_CONFIRMED\n", encoding="utf-8")
+        (bundle / "attachments/evidence/replay-output.log").write_text(
+            "[command] example local fixture replay\nEXAMPLE_ORACLE_CONFIRMED\nDIRECT_IMPACT_CONFIRMED\n",
+            encoding="utf-8",
+        )
+        helper = bundle / "run-example-finding-recording.sh"
+        helper.write_text(
+            "#!/bin/sh\nrecording_checkpoint() { :; }\n"
+            "ZHULONG_RECORDING_STAGE_DIR=\"\"\n"
+            "ZHULONG_RECORDING_STAGE_ACK_DIR=\"\"\n"
+            "ZHULONG_RECORDING_OWNER_MARKER=\"\"\n",
+            encoding="utf-8",
+        )
+        helper.chmod(0o755)
+        frames = []
+        frame_text = [
+            ["example-project", "v0.0.0-test", "IDENTITY_CONFIRMED"],
+            ["src/example.py:1", "example trigger context", "CODE_OR_TRIGGER_CONTEXT_CONFIRMED"],
+            ["DIRECT_IMPACT_CONFIRMED", "EXAMPLE_ORACLE_CONFIRMED", "FINAL_IMPACT_CONFIRMED"],
+        ]
+        for index, lines in enumerate(frame_text):
+            image = Image.new("RGB", (320, 180), [(38, 54, 84), (39, 76, 68), (92, 54, 54)][index])
+            draw = ImageDraw.Draw(image)
+            for row, line in enumerate(lines):
+                draw.text((18, 24 + row * 42), line, fill=(245, 245, 245))
+            frames.append(image)
+        video = bundle / "attachments/evidence/final-recording.gif"
+        frames[0].save(video, save_all=True, append_images=frames[1:], duration=[1000, 1000, 1000], loop=0)
+        for stage, timestamp in zip(stages, timestamps):
+            path = checkpoint_dir / f"{stage}.png"
+            validator_module._extract_frame(video, timestamp, path)
+
+        verification = {
+            "schema_version": 1,
+            "finding_slug": "example-finding",
+            "verification_status": "confirmed_in_docker",
+            "docker_required": True,
+            "docker_image": "example-image:v0.0.0-test",
+            "docker_command": "docker run example-image:v0.0.0-test",
+            "poc_path": proof.relative_to(bundle).as_posix(),
+            "expected_observation": "EXAMPLE_ORACLE_CONFIRMED",
+            "observed_observation": "EXAMPLE_ORACLE_CONFIRMED",
+            "oracle_token": "EXAMPLE_ORACLE_CONFIRMED",
+            "direct_impact_marker": "DIRECT_IMPACT_CONFIRMED",
+            "evidence_files": [],
+            "severity_escalation_attempted": True,
+            "severity_escalation_result": "Sanitized fixture only.",
+        }
+        stage_items = []
+        screenshot_items = []
+        for sequence, (stage, timestamp, marker) in enumerate(zip(stages, timestamps, stage_markers), start=1):
+            source_path = checkpoint_dir / f"{stage}.png"
+            source_hash = hashlib.sha256(source_path.read_bytes()).hexdigest()
+            screenshot_path = bundle / screenshot_paths[sequence - 1]
+            shutil.copy2(source_path, screenshot_path)
+            frame_hash = hashlib.sha256(source_path.read_bytes()).hexdigest()
+            observations = {
+                "identity": ["example-project", "v0.0.0-test", marker],
+                "code_or_trigger_context": [code_context, "example trigger context", marker],
+                "final_impact": ["DIRECT_IMPACT_CONFIRMED", "EXAMPLE_ORACLE_CONFIRMED", marker],
+            }[stage]
+            stage_items.append({
+                "stage": stage,
+                "sequence": sequence,
+                "event_timestamp": float(sequence),
+                "video_timestamp": timestamp,
+                "hold_start": max(0.0, timestamp - 0.4),
+                "hold_end": min(3.0, timestamp + 0.4),
+                "expected_marker": marker,
+                "source_name": "fixture source",
+                "source_window_identity": "fixture-terminal-window",
+                "canonical_identity": {
+                    "software_name": canonical["software_name"],
+                    "tested_ref": canonical["tested_ref"],
+                    "finding_slug": canonical["finding_slug"],
+                    "code_context_identity": canonical["code_context_identity"],
+                    "trigger_context_identity": canonical["trigger_context_identity"],
+                },
+                "source_checkpoint": {"name": source_path.name, "sha256": source_hash, "width": 320, "height": 180},
+                "frame": {
+                    "sha256": frame_hash,
+                    "width": 320,
+                    "height": 180,
+                    "perceptual_similarity": 1.0,
+                    "recording_time_observations": observations,
+                },
+            })
+            screenshot_items.append({
+                "stage": stage,
+                "path": screenshot_paths[sequence - 1],
+                "sha256": hashlib.sha256(screenshot_path.read_bytes()).hexdigest(),
+                "size": screenshot_path.stat().st_size,
+                "width": 320,
+                "height": 180,
+                "video_timestamp": timestamp,
+                "source_frame_sha256": frame_hash,
+            })
+        inventory_rel = "attachments/recording-screenshot-inventory.md"
+        (bundle / inventory_rel).write_text("\n".join(f"- `{path}`" for path in screenshot_paths) + "\n", encoding="utf-8")
+        verification["evidence_files"] = [
+            proof.relative_to(bundle).as_posix(),
+            "attachments/evidence/replay-output.log",
+            "attachments/evidence/final-recording.gif",
+            *screenshot_paths,
+            "recording-evidence.json",
+            inventory_rel,
+        ]
+        (bundle / "verification-evidence.json").write_text(json.dumps(verification, indent=2) + "\n", encoding="utf-8")
+        (bundle / "attachments/reviewer-evidence-index.json").write_text(json.dumps({
+            "schema_version": 1,
+            "replay_command": "./run-example-finding-recording.sh quick docker",
+            "evidence_artifacts": [{"path": path} for path in verification["evidence_files"]],
+            "oracle_tokens": ["EXAMPLE_ORACLE_CONFIRMED", "DIRECT_IMPACT_CONFIRMED"],
+        }, indent=2) + "\n", encoding="utf-8")
+        manifest = {
+            "schema_version": 1,
+            "recording_status": "staging",
+            "canonical_identity": canonical,
+            "video": {
+                "path": "attachments/evidence/final-recording.gif",
+                "sha256": hashlib.sha256(video.read_bytes()).hexdigest(),
+                "size": video.stat().st_size,
+                "duration_seconds": 3.0,
+                "width": 320,
+                "height": 180,
+            },
+            "replay": {"script_path": helper.name, "script_sha256": hashlib.sha256(helper.read_bytes()).hexdigest(), "exit_code": 0},
+            "obs": {
+                "source_name": "fixture source",
+                "source_kind": "fixture_media",
+                "window_identity": "fixture-terminal-window",
+                "window_title": "Zhulong fixture terminal",
+                "window_stable": True,
+            },
+            "stages": stage_items,
+            "screenshots": screenshot_items,
+            "registrations": {
+                "verification_evidence_path": "verification-evidence.json",
+                "reviewer_index_path": "attachments/reviewer-evidence-index.json",
+                "attachment_inventory_path": inventory_rel,
+                "screenshot_paths": screenshot_paths,
+            },
+            "archive": {
+                "status": "not_ready",
+                "archive_name": "example-finding.zip",
+                "testzip": None,
+                "required_entries": ["recording-evidence.json", *screenshot_paths, "attachments/evidence/final-recording.gif"],
+                "recording_ready": False,
+                "submission_ready": False,
+            },
+            "transaction": {
+                "owner": "zhulong-recording",
+                "owner_marker": ".zhulong-recording-transaction.json",
+                "promotion_status": "staging",
+                "rollback_safe": True,
+                "full_recording_time_validated": False,
+            },
+        }
+        (bundle / "recording-evidence.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+        return bundle, checkpoint_dir
+
+    def copy_case(root: Path, base_bundle: Path, base_checkpoint: Path, name: str) -> tuple[Path, Path]:
+        bundle = root / name
+        checkpoint = root / f"{name}-checkpoints"
+        shutil.copytree(base_bundle, bundle)
+        shutil.copytree(base_checkpoint, checkpoint)
+        return bundle, checkpoint
+
+    def error_code(bundle: Path, checkpoint: Path, archive: Path | None = None) -> str:
+        command = [sys.executable, str(validator_path), "--bundle-dir", str(bundle), "--checkpoint-dir", str(checkpoint), "--json"]
+        if archive is not None:
+            command.extend(["--archive", str(archive), "--archive-root", bundle.name])
+        proc = subprocess.run(command, cwd=plugin_root, capture_output=True, text=True)
+        if proc.returncode == 0:
+            raise SystemExit(f"FAILED: recording negative case unexpectedly passed: {bundle.name}")
+        output = proc.stdout.strip().splitlines()
+        if not output:
+            raise SystemExit(f"FAILED: recording validator emitted no JSON for {bundle.name}: {proc.stderr}")
+        return str(json.loads(output[-1]).get("error_code") or "")
+
+    with tempfile.TemporaryDirectory(prefix="zhulong-recording-selftest-") as tempdir:
+        root = Path(tempdir)
+        base_bundle, base_checkpoint = fixture(root)
+
+        case, checkpoint = copy_case(root, base_bundle, base_checkpoint, "case-01")
+        data = json.loads((case / "recording-evidence.json").read_text())
+        data["obs"]["window_stable"] = False
+        data["stages"][0]["frame"]["recording_time_observations"] = ["UNRELATED_NONBLACK_WINDOW"]
+        (case / "recording-evidence.json").write_text(json.dumps(data, indent=2) + "\n")
+        if error_code(case, checkpoint) != "RECORDING_WRONG_WINDOW":
+            raise SystemExit("FAILED: case 1 wrong-window gate")
+
+        case, checkpoint = copy_case(root, base_bundle, base_checkpoint, "case-01a")
+        data = json.loads((case / "recording-evidence.json").read_text())
+        data["stages"][0]["frame"]["recording_time_observations"] = ["UNRELATED_NONBLACK_WINDOW"]
+        (case / "recording-evidence.json").write_text(json.dumps(data, indent=2) + "\n")
+        if error_code(case, checkpoint) != "RECORDING_IDENTITY_FRAME_MISSING":
+            raise SystemExit("FAILED: case 1a identity-specific error must precede the generic marker error")
+
+        case, checkpoint = copy_case(root, base_bundle, base_checkpoint, "case-01b")
+        data = json.loads((case / "recording-evidence.json").read_text())
+        data["stages"][0]["frame"]["recording_time_observations"] = ["example-project", "v0.0.0-test"]
+        (case / "recording-evidence.json").write_text(json.dumps(data, indent=2) + "\n")
+        if error_code(case, checkpoint) != "RECORDING_VIDEO_CONTENT_UNVERIFIED":
+            raise SystemExit("FAILED: case 1b identity marker absence must retain the generic content error")
+
+        case, checkpoint = copy_case(root, base_bundle, base_checkpoint, "case-02")
+        data = json.loads((case / "recording-evidence.json").read_text())
+        data["stages"][0]["video_timestamp"] = 3.2
+        (case / "recording-evidence.json").write_text(json.dumps(data, indent=2) + "\n")
+        if error_code(case, checkpoint) != "RECORDING_VIDEO_CONTENT_UNVERIFIED":
+            raise SystemExit("FAILED: case 2 video-start gate")
+
+        case, checkpoint = copy_case(root, base_bundle, base_checkpoint, "case-03")
+        data = json.loads((case / "recording-evidence.json").read_text())
+        source = checkpoint / "final_impact.png"
+        shutil.copy2(checkpoint / "identity.png", source)
+        data["stages"][2]["source_checkpoint"]["sha256"] = hashlib.sha256(source.read_bytes()).hexdigest()
+        (case / "recording-evidence.json").write_text(json.dumps(data, indent=2) + "\n")
+        case_03_error = error_code(case, checkpoint)
+        if case_03_error != "RECORDING_STAGE_FRAME_MISMATCH":
+            raise SystemExit(f"FAILED: case 3 source/frame mismatch gate: {case_03_error}")
+
+        case, checkpoint = copy_case(root, base_bundle, base_checkpoint, "case-04")
+        data = json.loads((case / "recording-evidence.json").read_text())
+        data["stages"][1]["source_window_identity"] = "changed-window"
+        (case / "recording-evidence.json").write_text(json.dumps(data, indent=2) + "\n")
+        if error_code(case, checkpoint) != "RECORDING_WRONG_WINDOW":
+            raise SystemExit("FAILED: case 4 source/window stability gate")
+
+        case, checkpoint = copy_case(root, base_bundle, base_checkpoint, "case-05")
+        (case / screenshot_paths[2]).unlink()
+        case_05_error = error_code(case, checkpoint)
+        if case_05_error != "RECORDING_SCREENSHOT_MISSING":
+            raise SystemExit(f"FAILED: case 5 missing screenshot gate: {case_05_error}")
+
+        case, checkpoint = copy_case(root, base_bundle, base_checkpoint, "case-06")
+        shutil.copy2(case / screenshot_paths[0], case / screenshot_paths[1])
+        data = json.loads((case / "recording-evidence.json").read_text())
+        data["screenshots"][1]["sha256"] = hashlib.sha256((case / screenshot_paths[1]).read_bytes()).hexdigest()
+        data["screenshots"][1]["size"] = (case / screenshot_paths[1]).stat().st_size
+        (case / "recording-evidence.json").write_text(json.dumps(data, indent=2) + "\n")
+        if error_code(case, checkpoint) != "RECORDING_SCREENSHOT_DUPLICATE":
+            raise SystemExit("FAILED: case 6 duplicate screenshot gate")
+
+        case, checkpoint = copy_case(root, base_bundle, base_checkpoint, "case-07")
+        verification = json.loads((case / "verification-evidence.json").read_text())
+        verification["evidence_files"] = [item for item in verification["evidence_files"] if "03-final-impact" not in item]
+        (case / "verification-evidence.json").write_text(json.dumps(verification, indent=2) + "\n")
+        if error_code(case, checkpoint) != "RECORDING_SCREENSHOT_UNREGISTERED":
+            raise SystemExit("FAILED: case 7 screenshot registration gate")
+
+        case, checkpoint = copy_case(root, base_bundle, base_checkpoint, "case-08")
+        data = json.loads((case / "recording-evidence.json").read_text())
+        data["video"]["sha256"] = "0" * 64
+        (case / "recording-evidence.json").write_text(json.dumps(data, indent=2) + "\n")
+        if error_code(case, checkpoint) != "RECORDING_HASH_MISMATCH":
+            raise SystemExit("FAILED: case 8 hash tamper gate")
+
+        case, checkpoint = copy_case(root, base_bundle, base_checkpoint, "case-08a")
+        data = json.loads((case / "recording-evidence.json").read_text())
+        data["stages"][1]["expected_marker"] = "CONTEXT_FRAME"
+        data["stages"][1]["frame"]["recording_time_observations"] = ["CONTEXT_FRAME"]
+        (case / "recording-evidence.json").write_text(json.dumps(data, indent=2) + "\n")
+        if error_code(case, checkpoint) != "RECORDING_STAGE_FRAME_MISMATCH":
+            raise SystemExit("FAILED: case 8a code/context-specific error changed")
+
+        case, checkpoint = copy_case(root, base_bundle, base_checkpoint, "case-09")
+        data = json.loads((case / "recording-evidence.json").read_text())
+        data["stages"][2]["expected_marker"] = "FINAL_IMPACT_FRAME"
+        data["stages"][2]["frame"]["recording_time_observations"] = ["EXAMPLE_ORACLE_CONFIRMED", "FINAL_IMPACT_FRAME"]
+        (case / "recording-evidence.json").write_text(json.dumps(data, indent=2) + "\n")
+        if error_code(case, checkpoint) != "RECORDING_IMPACT_FRAME_MISSING":
+            raise SystemExit("FAILED: case 9 direct-impact gate")
+
+        case, checkpoint = copy_case(root, base_bundle, base_checkpoint, "case-10")
+        data = json.loads((case / "recording-evidence.json").read_text())
+        data["replay"]["exit_code"] = 7
+        (case / "recording-evidence.json").write_text(json.dumps(data, indent=2) + "\n")
+        if error_code(case, checkpoint) != "RECORDING_REPLAY_FAILED":
+            raise SystemExit("FAILED: case 10 replay exit gate")
+
+        case, checkpoint = copy_case(root, base_bundle, base_checkpoint, "case-11")
+        archive = root / "case-11.zip"
+        with zipfile.ZipFile(archive, "w") as handle:
+            handle.write(case / "recording-evidence.json", f"{case.name}/recording-evidence.json")
+        if error_code(case, checkpoint, archive) != "RECORDING_ARCHIVE_INCOMPLETE":
+            raise SystemExit("FAILED: case 11 incomplete archive gate")
+
+        case, _checkpoint = copy_case(root, base_bundle, base_checkpoint, "case-11a")
+        data = json.loads((case / "recording-evidence.json").read_text())
+        data["stages"][0]["frame"]["recording_time_observations"] = ["forged identity claim"]
+        (case / "recording-evidence.json").write_text(json.dumps(data, indent=2) + "\n")
+        finalize_without_checkpoint = subprocess.run(
+            [sys.executable, str(validator_path), "--bundle-dir", str(case), "--finalize", "--json"],
+            cwd=plugin_root,
+            capture_output=True,
+            text=True,
+        )
+        if finalize_without_checkpoint.returncode == 0 or "RECORDING_VIDEO_CONTENT_UNVERIFIED" not in finalize_without_checkpoint.stdout:
+            raise SystemExit("FAILED: case 11a forged recording-time observations finalized without live checkpoints")
+        persisted = json.loads((case / "recording-evidence.json").read_text())
+        if persisted["recording_status"] != "staging" or persisted["transaction"]["full_recording_time_validated"] is not False:
+            raise SystemExit("FAILED: case 11a missing checkpoints changed promotion authority")
+
+        auto_spec = importlib.util.spec_from_file_location("zhulong_auto_recording_selftest", auto_recorder_path)
+        if auto_spec is None or auto_spec.loader is None:
+            raise SystemExit("FAILED: cannot load public auto recorder")
+        auto_module = importlib.util.module_from_spec(auto_spec)
+        sys.modules[auto_spec.name] = auto_module
+        auto_spec.loader.exec_module(auto_module)
+
+        retained_dir = root / "retained-unpromoted"
+        parsed = auto_module.parse_args(["example-bundle", "--keep-unpromoted-archive", str(retained_dir)])
+        if parsed.keep_unpromoted_archive != retained_dir or parsed.zip_on_fail:
+            raise SystemExit("FAILED: recording diagnostic archive CLI did not parse the explicit destination")
+        legacy = auto_module.parse_args(["example-bundle", "--zip-on-fail"])
+        if not legacy.zip_on_fail or legacy.keep_unpromoted_archive is not None:
+            raise SystemExit("FAILED: deprecated --zip-on-fail compatibility parsing drifted")
+        legacy_probe = subprocess.run(
+            [sys.executable, str(auto_recorder_path), str(root / "missing-bundle"), "--zip-on-fail"],
+            cwd=plugin_root,
+            capture_output=True,
+            text=True,
+        )
+        if legacy_probe.returncode == 0 or "deprecated" not in legacy_probe.stderr or (root / "missing-bundle.zip").exists():
+            raise SystemExit("FAILED: deprecated --zip-on-fail did not warn and remain non-producing")
+        staged_diagnostic_zip = root / "verified-unpromoted.zip"
+        with zipfile.ZipFile(staged_diagnostic_zip, "w") as handle:
+            handle.writestr("example-finding/evidence.txt", "verified bytes\n")
+        final_diagnostic_zip = root / "example-finding.zip"
+        final_diagnostic_zip.write_bytes(b"original-final-zip-bytes\n")
+        retained = auto_module.retain_unpromoted_archive(staged_diagnostic_zip, retained_dir, base_bundle)
+        if retained.parent != retained_dir.resolve() or retained.name == final_diagnostic_zip.name:
+            raise SystemExit("FAILED: retained archive path is not explicitly diagnostic")
+        if retained.read_bytes() != staged_diagnostic_zip.read_bytes() or final_diagnostic_zip.read_bytes() != b"original-final-zip-bytes\n":
+            raise SystemExit("FAILED: diagnostic archive retention changed archive bytes or the final path")
+        try:
+            auto_module.retain_unpromoted_archive(staged_diagnostic_zip, retained_dir, base_bundle)
+        except RuntimeError:
+            pass
+        else:
+            raise SystemExit("FAILED: diagnostic archive retention overwrote an existing diagnostic copy")
+        inside_bundle_dir = base_bundle / "forbidden-diagnostics"
+        try:
+            auto_module.retain_unpromoted_archive(staged_diagnostic_zip, inside_bundle_dir, base_bundle)
+        except RuntimeError:
+            pass
+        else:
+            raise SystemExit("FAILED: diagnostic archive retention accepted a directory inside the final bundle")
+        shutil.rmtree(inside_bundle_dir, ignore_errors=True)
+
+        final_dir = root / "transaction-final"
+        final_dir.mkdir()
+        (final_dir / "original.txt").write_text("original bytes\n", encoding="utf-8")
+        final_zip = root / "transaction-final.zip"
+        with zipfile.ZipFile(final_zip, "w") as handle:
+            handle.writestr("transaction-final/original.txt", "original bytes\n")
+        before_dir = hashlib.sha256((final_dir / "original.txt").read_bytes()).hexdigest()
+        before_zip = hashlib.sha256(final_zip.read_bytes()).hexdigest()
+        stage_dir = root / "transaction-stage"
+        stage_dir.mkdir()
+        (stage_dir / ".zhulong-recording-transaction.json").write_text("{}\n", encoding="utf-8")
+        (stage_dir / "recording-evidence.json").write_text(
+            json.dumps({"recording_status": "staging", "transaction": {"full_recording_time_validated": False}}) + "\n",
+            encoding="utf-8",
+        )
+        try:
+            auto_module.transactional_promote(stage_dir, final_dir, root / "missing-stage.zip", final_zip)
+        except RuntimeError as exc:
+            if "full recording-time validation" not in str(exc):
+                raise
+            pass
+        else:
+            raise SystemExit("FAILED: case 12 unvalidated transaction unexpectedly succeeded")
+        (stage_dir / "recording-evidence.json").write_text(
+            json.dumps({"recording_status": "passed", "transaction": {"full_recording_time_validated": True}}) + "\n",
+            encoding="utf-8",
+        )
+        try:
+            auto_module.transactional_promote(stage_dir, final_dir, root / "missing-stage.zip", final_zip)
+        except (RuntimeError, OSError):
+            pass
+        else:
+            raise SystemExit("FAILED: case 12 interrupted transaction unexpectedly succeeded")
+        if hashlib.sha256((final_dir / "original.txt").read_bytes()).hexdigest() != before_dir or hashlib.sha256(final_zip.read_bytes()).hexdigest() != before_zip:
+            raise SystemExit("FAILED: case 12 rollback changed original bytes")
+
+        positive = run_capture([sys.executable, str(validator_path), "--bundle-dir", str(base_bundle), "--checkpoint-dir", str(base_checkpoint), "--finalize", "--json"], plugin_root)
+        positive_result = json.loads(positive)
+        if (
+            positive_result.get("status") != "passed"
+            or positive_result.get("validation_mode") != "full_recording_time"
+            or positive_result.get("live_checkpoint_proof_recomputed") is not True
+            or positive_result.get("recording_time_observations_authority") != "non_authoritative_consistency_claims"
+        ):
+            raise SystemExit("FAILED: case 13 sanitized positive fixture")
+        finalized_manifest = json.loads((base_bundle / "recording-evidence.json").read_text())
+        if finalized_manifest["transaction"]["full_recording_time_validated"] is not True:
+            raise SystemExit("FAILED: case 13 full validation did not persist promotion authority")
+        artifact_only = json.loads(
+            run_capture([sys.executable, str(validator_path), "--bundle-dir", str(base_bundle), "--json"], plugin_root)
+        )
+        if (
+            artifact_only.get("validation_mode") != "artifact_only"
+            or artifact_only.get("live_checkpoint_proof_recomputed") is not False
+            or artifact_only.get("recording_time_observations_authority") != "non_authoritative_consistency_claims"
+        ):
+            raise SystemExit("FAILED: case 13 artifact-only revalidation overstated recording-time proof")
+        positive_archive = root / "case-13-positive.zip"
+        with zipfile.ZipFile(positive_archive, "w", compression=zipfile.ZIP_DEFLATED) as handle:
+            for path in sorted(base_bundle.rglob("*")):
+                if path.is_file() and not path.is_symlink():
+                    handle.write(path, f"{base_bundle.name}/{path.relative_to(base_bundle)}")
+        positive_archive_result = run_capture(
+            [
+                sys.executable,
+                str(validator_path),
+                "--bundle-dir",
+                str(base_bundle),
+                "--checkpoint-dir",
+                str(base_checkpoint),
+                "--archive",
+                str(positive_archive),
+                "--archive-root",
+                base_bundle.name,
+                "--json",
+            ],
+            plugin_root,
+        )
+        if json.loads(positive_archive_result).get("status") != "passed":
+            raise SystemExit("FAILED: case 13 positive archive fixture")
+
+        render_spec = importlib.util.spec_from_file_location("zhulong_render_recording_selftest", plugin_root / "scripts/render_confirmed_vuln_docx.py")
+        if render_spec is None or render_spec.loader is None:
+            raise SystemExit("FAILED: cannot load renderer for normal replay case")
+        render_module = importlib.util.module_from_spec(render_spec)
+        sys.modules[render_spec.name] = render_module
+        render_spec.loader.exec_module(render_module)
+        helper_text = render_module.build_generated_recording_shell(finding(), "en-US", {}, {"generator_options": {"modes": ["quick"]}})
+        helper_path = root / "normal-replay-helper.sh"
+        helper_path.write_text(helper_text.rsplit("main \"$@\"", 1)[0] + "recording_checkpoint identity 'example-project v0.0.0-test'\n", encoding="utf-8")
+        proc = subprocess.run(["sh", "-c", f'. "{helper_path}"'], cwd=plugin_root, capture_output=True, text=True, timeout=3)
+        if proc.returncode != 0:
+            raise SystemExit(f"FAILED: case 14 normal replay waited/failed: {proc.stdout}{proc.stderr}")
+
+        helper_prefix = helper_text.rsplit("main \"$@\"", 1)[0]
+
+        def run_real_checkpoint_handshake(label: str, writer: object, expect_success: bool) -> None:
+            session_root = root / f"checkpoint-{label}"
+            events = session_root / "events"
+            acknowledgements = session_root / "acks"
+            events.mkdir(parents=True)
+            acknowledgements.mkdir()
+            owner = session_root / "owner.json"
+            auto_module.write_json_atomic(owner, {"owner": "zhulong-recording"})
+            generated_helper = session_root / "generated-helper.sh"
+            generated_helper.write_text(
+                helper_prefix
+                + "recording_checkpoint identity 'example-project v0.0.0-test'\n"
+                + "printf '%s\\n' '__ZHULONG_CHECKPOINT_SENTINEL__'\n",
+                encoding="utf-8",
+            )
+            environment = dict(os.environ)
+            environment.update(
+                {
+                    "ZHULONG_RECORDING_PROTOCOL_VERSION": "1",
+                    "ZHULONG_RECORDING_ROOT": str(session_root),
+                    "ZHULONG_RECORDING_STAGE_DIR": str(events),
+                    "ZHULONG_RECORDING_STAGE_ACK_DIR": str(acknowledgements),
+                    "ZHULONG_RECORDING_OWNER_MARKER": str(owner),
+                    "ZHULONG_RECORDING_ACK_TIMEOUT_SECONDS": "1",
+                    "ZHULONG_RECORDING_ACK_POLL_SECONDS": "0.02",
+                }
+            )
+            checkpoint_proc = subprocess.Popen(
+                ["sh", str(generated_helper)],
+                cwd=plugin_root,
+                env=environment,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            event_path = events / "1-identity.event.json"
+            deadline = time.monotonic() + 2.0
+            while not event_path.is_file():
+                if checkpoint_proc.poll() is not None:
+                    stdout, stderr = checkpoint_proc.communicate()
+                    raise SystemExit(f"FAILED: checkpoint {label} exited before emitting an event: {stdout}{stderr}")
+                if time.monotonic() >= deadline:
+                    checkpoint_proc.kill()
+                    stdout, stderr = checkpoint_proc.communicate()
+                    raise SystemExit(f"FAILED: checkpoint {label} did not emit an event: {stdout}{stderr}")
+                time.sleep(0.02)
+            event = json.loads(event_path.read_text(encoding="utf-8"))
+            acknowledgement = {
+                "protocol_version": 1,
+                "status": "ack",
+                "stage": event["stage"],
+                "sequence": event["sequence"],
+                "event_timestamp": event["event_timestamp"],
+                "expected_marker": event["expected_marker"],
+            }
+            ack_path = acknowledgements / f"{event['sequence']}-{event['stage']}.ack.json"
+            assert callable(writer)
+            writer(ack_path, acknowledgement, session_root)
+            try:
+                stdout, stderr = checkpoint_proc.communicate(timeout=4)
+            except subprocess.TimeoutExpired:
+                checkpoint_proc.kill()
+                stdout, stderr = checkpoint_proc.communicate()
+                raise SystemExit(f"FAILED: checkpoint {label} did not reach its short timeout: {stdout}{stderr}")
+            sentinel_seen = "__ZHULONG_CHECKPOINT_SENTINEL__" in stdout
+            if expect_success:
+                if checkpoint_proc.returncode != 0 or not sentinel_seen:
+                    raise SystemExit(f"FAILED: checkpoint {label} rejected a semantically valid ack: {stdout}{stderr}")
+            elif checkpoint_proc.returncode == 0 or sentinel_seen:
+                raise SystemExit(f"FAILED: checkpoint {label} accepted an invalid ack: {stdout}{stderr}")
+
+        def pretty_ack(path: Path, acknowledgement: dict[str, object], _session_root: Path) -> None:
+            auto_module.write_json_atomic(path, acknowledgement)
+
+        def compact_ack(path: Path, acknowledgement: dict[str, object], _session_root: Path) -> None:
+            path.write_text(json.dumps(acknowledgement, separators=(",", ":")) + "\n", encoding="utf-8")
+
+        def reordered_ack(path: Path, acknowledgement: dict[str, object], _session_root: Path) -> None:
+            reordered = {key: acknowledgement[key] for key in reversed(tuple(acknowledgement))}
+            path.write_text("\n  " + json.dumps(reordered, indent=4) + "\n", encoding="utf-8")
+
+        def invalid_ack(field: str, value: object) -> object:
+            def writer(path: Path, acknowledgement: dict[str, object], _session_root: Path) -> None:
+                modified = dict(acknowledgement)
+                modified[field] = value
+                auto_module.write_json_atomic(path, modified)
+
+            return writer
+
+        def malformed_ack(path: Path, _acknowledgement: dict[str, object], _session_root: Path) -> None:
+            path.write_text('{"status": "ack",', encoding="utf-8")
+
+        def symlink_ack(path: Path, acknowledgement: dict[str, object], session_root: Path) -> None:
+            target = session_root / "outside-ack.json"
+            auto_module.write_json_atomic(target, acknowledgement)
+            path.symlink_to(target)
+
+        run_real_checkpoint_handshake("pretty", pretty_ack, True)
+        run_real_checkpoint_handshake("compact", compact_ack, True)
+        run_real_checkpoint_handshake("reordered", reordered_ack, True)
+        run_real_checkpoint_handshake("wrong-status", invalid_ack("status", "ignored"), False)
+        run_real_checkpoint_handshake("wrong-stage", invalid_ack("stage", "final_impact"), False)
+        run_real_checkpoint_handshake("wrong-sequence", invalid_ack("sequence", 2), False)
+        run_real_checkpoint_handshake("string-sequence", invalid_ack("sequence", "1"), False)
+        run_real_checkpoint_handshake("wrong-marker", invalid_ack("expected_marker", "unexpected marker"), False)
+        run_real_checkpoint_handshake("malformed", malformed_ack, False)
+        run_real_checkpoint_handshake("symlink", symlink_ack, False)
+
+        layout_files = ["SKILL.md"] if not (plugin_root / "skills/zhulong/SKILL.md").is_file() else ["skills/zhulong/SKILL.md", "templates/claude-skill/SKILL.md"]
+        for rel in required + layout_files:
+            if not (plugin_root / rel).is_file():
+                raise SystemExit(f"FAILED: case 15 public layout missing {rel}")
+        print("RECORDING SELFTEST PASSED: identity/media/screenshot/transaction and semantic checkpoint gates")
+
+
 def selftest_installed_skill(skill_root: Path) -> None:
     for rel in INSTALLED_SKILL_REQUIRED_FILES:
         path = skill_root / rel
@@ -5163,6 +5836,9 @@ def selftest_installed_skill(skill_root: Path) -> None:
          str(skill_root / "scripts/check_sandbox_preflight.py"),
          str(skill_root / "scripts/manage_docker_resources.py"),
          str(skill_root / "scripts/render_confirmed_vuln_docx.py"),
+         str(skill_root / "scripts/recording_identity.py"),
+         str(skill_root / "scripts/auto_record_bundle.py"),
+         str(skill_root / "scripts/validate_recording_evidence.py"),
          str(skill_root / "scripts/extract_variant_seed.py"),
          str(skill_root / "scripts/find_variant_candidates.py"),
          str(skill_root / "scripts/validate_report_bundle.py"),
@@ -5179,6 +5855,7 @@ def selftest_installed_skill(skill_root: Path) -> None:
     exercise_independent_verifier(skill_root)
     exercise_disposition_integration(skill_root)
     exercise_contract_fixture_chain(skill_root)
+    exercise_recording_evidence_gate(skill_root)
 
     for script in [
         "scripts/bootstrap_verification_workspace.sh",
@@ -5411,6 +6088,7 @@ def main() -> None:
     exercise_independent_verifier(plugin_root)
     exercise_disposition_integration(plugin_root)
     exercise_contract_fixture_chain(plugin_root)
+    exercise_recording_evidence_gate(plugin_root)
 
     plugin_json = json.loads((plugin_root / ".codex-plugin/plugin.json").read_text(encoding="utf-8"))
     if plugin_json.get("name") != "zhulong":

@@ -488,6 +488,43 @@ Additional generator rules:
 - If you want one `findings.json` file to support both Chinese and English rendering, provide language-specific fields such as `title_en`, `title_zh`, `filename_en`, `filename_zh`, `vuln_type_en`, `vuln_type_zh`, `description_en`, `analysis_en`, `final_verdict_en`, `impact.affected_versions_en`, `impact.extra_en`, `cvss.rationale_en`, `reproduction[].title_en`, and `reproduction[].details_en`. The renderer will prefer the selected language and only fall back to generic fields when safe.
 - If your current draft is still single-language, use `scripts/scaffold_bilingual_findings.py` to copy the current generic fields into `*_zh` or `*_en` keys first, then manually fill the opposite language.
 
+## Final recording is a separate opt-in deliverable
+
+Recording a reviewer-facing screen capture is not implied by Docker confirmation
+or by a passing ordinary bundle validator. Use the public repository tools
+`scripts/auto_record_bundle.py` and `scripts/validate_recording_evidence.py`.
+The older local recording skill is only a deprecated compatibility wrapper.
+
+The generated bundle-root helper must emit recorder-owned `identity`,
+`code_or_trigger_context`, and `final_impact` checkpoints. Those checkpoints
+carry the canonical software name, stable tested ref, finding slug, source-bound
+code/trigger context, oracle, and direct-impact marker. The adapter binds the
+OBS source/window, captures temporary live images outside the bundle, and
+acknowledges each stage. A handwritten helper without the protocol fails closed
+in recording mode, while ordinary replay without recording variables remains
+non-blocking.
+
+The accepted encoded video is the only source for the final screenshot files:
+
+```text
+attachments/evidence/screenshots/01-target-identity.png
+attachments/evidence/screenshots/02-code-or-trigger-context.png
+attachments/evidence/screenshots/03-final-impact.png
+```
+
+The recording manifest records hashes, dimensions, timestamps, source-frame
+similarity, OBS/window identity, replay status, registration targets, and archive
+readiness. The recording validator recomputes file/media properties and rejects
+black or empty frames, identity/impact omissions, duplicates, unregistered
+files, and source mismatches. The recording gate runs after the ordinary report
+validator and does not upgrade a confirmed finding by itself.
+
+The recorder copies OBS output into owned staging, validates the staged report,
+recording manifest, and temporary ZIP, then atomically promotes the staged
+directory and final archive. Failed replay, archive, or promotion leaves the
+original confirmed bundle and ZIP byte-identical and retains only labelled
+unpromoted diagnostic state outside the deliverable.
+
 Operational note for Docker-based verification:
 
 - Use one foreground build command with readable logs when preparing the verification environment.

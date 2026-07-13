@@ -1,0 +1,126 @@
+{
+  "schema_version": 1,
+  "recording_status": "staging",
+  "canonical_identity": {
+    "software_name": "example-project",
+    "tested_ref": "v0.0.0-test",
+    "tested_ref_kind": "version",
+    "finding_slug": "example-finding",
+    "direct_impact_marker": "DIRECT_IMPACT_CONFIRMED",
+    "oracle_marker": "EXAMPLE_ORACLE_CONFIRMED",
+    "code_context_identity": "location=src/example.py:1;source=example input;sink=example operation",
+    "trigger_context_identity": "example trigger context"
+  },
+  "video": {
+    "path": "attachments/evidence/final-recording.gif",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "size": 1,
+    "duration_seconds": 3.0,
+    "width": 640,
+    "height": 360
+  },
+  "replay": {
+    "script_path": "run-example-finding-recording.sh",
+    "script_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "exit_code": 0
+  },
+  "obs": {
+    "source_name": "Zhulong Recording Source",
+    "source_kind": "fixture_media",
+    "window_identity": "fixture-terminal-window",
+    "window_title": "Zhulong fixture terminal",
+    "window_stable": true
+  },
+  "stages": [
+    {
+      "stage": "identity",
+      "sequence": 1,
+      "event_timestamp": 1.0,
+      "video_timestamp": 0.5,
+      "hold_start": 0.0,
+      "hold_end": 0.9,
+      "expected_marker": "example-project v0.0.0-test",
+      "canonical_identity": {
+        "software_name": "example-project",
+        "tested_ref": "v0.0.0-test",
+        "finding_slug": "example-finding",
+        "code_context_identity": "location=src/example.py:1;source=example input;sink=example operation",
+        "trigger_context_identity": "example trigger context"
+      },
+      "source_name": "Zhulong Recording Source",
+      "source_window_identity": "fixture-terminal-window",
+      "source_checkpoint": {"name": "identity.png", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "width": 640, "height": 360},
+      "frame": {"sha256": "0000000000000000000000000000000000000000000000000000000000000000", "width": 640, "height": 360, "perceptual_similarity": 0.99, "recording_time_observations": ["example-project", "v0.0.0-test", "example-project v0.0.0-test"]}
+    },
+    {
+      "stage": "code_or_trigger_context",
+      "sequence": 2,
+      "event_timestamp": 2.0,
+      "video_timestamp": 1.5,
+      "hold_start": 1.0,
+      "hold_end": 1.9,
+      "expected_marker": "location=src/example.py:1;source=example input;sink=example operation",
+      "canonical_identity": {
+        "software_name": "example-project",
+        "tested_ref": "v0.0.0-test",
+        "finding_slug": "example-finding",
+        "code_context_identity": "location=src/example.py:1;source=example input;sink=example operation",
+        "trigger_context_identity": "example trigger context"
+      },
+      "source_name": "Zhulong Recording Source",
+      "source_window_identity": "fixture-terminal-window",
+      "source_checkpoint": {"name": "code_or_trigger_context.png", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "width": 640, "height": 360},
+      "frame": {"sha256": "0000000000000000000000000000000000000000000000000000000000000000", "width": 640, "height": 360, "perceptual_similarity": 0.99, "recording_time_observations": ["location=src/example.py:1;source=example input;sink=example operation", "example trigger context"]}
+    },
+    {
+      "stage": "final_impact",
+      "sequence": 3,
+      "event_timestamp": 3.0,
+      "video_timestamp": 2.5,
+      "hold_start": 2.0,
+      "hold_end": 2.9,
+      "expected_marker": "DIRECT_IMPACT_CONFIRMED",
+      "canonical_identity": {
+        "software_name": "example-project",
+        "tested_ref": "v0.0.0-test",
+        "finding_slug": "example-finding",
+        "code_context_identity": "location=src/example.py:1;source=example input;sink=example operation",
+        "trigger_context_identity": "example trigger context"
+      },
+      "source_name": "Zhulong Recording Source",
+      "source_window_identity": "fixture-terminal-window",
+      "source_checkpoint": {"name": "final_impact.png", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "width": 640, "height": 360},
+      "frame": {"sha256": "0000000000000000000000000000000000000000000000000000000000000000", "width": 640, "height": 360, "perceptual_similarity": 0.99, "recording_time_observations": ["DIRECT_IMPACT_CONFIRMED", "EXAMPLE_ORACLE_CONFIRMED"]}
+    }
+  ],
+  "screenshots": [
+    {"stage": "identity", "path": "attachments/evidence/screenshots/01-target-identity.png", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "size": 1, "width": 640, "height": 360, "video_timestamp": 0.5, "source_frame_sha256": "0000000000000000000000000000000000000000000000000000000000000000"},
+    {"stage": "code_or_trigger_context", "path": "attachments/evidence/screenshots/02-code-or-trigger-context.png", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "size": 1, "width": 640, "height": 360, "video_timestamp": 1.5, "source_frame_sha256": "0000000000000000000000000000000000000000000000000000000000000000"},
+    {"stage": "final_impact", "path": "attachments/evidence/screenshots/03-final-impact.png", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "size": 1, "width": 640, "height": 360, "video_timestamp": 2.5, "source_frame_sha256": "0000000000000000000000000000000000000000000000000000000000000000"}
+  ],
+  "registrations": {
+    "verification_evidence_path": "verification-evidence.json",
+    "reviewer_index_path": "attachments/reviewer-evidence-index.json",
+    "attachment_inventory_path": "attachments/recording-screenshot-inventory.md",
+    "screenshot_paths": [
+      "attachments/evidence/screenshots/01-target-identity.png",
+      "attachments/evidence/screenshots/02-code-or-trigger-context.png",
+      "attachments/evidence/screenshots/03-final-impact.png"
+    ]
+  },
+  "archive": {
+    "status": "not_ready",
+    "archive_name": "example-finding.zip",
+    "testzip": null,
+    "required_entries": ["example-finding/recording-evidence.json"],
+    "recording_ready": true,
+    "submission_ready": false
+  },
+  "transaction": {
+    "owner": "zhulong-recording",
+    "owner_marker": ".zhulong-recording-transaction.json",
+    "promotion_status": "staging",
+    "rollback_safe": true,
+    "full_recording_time_validated": false
+  }
+}

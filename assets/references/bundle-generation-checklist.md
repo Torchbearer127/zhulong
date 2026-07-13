@@ -41,3 +41,13 @@ Before creating a final `confirmed/<slug>/` bundle:
 - Run final confirmed bundle validation after generation. Contract preflight does not replace `validate_report_bundle.py` or `validate_all_report_bundles.py`.
 - If staging or final validation fails, use `validate_report_bundle.py --bundle-dir <bundle> --all-errors --json --output-errors <bundle>/bundle-validation-errors.json` only to diagnose multiple actionable issues. Default validation remains fail-fast; all-errors reports do not repair bundles or confirm vulnerabilities.
 - After promote, run seeded variant discovery only from a `confirmed/<bundle>/` directory that passes `validate_report_bundle.py`, then run finalization. Candidate output from seeded variant discovery remains candidate-only until independently Docker-confirmed and bundle-validated.
+
+## Optional final recording gate
+
+- [ ] Treat recording as a separate opt-in; a normal confirmed bundle is not recording-ready.
+- [ ] Use the repository `scripts/auto_record_bundle.py`; do not use an older local skill as source of truth.
+- [ ] Confirm the generated helper contains the three-stage checkpoint protocol and source-bound identity.
+- [ ] Validate `recording-evidence.json` with `scripts/validate_recording_evidence.py`.
+- [ ] Extract identity/context/impact screenshots from the final encoded video and register all three paths in every evidence index/inventory.
+- [ ] Build and validate the temporary UTF-8 ZIP before atomic promotion. If a diagnostic copy is needed after a later promotion failure, use `--keep-unpromoted-archive DIR` outside the final bundle; it never writes or overwrites the final ZIP path. `--zip-on-fail` is deprecated and creates no archive.
+- [ ] Keep failed OBS output and owned staging outside the final bundle, with the original bundle and archive unchanged.

@@ -907,3 +907,68 @@ manually edited `stage-status.json` or a hand-written summary is not completion.
 - [final-summary-template.md](./assets/references/final-summary-template.md)
 - [false-positive-template.md](./assets/references/false-positive-template.md)
 - [unverified-lead-template.md](./assets/references/unverified-lead-template.md)
+
+## Final Recording Identity and Screenshot Gate (Issue #21)
+
+Final screen recording is an explicit opt-in after the ordinary Docker-confirmed
+bundle gate. The public source of truth is the repository implementation in
+`scripts/recording_identity.py`, `scripts/auto_record_bundle.py`,
+`scripts/validate_recording_evidence.py`,
+`assets/schemas/recording-evidence.schema.json`, and the sanitized fixtures under
+`assets/fixtures/recording-evidence/`. The older local recording skill is only a
+deprecated compatibility wrapper; do not treat it as authoritative and do not
+let it write directly into a confirmed bundle.
+
+Before recording, bind the software name, stable tested version/branch/commit or
+source ref, finding slug, oracle/direct-impact marker, code context, and trigger
+context from the bundle-local source-bound JSON materials. Missing or conflicting
+values fail closed with `RECORDING_IDENTITY_MISSING`,
+`RECORDING_IDENTITY_MISMATCH`, or `RECORDING_TESTED_REF_MISMATCH`.
+
+The generated root helper must emit recorder-owned `identity`,
+`code_or_trigger_context`, and `final_impact` checkpoints. The adapter verifies
+the terminal/OBS source and window identity, captures temporary live source
+images outside the bundle, records sequence/relative time, and acknowledges
+each stage. A handwritten helper without this protocol fails closed in recording
+mode. Ordinary replay with no recording environment variables does not wait.
+Ack acceptance is JSON-semantic rather than serialization-semantic: it requires
+an ordinary file in the recorder-owned ack directory with the exact protocol
+version, status, stage, integer sequence, and marker. Pretty or compact JSON,
+whitespace, and key order do not weaken those checks.
+
+The final encoded video is the only source for these exact screenshots:
+
+```text
+attachments/evidence/screenshots/01-target-identity.png
+attachments/evidence/screenshots/02-code-or-trigger-context.png
+attachments/evidence/screenshots/03-final-impact.png
+```
+
+Run both validators on the recorder-owned staging copy. The recording validator
+recomputes encoded frame hashes/dimensions, non-black content, timestamp holds,
+conservative source-frame similarity, and screenshot hashes/registrations. It
+requires the screenshots in `verification-evidence.json`,
+`attachments/reviewer-evidence-index.json`, and the attachment inventory. Keep
+`recording-evidence.json` as the strict manifest of identity, video, replay,
+OBS/window, stages, screenshots, registrations, transaction state, and archive
+readiness.
+
+`recording_time_observations` are recorder-supplied, non-authoritative
+consistency claims; they are not independent proof of video content. `--finalize`
+requires the recorder-owned checkpoint directory for full recording-time
+validation and promotion authority. A later no-checkpoint invocation is only
+artifact-only revalidation of hashes, screenshots, inventory, and archive
+consistency.
+
+OBS output and staging remain outside the final bundle until the staged report,
+recording manifest, and temporary UTF-8 ZIP pass. `testzip()` and required-entry
+checks run before atomic promotion. Replay, frame, archive, or promotion failure
+must leave the original confirmed bundle/video/screenshots/ZIP byte-identical
+and retain a labelled unpromoted recorder session. A confirmed finding remains
+confirmed but not recording-ready or submission-ready until this opt-in gate
+passes.
+
+`--keep-unpromoted-archive DIR` may retain a fully verified but unpromoted
+diagnostic ZIP only after a later promotion failure and only outside the final
+bundle; it never overwrites or uses the final ZIP path. `--zip-on-fail` is a
+deprecated no-output compatibility flag.
