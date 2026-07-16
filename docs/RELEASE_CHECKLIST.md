@@ -152,7 +152,7 @@ Use this checklist before publishing a tagged open-source release of Zhulong
   configuration leakage, and sensitive-data exposure in separate evidence tiers.
 - [ ] Bundle validation passes on all bundled confirmed findings.
 
-## 5. P8 Bundle Builder Closure
+## 5. Bundle Contract And Builder Closure
 
 - [ ] Source layout selftest passes: `python3 scripts/selftest_plugin.py`.
 - [ ] Claude installed layout selftest passes after `bash scripts/sync_to_claude_skill.sh`.
@@ -181,7 +181,22 @@ Use this checklist before publishing a tagged open-source release of Zhulong
 - [ ] No broad Docker prune appears as normal cleanup guidance.
 - [ ] No PID kill behavior is introduced for OMC teammate cleanup.
 
-## 6. Validation Commands
+## 6. Optional Final Recording Gate
+
+- [ ] Final recording is explicitly requested; ordinary confirmed status is not treated as recording-ready.
+- [ ] The public source files exist: `scripts/recording_identity.py`, `scripts/auto_record_bundle.py`, `scripts/validate_recording_evidence.py`, the strict recording schema, and sanitized fixtures.
+- [ ] `skills/zhulong/SKILL.md` and `templates/claude-skill/SKILL.md` are byte-identical, and neither delegates authority to the old local recording skill.
+- [ ] The generated helper has identity/context/impact checkpoint events and fails closed when the recorder-owned protocol is incomplete.
+- [ ] Checkpoint acknowledgements use exact JSON semantics (ordinary recorder-owned file, protocol version, status, stage, integer sequence, and marker), not serialization-dependent text matching.
+- [ ] Final encoded video frames are non-black, correctly timed, source/window-bound, and identity/oracle/direct-impact observations are present.
+- [ ] `recording_time_observations` are documented and emitted only as non-authoritative consistency claims; `--finalize` requires live checkpoints for full validation, while later no-checkpoint revalidation reports artifact-only consistency.
+- [ ] The three canonical screenshots are derived from the final encoded video, hashed, non-duplicate, and registered in all three evidence/inventory targets.
+- [ ] `recording-evidence.json` passes `scripts/validate_recording_evidence.py` only after finalization; the ordinary report validator also passes.
+- [ ] Temporary ZIP passes UTF-8/readability, `testzip()`, required-entry, and manifest-hash checks before atomic promotion.
+- [ ] Optional diagnostic archive retention uses `--keep-unpromoted-archive DIR` only after a verified staged archive and a later promotion failure; it stays external, diagnostic-named, and non-overwriting. Deprecated `--zip-on-fail` creates no archive.
+- [ ] A forced replay/archive/promotion failure leaves the original bundle, video, screenshots, and ZIP byte-identical; failed raw output remains outside the final path with an owned staging marker.
+
+## 7. Validation Commands
 
 Run from the plugin root:
 
@@ -208,7 +223,7 @@ contain confirmed findings:
 python3 scripts/validate_all_report_bundles.py --confirmed-dir <repo>/<audit-workspace>/confirmed --language zh-CN
 ```
 
-## 7. Release-Candidate Dogfood
+## 8. Release-Candidate Dogfood
 
 - [ ] At least five real-world pilot logs or workspace summaries are archived.
 - [ ] The pilot set covers a Docker-ready Web/API target, a medium/large
@@ -221,7 +236,7 @@ python3 scripts/validate_all_report_bundles.py --confirmed-dir <repo>/<audit-wor
 - [ ] Low-only wording, alias, or ergonomics issues are recorded as follow-up
   issues instead of restarting the hardening loop.
 
-## 8. Publish Decision
+## 9. Publish Decision
 
 Publish only when:
 
@@ -230,19 +245,4 @@ Publish only when:
 - [ ] Confirmed bundles validate.
 - [ ] No local absolute paths or stale package names remain in public docs.
 - [ ] No broad Docker prune or PID signaling path is present.
-- [ ] Release notes summarize the P5 gates and real-world dogfood status.
-
-## 9. Final Recording Gate (Issue #21)
-
-- [ ] Final recording is explicitly requested; ordinary confirmed status is not treated as recording-ready.
-- [ ] The public source files exist: `scripts/recording_identity.py`, `scripts/auto_record_bundle.py`, `scripts/validate_recording_evidence.py`, the strict recording schema, and sanitized fixtures.
-- [ ] `skills/zhulong/SKILL.md` and `templates/claude-skill/SKILL.md` are byte-identical, and neither delegates authority to the old local recording skill.
-- [ ] The generated helper has identity/context/impact checkpoint events and fails closed when the recorder-owned protocol is incomplete.
-- [ ] Checkpoint acknowledgements use exact JSON semantics (ordinary recorder-owned file, protocol version, status, stage, integer sequence, and marker), not serialization-dependent text matching.
-- [ ] Final encoded video frames are non-black, correctly timed, source/window-bound, and identity/oracle/direct-impact observations are present.
-- [ ] `recording_time_observations` are documented and emitted only as non-authoritative consistency claims; `--finalize` requires live checkpoints for full validation, while later no-checkpoint revalidation reports artifact-only consistency.
-- [ ] The three canonical screenshots are derived from the final encoded video, hashed, non-duplicate, and registered in all three evidence/inventory targets.
-- [ ] `recording-evidence.json` passes `scripts/validate_recording_evidence.py` only after finalization; the ordinary report validator also passes.
-- [ ] Temporary ZIP passes UTF-8/readability, `testzip()`, required-entry, and manifest-hash checks before atomic promotion.
-- [ ] Optional diagnostic archive retention uses `--keep-unpromoted-archive DIR` only after a verified staged archive and a later promotion failure; it stays external, diagnostic-named, and non-overwriting. Deprecated `--zip-on-fail` creates no archive.
-- [ ] A forced replay/archive/promotion failure leaves the original bundle, video, screenshots, and ZIP byte-identical; failed raw output remains outside the final path with an owned staging marker.
+- [ ] Release notes summarize the core safety gates and real-world dogfood status.

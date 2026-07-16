@@ -732,11 +732,20 @@ def exercise_replay_transcript_corpus(root: Path) -> None:
         root / "assets/references/bundle-generation-checklist.md",
         root / "docs/RELEASE_CHECKLIST.md",
         root / "docs/WORKFLOW_DETAILS.md",
-        root / "docs/WORKFLOW_DETAILS.zh-CN.md",
     ]
     for path in docs:
         require_text(path, "replay transcript corpus", f"replay transcript corpus docs pointer in {path.name}")
         require_text(path, "single rigid log format", f"no rigid replay format boundary in {path.name}")
+    require_text(
+        root / "docs/WORKFLOW_DETAILS.zh-CN.md",
+        "复现记录样本集",
+        "replay transcript corpus docs pointer in Chinese workflow",
+    )
+    require_text(
+        root / "docs/WORKFLOW_DETAILS.zh-CN.md",
+        "唯一且僵化的日志格式",
+        "no rigid replay format boundary in Chinese workflow",
+    )
 
 
 def exercise_bundle_rule_mapping(root: Path) -> None:
@@ -885,17 +894,24 @@ def exercise_p8_closure_contracts(root: Path) -> None:
 
     docs = [
         root / "docs/WORKFLOW_DETAILS.md",
-        root / "docs/WORKFLOW_DETAILS.zh-CN.md",
         root / "docs/RELEASE_CHECKLIST.md",
         root / "assets/references/bundle-generation-checklist.md",
     ]
     for path in docs:
-        require_text(path, "bundle contract", f"P8 short-path contract wording in {path.name}")
-        require_text(path, "confirmed/.staging/<slug>", f"P8 staging path wording in {path.name}")
-        require_text(path, "validate_all_report_bundles.py", f"P8 validate-all wording in {path.name}")
-        require_text(path, "finalization", f"P8 finalization wording in {path.name}")
-        require_text(path, "severity", f"P8 severity policy wording in {path.name}")
-        require_text(path, "bug_class", f"P8 bug_class policy wording in {path.name}")
+        require_text(path, "bundle contract", f"bundle short-path contract wording in {path.name}")
+        require_text(path, "confirmed/.staging/<slug>", f"bundle staging path wording in {path.name}")
+        require_text(path, "validate_all_report_bundles.py", f"bundle validate-all wording in {path.name}")
+        require_text(path, "finalization", f"bundle finalization wording in {path.name}")
+        require_text(path, "severity", f"bundle severity policy wording in {path.name}")
+        require_text(path, "bug_class", f"bundle bug_class policy wording in {path.name}")
+
+    chinese_workflow = root / "docs/WORKFLOW_DETAILS.zh-CN.md"
+    require_text(chinese_workflow, "生成合同", "bundle short-path contract wording in Chinese workflow")
+    require_text(chinese_workflow, "confirmed/.staging/<slug>", "bundle staging path wording in Chinese workflow")
+    require_text(chinese_workflow, "validate_all_report_bundles.py", "bundle validate-all wording in Chinese workflow")
+    require_text(chinese_workflow, "审计收尾", "bundle finalization wording in Chinese workflow")
+    require_text(chinese_workflow, "finding.severity", "bundle severity policy wording in Chinese workflow")
+    require_text(chinese_workflow, "bug_class", "bundle bug_class policy wording in Chinese workflow")
 
     for phrase in RECOMMENDED_BUG_CLASS_TEXT:
         require_text(
@@ -904,17 +920,17 @@ def exercise_p8_closure_contracts(root: Path) -> None:
             f"bundle checklist recommended bug_class wording {phrase}",
         )
 
-    require_text(root / "docs/WORKFLOW_DETAILS.md", "does not prove a vulnerability", "P8 English preflight boundary")
-    require_text(root / "docs/WORKFLOW_DETAILS.md", "diagnostic mode", "P8 English all-errors diagnostic boundary")
-    require_text(root / "docs/WORKFLOW_DETAILS.md", "failed staging directory", "P8 English failed staging boundary")
-    require_text(root / "docs/WORKFLOW_DETAILS.md", "Marker-only replay", "P8 English marker-only replay boundary")
-    require_text(root / "docs/WORKFLOW_DETAILS.md", "stays candidate-only", "P8 English seeded variant boundary")
+    require_text(root / "docs/WORKFLOW_DETAILS.md", "does not prove a vulnerability", "bundle English preflight boundary")
+    require_text(root / "docs/WORKFLOW_DETAILS.md", "diagnostic mode", "bundle English all-errors diagnostic boundary")
+    require_text(root / "docs/WORKFLOW_DETAILS.md", "failed staging directory", "bundle English failed staging boundary")
+    require_text(root / "docs/WORKFLOW_DETAILS.md", "Marker-only replay", "bundle English marker-only replay boundary")
+    require_text(root / "docs/WORKFLOW_DETAILS.md", "stays candidate-only", "bundle English seeded variant boundary")
 
-    require_text(root / "docs/WORKFLOW_DETAILS.zh-CN.md", "不能证明漏洞成立", "P8 Chinese preflight boundary")
-    require_text(root / "docs/WORKFLOW_DETAILS.zh-CN.md", "只是 staging", "P8 Chinese all-errors diagnostic boundary")
-    require_text(root / "docs/WORKFLOW_DETAILS.zh-CN.md", "不是 confirmed deliverable", "P8 Chinese failed staging boundary")
-    require_text(root / "docs/WORKFLOW_DETAILS.zh-CN.md", "marker-only replay log", "P8 Chinese marker-only replay boundary")
-    require_text(root / "docs/WORKFLOW_DETAILS.zh-CN.md", "始终保持候选态", "P8 Chinese seeded variant boundary")
+    require_text(root / "docs/WORKFLOW_DETAILS.zh-CN.md", "不能证明漏洞成立", "bundle Chinese preflight boundary")
+    require_text(root / "docs/WORKFLOW_DETAILS.zh-CN.md", "诊断模式", "bundle Chinese all-errors diagnostic boundary")
+    require_text(root / "docs/WORKFLOW_DETAILS.zh-CN.md", "不能称为已确认交付物", "bundle Chinese failed staging boundary")
+    require_text(root / "docs/WORKFLOW_DETAILS.zh-CN.md", "仅含标记的复现日志", "bundle Chinese marker-only replay boundary")
+    require_text(root / "docs/WORKFLOW_DETAILS.zh-CN.md", "始终保持候选态", "bundle Chinese seeded variant boundary")
 
     forbidden_claims = [
         "contract preflight proves a vulnerability",
@@ -928,7 +944,7 @@ def exercise_p8_closure_contracts(root: Path) -> None:
         "all-errors 证明漏洞",
         "all-errors 确认漏洞",
     ]
-    for path in docs + [skill_path]:
+    for path in docs + [chinese_workflow, skill_path]:
         for phrase in forbidden_claims:
             forbid_text(path, phrase, f"P8 no diagnostic-confirmation claim in {path.name}")
 
@@ -4473,10 +4489,13 @@ def exercise_agents_shim(plugin_root: Path) -> None:
         "use `$zhulong`",
         "Do not duplicate the full `$zhulong` skill contract here.",
         "Scanner, static-analysis, LLM, and dependency findings remain candidates until",
-        "Docker reproduction and confirmed-bundle validation support them.",
+        "attacker-entrypoint Docker reproduction, source-bound validity checks, and",
+        "confirmed-bundle validation support them.",
         "Do not execute PoC or exploit verification directly on the host.",
         "Docker / Docker Compose verification flow",
         "Confirmed findings must live only in validated Zhulong confirmed bundles.",
+        "Final recording is optional",
+        "ordinary confirmed status does not imply recording readiness.",
         "Do not use broad Docker prune or PID kill behavior.",
         "skills/zhulong/SKILL.md",
         "assets/references/",
@@ -6902,23 +6921,23 @@ def main() -> None:
     )
     require_text(
         plugin_root / "docs/WORKFLOW_DETAILS.md",
-        "P6.2 defines the Variant Seed Card fields",
-        "workflow details P6.2 seed-card contract",
+        "`scripts/extract_variant_seed.py` is an offline helper",
+        "workflow details seed-card extractor contract",
     )
     require_text(
         plugin_root / "docs/WORKFLOW_DETAILS.md",
-        "P6.4 adds `scripts/find_variant_candidates.py`",
-        "workflow details P6.4 candidate finder contract",
+        "`scripts/find_variant_candidates.py` reads one final Variant Seed Card",
+        "workflow details candidate finder contract",
     )
     require_text(
         plugin_root / "docs/WORKFLOW_DETAILS.zh-CN.md",
-        "P6.2 定义 Variant Seed Card 字段",
-        "Chinese workflow details P6.2 seed-card contract",
+        "从已有的确认漏洞包中提取同类漏洞种子卡",
+        "Chinese workflow details seed-card extractor contract",
     )
     require_text(
         plugin_root / "docs/WORKFLOW_DETAILS.zh-CN.md",
-        "P6.4 增加 `scripts/find_variant_candidates.py`",
-        "Chinese workflow details P6.4 candidate finder contract",
+        "执行 `scripts/find_variant_candidates.py`",
+        "Chinese workflow details candidate finder contract",
     )
     forbid_text(
         plugin_root / "scripts/find_variant_candidates.py",

@@ -75,7 +75,9 @@
 - **证据碎片化：** 证据、脚本、报告和漏洞研判记录经常彼此脱节。
 - **交接脆弱：** 长对话上下文很难让另一个 Agent 或人工审核员可靠接续。
 
-> **💡 核心理念：** 烛龙只有在漏洞可以通过 Docker 或 Docker Compose 复现，并且报告证据包通过自动一致性检查后，才会把它标记为“已确认”。其他结果会保留为候选项、误报、未验证线索或阻塞项。
+> **💡 核心理念：** 烛龙只有在适用的 Docker 或 Docker Compose 复现、源码绑定的
+> 有效性与严重性检查，以及最终报告证据包校验全部通过后，才会把漏洞标记为“已确认”。
+> 其他结果会保留为候选项、误报、未验证线索或阻塞项。
 
 ---
 
@@ -227,7 +229,9 @@ confirmed/<vulnerability-slug>/
 └── 📂 attachments/
 ```
 
-只有当 Docker 或 Docker Compose 中的运行时证据存在，并且烛龙的报告证据包自动检查通过时，一个发现才算完成态的已确认交付物；同类扩展只是针对既有确认漏洞包的可选候选生成环节，候选仍需独立 Docker 复现，通过后才可生成确认漏洞包。
+只有当适用的 Docker 或 Docker Compose 运行时证据、源码绑定的有效性与严重性检查，
+以及最终漏洞包自动校验全部通过后，一个发现才算已确认交付物。同类漏洞扩展只生成
+候选项，每条候选仍需独立完成 Docker 复现。
 
 人机协同细节、报告质量门禁、验证命令、示例审计发现形态、同类扩展复审规则和限制请阅读 [`docs/WORKFLOW_DETAILS.zh-CN.md`](docs/WORKFLOW_DETAILS.zh-CN.md)。
 
@@ -300,9 +304,12 @@ zhulong/
 │   ├── audit_disposition.py            # 工作区级线索判断记录
 │   ├── finalize_audit_workspace.py     # 交接前完成检查
 │   ├── assert_finalized_workspace.py   # 已完成工作区完整性检查
+│   ├── validate_bundle_contract.py     # 源码绑定的生成前预检
+│   ├── build_confirmed_bundle.py       # 暂存区校验与原子提升
 │   ├── extract_variant_seed.py         # 确认漏洞包 -> 同类漏洞种子卡
 │   ├── find_variant_candidates.py      # 种子卡 -> 同仓库排序候选
 │   ├── validate_report_bundle.py       # 已确认漏洞证据包检查
+│   ├── validate_recording_evidence.py  # 可选最终录屏证据门禁
 │   └── selftest_plugin.py              # 发布 / 打包自检
 ├── assets/
 │   ├── branding/                       # README 视觉与 logo 资源
@@ -358,7 +365,9 @@ Codex 支持说明见
 ```text
 Read docs/AGENTS.md, CONTRIBUTING.md, and docs/RELEASE_CHECKLIST.md before editing.
 Keep the change narrow.
-不要削弱以下规则：未验证问题不能进入已确认报告；适用时必须在 Docker 中复现；Docker 清理必须安全；OMC 多 Agent 工作进程只允许人工复核；危险验证容器必须提前拒绝；已确认漏洞证据包必须先通过检查再交付。
+不要削弱以下规则：未验证问题不能进入已确认报告；适用时必须在 Docker 中复现；确认
+结论必须绑定真实源码；Docker 清理必须安全；OMC 多 Agent 工作进程只允许人工复核；
+危险验证容器必须提前拒绝；已确认漏洞证据包必须先在暂存区通过检查再提升。
 ```
 
 ```bash
@@ -439,7 +448,8 @@ python3 scripts/validate_all_report_bundles.py --confirmed-dir <confirmed-dir>
 - [x] 机器可读的线索判断记录，以及便于人机协同接续的交接摘要。
 - [x] 针对危险验证容器、Docker 残留和 OMC 多 Agent 工作进程的安全检查与只读复核边界。
 - [x] 基于已确认漏洞提示同仓库里的同类漏洞线索，并要求每条线索独立完成 Docker 复现。
-- [x] 面向审核录屏的 replay 脚本会展示代码上下文、漏洞分析、实际危害边界和最终证据汇总。
+- [x] 面向审核录屏的复现脚本会展示代码上下文、漏洞分析、实际危害边界和最终证据汇总。
+- [x] 源码绑定的生成合同、暂存区校验提升，以及可选最终录屏证据门禁。
 - [x] Codex 用户级 Skill 支持、安装目录自检、平台无关启动入口和仓库根目录 AGENTS.md 引导文件。
 
 后续计划：

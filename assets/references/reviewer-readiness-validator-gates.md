@@ -144,7 +144,7 @@ coverage, and add a release checklist entry in the same change. Tests for these
 gates must not run Docker, replay scripts, PoCs, scanners, package managers,
 network calls, or real target code.
 
-## Final recording identity and screenshot gate (Issue #21)
+## Final Recording Identity And Screenshot Gate
 
 Final screen recordings are an explicit opt-in after the ordinary confirmed
 bundle gate. The public source of truth is `scripts/auto_record_bundle.py`,

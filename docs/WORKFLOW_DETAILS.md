@@ -134,7 +134,7 @@ and
 
 ## Confirmed Bundle Short Path
 
-P8 standardizes confirmed bundle generation as a short, repeatable path:
+Zhulong standardizes confirmed bundle generation as a short, repeatable path:
 
 ```text
 bundle contract preflight
@@ -301,7 +301,7 @@ Code-level or function-level reproduction is supporting evidence only; bundle
 readiness requires attacker-entrypoint reproduction with an input shape,
 entrypoint-to-sink path, and deterministic impact oracle.
 
-## Seeded Variant Discovery (P6)
+## Confirmed-Seed Variant Discovery
 
 - A confirmed seed is a confirmed finding that already has a valid confirmed
   bundle, reproducible Docker evidence, and a completed severity-escalation pass.
@@ -315,30 +315,27 @@ entrypoint-to-sink path, and deterministic impact oracle.
 - A variant candidate must not be reported as confirmed in a confirmed package,
   supplement, note, or reviewer-facing summary before Docker reproduction and
   independent bundle validation are complete.
-- P6.1 established the seeded-variant workflow boundary. P6.2 defines the Variant Seed Card fields without implementing automatic seed extraction or candidate finding.
-- P6.3 adds `scripts/extract_variant_seed.py`, an offline helper that reads one
-  existing confirmed bundle and extracts a Variant Seed Card. It does not
-  execute PoCs, run Docker, search the repository, rank candidates, or confirm
-  variants.
+- `scripts/extract_variant_seed.py` is an offline helper that reads one existing
+  confirmed bundle and extracts a Variant Seed Card. It does not execute PoCs,
+  run Docker, search the repository, rank candidates, or confirm variants.
 - Final Variant Seed Cards are accepted only when `confirmed_bundle_path`
   resolves to a real `confirmed/<bundle>/` directory in the current audit
   workspace and that bundle passes `validate_report_bundle.py`. Candidate ids,
   markdown rows, ad hoc notes, Docker evidence directories, partial bundles, and
   validation-failed bundles fail closed; manual same-pattern notes must stay
   outside formal `evidence/variant-analysis/seeds.jsonl`.
-- P6.4 adds `scripts/find_variant_candidates.py`, an offline helper that reads
-  one final Variant Seed Card and ranks same-repository candidates. It uses
-  local Python filesystem traversal only; it does not call scanners, `rg`,
-  `grep`, `git`, network APIs, LLMs, Docker, PoCs, DOCX rendering, or confirmed
-  bundle generation.
-- P6.4 candidate output lives in `variant-candidates.jsonl`. Each record stays
+- `scripts/find_variant_candidates.py` reads one final Variant Seed Card and
+  ranks same-repository candidates offline. It uses local Python filesystem
+  traversal only; it does not call scanners, `rg`, `grep`, `git`, network APIs,
+  LLMs, Docker, PoCs, DOCX rendering, or confirmed bundle generation.
+- Candidate output lives in `variant-candidates.jsonl`. Each record stays
   `status=candidate`, uses repo-relative file paths, includes deterministic
   score/rank evidence, and must require independent Docker or Docker Compose
   verification before any confirmation decision.
-- P6.5 adds `validate_report_bundle.py --variant-candidates` for candidate-only
-  JSONL/JSON-array validation. This is separate from confirmed bundle
-  validation: candidate JSONL can guide follow-up verification, but it cannot
-  prove a vulnerability.
+- `validate_report_bundle.py --variant-candidates` validates candidate-only
+  JSONL or JSON arrays. This is separate from confirmed bundle validation:
+  candidate output can guide follow-up verification, but it cannot prove a
+  vulnerability.
 - Confirmed bundles must not include `variant-candidates.jsonl` as primary
   evidence or cite candidate ranking, seed similarity, or candidate-only records
   as confirmation evidence.
@@ -521,7 +518,7 @@ cat docs/RELEASE_CHECKLIST.md
 - Zhulong does not run a hosted backend, dashboard, database, vector store, or
   RAG service.
 
-## Optional final recording workflow (Issue #21)
+## Optional Final Recording Workflow
 
 The ordinary confirmed-bundle path ends at Docker/report validation. Final
 screen recording is a separate opt-in path and does not turn an ordinary
@@ -537,8 +534,8 @@ python3 scripts/auto_record_bundle.py confirmed/<slug> \
 ```
 
 The recorder resolves canonical identity from bundle-local `findings.json`,
-`validity-review.json`, `verification-evidence.json`, and Issue #20
-source-bound material. It requires the generated root helper's
+`validity-review.json`, `verification-evidence.json`, and source-bound contract
+material. It requires the generated root helper's
 `identity`, `code_or_trigger_context`, and `final_impact` checkpoint protocol.
 The helper writes events only into a recorder-owned temporary directory; the
 adapter verifies the OBS source/window, captures live checkpoint images outside

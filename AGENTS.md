@@ -22,12 +22,16 @@ Do not duplicate the full `$zhulong` skill contract here.
 ## Safety Boundaries
 
 Scanner, static-analysis, LLM, and dependency findings remain candidates until
-Docker reproduction and confirmed-bundle validation support them.
+attacker-entrypoint Docker reproduction, source-bound validity checks, and
+confirmed-bundle validation support them.
 
 Do not execute PoC or exploit verification directly on the host. For applicable
 PoC work, use Zhulong's Docker / Docker Compose verification flow.
 
 Confirmed findings must live only in validated Zhulong confirmed bundles.
+
+Final recording is optional and has its own identity, screenshot, archive, and
+promotion gates; ordinary confirmed status does not imply recording readiness.
 
 Do not use broad Docker prune or PID kill behavior.
 

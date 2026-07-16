@@ -24,7 +24,7 @@ Use this local-agent skill when you want a repository-level security-focused cod
   copies. Do not edit installed copies as source.
 - Use `scripts/zhulong_audit.sh` as the platform-neutral terminal launcher. It
   resolves the current skill/package root and delegates to `scripts/asr_start.sh`.
-- The P7 Codex layout and sync contract lives at
+- The Codex layout and sync contract lives at
   [CODEX_SKILL_ADAPTATION.md](./docs/CODEX_SKILL_ADAPTATION.md).
 
 ## Installed Skill Runtime Contents
@@ -908,7 +908,7 @@ manually edited `stage-status.json` or a hand-written summary is not completion.
 - [false-positive-template.md](./assets/references/false-positive-template.md)
 - [unverified-lead-template.md](./assets/references/unverified-lead-template.md)
 
-## Final Recording Identity and Screenshot Gate (Issue #21)
+## Final Recording Identity and Screenshot Gate
 
 Final screen recording is an explicit opt-in after the ordinary Docker-confirmed
 bundle gate. The public source of truth is the repository implementation in

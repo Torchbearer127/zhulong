@@ -42,8 +42,9 @@ system, a dashboard product, an exploit automation framework, or a guaranteed
 
 Zhulong may track confirmed vulnerabilities, candidates, false positives,
 non-security defects, hardening-only observations, blocked verification, and
-unverified leads. Only Docker-reproduced and bundle-validated vulnerabilities
-enter `confirmed/`.
+unverified leads. A Docker-applicable vulnerability enters `confirmed/` only
+after attacker-entrypoint reproduction, source-bound validity and severity
+checks, and final bundle validation all pass.
 
 ## Ownership Model
 
@@ -53,7 +54,21 @@ enter `confirmed/`.
 - `scripts/*.py` and `scripts/*.sh` own deterministic checks, helpers, gates,
   validators, rendering, cleanup, and finalization.
 - `scripts/validate_report_bundle.py` owns confirmed bundle validation.
+- `scripts/validate_bundle_contract.py` owns generation-contract preflight;
+  `scripts/build_confirmed_bundle.py` owns validated staging and atomic
+  promotion into `confirmed/`.
+- `scripts/validate_candidate.py`, `scripts/verify_candidate.py`, and
+  `scripts/validate_verifier_verdict.py` own the candidate and independent
+  verifier evidence-level contracts. They do not replace Docker execution.
 - `scripts/audit_disposition.py` owns disposition ledger validation.
+- `scripts/finalize_audit_workspace.py` and
+  `scripts/assert_finalized_workspace.py` own final workspace and handoff/status
+  consistency checks.
+- `scripts/extract_variant_seed.py`, `scripts/find_variant_candidates.py`, and
+  their validators own confirmed-seed-based same-repository candidate analysis.
+- `scripts/recording_identity.py`, `scripts/auto_record_bundle.py`, and
+  `scripts/validate_recording_evidence.py` own the optional final recording
+  path. Recording readiness is separate from ordinary confirmed status.
 - `scripts/manage_docker_resources.py` owns Docker baseline, cleanup planning,
   exact adoption, and strict hygiene.
 - `scripts/check_omc_runtime.sh` owns OMC/runtime hygiene. Teammate PIDs are
@@ -70,6 +85,13 @@ validators, or selftests.
 - Scanner-only, dependency-only, static-only, LLM-only, blocked, timed-out,
   rejected unsafe sandbox, or dirty-Docker results must not enter `confirmed/`.
 - Docker-applicable confirmed findings require Docker reproduction.
+- Code-level reproduction, blocked entrypoint verification, candidate ranking,
+  and finder wording are supporting material only. They cannot promote a
+  finding or create a confirmed bundle.
+- Confirmation requires source-bound attacker entrypoint, path and token
+  fidelity, validity, evidence-bounded classification and severity, and a
+  deterministic impact oracle. Synthetic fixture properties cannot support
+  stronger real-world impact claims.
 - `rejected_unsafe_sandbox` is a safety blocker, not vulnerability evidence.
 - Confirmed bundles must preserve the existing one-folder-per-vulnerability
   contract, including DOCX report, reproduction supplement, attachment index,
@@ -77,6 +99,19 @@ validators, or selftests.
   helper script.
 - Confirmed reports must include attacker condition, server condition, and
   concrete CIA or equivalent security impact.
+- New confirmed bundles must be rendered under `confirmed/.staging/`, pass
+  final validation there, and be atomically promoted. Failed staging output is
+  not a confirmed deliverable.
+- Handoff and status claims must be derived from validated artifacts. A
+  directory count, Docker evidence alone, or code-level reproduction must not
+  be described as confirmed-bundle completion.
+- Formal same-repository variant analysis starts only from a validated
+  confirmed bundle. Every resulting lead remains a candidate until it completes
+  its own Docker reproduction and confirmed-bundle validation.
+- Final screen recording is opt-in. Recording identity, final-video-derived
+  screenshots, archive integrity, and transactional promotion are required only
+  when recording-ready or submission-ready delivery is requested; they do not
+  redefine ordinary confirmed status.
 - Docker residue and OMC/runtime residue must stay separate.
 - OMC teammate PID handling is review-only. Do not add PID signaling, broad
   teammate process cleanup, automatic hard-kill escalation, or Docker cleanup
@@ -123,6 +158,26 @@ python3 scripts/validate_report_bundle.py --bundle-dir <bundle-dir>
 python3 scripts/validate_all_report_bundles.py --confirmed-dir <confirmed-dir>
 ```
 
+For new bundle generation, validate the contract against the real target
+repository and use the staging builder rather than writing a final directory by
+hand:
+
+```bash
+python3 scripts/validate_bundle_contract.py \
+  --repo-root <target-repository> \
+  --workspace-dir <audit-workspace> \
+  --contract <bundle-contract>
+python3 scripts/build_confirmed_bundle.py \
+  --repo-root <target-repository> \
+  --workspace-dir <audit-workspace> \
+  --contract <bundle-contract> \
+  --language <zh-CN|en-US>
+```
+
+If optional final recording behavior changed, run the recording evidence tests
+and validate a sanitized recording fixture. Do not operate OBS, Terminal, a real
+PoC, Docker, or the network from deterministic selftests.
+
 Before a release, run through:
 
 - `../CONTRIBUTING.md`
@@ -142,9 +197,20 @@ When fixing a product bug, patch the canonical source area:
 - Ledger/finalization bugs: `scripts/audit_disposition.py`,
   `scripts/finalize_audit_workspace.py`,
   `scripts/assert_finalized_workspace.py`.
-- Report or bundle bugs: `scripts/render_confirmed_vuln_docx.py`,
+- Candidate/verifier evidence-level bugs: `scripts/validate_candidate.py`,
+  `scripts/verify_candidate.py`, `scripts/validate_verifier_verdict.py`,
+  finding-contract schemas and examples.
+- Report, contract, or bundle promotion bugs:
+  `scripts/validate_bundle_contract.py`,
+  `scripts/build_confirmed_bundle.py`,
+  `scripts/render_confirmed_vuln_docx.py`,
   `scripts/validate_report_bundle.py`,
   `assets/references/confirmed-vuln-docx-format.md`.
+- Same-repository variant-analysis bugs: `scripts/extract_variant_seed.py`,
+  `scripts/find_variant_candidates.py`, their validators and schemas.
+- Final recording bugs: `scripts/recording_identity.py`,
+  `scripts/auto_record_bundle.py`, `scripts/validate_recording_evidence.py`,
+  the recording schema and sanitized fixtures.
 - Agent behavior or prompt contract bugs: `skills/zhulong/SKILL.md`,
   `templates/claude-skill/SKILL.md`, `assets/references/*.md`.
 - Packaging docs or manifests: `.claude-plugin/plugin.json`,
@@ -159,6 +225,7 @@ You are maintaining Zhulong.
 Read docs/AGENTS.md, CONTRIBUTING.md, and docs/RELEASE_CHECKLIST.md first.
 Keep the change narrow.
 Do not weaken confirmed-only, Docker-first, Docker hygiene, OMC PID safety,
-sandbox preflight, finalization, or confirmed bundle contracts.
+sandbox preflight, source binding, evidence levels, staging promotion,
+finalization, handoff consistency, or confirmed bundle contracts.
 After editing, run the relevant selftests and report exactly what changed.
 ```

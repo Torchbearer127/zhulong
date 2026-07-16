@@ -37,6 +37,8 @@ python3 scripts/selftest_plugin.py
 ```bash
 bash scripts/sync_to_claude_skill.sh
 python3 ~/.claude/skills/zhulong/scripts/selftest_plugin.py
+bash scripts/sync_to_codex_skill.sh
+python3 ~/.agents/skills/zhulong/scripts/selftest_plugin.py
 ```
 
 ## When Adding New Security Tooling
@@ -54,12 +56,29 @@ python3 ~/.claude/skills/zhulong/scripts/selftest_plugin.py
 
 - Update the renderer and the validators together.
 - Preserve the fixed confirmed-bundle layout.
+- Validate the generation contract against the real target repository and use
+  the staging builder for new bundles. Do not hand-create final
+  `confirmed/<slug>/` directories.
 - Validate with:
 
 ```bash
+python3 scripts/validate_bundle_contract.py \
+  --repo-root <target-repository> \
+  --workspace-dir <audit-workspace> \
+  --contract <bundle-contract>
+python3 scripts/build_confirmed_bundle.py \
+  --repo-root <target-repository> \
+  --workspace-dir <audit-workspace> \
+  --contract <bundle-contract> \
+  --language <zh-CN|en-US>
 python3 scripts/validate_report_bundle.py --bundle-dir <bundle>
 python3 scripts/validate_all_report_bundles.py --confirmed-dir <confirmed-dir>
 ```
+
+If the change affects optional final recording delivery, update the recorder,
+recording validator, strict schema, sanitized fixtures, and reviewer-facing
+documentation together. Recording readiness must remain separate from ordinary
+confirmed status.
 
 ## When Changing Docker Or Runtime Hygiene
 

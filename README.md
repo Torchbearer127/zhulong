@@ -86,10 +86,10 @@ Zhulong is built for four recurring audit pains:
 - **Artifact fragmentation:** evidence, scripts, reports, and triage notes often drift apart.
 - **Handoff fragility:** long chat context is hard for another agent or human to resume.
 
-> **💡 Core principle:** Zhulong reports a vulnerability as confirmed only after it
-> has been reproduced in Docker or Docker Compose and its report package has
-> passed automated consistency checks. Everything else stays as a candidate,
-> false positive, unverified lead, or blocked item.
+> **💡 Core principle:** Zhulong reports a vulnerability as confirmed only after
+> applicable Docker or Docker Compose reproduction, source-bound validity and
+> severity checks, and final report-package validation all pass. Everything else
+> stays as a candidate, false positive, unverified lead, or blocked item.
 
 ---
 
@@ -264,10 +264,10 @@ confirmed/<vulnerability-slug>/
 └── 📂 attachments/
 ```
 
-A finding is not considered confirmed until runtime evidence exists from Docker
-or Docker Compose and Zhulong's automated report-package checks pass; seeded
-variant expansion is only an optional candidate-generation pass for an existing
-confirmed bundle, and variants still require independent Docker reproduction.
+A finding is not considered confirmed until applicable Docker or Docker Compose
+runtime evidence, source-bound validity and severity checks, and automated final
+package validation all pass. Confirmed-seed variant expansion generates
+candidates only; every variant still requires independent Docker reproduction.
 
 For collaboration details, report quality checks, validation commands, example
 finding shapes, seeded-variant review rules, and limitations, see
@@ -347,9 +347,12 @@ zhulong/
 │   ├── audit_disposition.py            # Workspace-level issue decision log
 │   ├── finalize_audit_workspace.py     # Completion checks before handoff
 │   ├── assert_finalized_workspace.py   # Finalized workspace integrity checks
+│   ├── validate_bundle_contract.py     # Source-bound generation preflight
+│   ├── build_confirmed_bundle.py       # Validated staging build and promotion
 │   ├── extract_variant_seed.py         # Confirmed bundle -> Variant Seed Card
 │   ├── find_variant_candidates.py      # Seed card -> same-repo ranked candidates
 │   ├── validate_report_bundle.py       # Confirmed vulnerability package checker
+│   ├── validate_recording_evidence.py  # Optional final recording evidence gate
 │   └── selftest_plugin.py              # Release and packaging selftest
 ├── assets/
 │   ├── branding/                       # README visuals and logo assets
@@ -413,9 +416,10 @@ Read `docs/AGENTS.md`, `CONTRIBUTING.md`, and
 `docs/RELEASE_CHECKLIST.md` before editing.
 Keep the change narrow.
 Do not weaken the rules that keep unverified issues out of confirmed reports,
-require Docker reproduction when applicable, protect Docker cleanup, keep OMC
-multi-agent worker process handling review-only, reject unsafe verification containers,
-or validate confirmed vulnerability packages before release.
+require Docker reproduction when applicable, bind confirmation to real source,
+protect Docker cleanup, keep OMC multi-agent worker process handling review-only,
+reject unsafe verification containers, or validate staged confirmed vulnerability
+packages before promotion.
 ```
 
 ```bash
@@ -520,6 +524,7 @@ Completed:
 - [x] Safety checks for unsafe verification containers, Docker residue, and review-only OMC multi-agent worker process handling.
 - [x] Same-repository variant discovery from confirmed vulnerabilities, with every lead still requiring its own Docker reproduction.
 - [x] Reviewer-facing replay helpers with code context, vulnerability analysis, practical impact, and final evidence summary screens.
+- [x] Source-bound bundle contracts, validated staging promotion, and optional final recording evidence gates.
 - [x] Codex user-level skill support with installed selftest, platform-neutral launcher, and repo-root AGENTS.md guidance.
 
 Planned:
