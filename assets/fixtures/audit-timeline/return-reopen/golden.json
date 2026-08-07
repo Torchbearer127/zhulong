@@ -1,0 +1,197 @@
+{
+  "blockers": [],
+  "bundles": {
+    "failed": 0,
+    "items": [],
+    "partial": 0,
+    "validated": 0
+  },
+  "candidate_flows": [],
+  "current_state": {
+    "blocker": null,
+    "event_sequence": 6,
+    "resume_step": null,
+    "revision": 6,
+    "run_id": "run-audit-timeline-fixture",
+    "stage": "recon",
+    "status": "running"
+  },
+  "docker": {
+    "baseline_path": null,
+    "baseline_sha256": null,
+    "baseline_status": "missing",
+    "hygiene_path": null,
+    "hygiene_sha256": null,
+    "hygiene_status": "missing",
+    "verification_status": "not_present"
+  },
+  "events": [
+    {
+      "blocker": null,
+      "event_name": "intake_started",
+      "event_type": "stage_transition",
+      "evidence_refs": [],
+      "from_status": null,
+      "reason_code": "normal_progress",
+      "resume_step": null,
+      "revision": 1,
+      "seq": 1,
+      "stage": "intake",
+      "subjects": [],
+      "summary": "Protocol fixture event 1: intake_started.",
+      "to_status": "running",
+      "transition_kind": "start"
+    },
+    {
+      "blocker": null,
+      "event_name": "recon_started",
+      "event_type": "stage_transition",
+      "evidence_refs": [],
+      "from_status": "running",
+      "reason_code": "normal_progress",
+      "resume_step": null,
+      "revision": 2,
+      "seq": 2,
+      "stage": "recon",
+      "subjects": [],
+      "summary": "Protocol fixture event 2: recon_started.",
+      "to_status": "running",
+      "transition_kind": "advance"
+    },
+    {
+      "blocker": null,
+      "event_name": "candidate_generation_started",
+      "event_type": "stage_transition",
+      "evidence_refs": [],
+      "from_status": "running",
+      "reason_code": "normal_progress",
+      "resume_step": null,
+      "revision": 3,
+      "seq": 3,
+      "stage": "candidate_generation",
+      "subjects": [],
+      "summary": "Protocol fixture event 3: candidate_generation_started.",
+      "to_status": "running",
+      "transition_kind": "advance"
+    },
+    {
+      "blocker": null,
+      "event_name": "returned_to_recon",
+      "event_type": "recovery",
+      "evidence_refs": [
+        "evidence/recovery.txt"
+      ],
+      "from_status": "running",
+      "reason_code": "validation_failed",
+      "resume_step": null,
+      "revision": 4,
+      "seq": 4,
+      "stage": "recon",
+      "subjects": [
+        "run:audit-timeline-fixture"
+      ],
+      "summary": "Protocol fixture event 4: returned_to_recon.",
+      "to_status": "running",
+      "transition_kind": "return"
+    },
+    {
+      "blocker": null,
+      "event_name": "recon_completed",
+      "event_type": "stage_transition",
+      "evidence_refs": [],
+      "from_status": "running",
+      "reason_code": "normal_progress",
+      "resume_step": null,
+      "revision": 5,
+      "seq": 5,
+      "stage": "recon",
+      "subjects": [],
+      "summary": "Protocol fixture event 5: recon_completed.",
+      "to_status": "completed",
+      "transition_kind": "complete"
+    },
+    {
+      "blocker": null,
+      "event_name": "recon_reopened",
+      "event_type": "recovery",
+      "evidence_refs": [
+        "evidence/recovery.txt"
+      ],
+      "from_status": "completed",
+      "reason_code": "recovery_requested",
+      "resume_step": null,
+      "revision": 6,
+      "seq": 6,
+      "stage": "recon",
+      "subjects": [
+        "run:audit-timeline-fixture"
+      ],
+      "summary": "Protocol fixture event 6: recon_reopened.",
+      "to_status": "running",
+      "transition_kind": "reopen"
+    }
+  ],
+  "finalization": {
+    "path": null,
+    "sha256": null,
+    "status": "not_finalized"
+  },
+  "handoff": {
+    "integrity": "not_present",
+    "path": null,
+    "sha256": null,
+    "status": "not_present"
+  },
+  "integrity": {
+    "authority_digest": "sha256:c4b2eec74aaa9f9090025e0a4720549925f0daf8c17cf23b63b4013e8c1c8ac4",
+    "issue_codes": [],
+    "status": "valid"
+  },
+  "next_actions": {
+    "blocking_codes": [],
+    "classification": "not_present",
+    "path": null,
+    "sha256": null,
+    "status": "not_present"
+  },
+  "non_authority_statement": "This offline timeline is a derived review view. It is not an authority source and grants no confirmation, disposition, execution, promotion, or finalization permission.",
+  "non_claims": [
+    "It does not prove that an Agent read any referenced material.",
+    "It does not contain hidden reasoning or conversation content.",
+    "It does not run Docker, PoC, replay, scanners, network requests, models, or Agents.",
+    "Confirmed status still requires the existing verdict, disposition, Docker, and bundle validators."
+  ],
+  "projection_kind": "derived_read_only_audit_timeline",
+  "protocol_mode": "r2",
+  "schema_version": 1,
+  "source_bindings": [
+    {
+      "kind": "journal",
+      "path": "audit-events.jsonl",
+      "sha256": "sha256:c3938acd2c18400954b83875749b31edadf3af217fa3348dde31db7b6df4a078",
+      "status": "validated",
+      "validator": "audit_state_io.py+audit_transition_policy.py"
+    },
+    {
+      "kind": "state",
+      "path": "stage-status.json",
+      "sha256": "sha256:37c94f7089215bb5d49e210847728559e1481493134047c8934b056e3b58d766",
+      "status": "validated",
+      "validator": "audit_state_io.py"
+    },
+    {
+      "kind": "target_contract",
+      "path": "zhulong-target.yaml",
+      "sha256": "sha256:142eed6c9749f99fe26e8de435f43f7d58d447bb76f70516fda72708dd744509",
+      "status": "validated",
+      "validator": "validate_target_contract.py"
+    }
+  ],
+  "target": {
+    "contract_path": "zhulong-target.yaml",
+    "contract_sha256": "sha256:142eed6c9749f99fe26e8de435f43f7d58d447bb76f70516fda72708dd744509",
+    "name": "fixture-service",
+    "tested_ref": "fixture-service-ref-001",
+    "validator_status": "validated"
+  }
+}

@@ -1,0 +1,145 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Torchbearer127/zhulong/blob/main/assets/schemas/stage-status.schema.json",
+  "title": "Zhulong Stage Status Materialized View R2",
+  "description": "Strict rebuildable current-state view derived from audit-events.jsonl. A valid view is not an authoritative journal and does not prove a vulnerability, Docker evidence, bundle, or workspace completion.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "plugin",
+    "plugin_version",
+    "run_id",
+    "state_revision",
+    "last_event_seq",
+    "event_log_digest",
+    "stage",
+    "status",
+    "last_event_at",
+    "last_event_type",
+    "last_event_name",
+    "blocker",
+    "resume_step"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 2
+    },
+    "plugin": {
+      "type": "string",
+      "const": "zhulong"
+    },
+    "plugin_version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "run_id": {
+      "$ref": "#/$defs/logical_id"
+    },
+    "state_revision": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "last_event_seq": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "event_log_digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "stage": {
+      "$ref": "#/$defs/stage"
+    },
+    "status": {
+      "$ref": "#/$defs/status"
+    },
+    "last_event_at": {
+      "$ref": "#/$defs/utc_timestamp"
+    },
+    "last_event_type": {
+      "$ref": "#/$defs/event_type"
+    },
+    "last_event_name": {
+      "$ref": "#/$defs/event_name"
+    },
+    "blocker": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        }
+      ]
+    },
+    "resume_step": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "logical_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "utc_timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,6})?Z$"
+    },
+    "stage": {
+      "type": "string",
+      "enum": [
+        "intake",
+        "recon",
+        "candidate_generation",
+        "triage",
+        "verification",
+        "severity_escalation",
+        "variant_discovery",
+        "packaging",
+        "finalization",
+        "recording"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "running",
+        "paused",
+        "blocked",
+        "completed"
+      ]
+    },
+    "event_type": {
+      "type": "string",
+      "enum": [
+        "stage_transition",
+        "state_observation",
+        "checkpoint",
+        "recovery",
+        "recording"
+      ]
+    },
+    "event_name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$"
+    }
+  }
+}

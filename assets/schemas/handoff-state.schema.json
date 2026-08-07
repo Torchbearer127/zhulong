@@ -1,0 +1,197 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Torchbearer127/zhulong/blob/main/assets/schemas/handoff-state.schema.json",
+  "title": "Zhulong Handoff State",
+  "description": "A deterministic, read-only derived continuation index. It is not authority for candidates, verdicts, dispositions, bundles, recordings, or finalization.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "generated_from_revision",
+    "generated_from_event_sequence",
+    "protocol_mode",
+    "plugin",
+    "plugin_version",
+    "tested_ref",
+    "stage",
+    "status",
+    "recon",
+    "triage",
+    "variant_analysis",
+    "docker",
+    "docker_baseline",
+    "runtime",
+    "recording",
+    "finalization",
+    "disposition",
+    "blocker",
+    "resume",
+    "artifacts",
+    "counts",
+    "identifiers",
+    "integrity",
+    "advisory_notes"
+  ],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "generated_from_revision": {"type": ["integer", "null"], "minimum": 1},
+    "generated_from_event_sequence": {"type": ["integer", "null"], "minimum": 1},
+    "protocol_mode": {"type": "string", "enum": ["r2", "legacy_r1"]},
+    "plugin": {"type": "string", "const": "zhulong"},
+    "plugin_version": {"type": "string", "minLength": 1},
+    "tested_ref": {"$ref": "#/$defs/tested_ref"},
+    "stage": {"type": "string", "minLength": 1},
+    "status": {"type": "string", "minLength": 1},
+    "recon": {"$ref": "#/$defs/status_ref"},
+    "triage": {"$ref": "#/$defs/status_ref"},
+    "variant_analysis": {"$ref": "#/$defs/status_ref"},
+    "docker": {"$ref": "#/$defs/status_ref"},
+    "docker_baseline": {"$ref": "#/$defs/status_ref"},
+    "runtime": {"$ref": "#/$defs/status_ref"},
+    "recording": {"$ref": "#/$defs/status_ref"},
+    "finalization": {"$ref": "#/$defs/status_ref"},
+    "disposition": {"$ref": "#/$defs/status_ref"},
+    "blocker": {"$ref": "#/$defs/blocker"},
+    "resume": {"$ref": "#/$defs/resume"},
+    "artifacts": {"type": "array", "items": {"$ref": "#/$defs/artifact"}},
+    "counts": {"$ref": "#/$defs/counts"},
+    "identifiers": {"$ref": "#/$defs/identifiers"},
+    "integrity": {"$ref": "#/$defs/integrity"},
+    "advisory_notes": {"$ref": "#/$defs/advisory_notes"}
+  },
+  "$defs": {
+    "workspace_relative_path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?![A-Za-z]:[\\\\/])(?![A-Za-z][A-Za-z0-9+.-]*:)(?!~)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+"
+    },
+    "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "stable_id": {"type": "string", "pattern": "^[A-Z][A-Z0-9]*-[0-9A-Za-z][0-9A-Za-z._-]*$"},
+    "issue_code": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]{2,63}$"},
+    "tested_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "verified", "source_paths", "source_kind"],
+      "properties": {
+        "value": {"type": ["string", "null"], "minLength": 1},
+        "verified": {"type": "boolean"},
+        "source_paths": {"type": "array", "items": {"$ref": "#/$defs/workspace_relative_path"}},
+        "source_kind": {"type": "string", "enum": ["target_contract", "structured_consensus", "unknown"]}
+      }
+    },
+    "blocker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["active", "code", "summary", "source_path"],
+      "properties": {
+        "active": {"type": "boolean"},
+        "code": {"type": ["string", "null"], "pattern": "^[A-Z][A-Z0-9_]{2,63}$"},
+        "summary": {"type": ["string", "null"], "minLength": 1},
+        "source_path": {"oneOf": [{"$ref": "#/$defs/workspace_relative_path"}, {"type": "null"}]}
+      }
+    },
+    "resume": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["available", "step", "entrypoint", "parameters", "evidence_refs"],
+      "properties": {
+        "available": {"type": "boolean"},
+        "step": {"type": ["string", "null"], "minLength": 1},
+        "entrypoint": {"type": "string", "enum": ["none", "manual_review", "render_handoff_state", "validate_handoff_state", "resume_stage"]},
+        "parameters": {"type": "array", "items": {"$ref": "#/$defs/parameter"}},
+        "evidence_refs": {"type": "array", "items": {"$ref": "#/$defs/workspace_relative_path"}}
+      }
+    },
+    "parameter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "value"],
+      "properties": {
+        "name": {"type": "string", "enum": ["workspace-dir", "repo-root", "checkpoint", "artifact"]},
+        "value": {"type": "string", "minLength": 1, "$ref": "#/$defs/workspace_relative_path"}
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "kind", "status"],
+      "properties": {
+        "path": {"$ref": "#/$defs/workspace_relative_path"},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "kind": {"type": "string", "enum": ["journal", "state", "target_contract", "recon", "triage", "candidate", "verdict", "disposition", "bundle", "docker", "runtime", "recording", "finalization", "notes", "other"]},
+        "status": {"type": "string", "enum": ["authoritative", "validated", "advisory", "observed"]}
+      }
+    },
+    "status_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "path", "sha256", "summary"],
+      "properties": {
+        "status": {"type": "string", "minLength": 1},
+        "path": {"oneOf": [{"$ref": "#/$defs/workspace_relative_path"}, {"type": "null"}]},
+        "sha256": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+        "summary": {"type": "string", "minLength": 1}
+      }
+    },
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["candidates", "verdicts", "dispositions", "disposition_items", "confirmed_bundle_dirs", "validated_confirmed_bundles", "partial_or_failed_confirmed_bundles", "docker_evidence_only", "recording_manifests"],
+      "properties": {
+        "candidates": {"type": "integer", "minimum": 0},
+        "verdicts": {"type": "integer", "minimum": 0},
+        "dispositions": {"type": "integer", "minimum": 0},
+        "disposition_items": {"type": "integer", "minimum": 0},
+        "confirmed_bundle_dirs": {"type": "integer", "minimum": 0},
+        "validated_confirmed_bundles": {"type": "integer", "minimum": 0},
+        "partial_or_failed_confirmed_bundles": {"type": "integer", "minimum": 0},
+        "docker_evidence_only": {"type": "integer", "minimum": 0},
+        "recording_manifests": {"type": "integer", "minimum": 0}
+      }
+    },
+    "identifiers": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["candidate_ids", "verdict_candidate_ids", "disposition_ids", "confirmed_bundle_ids"],
+      "properties": {
+        "candidate_ids": {"type": "array", "items": {"$ref": "#/$defs/stable_id"}},
+        "verdict_candidate_ids": {"type": "array", "items": {"$ref": "#/$defs/stable_id"}},
+        "disposition_ids": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "confirmed_bundle_ids": {"type": "array", "items": {"type": "string", "minLength": 1}}
+      }
+    },
+    "integrity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["overall", "journal_digest", "state_digest", "authoritative_digest", "snapshot_consistent", "issues"],
+      "properties": {
+        "overall": {"type": "string", "enum": ["valid", "blocked", "invalid"]},
+        "journal_digest": {"type": ["string", "null"], "pattern": "^sha256:[0-9a-f]{64}$"},
+        "state_digest": {"type": ["string", "null"], "pattern": "^sha256:[0-9a-f]{64}$"},
+        "authoritative_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "snapshot_consistent": {"type": "boolean"},
+        "issues": {"type": "array", "items": {"$ref": "#/$defs/issue"}}
+      }
+    },
+    "issue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message", "path"],
+      "properties": {
+        "code": {"$ref": "#/$defs/issue_code"},
+        "message": {"type": "string", "minLength": 1},
+        "path": {"oneOf": [{"$ref": "#/$defs/workspace_relative_path"}, {"type": "null"}]}
+      }
+    },
+    "advisory_notes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "status"],
+      "properties": {
+        "path": {"oneOf": [{"$ref": "#/$defs/workspace_relative_path"}, {"type": "null"}]},
+        "sha256": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+        "status": {"type": "string", "enum": ["advisory", "missing"]}
+      }
+    }
+  }
+}

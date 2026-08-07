@@ -1,0 +1,419 @@
+{
+  "schema_version": 1,
+  "recon_id": "RECON-SERVICE-001",
+  "status": "complete",
+  "target_binding": {
+    "target_contract_path": "zhulong-target.yaml",
+    "target_contract_sha256": "sha256:142eed6c9749f99fe26e8de435f43f7d58d447bb76f70516fda72708dd744509",
+    "tested_ref": "fixture-service-ref-001"
+  },
+  "attack_surface_binding": {
+    "path": "attack-surface.md",
+    "sha256": "sha256:977ee46f69eac6bde639886c083c20f399b02b0e4f41023acfd3c26208844025"
+  },
+  "technology_stack": [
+    {
+      "id": "TECH-PYTHON",
+      "name": "Python",
+      "category": "language",
+      "summary": "Python source files define the fixture application handlers.",
+      "source_refs": [
+        {
+          "path": "src/app.py",
+          "start_line": 1,
+          "end_line": 9,
+          "symbol": "import_url"
+        }
+      ],
+      "evidence_refs": [
+        {
+          "path": "evidence/recon-notes.md",
+          "section": "Stack"
+        }
+      ]
+    },
+    {
+      "id": "TECH-DOCKER-COMPOSE",
+      "name": "Docker Compose",
+      "category": "runtime",
+      "summary": "The target contract declares an application service for Docker Compose.",
+      "source_refs": [
+        {
+          "path": "README.md",
+          "start_line": 1,
+          "end_line": 4
+        }
+      ],
+      "evidence_refs": [
+        {
+          "path": "evidence/deployment.md",
+          "section": "Runtime"
+        }
+      ]
+    }
+  ],
+  "public_entrypoints": [
+    {
+      "id": "ENTRY-HTTP-IMPORT",
+      "kind": "http",
+      "route": {
+        "path": "/api/import",
+        "method": "POST",
+        "symbol": "import_url",
+        "input_fields": [
+          "url"
+        ]
+      },
+      "auth": {
+        "mode": "authenticated",
+        "mechanism": "application session"
+      },
+      "summary": "An authenticated import request accepts a caller-provided URL.",
+      "source_refs": [
+        {
+          "path": "src/app.py",
+          "start_line": 5,
+          "end_line": 8,
+          "symbol": "import_url"
+        }
+      ],
+      "evidence_refs": [
+        {
+          "path": "attack-surface.md",
+          "section": "External Entry Points"
+        }
+      ]
+    }
+  ],
+  "trust_boundaries": [
+    {
+      "id": "BOUNDARY-HTTP-APP",
+      "from_zone": "external authenticated request",
+      "to_zone": "application import handler",
+      "controls": [
+        "application authentication",
+        "request JSON parsing"
+      ],
+      "summary": "The import handler is the boundary between request data and application code.",
+      "source_refs": [
+        {
+          "path": "src/app.py",
+          "start_line": 5,
+          "end_line": 8,
+          "symbol": "import_url"
+        }
+      ],
+      "evidence_refs": [
+        {
+          "path": "attack-surface.md",
+          "section": "Trust Boundaries"
+        }
+      ]
+    }
+  ],
+  "high_risk_sinks": [
+    {
+      "id": "SINK-NETWORK-FETCH",
+      "family": "network",
+      "symbol": {
+        "name": "urllib.request.urlopen",
+        "kind": "network client"
+      },
+      "controlled_inputs": [
+        "url"
+      ],
+      "summary": "The import handler passes the URL field to a network fetch sink.",
+      "source_refs": [
+        {
+          "path": "src/app.py",
+          "start_line": 8,
+          "end_line": 8,
+          "symbol": "urlopen"
+        }
+      ],
+      "evidence_refs": [
+        {
+          "path": "attack-surface.md",
+          "section": "High-Risk Sinks"
+        }
+      ]
+    }
+  ],
+  "security_policy_explanations": [
+    {
+      "id": "POLICY-URL-VALIDATION",
+      "policy_type": "input_validation",
+      "explanation": "The source map identifies a URL validation helper; its enforcement at the import boundary remains a Recon coverage observation.",
+      "summary": "URL validation policy and its call-site relationship were recorded.",
+      "source_refs": [
+        {
+          "path": "src/policy.py",
+          "start_line": 1,
+          "end_line": 3,
+          "symbol": "validate_import_url"
+        }
+      ],
+      "evidence_refs": [
+        {
+          "path": "evidence/recon-notes.md",
+          "section": "Policy"
+        }
+      ]
+    }
+  ],
+  "default_deployment_assumptions": [
+    {
+      "id": "ASSUME-LOCAL-COMPOSE",
+      "assumption": "The default review runtime is the app service declared by the target Docker Compose contract.",
+      "confidence": "observed",
+      "summary": "The default deployment assumption is tied to the target contract rather than copied into Recon identity fields.",
+      "source_refs": [
+        {
+          "path": "README.md",
+          "start_line": 1,
+          "end_line": 4
+        }
+      ],
+      "evidence_refs": [
+        {
+          "path": "evidence/deployment.md",
+          "section": "Deployment"
+        }
+      ]
+    }
+  ],
+  "priority_areas": [
+    {
+      "id": "FOCUS-IMPORT",
+      "scope": {
+        "paths": [
+          "src/app.py",
+          "src/policy.py"
+        ],
+        "symbols": [
+          "import_url",
+          "validate_import_url"
+        ]
+      },
+      "reason": "The import input, URL policy, and network fetch form one reviewable source-to-sink surface.",
+      "summary": "Prioritize the URL import handler and its validation boundary.",
+      "source_refs": [
+        {
+          "path": "src/app.py",
+          "start_line": 5,
+          "end_line": 8,
+          "symbol": "import_url"
+        }
+      ],
+      "evidence_refs": [
+        {
+          "path": "attack-surface.md",
+          "section": "Review Scope"
+        }
+      ]
+    }
+  ],
+  "deferred_areas": [
+    {
+      "id": "DEFER-DOCUMENTATION",
+      "scope": {
+        "paths": [
+          "README.md"
+        ],
+        "symbols": []
+      },
+      "reason": "Documentation examples do not affect the first-pass import source-to-sink map.",
+      "revisit_when": "After the import boundary and network sink coverage are reviewed.",
+      "summary": "Documentation examples are explicitly deferred with a revisit condition.",
+      "source_refs": [
+        {
+          "path": "README.md",
+          "start_line": 1,
+          "end_line": 4
+        }
+      ],
+      "evidence_refs": [
+        {
+          "path": "attack-surface.md",
+          "section": "Review Scope"
+        }
+      ]
+    }
+  ],
+  "coverage": {
+    "technology_stack": {
+      "status": "covered",
+      "item_ids": [
+        "TECH-PYTHON",
+        "TECH-DOCKER-COMPOSE"
+      ],
+      "reason": "The source and deployment map cover the observed language and runtime.",
+      "basis": {
+        "source_refs": [
+          {
+            "path": "src/app.py",
+            "start_line": 1,
+            "end_line": 9
+          }
+        ],
+        "evidence_refs": [
+          {
+            "path": "evidence/recon-notes.md"
+          }
+        ]
+      }
+    },
+    "public_entrypoints": {
+      "status": "covered",
+      "item_ids": [
+        "ENTRY-HTTP-IMPORT"
+      ],
+      "reason": "The import route, method, symbol, authentication mode, and input field are structured.",
+      "basis": {
+        "source_refs": [
+          {
+            "path": "src/app.py",
+            "start_line": 5,
+            "end_line": 8
+          }
+        ],
+        "evidence_refs": [
+          {
+            "path": "attack-surface.md"
+          }
+        ]
+      }
+    },
+    "trust_boundaries": {
+      "status": "covered",
+      "item_ids": [
+        "BOUNDARY-HTTP-APP"
+      ],
+      "reason": "The external-request to handler boundary and its controls are recorded.",
+      "basis": {
+        "source_refs": [
+          {
+            "path": "src/app.py",
+            "start_line": 5,
+            "end_line": 8
+          }
+        ],
+        "evidence_refs": [
+          {
+            "path": "attack-surface.md"
+          }
+        ]
+      }
+    },
+    "high_risk_sinks": {
+      "status": "covered",
+      "item_ids": [
+        "SINK-NETWORK-FETCH"
+      ],
+      "reason": "The network sink symbol and caller-controlled URL input are structured.",
+      "basis": {
+        "source_refs": [
+          {
+            "path": "src/app.py",
+            "start_line": 8,
+            "end_line": 8
+          }
+        ],
+        "evidence_refs": [
+          {
+            "path": "attack-surface.md"
+          }
+        ]
+      }
+    },
+    "security_policy_explanations": {
+      "status": "covered",
+      "item_ids": [
+        "POLICY-URL-VALIDATION"
+      ],
+      "reason": "The relevant URL validation policy is tied to source and evidence references.",
+      "basis": {
+        "source_refs": [
+          {
+            "path": "src/policy.py",
+            "start_line": 1,
+            "end_line": 3
+          }
+        ],
+        "evidence_refs": [
+          {
+            "path": "evidence/recon-notes.md"
+          }
+        ]
+      }
+    },
+    "default_deployment_assumptions": {
+      "status": "covered",
+      "item_ids": [
+        "ASSUME-LOCAL-COMPOSE"
+      ],
+      "reason": "The default Compose service assumption is explicit and evidence-bound.",
+      "basis": {
+        "source_refs": [
+          {
+            "path": "README.md",
+            "start_line": 1,
+            "end_line": 4
+          }
+        ],
+        "evidence_refs": [
+          {
+            "path": "evidence/deployment.md"
+          }
+        ]
+      }
+    },
+    "priority_areas": {
+      "status": "covered",
+      "item_ids": [
+        "FOCUS-IMPORT"
+      ],
+      "reason": "The first review range and rationale are explicit.",
+      "basis": {
+        "source_refs": [
+          {
+            "path": "src/app.py",
+            "start_line": 5,
+            "end_line": 8
+          }
+        ],
+        "evidence_refs": [
+          {
+            "path": "attack-surface.md"
+          }
+        ]
+      }
+    },
+    "deferred_areas": {
+      "status": "covered",
+      "item_ids": [
+        "DEFER-DOCUMENTATION"
+      ],
+      "reason": "The deferred range, reason, and revisit condition are explicit.",
+      "basis": {
+        "source_refs": [
+          {
+            "path": "README.md",
+            "start_line": 1,
+            "end_line": 4
+          }
+        ],
+        "evidence_refs": [
+          {
+            "path": "attack-surface.md"
+          }
+        ]
+      }
+    }
+  },
+  "coverage_gaps": [],
+  "unresolved_blockers": [],
+  "focus_refs": [
+    "FOCUS-IMPORT"
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "schema_version": 2,
+  "plugin_version": "0.4.0-fixture",
+  "seq": 1,
+  "run_id": "run-rebuild-fixture-r2",
+  "ts": "2026-07-20T00:00:00Z",
+  "stage": "intake",
+  "event_type": "stage_transition",
+  "event_name": "intake_started",
+  "from_status": null,
+  "from_stage": null,
+  "transition_kind": "start",
+  "transition_policy_version": 1,
+  "to_status": "running",
+  "blocker": null,
+  "resume_step": null,
+  "reason_code": "normal_progress",
+  "subjects": ["run:rebuild-fixture-r2"],
+  "evidence_refs": [],
+  "next_actions": [],
+  "expected_state_revision": 0,
+  "details": {"summary": "P9.4 journal-only rebuild fixture."}
+}

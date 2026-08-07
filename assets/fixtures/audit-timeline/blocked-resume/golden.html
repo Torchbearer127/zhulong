@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src &#39;none&#39;; style-src &#39;unsafe-inline&#39;; img-src &#39;none&#39;; base-uri &#39;none&#39;; form-action &#39;none&#39;">
+<title>Zhulong Static Audit Timeline</title>
+<style>
+:root{color-scheme:light;--ink:#20231f;--muted:#666b64;--line:#d9ddd6;--paper:#fafbf8;--accent:#245b46;--warn:#8a4b13}
+*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.55 system-ui,sans-serif}
+main{max-width:1120px;margin:auto;padding:2rem 1.25rem 4rem}h1,h2{line-height:1.2}h2{margin-top:2.25rem;border-bottom:1px solid var(--line);padding-bottom:.4rem}
+.notice{border-left:4px solid var(--accent);padding:.8rem 1rem;background:#eef4ef}.muted{color:var(--muted)}.warn{color:var(--warn)}
+table{width:100%;border-collapse:collapse;margin:.8rem 0;display:block;overflow-x:auto}th,td{padding:.55rem .65rem;border:1px solid var(--line);text-align:left;vertical-align:top}th{background:#f0f2ee}
+code{font-family:ui-monospace,monospace;font-size:.92em;overflow-wrap:anywhere}a{color:var(--accent)}a:focus{outline:3px solid #efb35d;outline-offset:2px}
+ol.timeline{padding-left:1.4rem}.timeline li{margin:.65rem 0}.pill{display:inline-block;border:1px solid var(--line);border-radius:999px;padding:.05rem .45rem;font-size:.85em}
+</style>
+</head>
+<body>
+<main>
+<h1>Zhulong Static Audit Timeline</h1>
+<p class="notice">This offline timeline is a derived review view. It is not an authority source and grants no confirmation, disposition, execution, promotion, or finalization permission.</p>
+<h2>Target and current integrity</h2>
+<dl>
+<dt>Target</dt><dd>fixture-service</dd>
+<dt>Tested ref</dt><dd><code>fixture-service-ref-001</code></dd>
+<dt>Target contract</dt><dd><a href="zhulong-target.yaml">zhulong-target.yaml</a> <code>sha256:142eed6c9749f99fe26e8de435f43f7d58d447bb76f70516fda72708dd744509</code></dd>
+<dt>Protocol</dt><dd><code>r2</code></dd>
+<dt>Current state</dt><dd><span class="pill">intake / running</span></dd>
+<dt>Integrity</dt><dd><strong>valid</strong> <code>sha256:9b11378ba2cd9d36dbb85e595ce1e9c57110dfdf3996da70fa8456a4d575a6d2</code></dd>
+</dl>
+<h2>Stage event sequence</h2>
+<ol class="timeline">
+<li>
+<strong>intake</strong> — <code>intake_started</code>
+<span class="pill">start</span>
+<br>status:  → running; reason: <code>normal_progress</code>
+<br>summary: Protocol fixture event 1: intake_started.
+<br>evidence: <span class="muted">none</span>
+</li>
+<li>
+<strong>intake</strong> — <code>intake_blocked</code>
+<span class="pill">block</span>
+<br>status: running → blocked; reason: <code>verification_blocked</code>
+<br>summary: Protocol fixture event 2: intake_blocked.
+<br>evidence: <span class="muted">none</span>
+</li>
+<li>
+<strong>intake</strong> — <code>intake_resumed</code>
+<span class="pill">resume</span>
+<br>status: blocked → running; reason: <code>recovery_requested</code>
+<br>summary: Protocol fixture event 3: intake_resumed.
+<br>evidence: <a href="evidence/recovery.txt">evidence/recovery.txt</a>
+</li>
+</ol>
+<h2>Blockers, resume, return, and reopen</h2>
+<ul>
+<li><strong>historical</strong>: <code>verification_blocked</code>; Fixture prerequisite is unavailable.; resume: Review evidence/recovery.txt and resume intake.; evidence: none</li>
+</ul>
+<ul>
+<li><code>resume</code> at intake: <code>recovery_requested</code></li>
+</ul>
+<h2>Candidate → verdict → disposition → bundle</h2>
+<table><thead><tr><th>Candidate</th><th>Verdict</th><th>Disposition</th><th>Bundle</th></tr></thead><tbody>
+<tr><td colspan="4" class="muted">No validated candidate flows are present.</td></tr>
+</tbody></table>
+<h2>Docker and bundle validation</h2>
+<dl>
+<dt>Docker verification</dt><dd>not_present</dd>
+<dt>Docker hygiene</dt><dd>missing <span class="muted">not present</span></dd>
+<dt>Bundle classification</dt><dd>validated=0, partial=0, failed=0</dd>
+</dl>
+<h2>Finalization, handoff, and next actions</h2>
+<dl>
+<dt>Finalization</dt><dd>not_finalized <span class="muted">not present</span></dd>
+<dt>Handoff integrity</dt><dd>not_present / not_present <span class="muted">not present</span></dd>
+<dt>Next actions</dt><dd>not_present / not_present <span class="muted">not present</span></dd>
+</dl>
+<h2>Validated source bindings and safe evidence links</h2>
+<table><thead><tr><th>Kind</th><th>Path</th><th>SHA-256</th><th>Validator</th></tr></thead><tbody>
+<tr><td>journal</td><td><a href="audit-events.jsonl">audit-events.jsonl</a></td><td><code>sha256:6654e48da166f37f98b442362919c01cbdebf1768c36696ad882ab15f19543f9</code></td><td><code>audit_state_io.py+audit_transition_policy.py</code></td></tr>
+<tr><td>state</td><td><a href="stage-status.json">stage-status.json</a></td><td><code>sha256:4c1af742ed245f1993816315f4804685f07c36c5b10b70a1709f8a19c6468dcd</code></td><td><code>audit_state_io.py</code></td></tr>
+<tr><td>target_contract</td><td><a href="zhulong-target.yaml">zhulong-target.yaml</a></td><td><code>sha256:142eed6c9749f99fe26e8de435f43f7d58d447bb76f70516fda72708dd744509</code></td><td><code>validate_target_contract.py</code></td></tr>
+</tbody></table>
+<h2>Non-claims</h2>
+<ul>
+<li>It does not prove that an Agent read any referenced material.</li>
+<li>It does not contain hidden reasoning or conversation content.</li>
+<li>It does not run Docker, PoC, replay, scanners, network requests, models, or Agents.</li>
+<li>Confirmed status still requires the existing verdict, disposition, Docker, and bundle validators.</li>
+</ul>
+</main>
+</body>
+</html>

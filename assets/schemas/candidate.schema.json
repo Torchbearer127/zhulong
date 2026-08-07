@@ -1,270 +1,102 @@
 {
-  "$schema": "https://json-schema.org/draft-07/schema#",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Torchbearer127/zhulong/blob/main/assets/schemas/candidate.schema.json",
-  "title": "Zhulong Candidate Finding Contract R1",
-  "description": "Pre-verification vulnerability claim contract. A candidate is not a confirmation and cannot recommend confirmed status.",
+  "title": "Zhulong Candidate Finding Contract R1/R2",
+  "description": "Candidate-only claim contract. Identity, provenance, and deduplication metadata never grant verification or confirmation authority.",
   "type": "object",
   "additionalProperties": false,
-  "required": [
-    "schema_version",
-    "candidate_id",
-    "title",
-    "bug_class",
-    "status",
-    "target_ref",
-    "entrypoint",
-    "attacker_model",
-    "claim",
-    "poc",
-    "evidence",
-    "finder"
-  ],
+  "required": ["schema_version", "candidate_id", "title", "bug_class", "status", "target_ref", "entrypoint", "attacker_model", "claim", "poc", "evidence", "finder"],
   "properties": {
-    "schema_version": {
-      "type": "integer",
-      "const": 1
-    },
-    "candidate_id": {
-      "type": "string",
-      "pattern": "^CAND-[0-9A-Za-z._-]+$"
-    },
-    "title": {
-      "type": "string",
-      "minLength": 1
-    },
-    "bug_class": {
-      "type": "string",
-      "minLength": 1
-    },
-    "status": {
-      "type": "string",
-      "const": "candidate"
-    },
+    "schema_version": {"type": "integer", "enum": [1, 2]},
+    "candidate_id": {"$ref": "#/$defs/candidate_id"},
+    "title": {"$ref": "#/$defs/text"},
+    "bug_class": {"$ref": "#/$defs/text"},
+    "status": {"const": "candidate"},
     "target_ref": {
-      "$ref": "#/definitions/target_ref"
+      "type": "object", "additionalProperties": false, "required": ["target_config", "tested_ref"],
+      "properties": {"target_config": {"$ref": "#/$defs/relative_path"}, "tested_ref": {"$ref": "#/$defs/text"}}
     },
     "entrypoint": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "id",
-        "kind",
-        "route"
-      ],
-      "properties": {
-        "id": {
-          "type": "string",
-          "minLength": 1
-        },
-        "kind": {
-          "type": "string",
-          "minLength": 1
-        },
-        "route": {
-          "type": "string",
-          "minLength": 1
-        }
-      }
+      "type": "object", "additionalProperties": false, "required": ["id", "kind", "route"],
+      "properties": {"id": {"$ref": "#/$defs/text"}, "kind": {"$ref": "#/$defs/text"}, "route": {"$ref": "#/$defs/text"}}
     },
     "attacker_model": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "required_auth",
-        "attacker_controls",
-        "environment_assumptions"
-      ],
+      "type": "object", "additionalProperties": false, "required": ["required_auth", "attacker_controls", "environment_assumptions"],
       "properties": {
-        "required_auth": {
-          "type": "string",
-          "minLength": 1
-        },
-        "attacker_controls": {
-          "type": "array",
-          "minItems": 1,
-          "items": {
-            "type": "string",
-            "minLength": 1
-          }
-        },
-        "environment_assumptions": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
+        "required_auth": {"$ref": "#/$defs/text"},
+        "attacker_controls": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/text"}},
+        "environment_assumptions": {"type": "array", "items": {"$ref": "#/$defs/text"}}
       }
     },
     "claim": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "source",
-        "sink",
-        "missing_constraint",
-        "impact"
-      ],
-      "properties": {
-        "source": {
-          "type": "string",
-          "minLength": 1
-        },
-        "sink": {
-          "type": "string",
-          "minLength": 1
-        },
-        "missing_constraint": {
-          "type": "string",
-          "minLength": 1
-        },
-        "impact": {
-          "type": "string",
-          "minLength": 1
-        }
-      }
+      "type": "object", "additionalProperties": false, "required": ["source", "sink", "missing_constraint", "impact"],
+      "properties": {"source": {"$ref": "#/$defs/text"}, "sink": {"$ref": "#/$defs/text"}, "missing_constraint": {"$ref": "#/$defs/text"}, "impact": {"$ref": "#/$defs/text"}}
     },
     "poc": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "kind",
-        "path",
-        "expected_oracle"
-      ],
+      "type": "object", "additionalProperties": false, "required": ["kind", "path", "expected_oracle"],
       "properties": {
-        "kind": {
-          "type": "string",
-          "minLength": 1
-        },
-        "path": {
-          "$ref": "#/definitions/repo_relative_path"
-        },
-        "expected_oracle": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "type",
-            "description"
-          ],
-          "properties": {
-            "type": {
-              "type": "string",
-              "minLength": 1
-            },
-            "description": {
-              "type": "string",
-              "minLength": 1
-            }
-          }
-        }
+        "kind": {"$ref": "#/$defs/text"}, "path": {"$ref": "#/$defs/relative_path"},
+        "expected_oracle": {"type": "object", "additionalProperties": false, "required": ["type", "description"], "properties": {"type": {"$ref": "#/$defs/text"}, "description": {"$ref": "#/$defs/text"}}}
       }
     },
     "evidence": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "static_locations",
-        "dynamic_evidence"
-      ],
+      "type": "object", "additionalProperties": false, "required": ["static_locations", "dynamic_evidence"],
       "properties": {
-        "static_locations": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "path",
-              "start_line",
-              "end_line",
-              "reason"
-            ],
-            "properties": {
-              "path": {
-                "$ref": "#/definitions/repo_relative_path"
-              },
-              "start_line": {
-                "type": "integer",
-                "minimum": 1
-              },
-              "end_line": {
-                "type": "integer",
-                "minimum": 1
-              },
-              "reason": {
-                "type": "string",
-                "minLength": 1
-              }
-            }
-          }
-        },
-        "dynamic_evidence": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "type",
-              "summary"
-            ],
-            "properties": {
-              "type": {
-                "type": "string",
-                "minLength": 1
-              },
-              "path": {
-                "$ref": "#/definitions/repo_relative_path"
-              },
-              "summary": {
-                "type": "string",
-                "minLength": 1
-              }
-            }
-          }
-        }
+        "static_locations": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["path", "start_line", "end_line", "reason"], "properties": {"path": {"$ref": "#/$defs/relative_path"}, "start_line": {"type": "integer", "minimum": 1}, "end_line": {"type": "integer", "minimum": 1}, "reason": {"$ref": "#/$defs/text"}}}},
+        "dynamic_evidence": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["type", "summary"], "properties": {"type": {"$ref": "#/$defs/text"}, "path": {"$ref": "#/$defs/relative_path"}, "summary": {"$ref": "#/$defs/text"}}}}
       }
     },
-    "finder": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "source",
-        "created_at"
-      ],
-      "properties": {
-        "source": {
-          "type": "string",
-          "minLength": 1
-        },
-        "created_at": {
-          "type": "string",
-          "format": "date-time"
-        }
-      }
-    }
+    "finder": {"type": "object", "additionalProperties": false, "required": ["source", "created_at"], "properties": {"source": {"$ref": "#/$defs/text"}, "created_at": {"type": "string", "format": "date-time"}}},
+    "identity": {"$ref": "#/$defs/identity"},
+    "provenance": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/provenance"}},
+    "relationships": {"$ref": "#/$defs/relationships"}
   },
-  "definitions": {
-    "target_ref": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "target_config",
-        "tested_ref"
-      ],
+  "oneOf": [
+    {"properties": {"schema_version": {"const": 1}}, "not": {"anyOf": [{"required": ["identity"]}, {"required": ["provenance"]}, {"required": ["relationships"]}]}},
+    {"properties": {"schema_version": {"const": 2}}, "required": ["identity", "provenance", "relationships"]}
+  ],
+  "$defs": {
+    "text": {"type": "string", "minLength": 1},
+    "candidate_id": {"type": "string", "pattern": "^CAND-[0-9A-Za-z._-]+$"},
+    "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "stable_token": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._:-]{0,127}$"},
+    "relative_path": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?![A-Za-z]:[\\\\/])(?!file://)(?!https?://)(?!~)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+"},
+    "normalized_entrypoint": {
+      "type": "object", "additionalProperties": false, "required": ["id", "kind", "route"],
+      "properties": {"id": {"$ref": "#/$defs/stable_token"}, "kind": {"$ref": "#/$defs/stable_token"}, "route": {"$ref": "#/$defs/text"}}
+    },
+    "identity": {
+      "type": "object", "additionalProperties": false,
+      "required": ["identity_version", "normalization_version", "fingerprint", "target_commit", "normalized_entrypoint", "trust_boundary_id", "sink_family", "root_cause_family", "primary_source_path"],
       "properties": {
-        "target_config": {
-          "$ref": "#/definitions/repo_relative_path"
-        },
-        "tested_ref": {
-          "type": "string",
-          "minLength": 1
-        }
+        "identity_version": {"const": 1}, "normalization_version": {"const": 1}, "fingerprint": {"$ref": "#/$defs/sha256"},
+        "target_commit": {"$ref": "#/$defs/text"}, "normalized_entrypoint": {"$ref": "#/$defs/normalized_entrypoint"},
+        "trust_boundary_id": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/stable_token"}]},
+        "sink_family": {"type": "string", "pattern": "^(?:command_execution|file_read|file_write|path_resolution|http_request|deserialization|template_render|database_query|code_loading|authz_decision|secret_exposure|resource_exhaustion|logging|other:[a-z0-9][a-z0-9._-]{0,63})$"},
+        "root_cause_family": {"type": "string", "pattern": "^(?:missing_validation|insufficient_validation|canonicalization_mismatch|authorization_missing|trust_boundary_confusion|unsafe_default|injection|resource_limit_missing|race_condition|other:[a-z0-9][a-z0-9._-]{0,63})$"},
+        "primary_source_path": {"$ref": "#/$defs/relative_path"}
       }
     },
-    "repo_relative_path": {
-      "type": "string",
-      "minLength": 1,
-      "pattern": "^(?!/)(?![A-Za-z]:[\\\\/])(?!file://)(?!~)(?!.*(^|/)\\.\\.($|/)).+"
+    "producer": {"type": "object", "additionalProperties": false, "required": ["name", "version"], "properties": {"name": {"$ref": "#/$defs/stable_token"}, "version": {"$ref": "#/$defs/text"}}},
+    "provenance": {
+      "type": "object", "additionalProperties": false, "required": ["source_kind", "source_id", "artifact_path", "artifact_sha256"],
+      "properties": {
+        "source_kind": {"enum": ["agent", "scanner", "manual_review", "seeded_variant", "imported_legacy"]},
+        "source_id": {"$ref": "#/$defs/stable_token"}, "artifact_path": {"$ref": "#/$defs/relative_path"}, "artifact_sha256": {"$ref": "#/$defs/sha256"},
+        "observed_at": {"type": "string", "format": "date-time"}, "producer": {"$ref": "#/$defs/producer"}
+      }
+    },
+    "candidate_reference": {
+      "type": "object", "additionalProperties": false, "required": ["candidate_id", "fingerprint", "path", "sha256"],
+      "properties": {"candidate_id": {"$ref": "#/$defs/candidate_id"}, "fingerprint": {"$ref": "#/$defs/sha256"}, "path": {"$ref": "#/$defs/relative_path"}, "sha256": {"$ref": "#/$defs/sha256"}}
+    },
+    "legacy_mapping": {
+      "type": "object", "additionalProperties": false, "required": ["legacy_candidate_id", "current_candidate_id"],
+      "properties": {"legacy_candidate_id": {"$ref": "#/$defs/candidate_id"}, "current_candidate_id": {"$ref": "#/$defs/candidate_id"}}
+    },
+    "relationships": {
+      "type": "object", "additionalProperties": false, "required": ["merged_from", "duplicate_of", "legacy_id_mapping"],
+      "properties": {"merged_from": {"type": "array", "items": {"$ref": "#/$defs/candidate_reference"}}, "duplicate_of": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/candidate_reference"}]}, "legacy_id_mapping": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/legacy_mapping"}}}
     }
   }
 }

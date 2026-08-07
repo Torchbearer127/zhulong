@@ -1,0 +1,21 @@
+{
+  "schema_version": 2,
+  "seq": 1,
+  "run_id": "run-fixture-r2",
+  "ts": "2026-07-18T00:00:00Z",
+  "stage": "intake",
+  "event_type": "stage_transition",
+  "event_name": "intake_started",
+  "from_status": null,
+  "to_status": "running",
+  "reason_code": "normal_progress",
+  "subjects": [],
+  "evidence_refs": [
+    "https://example.invalid/evidence.json"
+  ],
+  "next_actions": [],
+  "expected_state_revision": 0,
+  "details": {
+    "summary": "HTTPS URI evidence reference fixture."
+  }
+}

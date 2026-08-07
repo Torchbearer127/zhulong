@@ -30,6 +30,9 @@ dist/
 build/
 coverage/
 *.log
+!assets/fixtures/p8-dogfood/marker-only-replay-output.log
+!assets/fixtures/p8-real-historical-bundle-dogfood/workspaces/historical-sample-01/placeholder-replay-output.log
+!assets/fixtures/replay-transcript-corpus/*.log
 *.tmp
 
 # Local secrets and machine-specific config

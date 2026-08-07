@@ -1,0 +1,148 @@
+{
+  "negative_cases": [
+    "invalid-seq-revision-run-id",
+    "illegal-transition",
+    "stale-mismatched-state",
+    "candidate-verdict-id-fingerprint-tested-ref-mismatch",
+    "disposition-drift",
+    "fake-confirmed-event-zero-bundle",
+    "partial-failed-masquerading-as-validated",
+    "unsafe-evidence-absolute-uri-traversal-backslash-symlink",
+    "html-script-style-javascript-injection",
+    "html-quotes-ampersands-escaping",
+    "credential-token-private-key-local-path",
+    "credential-classifier-near-miss-controls",
+    "confirmed-flow-linkage-ambiguity",
+    "confirmed-flow-reverse-invariants",
+    "html-parser-uri-attribute-boundary",
+    "agent-notes-authority-override",
+    "prompt-chat-reasoning-fields",
+    "tampered-golden-json-html-digest",
+    "atomic-stage-validation-replace-rollback",
+    "locale-timezone-cwd-repeat-determinism",
+    "r2-event-portability-write-boundary"
+  ],
+  "scenarios": [
+    {
+      "blocking_codes": [],
+      "bundle_counts": {
+        "failed": 0,
+        "partial": 0,
+        "validated": 0
+      },
+      "current_state": {
+        "stage": "recon",
+        "status": "running"
+      },
+      "event_sequence": [
+        "start",
+        "advance"
+      ],
+      "flow_count": 0,
+      "golden_html_sha256": "sha256:74c5503374a9637057095a09fb4060f1520faaa89d85bc4c48d052ccb173eb49",
+      "golden_json_sha256": "sha256:a6acc002508cb8f483ba20372a886edc390d808f05bbde80308374fca602e005",
+      "id": "normal-running",
+      "protocol_mode": "r2"
+    },
+    {
+      "blocking_codes": [],
+      "bundle_counts": {
+        "failed": 0,
+        "partial": 0,
+        "validated": 0
+      },
+      "current_state": {
+        "stage": "intake",
+        "status": "running"
+      },
+      "event_sequence": [
+        "start",
+        "block",
+        "resume"
+      ],
+      "flow_count": 0,
+      "golden_html_sha256": "sha256:b014da610bd1c6f3bfb82c577c3c78e57a494b24d8aee4c101e8d5048ea57456",
+      "golden_json_sha256": "sha256:ecacc23c1b4e8935ba3d5a6006afe46c332d0ca9c003af0b86f2e147c86aea9c",
+      "id": "blocked-resume",
+      "protocol_mode": "r2"
+    },
+    {
+      "blocking_codes": [],
+      "bundle_counts": {
+        "failed": 0,
+        "partial": 0,
+        "validated": 0
+      },
+      "current_state": {
+        "stage": "recon",
+        "status": "running"
+      },
+      "event_sequence": [
+        "start",
+        "advance",
+        "advance",
+        "return",
+        "complete",
+        "reopen"
+      ],
+      "flow_count": 0,
+      "golden_html_sha256": "sha256:148caf1da470d241ce8f1899c13f315e8d82a7c6fbb79a44a6b16d165f74b708",
+      "golden_json_sha256": "sha256:b3f33621736a7881b27612c3c9fc6c9525d8940a92e552eae7f329a9293da447",
+      "id": "return-reopen",
+      "protocol_mode": "r2"
+    },
+    {
+      "blocking_codes": [],
+      "bundle_counts": {
+        "failed": 0,
+        "partial": 0,
+        "validated": 0
+      },
+      "current_state": {
+        "stage": "finalization",
+        "status": "completed"
+      },
+      "event_sequence": [
+        "start",
+        "advance",
+        "advance",
+        "advance",
+        "advance",
+        "advance",
+        "complete"
+      ],
+      "flow_count": 0,
+      "golden_html_sha256": "sha256:760eaf2297687248c792a53df6e78acb98a3fd3e38a7eeef61f831180152d1b4",
+      "golden_json_sha256": "sha256:2cdb2d246b63a99b81a9ea8d107287628ef823982a50636079537866b94d96b0",
+      "id": "completed-no-confirmed",
+      "protocol_mode": "r2"
+    },
+    {
+      "blocking_codes": [],
+      "bundle_counts": {
+        "failed": 0,
+        "partial": 0,
+        "validated": 1
+      },
+      "current_state": {
+        "stage": "finalization",
+        "status": "completed"
+      },
+      "event_sequence": [
+        "start",
+        "advance",
+        "advance",
+        "advance",
+        "advance",
+        "advance",
+        "complete"
+      ],
+      "flow_count": 1,
+      "golden_html_sha256": "sha256:0009271e76b11c1c9c18d69dfdbecc8b079074dad30af9634ca4017475c2c674",
+      "golden_json_sha256": "sha256:d5ec166bbb04a60027bb9c3973a59db757382721856f21fdca8139c6ebd39350",
+      "id": "completed-confirmed",
+      "protocol_mode": "r2"
+    }
+  ],
+  "schema_version": 1
+}

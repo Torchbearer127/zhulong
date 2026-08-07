@@ -1838,6 +1838,32 @@ def write_bundle_validated_event(
     if writer is None:
         fail("cannot write audit event because write_audit_event.py was not found next to the validator")
 
+    # The first validated bundle can move a running verification/variant path
+    # into packaging. A later validation while packaging is already running is
+    # evidence collection within that stage, not a second packaging advance.
+    # This snapshot is only an intent selection hint: the writer revalidates
+    # the actual source state while holding the P9.2 workspace lock.
+    try:
+        from audit_state_io import AuditStateError, normalize_workspace_state
+    except ImportError as exc:
+        fail(f"cannot determine audit state for bundle_validated event: {exc}")
+    try:
+        normalized_state = normalize_workspace_state(workspace_dir)
+    except AuditStateError as exc:
+        fail(f"cannot determine audit state for bundle_validated event: {exc.code}: {exc.message}")
+
+    stage_argument = "reporting"
+    status_argument = "running"
+    transition_kind = "advance"
+    if (
+        normalized_state.get("mode") == "r2"
+        and normalized_state.get("stage") == "packaging"
+        and normalized_state.get("status") == "running"
+    ):
+        stage_argument = "current"
+        status_argument = "current"
+        transition_kind = "observe"
+
     details = {
         "bundle": f"confirmed/{bundle_dir.name}",
         "language": language,
@@ -1847,6 +1873,7 @@ def write_bundle_validated_event(
         "attachment_note": note_path.name,
         "reproduction_supplement": supplement_path.name,
     }
+    bundle_ref = f"confirmed/{bundle_dir.name}"
     command = [
         sys.executable,
         str(writer),
@@ -1855,13 +1882,24 @@ def write_bundle_validated_event(
         "--event",
         "bundle_validated",
         "--stage",
-        "reporting",
+        stage_argument,
         "--status",
-        "running",
+        status_argument,
+        "--transition-kind",
+        transition_kind,
         "--event-status",
         "ok",
         "--message",
         f"Confirmed bundle validated: {bundle_dir.name}",
+        "--accept-current-revision",
+        "--evidence-ref",
+        f"{bundle_ref}/verification-evidence.json",
+        "--evidence-ref",
+        f"{bundle_ref}/{docx_path.name}",
+        "--evidence-ref",
+        f"{bundle_ref}/{note_path.name}",
+        "--evidence-ref",
+        f"{bundle_ref}/{supplement_path.name}",
         "--details-json",
         json.dumps(details, ensure_ascii=False, sort_keys=True),
     ]

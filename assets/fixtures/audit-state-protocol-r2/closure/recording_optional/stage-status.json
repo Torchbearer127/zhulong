@@ -1,0 +1,16 @@
+{
+  "blocker": null,
+  "event_log_digest": "sha256:f7864fd48ba6168ab0722a50b23ad716da91d4b6635217ef8bcd8466ad15cfd7",
+  "last_event_at": "2026-07-20T00:00:01Z",
+  "last_event_name": "recording_skipped",
+  "last_event_seq": 9,
+  "last_event_type": "stage_transition",
+  "plugin": "zhulong",
+  "plugin_version": "p9.5-closure-fixture",
+  "resume_step": null,
+  "run_id": "run-59f7fc3ce444483096abd5f301f19fe8",
+  "schema_version": 2,
+  "stage": "recording",
+  "state_revision": 9,
+  "status": "completed"
+}

@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src &#39;none&#39;; style-src &#39;unsafe-inline&#39;; img-src &#39;none&#39;; base-uri &#39;none&#39;; form-action &#39;none&#39;">
+<title>Zhulong Static Audit Timeline</title>
+<style>
+:root{color-scheme:light;--ink:#20231f;--muted:#666b64;--line:#d9ddd6;--paper:#fafbf8;--accent:#245b46;--warn:#8a4b13}
+*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.55 system-ui,sans-serif}
+main{max-width:1120px;margin:auto;padding:2rem 1.25rem 4rem}h1,h2{line-height:1.2}h2{margin-top:2.25rem;border-bottom:1px solid var(--line);padding-bottom:.4rem}
+.notice{border-left:4px solid var(--accent);padding:.8rem 1rem;background:#eef4ef}.muted{color:var(--muted)}.warn{color:var(--warn)}
+table{width:100%;border-collapse:collapse;margin:.8rem 0;display:block;overflow-x:auto}th,td{padding:.55rem .65rem;border:1px solid var(--line);text-align:left;vertical-align:top}th{background:#f0f2ee}
+code{font-family:ui-monospace,monospace;font-size:.92em;overflow-wrap:anywhere}a{color:var(--accent)}a:focus{outline:3px solid #efb35d;outline-offset:2px}
+ol.timeline{padding-left:1.4rem}.timeline li{margin:.65rem 0}.pill{display:inline-block;border:1px solid var(--line);border-radius:999px;padding:.05rem .45rem;font-size:.85em}
+</style>
+</head>
+<body>
+<main>
+<h1>Zhulong Static Audit Timeline</h1>
+<p class="notice">This offline timeline is a derived review view. It is not an authority source and grants no confirmation, disposition, execution, promotion, or finalization permission.</p>
+<h2>Target and current integrity</h2>
+<dl>
+<dt>Target</dt><dd>selftest-service</dd>
+<dt>Tested ref</dt><dd><code>9160ad77199bb63e86bd1b4adfb948989247622c</code></dd>
+<dt>Target contract</dt><dd><a href="target/zhulong-target.yaml">target/zhulong-target.yaml</a> <code>sha256:68f75efb18c6f68c0aa02e6aba0a04c6d843284c2b2c5bc911cdeca65a1fdcb7</code></dd>
+<dt>Protocol</dt><dd><code>r2</code></dd>
+<dt>Current state</dt><dd><span class="pill">finalization / completed</span></dd>
+<dt>Integrity</dt><dd><strong>valid</strong> <code>sha256:28bf87a419d449ae359aed8227c574ca6cbb49f63ffb1900bf02f2dc19fc4f0c</code></dd>
+</dl>
+<h2>Stage event sequence</h2>
+<ol class="timeline">
+<li>
+<strong>intake</strong> — <code>intake_started</code>
+<span class="pill">start</span>
+<br>status:  → running; reason: <code>normal_progress</code>
+<br>summary: Protocol fixture event 1: intake_started.
+<br>evidence: <span class="muted">none</span>
+</li>
+<li>
+<strong>recon</strong> — <code>recon_started</code>
+<span class="pill">advance</span>
+<br>status: running → running; reason: <code>normal_progress</code>
+<br>summary: Protocol fixture event 2: recon_started.
+<br>evidence: <span class="muted">none</span>
+</li>
+<li>
+<strong>candidate_generation</strong> — <code>candidate_generation_started</code>
+<span class="pill">advance</span>
+<br>status: running → running; reason: <code>normal_progress</code>
+<br>summary: Protocol fixture event 3: candidate_generation_started.
+<br>evidence: <span class="muted">none</span>
+</li>
+<li>
+<strong>triage</strong> — <code>triage_started</code>
+<span class="pill">advance</span>
+<br>status: running → running; reason: <code>normal_progress</code>
+<br>summary: Protocol fixture event 4: triage_started.
+<br>evidence: <span class="muted">none</span>
+</li>
+<li>
+<strong>verification</strong> — <code>verification_started</code>
+<span class="pill">advance</span>
+<br>status: running → running; reason: <code>normal_progress</code>
+<br>summary: Protocol fixture event 5: verification_started.
+<br>evidence: <span class="muted">none</span>
+</li>
+<li>
+<strong>finalization</strong> — <code>finalization_started</code>
+<span class="pill">advance</span>
+<br>status: running → running; reason: <code>normal_progress</code>
+<br>summary: Protocol fixture event 6: finalization_started.
+<br>evidence: <span class="muted">none</span>
+</li>
+<li>
+<strong>finalization</strong> — <code>finalization_succeeded</code>
+<span class="pill">complete</span>
+<br>status: running → completed; reason: <code>normal_progress</code>
+<br>summary: Protocol fixture event 7: finalization_succeeded.
+<br>evidence: <span class="muted">none</span>
+</li>
+</ol>
+<h2>Blockers, resume, return, and reopen</h2>
+<p class="muted">No recorded blockers.</p>
+<h2>Candidate → verdict → disposition → bundle</h2>
+<table><thead><tr><th>Candidate</th><th>Verdict</th><th>Disposition</th><th>Bundle</th></tr></thead><tbody>
+<tr><td><code>CAND-0001</code><br><a href="candidates/CAND-0001/candidate.json">candidates/CAND-0001/candidate.json</a><br><code>sha256:0ec232de91dfff9a5b76f390d02e39a069124a691ece9a47a37d03e8c5f30119</code></td><td>confirmed_in_docker<br><a href="verifier/CAND-0001/verifier-verdict.json">verifier/CAND-0001/verifier-verdict.json</a></td><td>confirmed_in_docker<br><a href="audit-disposition.json">audit-disposition.json</a></td><td>bundle_validated<br>confirmed/demo-app_Path_Traversal_高危漏洞报告</td></tr>
+</tbody></table>
+<h2>Docker and bundle validation</h2>
+<dl>
+<dt>Docker verification</dt><dd>confirmed_verdict_present</dd>
+<dt>Docker hygiene</dt><dd>clean <a href="docker/docker-cleanliness-status.json">docker/docker-cleanliness-status.json</a></dd>
+<dt>Bundle classification</dt><dd>validated=1, partial=0, failed=0</dd>
+</dl>
+<h2>Finalization, handoff, and next actions</h2>
+<dl>
+<dt>Finalization</dt><dd>completed <a href="audit-events.jsonl">audit-events.jsonl</a></dd>
+<dt>Handoff integrity</dt><dd>not_present / not_present <span class="muted">not present</span></dd>
+<dt>Next actions</dt><dd>not_present / not_present <span class="muted">not present</span></dd>
+</dl>
+<h2>Validated source bindings and safe evidence links</h2>
+<table><thead><tr><th>Kind</th><th>Path</th><th>SHA-256</th><th>Validator</th></tr></thead><tbody>
+<tr><td>bundle</td><td><a href="confirmed/demo-app_Path_Traversal_%E9%AB%98%E5%8D%B1%E6%BC%8F%E6%B4%9E%E6%8A%A5%E5%91%8A/findings.json">confirmed/demo-app_Path_Traversal_高危漏洞报告/findings.json</a></td><td><code>sha256:4f28f6c476052da0fb8e19f184a8d92f9abb9b44861ec8eb37552ab261ed5104</code></td><td><code>validate_all_report_bundles.py</code></td></tr>
+<tr><td>bundle</td><td><a href="confirmed/demo-app_Path_Traversal_%E9%AB%98%E5%8D%B1%E6%BC%8F%E6%B4%9E%E6%8A%A5%E5%91%8A/validity-review.json">confirmed/demo-app_Path_Traversal_高危漏洞报告/validity-review.json</a></td><td><code>sha256:7b39a0aecd3bd9f873b71ac6eefda874d4c16377652ff7965d558e6426d84695</code></td><td><code>validate_all_report_bundles.py</code></td></tr>
+<tr><td>bundle</td><td><a href="confirmed/demo-app_Path_Traversal_%E9%AB%98%E5%8D%B1%E6%BC%8F%E6%B4%9E%E6%8A%A5%E5%91%8A/verification-evidence.json">confirmed/demo-app_Path_Traversal_高危漏洞报告/verification-evidence.json</a></td><td><code>sha256:5a78e4070992361ecdf9d8eff66aff133b1db78a8232a8f6d133b3bf0d95e53d</code></td><td><code>validate_all_report_bundles.py</code></td></tr>
+<tr><td>candidate</td><td><a href="candidates/CAND-0001/candidate.json">candidates/CAND-0001/candidate.json</a></td><td><code>sha256:0ec232de91dfff9a5b76f390d02e39a069124a691ece9a47a37d03e8c5f30119</code></td><td><code>validate_candidate.py</code></td></tr>
+<tr><td>disposition</td><td><a href="audit-disposition.json">audit-disposition.json</a></td><td><code>sha256:84689858acfdf07b474f0b82f0b8384370e580a6e3b5b6eaa17464f29e193843</code></td><td><code>audit_disposition.py</code></td></tr>
+<tr><td>docker</td><td><a href="docker/docker-cleanliness-status.json">docker/docker-cleanliness-status.json</a></td><td><code>sha256:9a7beed72a93ca32e88e4e33ea5dd97df6d8323fe40131fd87118f0df833b991</code></td><td><code>workspace_state.py</code></td></tr>
+<tr><td>docker</td><td><a href="docker/docker-resource-baseline.json">docker/docker-resource-baseline.json</a></td><td><code>sha256:68d442164e29c41047268d885f1f2a78dedc498fd341aba8400202abf9aa5052</code></td><td><code>workspace_state.py</code></td></tr>
+<tr><td>journal</td><td><a href="audit-events.jsonl">audit-events.jsonl</a></td><td><code>sha256:36515dc3664d087a2b5c3a6be85a5b1cc43ebc1ed77c0b33914c3721c0ec59ea</code></td><td><code>audit_state_io.py+audit_transition_policy.py</code></td></tr>
+<tr><td>other</td><td><a href="evidence/variant-analysis/seeds.jsonl">evidence/variant-analysis/seeds.jsonl</a></td><td><code>sha256:d8d039505b8a8b3db924a1160bdecb6a73b9ce00a6027cbd623a9e5e22b5197a</code></td><td><code>workspace_state.py</code></td></tr>
+<tr><td>other</td><td><a href="evidence/variant-analysis/variant-candidates.jsonl">evidence/variant-analysis/variant-candidates.jsonl</a></td><td><code>sha256:8521fa1da310efacce1f8b193b225053c3d8a49f59ba945ab8bfc0d959f09a66</code></td><td><code>workspace_state.py</code></td></tr>
+<tr><td>state</td><td><a href="stage-status.json">stage-status.json</a></td><td><code>sha256:f033e91ace917e240dcb0a939a50b032c6e8ad00bcdd90d9bc0b3cc53bf07a88</code></td><td><code>audit_state_io.py</code></td></tr>
+<tr><td>target_contract</td><td><a href="target/zhulong-target.yaml">target/zhulong-target.yaml</a></td><td><code>sha256:68f75efb18c6f68c0aa02e6aba0a04c6d843284c2b2c5bc911cdeca65a1fdcb7</code></td><td><code>validate_target_contract.py</code></td></tr>
+<tr><td>verdict</td><td><a href="verifier/CAND-0001/verifier-verdict.json">verifier/CAND-0001/verifier-verdict.json</a></td><td><code>sha256:e5bbf72ef52bbf5abfc2b77c49cf8de11ac7529ae3fb961573557733cbc7d31c</code></td><td><code>validate_verifier_verdict.py</code></td></tr>
+</tbody></table>
+<h2>Non-claims</h2>
+<ul>
+<li>It does not prove that an Agent read any referenced material.</li>
+<li>It does not contain hidden reasoning or conversation content.</li>
+<li>It does not run Docker, PoC, replay, scanners, network requests, models, or Agents.</li>
+<li>Confirmed status still requires the existing verdict, disposition, Docker, and bundle validators.</li>
+</ul>
+</main>
+</body>
+</html>

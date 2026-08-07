@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "fixture_family": "tool-registry-r2",
+  "execution_policy": "offline-production-validator-and-planner-only",
+  "forbidden_execution": [
+    "docker",
+    "poc",
+    "scanner",
+    "network",
+    "package_manager",
+    "github",
+    "llm"
+  ],
+  "cases": [
+    "canonical_registry",
+    "declared_use_positive_matrix",
+    "unknown_enum",
+    "duplicate_tool",
+    "prohibited_effect",
+    "external_boundary_without_scope",
+    "external_scope_without_boundary",
+    "active_dast_without_network_contract",
+    "missing_wrapper",
+    "raw_dast_or_docker_authority",
+    "missing_evidence_output",
+    "timeout_contract_missing",
+    "wrapper_and_evidence_path_escape",
+    "stage_misuse",
+    "planner_bad_registry",
+    "raw_hint_bypass",
+    "confirmed_text_is_not_authority"
+  ]
+}

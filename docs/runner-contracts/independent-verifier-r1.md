@@ -55,6 +55,14 @@ Optional flags:
 By default, R1 avoids surprising execution. It never falls back to host-side PoC
 execution.
 
+`scripts/run_verification_case.sh` is a separate Docker-evidence wrapper, not
+an execution implementation hidden inside this R1 verifier. In an R2 audit
+workspace it requires a synchronized `verification/running` state (or an
+explicit retry from `verification/blocked`) before any Docker CLI call, then
+commits a revision-bound same-stage start event before the PoC container
+command. Its result remains Docker oracle material only. Legacy R1 behavior is
+kept compatible, and a no-state path is never silently upgraded to R2.
+
 ## Runtime Behavior
 
 `runtime.type=manual-blocked` always produces a `blocked` verdict. The reason

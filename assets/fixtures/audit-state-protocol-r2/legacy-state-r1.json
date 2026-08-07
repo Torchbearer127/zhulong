@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "plugin": "zhulong",
+  "plugin_version": "0.4.0-fixture",
+  "stage": "workspace_preparing",
+  "status": "running",
+  "last_event_at": "2026-07-18T00:00:00Z",
+  "blocker": null,
+  "resume_step": null,
+  "workspace": "security-research-r1",
+  "target_repo": ".",
+  "last_event": "workspace_created",
+  "last_message": "Audit workspace created."
+}

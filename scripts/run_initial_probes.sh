@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# zhulong-tool-contract: initial-probes-v1
 
 set -euo pipefail
 
@@ -9,7 +10,8 @@ Usage:
 
 Purpose:
   Run first-pass local scanners with stable paths, non-fatal handling, and a
-  structured initial-probes-summary.json classification file.
+  structured initial-probes-summary.json classification file. Any --output-dir
+  must remain under <audit-workspace>/evidence/.
 EOF
 }
 
@@ -19,6 +21,38 @@ OUTPUT_DIR=""
 PROBES_RUN=0
 PROBES_SKIPPED=0
 PROBE_STATUS_LABELS="ran_ok skipped_tool_missing skipped_no_package_sources failed_nonfatal failed_fatal"
+
+validate_declared_initial_probe_use() {
+  local script_dir contract_root registry schema validator
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  if [[ -f "$script_dir/tool-registry.json" ]]; then
+    contract_root="$(cd "$script_dir/.." && pwd)"
+    registry="$script_dir/tool-registry.json"
+    schema="$script_dir/tool-registry.schema.json"
+    validator="$script_dir/validate_tool_registry.py"
+  else
+    contract_root="$(cd "$script_dir/.." && pwd)"
+    registry="$contract_root/assets/tool-registry.json"
+    schema="$contract_root/assets/schemas/tool-registry.schema.json"
+    validator="$contract_root/scripts/validate_tool_registry.py"
+  fi
+  if [[ ! -f "$validator" || ! -f "$registry" || ! -f "$schema" ]]; then
+    echo "Tool Registry R2 contract files are missing; refusing to start initial probes." >&2
+    exit 1
+  fi
+  if ! python3 "$validator" \
+    --skill-root "$contract_root" \
+    --registry "$registry" \
+    --schema "$schema" \
+    --tool initial-probes-wrapper \
+    --stage recon \
+    --boundary workspace_write \
+    --effect workspace_evidence_write \
+    --json >/dev/null; then
+    echo "Tool Registry R2 declared-use validation failed; refusing to start initial probes." >&2
+    exit 1
+  fi
+}
 
 find_state_writer() {
   local script_dir
@@ -42,8 +76,7 @@ write_state_event() {
   [[ -n "${WORKSPACE_DIR:-}" ]] || return 0
   writer="$(find_state_writer)"
   [[ -n "$writer" ]] || return 0
-  python3 "$writer" "$@" --workspace-dir "$WORKSPACE_DIR" --target-repo "$REPO_ROOT" || \
-    echo "[zhulong] WARNING: state write failed (non-fatal)." >&2
+  python3 "$writer" "$@" --workspace-dir "$WORKSPACE_DIR" --target-repo "$REPO_ROOT" --accept-current-revision >/dev/null
 }
 
 launcher_hint() {
@@ -168,15 +201,38 @@ infer_workspace_dir() {
   exit 1
 }
 
-if [[ -z "$OUTPUT_DIR" ]]; then
+if [[ -z "${WORKSPACE_DIR:-}" ]]; then
   WORKSPACE_DIR="$(infer_workspace_dir "$REPO_ROOT")"
-  OUTPUT_DIR="$WORKSPACE_DIR/evidence/initial-probes"
-elif [[ -n "$WORKSPACE_DIR" ]]; then
+else
   WORKSPACE_DIR="${WORKSPACE_DIR/#\~/$HOME}"
   WORKSPACE_DIR="$(cd "$WORKSPACE_DIR" && pwd)"
+  if ! is_valid_workspace_dir "$WORKSPACE_DIR"; then
+    echo "Explicit workspace is not a valid per-audit workspace: $WORKSPACE_DIR" >&2
+    exit 1
+  fi
 fi
+if [[ -z "$OUTPUT_DIR" ]]; then
+  OUTPUT_DIR="$WORKSPACE_DIR/evidence/initial-probes"
+else
+  OUTPUT_DIR="${OUTPUT_DIR/#\~/$HOME}"
+fi
+case "$OUTPUT_DIR" in
+  "$WORKSPACE_DIR"/evidence|"$WORKSPACE_DIR"/evidence/*) ;;
+  *)
+    echo "--output-dir must stay under <audit-workspace>/evidence/." >&2
+    exit 1
+    ;;
+esac
+validate_declared_initial_probe_use
 mkdir -p "$OUTPUT_DIR"
 OUTPUT_DIR="$(cd "$OUTPUT_DIR" && pwd)"
+case "$OUTPUT_DIR" in
+  "$WORKSPACE_DIR"/evidence/*) ;;
+  *)
+    echo "--output-dir must stay under <audit-workspace>/evidence/." >&2
+    exit 1
+    ;;
+esac
 
 SUMMARY_FILE="$OUTPUT_DIR/summary.txt"
 RECORDS_FILE="$OUTPUT_DIR/probes.jsonl"
@@ -317,13 +373,49 @@ summary_path.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys
 PY
 }
 
-write_state_event \
-  --event initial_probe_started \
-  --stage initial_probing \
-  --status running \
-  --event-status ok \
-  --message "Initial probes started." \
-  --detail "output_dir=$OUTPUT_DIR"
+start_initial_probe_state_event() {
+  local current_stage current_status
+  [[ -n "${WORKSPACE_DIR:-}" ]] || return 0
+
+  read -r current_stage current_status < <(python3 - <<'PY' "$WORKSPACE_DIR/stage-status.json"
+import json
+import sys
+from pathlib import Path
+
+try:
+    state = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+except (OSError, json.JSONDecodeError):
+    state = {}
+print(str(state.get("stage") or ""), str(state.get("status") or ""))
+PY
+)
+
+  if [[ "$current_stage" == "intake" && "$current_status" == "running" ]]; then
+    # The first initial-probe pass begins recon.  Subsequent/manual passes are
+    # observations of the currently locked workflow state, not repeated
+    # recon advances.
+    write_state_event \
+      --event initial_probe_started \
+      --stage recon \
+      --status running \
+      --transition-kind advance \
+      --event-status ok \
+      --message "Initial probes started." \
+      --evidence-ref "evidence/initial-probes"
+    return
+  fi
+
+  write_state_event \
+    --event initial_probe_started \
+    --stage current \
+    --status current \
+    --transition-kind observe \
+    --event-status ok \
+    --message "Initial probes started as a non-promoting observation." \
+    --evidence-ref "evidence/initial-probes"
+}
+
+start_initial_probe_state_event
 
 run_probe() {
   local name="$1"
@@ -732,23 +824,25 @@ write_summary_json
 if [[ "$PROBES_RUN" -gt 0 ]]; then
   write_state_event \
     --event initial_probe_completed \
-    --stage initial_probing \
-    --status running \
+    --stage current \
+    --status current \
+    --transition-kind observe \
     --event-status ok \
     --message "Initial probes completed." \
-    --detail "output_dir=$OUTPUT_DIR" \
-    --detail "summary_json=$SUMMARY_JSON" \
+    --evidence-ref "evidence/initial-probes" \
+    --evidence-ref "evidence/initial-probes/initial-probes-summary.json" \
     --detail "probes_run=$PROBES_RUN" \
     --detail "probes_skipped=$PROBES_SKIPPED"
 else
   write_state_event \
     --event initial_probe_skipped \
-    --stage initial_probing \
-    --status running \
+    --stage current \
+    --status current \
+    --transition-kind observe \
     --event-status skipped \
     --message "All initial probes were skipped." \
-    --detail "output_dir=$OUTPUT_DIR" \
-    --detail "summary_json=$SUMMARY_JSON" \
+    --evidence-ref "evidence/initial-probes" \
+    --evidence-ref "evidence/initial-probes/initial-probes-summary.json" \
     --detail "probes_skipped=$PROBES_SKIPPED"
 fi
 

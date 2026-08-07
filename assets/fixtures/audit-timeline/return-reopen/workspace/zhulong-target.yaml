@@ -1,0 +1,43 @@
+schema_version: 1
+target:
+  name: "fixture-service"
+  repo_root: "."
+  tested_ref: "fixture-service-ref-001"
+  language_hint:
+    - "python"
+runtime:
+  type: "docker-compose"
+  compose_file: "docker-compose.fixture.yml"
+  service: "app"
+  healthcheck:
+    command: "python -c print-ready"
+    timeout_seconds: 30
+build:
+  command: "docker compose -f docker-compose.fixture.yml build"
+  network_required: true
+start:
+  command: "docker compose -f docker-compose.fixture.yml up -d"
+  readiness:
+    command: "python -c print-ready"
+    timeout_seconds: 60
+verify:
+  mode: "fresh-container"
+  allowed_network: "local-only"
+  success_oracles:
+    - type: "http_response"
+  cleanup:
+    command: "docker compose -f docker-compose.fixture.yml down -v"
+scope:
+  entrypoints:
+    - id: "import-url"
+      kind: "http"
+      route: "POST /api/import"
+      auth: "authenticated-user"
+      attacker_control:
+        - "url"
+  trust_boundaries:
+    - "external HTTP request -> application import handler"
+  in_scope_bug_classes:
+    - "SSRF"
+  out_of_scope:
+    - "host shell access"

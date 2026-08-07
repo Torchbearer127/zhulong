@@ -80,6 +80,8 @@ The runner writes structured evidence to
 
 Stable runner labels:
 
+- `blocked_state_precondition`
+- `blocked_authority_event_commit`
 - `blocked_docker_unavailable`
 - `blocked_missing_image`
 - `failed_timeout`
@@ -87,6 +89,28 @@ Stable runner labels:
 - `rejected_unsafe_sandbox`
 - `rejected_not_reproducible`
 - `confirmed_in_docker`
+
+For an R2 workspace, the runner reads the canonical journal/state snapshot
+before any Docker CLI call. Only `verification/running` or an explicitly
+retried `verification/blocked` state may proceed. A wrong, missing, stale,
+corrupt, symlinked, or protocol-mismatched R2 state returns
+`VERIFICATION_STATE_PRECONDITION_FAILED`, records
+`docker_invoked=false` and `oracle_matched=false`, and leaves journal/state
+bytes unchanged. The runner never advances triage or another workflow stage.
+
+Docker daemon and image checks are non-PoC prerequisites. After they pass, an
+R2 run commits a same-stage `verification_case_started` observation with
+revision and source-state checks before starting the actual PoC container
+command. Confirmed and not-reproduced results remain same-stage observations;
+blocked results use `verification/running -> verification/blocked`; an
+explicit blocked retry records resume before start. If the start event fails,
+no PoC command runs. If a result event fails after Docker, the wrapper exits
+nonzero and preserves both the Docker evidence status and
+`authority_event_committed=false`.
+
+Legacy R1 behavior remains compatible. A workspace with no state files is not
+silently upgraded to R2; any unavailable result-event authority remains an
+explicit wrapper failure rather than creating synthetic journal/state files.
 
 `rejected_unsafe_sandbox` means the local preflight blocked privileged mode,
 host network, host PID, Docker socket mounts, or host-root mounts before Docker

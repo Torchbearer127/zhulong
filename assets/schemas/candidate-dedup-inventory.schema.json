@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Torchbearer127/zhulong/blob/main/assets/schemas/candidate-dedup-inventory.schema.json",
+  "title": "Zhulong Explicit Candidate Dedup Inventory",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema_version", "inventory_id", "candidates"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "inventory_id": {"type": "string", "pattern": "^INVENTORY-[0-9A-Za-z][0-9A-Za-z._-]*$"},
+    "candidates": {"type": "array", "minItems": 2, "items": {"$ref": "#/$defs/item"}}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "path": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?![A-Za-z]:[\\\\/])(?!file://)(?!https?://)(?!~)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+"},
+    "item": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "sha256", "candidate_id", "fingerprint", "target_tested_ref"],
+      "properties": {
+        "path": {"$ref": "#/$defs/path"}, "sha256": {"$ref": "#/$defs/sha256"},
+        "candidate_id": {"type": "string", "pattern": "^CAND-[0-9A-Za-z._-]+$"},
+        "fingerprint": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/sha256"}]},
+        "target_tested_ref": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

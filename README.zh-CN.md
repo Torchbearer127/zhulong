@@ -11,7 +11,7 @@
 <em>That which illumines the nether gloom — the Torch Dragon.</em></p>
 
 <p>
-  <a href="#"><img alt="Version" src="https://img.shields.io/badge/version-0.4.0-blue.svg?style=flat-square" /></a>
+  <a href="#"><img alt="Version" src="https://img.shields.io/badge/version-0.6.0-blue.svg?style=flat-square" /></a>
   <a href="#"><img alt="Status" src="https://img.shields.io/badge/status-release-brightgreen.svg?style=flat-square" /></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-green.svg?style=flat-square" /></a>
   <a href="#快速开始"><img alt="Runtime" src="https://img.shields.io/badge/runtime-Local%20Agent-111111.svg?style=flat-square" /></a>
@@ -451,6 +451,11 @@ python3 scripts/validate_all_report_bundles.py --confirmed-dir <confirmed-dir>
 - [x] 面向审核录屏的复现脚本会展示代码上下文、漏洞分析、实际危害边界和最终证据汇总。
 - [x] 源码绑定的生成合同、暂存区校验提升，以及可选最终录屏证据门禁。
 - [x] Codex 用户级 Skill 支持、安装目录自检、平台无关启动入口和仓库根目录 AGENTS.md 引导文件。
+- [x] 文件式可恢复审计状态：追加只读的权威事件日志与派生工作区状态。
+- [x] 结构化交接、不可变检查点和机器可读的下一步动作，支持全新上下文接力。
+- [x] 离线静态审计时间线（JSON 与 HTML），内置安全脱敏，便于离线复核。
+- [x] 候选身份、指纹与去重，保证重复发现被一致跟踪。
+- [x] 基于权威日志的状态重建，以及修订号锁定的并发写入保护。
 
 后续计划：
 

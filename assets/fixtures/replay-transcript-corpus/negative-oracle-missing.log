@@ -1,0 +1,3 @@
+[command] python3 attachments/poc/reproduce.py --target http://target.local/import
+Observed target text: request reached the demo service and returned a response.
+The transcript stops before a grep, jq, direct-impact marker, or exit-status/pass result is recorded.

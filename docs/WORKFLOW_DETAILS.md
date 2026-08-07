@@ -21,6 +21,111 @@ being trapped in a long chat transcript or raw scanner output.
 - Reviewers can inspect confirmed bundles without reconstructing which
   evidence, command, payload, and report claim belong together.
 
+## Audit State Protocol R2
+
+The R2 protocol defines audit-events.jsonl as the authoritative append-only
+journal and stage-status.json as a derived materialized current-state view.
+Shape-valid records do not prove a vulnerability, Docker confirmation, bundle
+validity, or workspace completion. New R2 writes use a locked writer with
+explicit CAS/current-revision intent and an explicit transition intent.
+The authoritative P9.3 policy records source stage, controls local state changes,
+conservative forward/return/optional-stage relationships, and evidence-bearing
+resume/skip/return/reopen actions. Old R2 records remain visibly classified as
+pre-policy history, while valid R1 workspaces remain read/write compatible without
+silent migration. P9.4 adds a byte-aware shared inspector, field-level drift
+diagnostics, read-only R1 migration preflight, and an explicit double-digest-CAS
+command that can atomically rebuild only stage-status.json. Consumers never
+auto-repair, and audit-events.jsonl is never truncated, rewritten, or synthesized. See
+[audit-state-protocol-r2.md](runner-contracts/audit-state-protocol-r2.md).
+Before any new R2 journal append, the canonical locked writer also screens its
+published event text for local host paths, `file:` URIs, and common credential
+or private-key shapes. Rejection reports only a stable category and leaves both
+journal and state bytes unchanged; direct writers and stage finalizers share
+this boundary. Historical journal bytes are never sanitized in place.
+The recovery CLI reports `STATE_CAS_INTENT_CONFLICT` in JSON before taking a lock
+when both state-CAS intents are supplied. LF and CRLF journals are accepted as
+distinct exact-byte inputs; recovery never normalizes their line endings. Historical
+anchored plugin-version metadata is explicitly identified as prefix provenance, not
+as the latest plugin version. The offline protocol closure fixtures exercise these
+rules without Docker, PoC, replay, network, or package-manager execution.
+
+## Recon Coverage Result
+
+Recon coverage is carried in a separate, portable JSON contract. Read
+[`recon-result-contract-r1.md`](runner-contracts/recon-result-contract-r1.md)
+before creating or reviewing `recon-result.json`.
+
+Candidate triage is a separate advisory batch contract. Read
+[`triage-batch-contract-r1.md`](runner-contracts/triage-batch-contract-r1.md)
+before creating `triage-batch.json` or recording a Recon/triage terminal state.
+Triage cannot update a disposition or claim confirmation. The narrow stage
+finalizer uses exact result and revision CAS to append only a same-stage R2
+complete/pause/block event; it never advances work or executes next actions.
+
+Candidate Contract R2 adds deterministic identity, structured provenance, and
+candidate-only duplicate relationships. Read
+[`candidate-identity-dedupe-r1.md`](runner-contracts/candidate-identity-dedupe-r1.md)
+before upgrading or deduplicating candidates. R1 remains readable as
+`legacy_r1`; upgrade is explicit and non-overwriting. Exact fingerprint matches
+and advisory dedup plans never replace independent verification, disposition,
+Docker evidence, confirmed-bundle validation, or finalization.
+
+The result binds to the exact `zhulong-target.yaml` digest, `tested_ref`, and
+workspace-root `attack-surface.md` digest. Its structured observations use
+stable IDs and repository/workspace-relative source and evidence references.
+`complete` means only that all Recon coverage categories are structurally
+covered or evidence-backed `not_applicable`; it does not mean no vulnerability,
+audit completion, candidate readiness, or confirmed deliverable. `partial` and
+`blocked` must carry explicit gaps/blockers and executable recovery actions.
+
+Validate it without changing the repository or workspace:
+
+```bash
+python3 scripts/validate_recon_result.py \
+  --repo-root <repo-root> \
+  --workspace-dir <audit-workspace> \
+  --recon-result <audit-workspace>/recon-result.json \
+  --json
+```
+
+The validator is offline and read-only. Recon output may expose stable
+`focus_refs` for later review planning, but it cannot create candidates,
+verdicts, dispositions, bundles, or finalization state. A separate, later
+stage-finalization entrypoint is solely responsible for registering Recon-stage
+termination.
+
+## Tool Effects and Execution Boundaries
+
+The strict R2 Tool Registry is shared by the dynamic planner, the offline
+validator, and Zhulong's narrow controlled wrappers. Read
+[`tool-effects-execution-boundaries-r1.md`](runner-contracts/tool-effects-execution-boundaries-r1.md)
+before changing tool metadata or interpreting a plan.
+
+The registry is local to Zhulong: it cannot intercept a human's or another
+Agent's native tools. A successful registry check is metadata-only and never
+creates a candidate, verdict, disposition, or confirmation. First-pass scanner
+output is candidate material only; the initial-probe wrapper records its start
+in the canonical `recon` stage. Raw Docker and uncontrolled DAST/live-target
+tools have no direct planner command hint. Only the fixed Docker verification
+wrapper can emit Docker oracle material, and that material still must pass the
+existing verifier-verdict, disposition, and confirmed-bundle gates.
+
+In an R2 workspace, the verification wrapper validates the canonical
+journal/state pair and requires `verification/running` or an explicit retry
+from `verification/blocked` before any Docker CLI call. It never advances
+triage or rewrites workflow state to make a result event fit. Docker
+daemon/image checks are non-PoC prerequisites; the actual PoC container command
+starts only after a revision-bound same-stage start event commits. Result-event
+failure is a nonzero wrapper result even when Docker evidence exists. R1
+remains legacy-compatible, and a workspace with no state files is not silently
+upgraded to R2.
+
+## Advisory Context Planning
+
+`assets/context-catalog.json` declares stable local references that may be recommended for a phase. Run `plan_audit_context.py` with an explicit target directory and phase to create a deterministic `context-plan.json`; optional bug classes are closed explicit inputs. The planner reuses the toolchain planner's stack and attack-surface detection only. It does not parse notes, candidates, handoff text, or references.
+
+`mandatory` means a phase-baseline reading recommendation, not a security gate. `optional` records exact matching selector facts, and `deferred` records a phase-relevant module without a selector match. The plan is advisory only: it does not prove an Agent read, understood, or used a module; execute tools or references; create evidence; confirm findings; or replace existing validators, gates, or root Skill constraints. See [`context-planning-r1.md`](runner-contracts/context-planning-r1.md).
+
 ## Handoff Status Consistency
 
 `handoff-summary.md` is an operational continuation packet. It must describe the
@@ -56,6 +161,79 @@ partial bundles, and validation-failed directories remain manual or unverified
 workspace material until a real `confirmed/<bundle>/` passes final validation.
 `validate_workspace_state.py`, `assert_finalized_workspace.py`, and the
 finalization gate reject stale handoff/status text that claims otherwise.
+
+### Structured Handoff And Checkpoints
+
+`handoff-state.json` is the machine-readable continuation index. It is derived
+by `scripts/workspace_state.py` from the committed journal/state view and the
+existing candidate, verifier, disposition, bundle, Docker, runtime, recording,
+and finalization validators. It records revision/digest, tested-ref
+verifiability, stable IDs and counts, formal seeded-variant status, blocker/
+resume context, and relative artifact digests. It never writes back to those
+authoritative artifacts and it never turns Docker evidence, recording manifests,
+or notes into a confirmed finding.
+
+For Recon and triage, this aggregation uses each production validator's
+declared input contract. In particular, triage receives only its
+workspace-relative `--triage-batch` input; its digest-bound `recon_binding` is
+validated internally by the triage contract rather than supplied as an invented
+second CLI flag.
+
+`render_handoff_state.py` publishes only that one file with a same-directory
+temporary file, fsync, and atomic replacement. `validate_handoff_state.py` is
+read-only and reports stale revision, tested-ref, digest, and count/ID drift.
+The human renderer refreshes or validates this state before writing
+`handoff-summary.md`; `agent-notes.md`, when present, is explicitly advisory.
+
+`checkpoints/<revision>.json` is an immutable, lightweight snapshot index, not a
+copy of logs, prompts, chat, credentials, or evidence. Creation requires a
+current handoff state, uses a stable numeric filename, and is idempotent for
+identical bytes; conflicting same-revision bytes fail closed. Checkpoint resume
+metadata uses fixed safe entrypoints and workspace-relative parameters only. A
+validator may classify a structurally sound older checkpoint as
+`valid_historical`; changed inputs or an unsafe/tampered index are
+`historical_unverifiable` or `tampered`, not silently current.
+
+### Derived Next Actions
+
+`next-actions.json` is a deterministic, advisory-only index derived from a
+current `handoff-state.json` and its existing structured authority inputs.
+`render_next_actions.py` writes only this derived file atomically;
+`validate_next_actions.py` is read-only and rederives every field. Suggestions
+use a fixed entrypoint allowlist and structured relative parameters, and are
+never shell commands or automatic execution. The index is not evidence and has
+no candidate, verdict, disposition, bundle, recording, finalization, or audit
+completion authority. Missing or conflicting authority fails closed rather than
+being inferred from notes, summaries, chat, or directory names.
+
+### Static Audit Timeline
+
+`render_audit_timeline.py --workspace-dir <audit-workspace> --repo-root <repo-root>`
+creates `audit-timeline.json` and `audit-timeline.html` as one deterministic,
+offline review projection. The JSON is derived from the canonical journal/state
+reader and the existing target, candidate, verdict, disposition, Docker, bundle,
+handoff, next-action, and finalization validators; the HTML is rendered only
+from that validated JSON. Run `validate_audit_timeline.py --timeline
+<audit-workspace>/audit-timeline.json --html
+<audit-workspace>/audit-timeline.html --workspace-dir <audit-workspace> --repo-root
+<repo-root>` before opening the HTML locally.
+
+The timeline does not run an audit, Docker, a PoC, replay, a scanner, a network
+request, a model, or an Agent. It contains no hidden reasoning or chat content,
+and it has no confirmation, disposition, bundle, execution, or finalization
+authority. A confirmed flow still requires the existing Docker evidence,
+independent verdict, disposition, and validated bundle. Zhulong intentionally
+uses a static file instead of a server-side dashboard so review adds no service,
+database, daemon, telemetry, network, or new authority surface.
+
+Common credential and private-key shapes make timeline generation fail closed
+without echoing the matched value. The same classifier also rejects local host
+paths and is shared with the new-R2 write boundary; historical unsafe journal
+text remains a read-only fail-closed condition. A confirmed bundle is displayed only when
+the existing authority files prove one unique candidate-to-bundle relationship;
+ambiguous multi-confirmed workspaces are rejected rather than paired by names or
+ordering. Escaped URLs may appear as visible review text, while clickable
+resources remain limited to canonical workspace-relative links.
 
 ## Runtime Residue And Cleanup
 
@@ -587,3 +765,121 @@ validation does it copy that unpromoted diagnostic archive to the explicit
 bundle-external directory; it never overwrites an existing diagnostic copy.
 The legacy `--zip-on-fail` flag emits a deprecation warning and creates no
 failure archive.
+
+## Root Skill kernel and phase references
+
+The root `SKILL.md` is intentionally limited to product boundaries, core safety
+invariants, lifecycle authority, phase-reference loading, the confirmed bundle
+path, canonical finalization, and opt-in recording. Detailed phase operations
+live in the baseline `audit-phase-*.md` references and
+`audit-continuation-state.md`.
+
+`assets/root-skill-rule-inventory.json` records why each former root rule is
+retained or moved and binds it to production schema, validators, gates, fixed
+wrappers, the kernel, references, and selftests. Validate the relationship with:
+
+```bash
+python3 scripts/validate_root_skill_rule_inventory.py \
+  --skill-root . \
+  --inventory assets/root-skill-rule-inventory.json \
+  --json
+```
+
+A moved hard constraint requires a real production carrier; documentation,
+references, inventory, and selftests are not production authority. Phase
+references are catalog baseline modules, but `mandatory` remains planned reading
+priority only. It does not prove an Agent read, understood, applied, or completed
+a reference and grants no execution, confirmation, promotion, recording, or
+finalization authority. See
+`docs/runner-contracts/root-skill-kernel-r1.md`.
+
+## Authority-bound completion and verification-wrapper boundary
+
+Completion is a substantive evidence-chain decision, not a count of state fields,
+validated bundle directories, or self-authored Markdown. For a confirmed result,
+the read-only completion helper requires a one-to-one chain:
+
+```text
+candidate.json -> verifier-verdict.json -> candidate disposition -> confirmed bundle
+```
+
+The candidate and verifier are revalidated by their production validators. Their
+candidate IDs, target references, verdict/status, Docker-confirmed status, and
+evidence fields must agree; Candidate R2 records also bind the candidate file
+SHA-256 and fingerprint. A bundle's
+`validity-review.json.source_binding.materials.verifier_verdict` must be a safe,
+workspace-relative regular file and must point to exactly one passed disposition.
+The standalone bundle validator remains necessary but is not sufficient.
+
+For `completed_no_confirmed_findings`, every discovered candidate must have one
+production-valid terminal verifier disposition and only `false_positive` may
+permit nonconfirmation. Candidate, unverified, blocked, missing, duplicate, or
+orphaned records remain blocking. When there are no candidate files, R2 requires
+an existing production-valid Recon coverage result (with no gaps or blockers)
+that proves the reviewed surface; an arbitrary boolean or hand-written “no
+findings” note is not a substitute. The same read-only predicate is consumed by
+the finalizer, handoff derivation, workspace validator, and finalization assertion.
+
+Legacy R1 workspaces remain readable and their historical completion fields are
+not silently migrated. New R2-only transition intent is rejected by automatic
+R1 writing; a real R1 producer must pass `--protocol-mode legacy-r1`, and the
+write result reports compatibility/ignored-field diagnostics. This compatibility
+does not describe the workspace as R2 verification-complete.
+
+The verification wrapper validates the case identifier and evidence directory
+before it creates evidence, reads authority, invokes Docker, or runs a PoC. Case
+IDs must start with an ASCII letter or digit and contain only ASCII letters,
+digits, `.`, `_`, and `-`; dot components, separators, whitespace, control
+characters, and leading-dot IDs are rejected. The evidence path must normalize
+exactly to `<workspace>/evidence/<case-id>` and cannot traverse symlink or
+non-directory ancestors. A workspace with neither journal nor state view is
+blocked with `AUTHORITATIVE_STATE_MISSING` before execution. Docker cleanliness
+checks have no production success bypass; the former test-only skip variable is
+unsupported.
+
+### Closure security boundary rules
+
+The verification wrapper owns control evidence. `verification-result.json`,
+`command.json`, sandbox status, `stdout.log`, `stderr.log`, and authority
+references are created or replaced with host-owned, identity-checked file
+descriptors and same-directory atomic publication. `/workspace/evidence` is
+read-only when it is mounted into a Docker-run case; a separate
+`/workspace/output` mount is the only default writable container-output area,
+and output files are review-only attachments. The oracle reads bytes held by
+the host capture descriptors, never reopens a container-replaceable pathname.
+Symlink, hardlink, FIFO, directory, ancestor drift, and running pathname
+replacement therefore fail closed and cannot write `stage-status.json` or
+turn a case into `confirmed_in_docker`. Compose cases receive the same host
+capture treatment; writable binds overlapping workspace control paths are
+rejected.
+
+Sandbox preflight is a proof obligation before any evidence or Docker side
+effect. Compose services must declare literal `privileged: false`; anchors,
+aliases, interpolation and non-static namespace values are rejected. Unknown
+or value-less extra Docker arguments are rejected; only documented resource
+limits and `--read-only` are allowed. Bootstrap workspace names are one safe
+ASCII directory component and the destination must be a direct child of a
+real target directory.
+
+`blocked_verification.py` first consumes structured verification results,
+verdicts, dispositions and normalized events. An unresolved identity-specific
+`blocked_*`, timeout, unsafe-sandbox, missing-image/runtime, or authority-event
+failure blocks completion. Only a later structured result for the same case or
+candidate identity can resolve it; text scanning is a conservative fallback
+for historical R1 workspaces and skips examples/resolved sentences.
+
+Publishable R1 text, `tested_ref`, handoff and checkpoint fields share the
+portable classifier. Local absolute paths, credentials, private keys, tokens
+and control characters are rejected before append/publication; the raw value
+is never returned. Normal SHA-1/SHA-256 refs, tags, branches, URLs without
+embedded credentials and workspace-relative evidence paths remain valid. New
+R1 state uses logical workspace/repository labels rather than parsed host
+paths.
+
+The Tool Registry treats `prohibited` as an exclusive boundary: effects,
+wrappers, authority, active network and planner capabilities must all be
+empty/prohibited. Finalization requires a safe current
+`docker/docker-cleanliness-status.json` with `clean=true` and `strict=true`.
+The `finalization_succeeded` event must bind its relative path, SHA-256,
+workspace and `checked_at`; missing, stale, symlinked, mismatched or manually
+paired status evidence fails the assertion.

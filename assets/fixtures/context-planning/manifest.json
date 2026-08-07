@@ -1,0 +1,498 @@
+{
+  "schema_version": 1,
+  "fixture_family": "context-planning-r1",
+  "execution_policy": "offline-production-catalog-planner-validator-only",
+  "forbidden_execution": [
+    "docker",
+    "poc",
+    "scanner",
+    "network",
+    "package_manager",
+    "llm",
+    "agent"
+  ],
+  "positive_cases": [
+    "generic-recon",
+    "node-web-recon",
+    "python-library-candidate-generation",
+    "java-web-verification",
+    "ssrf-verification",
+    "three-layout-byte-identical"
+  ],
+  "negative_cases": [
+    "unknown-field",
+    "duplicate-module",
+    "absolute-reference-path",
+    "uri-reference-path",
+    "traversal-reference-path",
+    "backslash-reference-path",
+    "reference-symlink",
+    "missing-reference",
+    "directory-reference",
+    "dogfood-reference",
+    "template-reference",
+    "example-json-reference",
+    "unknown-selector",
+    "unknown-phase",
+    "forged-plan-module",
+    "duplicate-plan-module",
+    "missing-baseline",
+    "selector-reason-drift",
+    "noncanonical-order",
+    "catalog-digest-drift",
+    "authority-drift",
+    "unknown-claim",
+    "unknown-plan-input-fact",
+    "output-symlink",
+    "locale-timezone-determinism"
+  ],
+  "golden_selection": {
+    "generic-recon": {
+      "mandatory": [
+        {
+          "id": "continuation-state",
+          "matched_selectors": [],
+          "path": "assets/references/audit-continuation-state.md",
+          "reason_code": "PHASE_BASELINE"
+        },
+        {
+          "id": "path-discipline",
+          "matched_selectors": [],
+          "path": "assets/references/path-discipline.md",
+          "reason_code": "PHASE_BASELINE"
+        },
+        {
+          "id": "phase-intake-recon",
+          "matched_selectors": [],
+          "path": "assets/references/audit-phase-intake-recon.md",
+          "reason_code": "PHASE_BASELINE"
+        },
+        {
+          "id": "repo-preparation",
+          "matched_selectors": [],
+          "path": "assets/references/repo-preparation.md",
+          "reason_code": "PHASE_BASELINE"
+        },
+        {
+          "id": "security-tooling",
+          "matched_selectors": [],
+          "path": "assets/references/recommended-security-tooling.md",
+          "reason_code": "PHASE_BASELINE"
+        }
+      ],
+      "optional": [],
+      "deferred": [
+        {
+          "id": "go-web",
+          "matched_selectors": [],
+          "path": "assets/references/go-web-audit-playbook.md",
+          "reason_code": "PHASE_RELEVANT_NO_SELECTOR_MATCH"
+        },
+        {
+          "id": "java-web",
+          "matched_selectors": [],
+          "path": "assets/references/java-web-audit-playbook.md",
+          "reason_code": "PHASE_RELEVANT_NO_SELECTOR_MATCH"
+        },
+        {
+          "id": "nodejs-library",
+          "matched_selectors": [],
+          "path": "assets/references/nodejs-library-audit-playbook.md",
+          "reason_code": "PHASE_RELEVANT_NO_SELECTOR_MATCH"
+        },
+        {
+          "id": "nodejs-web",
+          "matched_selectors": [],
+          "path": "assets/references/nodejs-web-audit-playbook.md",
+          "reason_code": "PHASE_RELEVANT_NO_SELECTOR_MATCH"
+        },
+        {
+          "id": "php-swoole",
+          "matched_selectors": [],
+          "path": "assets/references/php-swoole-audit-playbook.md",
+          "reason_code": "PHASE_RELEVANT_NO_SELECTOR_MATCH"
+        },
+        {
+          "id": "python-library",
+          "matched_selectors": [],
+          "path": "assets/references/python-library-audit-playbook.md",
+          "reason_code": "PHASE_RELEVANT_NO_SELECTOR_MATCH"
+        },
+        {
+          "id": "python-web",
+          "matched_selectors": [],
+          "path": "assets/references/python-web-audit-playbook.md",
+          "reason_code": "PHASE_RELEVANT_NO_SELECTOR_MATCH"
+        }
+      ]
+    },
+    "node-web-recon": {
+      "mandatory": [
+        {
+          "id": "continuation-state",
+          "matched_selectors": [],
+          "path": "assets/references/audit-continuation-state.md",
+          "reason_code": "PHASE_BASELINE"
+        },
+        {
+          "id": "path-discipline",
+          "matched_selectors": [],
+          "path": "assets/references/path-discipline.md",
+          "reason_code": "PHASE_BASELINE"
+        },
+        {
+          "id": "phase-intake-recon",
+          "matched_selectors": [],
+          "path": "assets/references/audit-phase-intake-recon.md",
+          "reason_code": "PHASE_BASELINE"
+        },
+        {
+          "id": "repo-preparation",
+          "matched_selectors": [],
+          "path": "assets/references/repo-preparation.md",
+          "reason_code": "PHASE_BASELINE"
+        },
+        {
+          "id": "security-tooling",
+          "matched_selectors": [],
+          "path": "assets/references/recommended-security-tooling.md",
+          "reason_code": "PHASE_BASELINE"
+        }
+      ],
+      "optional": [
+        {
+          "id": "nodejs-web",
+          "matched_selectors": [
+            "attack_surface:node-web"
+          ],
+          "path": "assets/references/nodejs-web-audit-playbook.md",
+          "reason_code": "NODE_WEB_PLAYBOOK"
+        }
+      ],
+      "deferred": [
+        {
+          "id": "go-web",
+          "matched_selectors": [],
+          "path": "assets/references/go-web-audit-playbook.md",
+          "reason_code": "PHASE_RELEVANT_NO_SELECTOR_MATCH"
+        },
+        {
+          "id": "java-web",
+          "matched_selectors": [],
+          "path": "assets/references/java-web-audit-playbook.md",
+          "reason_code": "PHASE_RELEVANT_NO_SELECTOR_MATCH"
+        },
+        {
+          "id": "nodejs-library",
+          "matched_selectors": [],
+          "path": "assets/references/nodejs-library-audit-playbook.md",
+          "reason_code": "PHASE_RELEVANT_NO_SELECTOR_MATCH"
+        },
+        {
+          "id": "php-swoole",
+          "matched_selectors": [],
+          "path": "assets/references/php-swoole-audit-playbook.md",
+          "reason_code": "PHASE_RELEVANT_NO_SELECTOR_MATCH"
+        },
+        {
+          "id": "python-library",
+          "matched_selectors": [],
+          "path": "assets/references/python-library-audit-playbook.md",
+          "reason_code": "PHASE_RELEVANT_NO_SELECTOR_MATCH"
+        },
+        {
+          "id": "python-web",
+          "matched_selectors": [],
+          "path": "assets/references/python-web-audit-playbook.md",
+          "reason_code": "PHASE_RELEVANT_NO_SELECTOR_MATCH"
+        }
+      ]
+    },
+    "python-library-candidate-generation": {
+      "mandatory": [
+        {
+          "id": "continuation-state",
+          "matched_selectors": [],
+          "path": "assets/references/audit-continuation-state.md",
+          "reason_code": "PHASE_BASELINE"
+        },
+        {
+          "id": "path-discipline",
+          "matched_selectors": [],
+          "path": "assets/references/path-discipline.md",
+          "reason_code": "PHASE_BASELINE"
+        },
+        {
+          "id": "phase-candidate-triage",
+          "matched_selectors": [],
+          "path": "assets/references/audit-phase-candidate-triage.md",
+          "reason_code": "PHASE_BASELINE"
+        },
+        {
+          "id": "security-tooling",
+          "matched_selectors": [],
+          "path": "assets/references/recommended-security-tooling.md",
+          "reason_code": "PHASE_BASELINE"
+        }
+      ],
+      "optional": [
+        {
+          "id": "python-library",
+          "matched_selectors": [
+            "attack_surface:python-library"
+          ],
+          "path": "assets/references/python-library-audit-playbook.md",
+          "reason_code": "PYTHON_LIBRARY_PLAYBOOK"
+        }
+      ],
+      "deferred": [
+        {
+          "id": "go-web",
+          "matched_selectors": [],
+          "path": "assets/references/go-web-audit-playbook.md",
+          "reason_code": "PHASE_RELEVANT_NO_SELECTOR_MATCH"
+        },
+        {
+          "id": "java-web",
+          "matched_selectors": [],
+          "path": "assets/references/java-web-audit-playbook.md",
+          "reason_code": "PHASE_RELEVANT_NO_SELECTOR_MATCH"
+        },
+        {
+          "id": "nodejs-library",
+          "matched_selectors": [],
+          "path": "assets/references/nodejs-library-audit-playbook.md",
+          "reason_code": "PHASE_RELEVANT_NO_SELECTOR_MATCH"
+        },
+        {
+          "id": "nodejs-web",
+          "matched_selectors": [],
+          "path": "assets/references/nodejs-web-audit-playbook.md",
+          "reason_code": "PHASE_RELEVANT_NO_SELECTOR_MATCH"
+        },
+        {
+          "id": "path-traversal-checklist",
+          "matched_selectors": [],
+          "path": "assets/references/path-traversal-checklist.md",
+          "reason_code": "PHASE_RELEVANT_NO_SELECTOR_MATCH"
+        },
+        {
+          "id": "php-swoole",
+          "matched_selectors": [],
+          "path": "assets/references/php-swoole-audit-playbook.md",
+          "reason_code": "PHASE_RELEVANT_NO_SELECTOR_MATCH"
+        },
+        {
+          "id": "prototype-pollution-checklist",
+          "matched_selectors": [],
+          "path": "assets/references/prototype-pollution-checklist.md",
+          "reason_code": "PHASE_RELEVANT_NO_SELECTOR_MATCH"
+        },
+        {
+          "id": "python-web",
+          "matched_selectors": [],
+          "path": "assets/references/python-web-audit-playbook.md",
+          "reason_code": "PHASE_RELEVANT_NO_SELECTOR_MATCH"
+        },
+        {
+          "id": "ssrf-checklist",
+          "matched_selectors": [],
+          "path": "assets/references/ssrf-checklist.md",
+          "reason_code": "PHASE_RELEVANT_NO_SELECTOR_MATCH"
+        }
+      ]
+    },
+    "java-web-verification": {
+      "mandatory": [
+        {
+          "id": "continuation-state",
+          "matched_selectors": [],
+          "path": "assets/references/audit-continuation-state.md",
+          "reason_code": "PHASE_BASELINE"
+        },
+        {
+          "id": "docker-resource-hygiene",
+          "matched_selectors": [],
+          "path": "assets/references/docker-resource-hygiene.md",
+          "reason_code": "PHASE_BASELINE"
+        },
+        {
+          "id": "path-discipline",
+          "matched_selectors": [],
+          "path": "assets/references/path-discipline.md",
+          "reason_code": "PHASE_BASELINE"
+        },
+        {
+          "id": "phase-verification",
+          "matched_selectors": [],
+          "path": "assets/references/audit-phase-verification.md",
+          "reason_code": "PHASE_BASELINE"
+        }
+      ],
+      "optional": [
+        {
+          "id": "java-web",
+          "matched_selectors": [
+            "attack_surface:java-web"
+          ],
+          "path": "assets/references/java-web-audit-playbook.md",
+          "reason_code": "JAVA_WEB_PLAYBOOK"
+        },
+        {
+          "id": "python-library",
+          "matched_selectors": [
+            "attack_surface:python-library"
+          ],
+          "path": "assets/references/python-library-audit-playbook.md",
+          "reason_code": "PYTHON_LIBRARY_PLAYBOOK"
+        }
+      ],
+      "deferred": [
+        {
+          "id": "go-web",
+          "matched_selectors": [],
+          "path": "assets/references/go-web-audit-playbook.md",
+          "reason_code": "PHASE_RELEVANT_NO_SELECTOR_MATCH"
+        },
+        {
+          "id": "nodejs-library",
+          "matched_selectors": [],
+          "path": "assets/references/nodejs-library-audit-playbook.md",
+          "reason_code": "PHASE_RELEVANT_NO_SELECTOR_MATCH"
+        },
+        {
+          "id": "nodejs-web",
+          "matched_selectors": [],
+          "path": "assets/references/nodejs-web-audit-playbook.md",
+          "reason_code": "PHASE_RELEVANT_NO_SELECTOR_MATCH"
+        },
+        {
+          "id": "path-traversal-checklist",
+          "matched_selectors": [],
+          "path": "assets/references/path-traversal-checklist.md",
+          "reason_code": "PHASE_RELEVANT_NO_SELECTOR_MATCH"
+        },
+        {
+          "id": "php-swoole",
+          "matched_selectors": [],
+          "path": "assets/references/php-swoole-audit-playbook.md",
+          "reason_code": "PHASE_RELEVANT_NO_SELECTOR_MATCH"
+        },
+        {
+          "id": "prototype-pollution-checklist",
+          "matched_selectors": [],
+          "path": "assets/references/prototype-pollution-checklist.md",
+          "reason_code": "PHASE_RELEVANT_NO_SELECTOR_MATCH"
+        },
+        {
+          "id": "python-web",
+          "matched_selectors": [],
+          "path": "assets/references/python-web-audit-playbook.md",
+          "reason_code": "PHASE_RELEVANT_NO_SELECTOR_MATCH"
+        },
+        {
+          "id": "ssrf-checklist",
+          "matched_selectors": [],
+          "path": "assets/references/ssrf-checklist.md",
+          "reason_code": "PHASE_RELEVANT_NO_SELECTOR_MATCH"
+        }
+      ]
+    },
+    "ssrf-verification": {
+      "mandatory": [
+        {
+          "id": "continuation-state",
+          "matched_selectors": [],
+          "path": "assets/references/audit-continuation-state.md",
+          "reason_code": "PHASE_BASELINE"
+        },
+        {
+          "id": "docker-resource-hygiene",
+          "matched_selectors": [],
+          "path": "assets/references/docker-resource-hygiene.md",
+          "reason_code": "PHASE_BASELINE"
+        },
+        {
+          "id": "path-discipline",
+          "matched_selectors": [],
+          "path": "assets/references/path-discipline.md",
+          "reason_code": "PHASE_BASELINE"
+        },
+        {
+          "id": "phase-verification",
+          "matched_selectors": [],
+          "path": "assets/references/audit-phase-verification.md",
+          "reason_code": "PHASE_BASELINE"
+        }
+      ],
+      "optional": [
+        {
+          "id": "python-library",
+          "matched_selectors": [
+            "attack_surface:python-library"
+          ],
+          "path": "assets/references/python-library-audit-playbook.md",
+          "reason_code": "PYTHON_LIBRARY_PLAYBOOK"
+        },
+        {
+          "id": "ssrf-checklist",
+          "matched_selectors": [
+            "bug_class:ssrf"
+          ],
+          "path": "assets/references/ssrf-checklist.md",
+          "reason_code": "SSRF_CHECKLIST"
+        }
+      ],
+      "deferred": [
+        {
+          "id": "go-web",
+          "matched_selectors": [],
+          "path": "assets/references/go-web-audit-playbook.md",
+          "reason_code": "PHASE_RELEVANT_NO_SELECTOR_MATCH"
+        },
+        {
+          "id": "java-web",
+          "matched_selectors": [],
+          "path": "assets/references/java-web-audit-playbook.md",
+          "reason_code": "PHASE_RELEVANT_NO_SELECTOR_MATCH"
+        },
+        {
+          "id": "nodejs-library",
+          "matched_selectors": [],
+          "path": "assets/references/nodejs-library-audit-playbook.md",
+          "reason_code": "PHASE_RELEVANT_NO_SELECTOR_MATCH"
+        },
+        {
+          "id": "nodejs-web",
+          "matched_selectors": [],
+          "path": "assets/references/nodejs-web-audit-playbook.md",
+          "reason_code": "PHASE_RELEVANT_NO_SELECTOR_MATCH"
+        },
+        {
+          "id": "path-traversal-checklist",
+          "matched_selectors": [],
+          "path": "assets/references/path-traversal-checklist.md",
+          "reason_code": "PHASE_RELEVANT_NO_SELECTOR_MATCH"
+        },
+        {
+          "id": "php-swoole",
+          "matched_selectors": [],
+          "path": "assets/references/php-swoole-audit-playbook.md",
+          "reason_code": "PHASE_RELEVANT_NO_SELECTOR_MATCH"
+        },
+        {
+          "id": "prototype-pollution-checklist",
+          "matched_selectors": [],
+          "path": "assets/references/prototype-pollution-checklist.md",
+          "reason_code": "PHASE_RELEVANT_NO_SELECTOR_MATCH"
+        },
+        {
+          "id": "python-web",
+          "matched_selectors": [],
+          "path": "assets/references/python-web-audit-playbook.md",
+          "reason_code": "PHASE_RELEVANT_NO_SELECTOR_MATCH"
+        }
+      ]
+    }
+  }
+}

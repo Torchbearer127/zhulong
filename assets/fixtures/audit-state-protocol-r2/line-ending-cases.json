@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "base_event": "valid-event-r2.json",
+  "cases": [
+    {"id": "cr-only", "suffix": "\r", "expected_issue_code": "JOURNAL_FINAL_NEWLINE_MISSING"},
+    {"id": "crlf", "suffix": "\r\n", "expected_classification": "complete_valid"},
+    {"id": "mixed-crlf-cr", "suffixes": ["\r\n", "\r"], "expected_issue_code": "JOURNAL_FINAL_NEWLINE_MISSING"}
+  ]
+}

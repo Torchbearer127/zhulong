@@ -1,0 +1,16 @@
+Zhulong reviewer replay log
+Generated at: 2026-06-25T00:00:00Z
+
+[command] bash attachments/poc/start-fixture.sh
+stdout: fixture service booted on local compose network
+exit status: 0
+
+[command] python3 attachments/poc/reproduce.py --target http://target.local/import
+stdout: callback listener received request id replay-corpus-001
+stderr: no unexpected errors
+exit status: 0
+
+[command] grep -Fq DIRECT_IMPACT_CONFIRMED attachments/evidence/replay-output.log
+stdout: deterministic success marker verified
+exit status: 0
+DIRECT_IMPACT_CONFIRMED

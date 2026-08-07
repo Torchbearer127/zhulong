@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Zhulong Context Catalog",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "catalog_id", "catalog_version", "authority", "non_authority_statement", "modules"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "catalog_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{2,63}$"},
+    "catalog_version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+    "authority": {"const": "recommended_context_only"},
+    "non_authority_statement": {"const": "This catalog recommends local reading context only. It does not grant read, execution, confirmation, promotion, or completion authority."},
+    "modules": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/module"}}
+  },
+  "$defs": {
+    "module": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "path", "title", "phases", "selection_policy", "reason_code", "authority"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{2,63}$"},
+        "path": {"type": "string", "pattern": "^assets/references/[A-Za-z0-9][A-Za-z0-9._-]*$"},
+        "title": {"type": "string", "minLength": 3, "maxLength": 160},
+        "phases": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["intake", "recon", "candidate_generation", "verification", "severity_escalation", "packaging", "finalization", "variant_discovery"]}},
+        "selection_policy": {"enum": ["baseline", "conditional"]},
+        "stacks": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["generic", "node", "python", "rust", "go", "java", "php", "docker"]}},
+        "attack_surface_hints": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["api", "auth", "cmd", "controller", "controllers", "docker-compose", "go-web", "graphql", "http-api", "java-web", "node-library", "node-web", "php", "php-swoole", "php-web", "python-library", "python-web", "route", "router", "routes", "ssrf-sinks"]}},
+        "bug_classes": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["ssrf", "path-traversal", "prototype-pollution"]}},
+        "reason_code": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]{2,63}$"},
+        "authority": {"const": "recommended_context_only"}
+      }
+    }
+  }
+}

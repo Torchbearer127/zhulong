@@ -1,0 +1,3 @@
+The reviewer would run the bundle-root replay helper here.
+If the target service accepted the payload, the proof would print DIRECT_IMPACT_CONFIRMED.
+This note intentionally has no concrete command block, raw stdout/stderr, oracle check, or exit status.

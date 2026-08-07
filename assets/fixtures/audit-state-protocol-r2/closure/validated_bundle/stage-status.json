@@ -1,0 +1,16 @@
+{
+  "blocker": null,
+  "event_log_digest": "sha256:23464affb214f3db610ccd46e84e6d0117db08169fa128238648f2b6ad4284a3",
+  "last_event_at": "2026-07-20T00:00:01Z",
+  "last_event_name": "finalization_completed",
+  "last_event_seq": 7,
+  "last_event_type": "stage_transition",
+  "plugin": "zhulong",
+  "plugin_version": "p9.5-closure-fixture",
+  "resume_step": null,
+  "run_id": "run-12dc6bc1e290496ab833a08ec67fa9c0",
+  "schema_version": 2,
+  "stage": "finalization",
+  "state_revision": 7,
+  "status": "completed"
+}

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.0
+
+- added file-backed, recoverable audit state with an append-only authority event log, derived workspace views, revision-locked writes, and explicit recovery
+- added advisory structured handoff, immutable checkpoints, and machine-readable next-actions for fresh-context resume
+- added an offline static audit timeline in JSON and HTML with built-in safety sanitization
+- added candidate identity, fingerprinting, deduplication, and bounded triage so repeat findings are tracked consistently
+- added strict production validators across recon, triage, candidate, verdict, disposition, handoff, checkpoint, next-actions, timeline, and finalization authority boundaries
+- added source, Claude installed, and Codex installed layout synchronization and selftests
+
 ## 0.4.0
 
 - added tested Codex user-level skill support at `~/.agents/skills/zhulong/`

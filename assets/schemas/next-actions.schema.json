@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Torchbearer127/zhulong/blob/main/assets/schemas/next-actions.schema.json",
+  "title": "Zhulong Derived Next Actions",
+  "description": "A deterministic, advisory-only index derived from current workspace facts. It is not authority for candidates, verdicts, dispositions, confirmed bundles, recordings, finalization, or completion.",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema_version", "generated_from_revision", "generated_from_event_sequence", "tested_ref", "protocol_mode", "handoff_state_sha256", "classification", "actions", "integrity"],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "generated_from_revision": {"type": ["integer", "null"], "minimum": 1},
+    "generated_from_event_sequence": {"type": ["integer", "null"], "minimum": 1},
+    "tested_ref": {"$ref": "#/$defs/tested_ref"},
+    "protocol_mode": {"type": "string", "enum": ["r2", "legacy_r1"]},
+    "handoff_state_sha256": {"$ref": "#/$defs/sha256"},
+    "classification": {"type": "string", "enum": ["action_required", "no_action", "blocked_invalid_authority"]},
+    "actions": {"type": "array", "items": {"$ref": "#/$defs/action"}},
+    "integrity": {"$ref": "#/$defs/integrity"}
+  },
+  "$defs": {
+    "path": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?![A-Za-z]:[\\\\/])(?![A-Za-z][A-Za-z0-9+.-]*:)(?!~)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+"},
+    "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "tested_ref": {"type": "object", "additionalProperties": false, "required": ["value", "verified", "source_paths", "source_kind"], "properties": {"value": {"type": ["string", "null"]}, "verified": {"type": "boolean"}, "source_paths": {"type": "array", "items": {"$ref": "#/$defs/path"}}, "source_kind": {"type": "string", "enum": ["target_contract", "structured_consensus", "unknown"]}}},
+    "subject": {"type": "object", "additionalProperties": false, "required": ["kind", "id", "path"], "properties": {"kind": {"type": "string", "enum": ["workspace", "recon", "candidate", "bundle"]}, "id": {"type": "string", "pattern": "^(?:WORKSPACE|RECON-[0-9A-Za-z._-]+|CAND-[0-9A-Za-z._-]+|BUNDLE-[0-9A-Za-z._-]+)$"}, "path": {"oneOf": [{"$ref": "#/$defs/path"}, {"type": "null"}]}}},
+    "output": {"type": "object", "additionalProperties": false, "required": ["kind", "path"], "properties": {"kind": {"type": "string", "enum": ["handoff_state", "recon_result", "verifier_verdict", "severity_evidence", "replay_material", "variant_seed", "variant_candidates", "docker_cleanliness", "finalization_event"]}, "path": {"$ref": "#/$defs/path"}}},
+    "parameter": {"type": "object", "additionalProperties": false, "required": ["name", "value"], "properties": {"name": {"type": "string", "enum": ["candidate_id", "workspace_dir", "repo_root", "artifact"]}, "value": {"oneOf": [{"type": "string", "pattern": "^CAND-[0-9A-Za-z._-]+$"}, {"$ref": "#/$defs/path"}]}}},
+    "entrypoint": {"type": "object", "additionalProperties": false, "required": ["name", "parameters"], "properties": {"name": {"type": "string", "enum": ["render_handoff_state", "validate_recon_result", "verify_candidate", "validate_report_bundle", "validate_all_report_bundles", "extract_variant_seed", "find_variant_candidates", "manage_docker_resources_review", "finalize_audit_workspace", "manual_review"]}, "parameters": {"type": "array", "items": {"$ref": "#/$defs/parameter"}}}},
+    "fact": {"type": "object", "additionalProperties": false, "required": ["fact", "path", "sha256"], "properties": {"fact": {"type": "string", "enum": ["authoritative_event_journal", "derived_state_view", "validated_recon_result", "validated_candidate", "validated_verifier_verdict", "validated_confirmed_bundle_count", "strict_docker_cleanliness", "validated_disposition"]}, "path": {"$ref": "#/$defs/path"}, "sha256": {"$ref": "#/$defs/sha256"}}},
+    "action": {"type": "object", "additionalProperties": false, "required": ["action_id", "subject", "blocking_code", "priority", "required_outputs", "suggested_entrypoint", "fact_basis", "evidence_refs"], "properties": {"action_id": {"type": "string", "pattern": "^ACT-[A-Z_]+-[0-9a-f]{16}$"}, "subject": {"$ref": "#/$defs/subject"}, "blocking_code": {"type": "string", "enum": ["HANDOFF_STALE", "ENTRYPOINT_CHAIN_INCOMPLETE", "TRUST_BOUNDARY_REVIEW_INCOMPLETE", "VERDICT_MISSING", "DOCKER_ORACLE_UNPROVEN", "REPLAY_MATERIAL_MISSING", "SEVERITY_ESCALATION_PENDING", "SEEDED_VARIANT_DISCOVERY_PENDING", "DOCKER_CLEANUP_INCOMPLETE", "FINALIZATION_EVENT_MISSING"]}, "priority": {"type": "string", "enum": ["critical", "high", "normal"]}, "required_outputs": {"type": "array", "items": {"$ref": "#/$defs/output"}}, "suggested_entrypoint": {"$ref": "#/$defs/entrypoint"}, "fact_basis": {"type": "array", "items": {"$ref": "#/$defs/fact"}}, "evidence_refs": {"type": "array", "items": {"$ref": "#/$defs/path"}}}},
+    "integrity": {"type": "object", "additionalProperties": false, "required": ["journal_digest", "state_digest", "authoritative_digest", "snapshot_consistent"], "properties": {"journal_digest": {"$ref": "#/$defs/sha256"}, "state_digest": {"$ref": "#/$defs/sha256"}, "authoritative_digest": {"$ref": "#/$defs/sha256"}, "snapshot_consistent": {"type": "boolean"}}}
+  }
+}

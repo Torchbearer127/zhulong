@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Zhulong Context Plan",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema_version", "authority", "phase", "catalog", "input_facts", "mandatory", "optional", "deferred", "non_claims"],
+  "properties": {
+    "schema_version": {"const": 1}, "authority": {"const": "recommended_context_only"},
+    "phase": {"enum": ["intake", "recon", "candidate_generation", "verification", "severity_escalation", "packaging", "finalization", "variant_discovery"]},
+    "catalog": {"type": "object", "additionalProperties": false, "required": ["id", "version", "digest"], "properties": {"id": {"type": "string"}, "version": {"type": "string"}, "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}}},
+    "input_facts": {"type": "object", "additionalProperties": false, "required": ["detected_stack", "attack_surface_hints", "bug_classes"], "properties": {"detected_stack": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string"}}, "attack_surface_hints": {"type": "array", "uniqueItems": true, "items": {"type": "string"}}, "bug_classes": {"type": "array", "uniqueItems": true, "items": {"type": "string"}}}},
+    "mandatory": {"type": "array", "items": {"$ref": "#/$defs/item"}}, "optional": {"type": "array", "items": {"$ref": "#/$defs/item"}}, "deferred": {"type": "array", "items": {"$ref": "#/$defs/item"}},
+    "non_claims": {"type": "array", "minItems": 4, "uniqueItems": true, "items": {"type": "string", "minLength": 8}}
+  },
+  "$defs": {"item": {"type": "object", "additionalProperties": false, "required": ["id", "path", "reason_code", "matched_selectors"], "properties": {"id": {"type": "string"}, "path": {"type": "string"}, "reason_code": {"type": "string"}, "matched_selectors": {"type": "array", "uniqueItems": true, "items": {"type": "string"}}}}}
+}

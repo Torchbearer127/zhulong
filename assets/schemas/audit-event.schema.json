@@ -1,0 +1,339 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Torchbearer127/zhulong/blob/main/assets/schemas/audit-event.schema.json",
+  "title": "Zhulong Audit Event Protocol R2",
+  "description": "Strict append-only audit event record. A valid event records workflow state only and does not confirm a vulnerability, Docker evidence, bundle, or workspace completion.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "seq",
+    "run_id",
+    "ts",
+    "stage",
+    "event_type",
+    "event_name",
+    "from_status",
+    "to_status",
+    "reason_code",
+    "subjects",
+    "evidence_refs",
+    "next_actions",
+    "expected_state_revision",
+    "details"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 2
+    },
+    "plugin_version": {
+      "description": "P9.4 immutable writer metadata. Optional only for accepted historical R2 records.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "run_id": {
+      "$ref": "#/$defs/logical_id"
+    },
+    "ts": {
+      "$ref": "#/$defs/utc_timestamp"
+    },
+    "stage": {
+      "$ref": "#/$defs/stage"
+    },
+    "event_type": {
+      "$ref": "#/$defs/event_type"
+    },
+    "event_name": {
+      "$ref": "#/$defs/event_name"
+    },
+    "from_status": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/status"
+        }
+      ]
+    },
+    "from_stage": {
+      "description": "P9.3 source-stage metadata. It is absent on pre-policy R2 records and null only for a new journal's first event.",
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/stage"
+        }
+      ]
+    },
+    "transition_kind": {
+      "$ref": "#/$defs/transition_kind"
+    },
+    "transition_policy_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "to_status": {
+      "$ref": "#/$defs/status"
+    },
+    "blocker": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        }
+      ]
+    },
+    "resume_step": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        }
+      ]
+    },
+    "reason_code": {
+      "$ref": "#/$defs/reason_code"
+    },
+    "subjects": {
+      "type": "array",
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/logical_id"
+      }
+    },
+    "evidence_refs": {
+      "$ref": "#/$defs/evidence_refs"
+    },
+    "next_actions": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "$ref": "#/$defs/next_action"
+      }
+    },
+    "expected_state_revision": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "details": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "summary"
+      ],
+      "properties": {
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "reason_detail": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "metadata": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "$ref": "#/$defs/metadata_entry"
+          }
+        }
+      }
+    },
+    "prev_event_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  },
+  "$defs": {
+    "logical_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "utc_timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,6})?Z$"
+    },
+    "stage": {
+      "type": "string",
+      "enum": [
+        "intake",
+        "recon",
+        "candidate_generation",
+        "triage",
+        "verification",
+        "severity_escalation",
+        "variant_discovery",
+        "packaging",
+        "finalization",
+        "recording"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "running",
+        "paused",
+        "blocked",
+        "completed"
+      ]
+    },
+    "transition_kind": {
+      "type": "string",
+      "enum": [
+        "start",
+        "observe",
+        "advance",
+        "pause",
+        "block",
+        "resume",
+        "skip",
+        "return",
+        "reopen",
+        "complete"
+      ]
+    },
+    "event_type": {
+      "type": "string",
+      "enum": [
+        "stage_transition",
+        "state_observation",
+        "checkpoint",
+        "recovery",
+        "recording"
+      ]
+    },
+    "event_name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$"
+    },
+    "reason_code": {
+      "type": "string",
+      "enum": [
+        "normal_progress",
+        "operator_request",
+        "prerequisite_missing",
+        "policy_or_safety_block",
+        "verification_blocked",
+        "validation_failed",
+        "external_dependency",
+        "manual_review_required",
+        "interrupted",
+        "recovery_requested",
+        "scope_change",
+        "not_applicable"
+      ]
+    },
+    "evidence_ref": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^(?!/)(?!\\\\)(?!~)(?![A-Za-z]:)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*\\\\)(?!.*(?:^|/)\\.\\.?(/|$))[^/]+(?:/[^/]+)*$"
+    },
+    "evidence_refs": {
+      "type": "array",
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/evidence_ref"
+      }
+    },
+    "metadata_entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "key",
+        "value"
+      ],
+      "properties": {
+        "key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-z][a-z0-9_]{0,63}$"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 1024
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "next_action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "action_id",
+        "action_type",
+        "subject_ids",
+        "summary"
+      ],
+      "properties": {
+        "action_id": {
+          "$ref": "#/$defs/logical_id"
+        },
+        "action_type": {
+          "type": "string",
+          "enum": [
+            "review",
+            "collect_evidence",
+            "verify",
+            "resume",
+            "manual_follow_up"
+          ]
+        },
+        "subject_ids": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/logical_id"
+          }
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "evidence_refs": {
+          "$ref": "#/$defs/evidence_refs"
+        }
+      }
+    }
+  }
+}

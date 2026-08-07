@@ -1,0 +1,154 @@
+{
+  "blockers": [
+    {
+      "active": false,
+      "evidence_refs": [],
+      "reason_code": "verification_blocked",
+      "resume_step": "Review evidence/recovery.txt and resume intake.",
+      "seq": 2,
+      "summary": "Fixture prerequisite is unavailable."
+    }
+  ],
+  "bundles": {
+    "failed": 0,
+    "items": [],
+    "partial": 0,
+    "validated": 0
+  },
+  "candidate_flows": [],
+  "current_state": {
+    "blocker": null,
+    "event_sequence": 3,
+    "resume_step": null,
+    "revision": 3,
+    "run_id": "run-audit-timeline-fixture",
+    "stage": "intake",
+    "status": "running"
+  },
+  "docker": {
+    "baseline_path": null,
+    "baseline_sha256": null,
+    "baseline_status": "missing",
+    "hygiene_path": null,
+    "hygiene_sha256": null,
+    "hygiene_status": "missing",
+    "verification_status": "not_present"
+  },
+  "events": [
+    {
+      "blocker": null,
+      "event_name": "intake_started",
+      "event_type": "stage_transition",
+      "evidence_refs": [],
+      "from_status": null,
+      "reason_code": "normal_progress",
+      "resume_step": null,
+      "revision": 1,
+      "seq": 1,
+      "stage": "intake",
+      "subjects": [],
+      "summary": "Protocol fixture event 1: intake_started.",
+      "to_status": "running",
+      "transition_kind": "start"
+    },
+    {
+      "blocker": "Fixture prerequisite is unavailable.",
+      "event_name": "intake_blocked",
+      "event_type": "stage_transition",
+      "evidence_refs": [],
+      "from_status": "running",
+      "reason_code": "verification_blocked",
+      "resume_step": "Review evidence/recovery.txt and resume intake.",
+      "revision": 2,
+      "seq": 2,
+      "stage": "intake",
+      "subjects": [],
+      "summary": "Protocol fixture event 2: intake_blocked.",
+      "to_status": "blocked",
+      "transition_kind": "block"
+    },
+    {
+      "blocker": null,
+      "event_name": "intake_resumed",
+      "event_type": "recovery",
+      "evidence_refs": [
+        "evidence/recovery.txt"
+      ],
+      "from_status": "blocked",
+      "reason_code": "recovery_requested",
+      "resume_step": null,
+      "revision": 3,
+      "seq": 3,
+      "stage": "intake",
+      "subjects": [
+        "run:audit-timeline-fixture"
+      ],
+      "summary": "Protocol fixture event 3: intake_resumed.",
+      "to_status": "running",
+      "transition_kind": "resume"
+    }
+  ],
+  "finalization": {
+    "path": null,
+    "sha256": null,
+    "status": "not_finalized"
+  },
+  "handoff": {
+    "integrity": "not_present",
+    "path": null,
+    "sha256": null,
+    "status": "not_present"
+  },
+  "integrity": {
+    "authority_digest": "sha256:9b11378ba2cd9d36dbb85e595ce1e9c57110dfdf3996da70fa8456a4d575a6d2",
+    "issue_codes": [],
+    "status": "valid"
+  },
+  "next_actions": {
+    "blocking_codes": [],
+    "classification": "not_present",
+    "path": null,
+    "sha256": null,
+    "status": "not_present"
+  },
+  "non_authority_statement": "This offline timeline is a derived review view. It is not an authority source and grants no confirmation, disposition, execution, promotion, or finalization permission.",
+  "non_claims": [
+    "It does not prove that an Agent read any referenced material.",
+    "It does not contain hidden reasoning or conversation content.",
+    "It does not run Docker, PoC, replay, scanners, network requests, models, or Agents.",
+    "Confirmed status still requires the existing verdict, disposition, Docker, and bundle validators."
+  ],
+  "projection_kind": "derived_read_only_audit_timeline",
+  "protocol_mode": "r2",
+  "schema_version": 1,
+  "source_bindings": [
+    {
+      "kind": "journal",
+      "path": "audit-events.jsonl",
+      "sha256": "sha256:6654e48da166f37f98b442362919c01cbdebf1768c36696ad882ab15f19543f9",
+      "status": "validated",
+      "validator": "audit_state_io.py+audit_transition_policy.py"
+    },
+    {
+      "kind": "state",
+      "path": "stage-status.json",
+      "sha256": "sha256:4c1af742ed245f1993816315f4804685f07c36c5b10b70a1709f8a19c6468dcd",
+      "status": "validated",
+      "validator": "audit_state_io.py"
+    },
+    {
+      "kind": "target_contract",
+      "path": "zhulong-target.yaml",
+      "sha256": "sha256:142eed6c9749f99fe26e8de435f43f7d58d447bb76f70516fda72708dd744509",
+      "status": "validated",
+      "validator": "validate_target_contract.py"
+    }
+  ],
+  "target": {
+    "contract_path": "zhulong-target.yaml",
+    "contract_sha256": "sha256:142eed6c9749f99fe26e8de435f43f7d58d447bb76f70516fda72708dd744509",
+    "name": "fixture-service",
+    "tested_ref": "fixture-service-ref-001",
+    "validator_status": "validated"
+  }
+}

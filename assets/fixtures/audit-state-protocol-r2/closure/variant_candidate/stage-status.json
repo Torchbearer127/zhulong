@@ -1,0 +1,16 @@
+{
+  "blocker": null,
+  "event_log_digest": "sha256:612f21220ab0869495443e73ab42a9edc65c40730882005ba8673b838846dcb5",
+  "last_event_at": "2026-07-20T00:00:01Z",
+  "last_event_name": "candidate_returned",
+  "last_event_seq": 7,
+  "last_event_type": "recovery",
+  "plugin": "zhulong",
+  "plugin_version": "p9.5-closure-fixture",
+  "resume_step": null,
+  "run_id": "run-56fdd9976e324aae992447db37eabe22",
+  "schema_version": 2,
+  "stage": "verification",
+  "state_revision": 7,
+  "status": "running"
+}

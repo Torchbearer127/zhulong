@@ -1,161 +1,753 @@
 {
+  "schema_version": 2,
   "plugin": "zhulong",
-  "tiers": {
-    "runtime": [
-      {
-        "name": "docker",
-        "required": true,
-        "role": "containerized verification runtime"
-      },
-      {
-        "name": "gh",
-        "required": false,
-        "role": "GitHub clone and intelligence lookup"
-      }
-    ],
-    "broad_probe": [
-      {
-        "name": "ship-safe",
-        "required": false,
-        "role": "broad first-pass security probe"
-      },
-      {
-        "name": "semgrep",
-        "required": false,
-        "role": "SAST and custom rule scanning"
-      },
-      {
-        "name": "codeql",
-        "required": false,
-        "role": "deeper static analysis on selected targets"
-      }
-    ],
-    "dependency_and_sbom": [
-      {
-        "name": "trivy",
-        "required": false,
-        "role": "filesystem, image, dependency, secret, and misconfiguration scanning"
-      },
-      {
-        "name": "osv-scanner",
-        "required": false,
-        "role": "dependency vulnerability confirmation"
-      },
-      {
-        "name": "syft",
-        "required": false,
-        "role": "SBOM generation"
-      },
-      {
-        "name": "grype",
-        "required": false,
-        "role": "SBOM and image vulnerability matching"
-      },
-      {
-        "name": "mvn",
-        "required": false,
-        "role": "Java Maven dependency tree extraction"
-      },
-      {
-        "name": "gradle",
-        "required": false,
-        "role": "Java Gradle dependency tree extraction"
-      },
-      {
-        "name": "dependency-check",
-        "required": false,
-        "role": "OWASP dependency vulnerability analysis for Java projects"
-      },
-      {
-        "name": "govulncheck",
-        "required": false,
-        "role": "Go vulnerability analysis"
-      },
-      {
-        "name": "go",
-        "required": false,
-        "role": "Go module inventory with go list"
-      }
-    ],
-    "language_sast": [
-      {
-        "name": "spotbugs",
-        "required": false,
-        "role": "Java static bug and security pattern analysis"
-      },
-      {
-        "name": "findsecbugs",
-        "required": false,
-        "role": "Java security bug patterns for SpotBugs"
-      },
-      {
-        "name": "gosec",
-        "required": false,
-        "role": "Go security pattern scanning"
-      },
-      {
-        "name": "golangci-lint",
-        "required": false,
-        "role": "Go lint aggregation and bug-pattern checks"
-      }
-    ],
-    "secrets": [
-      {
-        "name": "gitleaks",
-        "required": false,
-        "role": "secret scanning in repository tree and history"
-      },
-      {
-        "name": "trufflehog",
-        "required": false,
-        "role": "secret scanning in repository tree and history"
-      }
-    ],
-    "dast": [
-      {
-        "name": "nuclei",
-        "required": false,
-        "role": "template-based DAST and exposure checks"
-      },
-      {
-        "name": "ffuf",
-        "required": false,
-        "role": "endpoint and parameter fuzzing"
-      },
-      {
-        "name": "sqlmap",
-        "required": false,
-        "role": "focused SQL injection verification after a live Docker target exists"
-      },
-      {
-        "name": "owasp-zap",
-        "required": false,
-        "role": "deeper web and API dynamic scanning"
-      }
-    ],
-    "mcp_hardening": [
-      {
-        "name": "mcpserver-audit",
-        "required": false,
-        "role": "audit third-party MCP servers before trusting them"
-      },
-      {
-        "name": "mcp-scanner",
-        "required": false,
-        "role": "scan MCP servers for malicious or risky behavior"
-      }
-    ],
-    "document_qa": [
-      {
-        "name": "markitdown",
-        "required": false,
-        "role": "extract generated docx as markdown for readability smoke tests"
-      },
-      {
-        "name": "libreoffice",
-        "required": false,
-        "role": "headless docx conversion validation"
-      }
-    ]
-  }
+  "tiers": [
+    {
+      "name": "runtime",
+      "tools": [
+        {
+          "name": "docker",
+          "kind": "runtime",
+          "required": true,
+          "role": "raw Docker CLI is not a Zhulong-authorized verification entrypoint",
+          "availability_commands": ["docker"],
+          "allowed_stages": ["verification", "severity_escalation", "variant_discovery"],
+          "execution_boundaries": ["prohibited"],
+          "effects": [],
+          "network_scope": "none",
+          "concurrency_policy": "serial",
+          "timeout_policy": "not_executed",
+          "failure_policy": "fail_closed",
+          "evidence_outputs": [],
+          "confirmation_authority": "none",
+          "controlled_wrapper": null,
+          "planner_status": "prohibited"
+        },
+        {
+          "name": "gh",
+          "kind": "source_control",
+          "required": false,
+          "role": "raw GitHub CLI is outside the planner execution contract",
+          "availability_commands": ["gh"],
+          "allowed_stages": ["intake", "recon"],
+          "execution_boundaries": ["prohibited"],
+          "effects": [],
+          "network_scope": "none",
+          "concurrency_policy": "serial",
+          "timeout_policy": "not_executed",
+          "failure_policy": "optional_unavailable",
+          "evidence_outputs": [],
+          "confirmation_authority": "none",
+          "controlled_wrapper": null,
+          "planner_status": "prohibited"
+        },
+        {
+          "name": "docker-verification-wrapper",
+          "kind": "controlled_wrapper",
+          "required": true,
+          "role": "Docker-only verification wrapper that emits oracle material for independent review",
+          "availability_commands": [],
+          "allowed_stages": ["verification", "severity_escalation", "variant_discovery"],
+          "execution_boundaries": ["workspace_write", "docker_exec", "external_network"],
+          "effects": ["workspace_evidence_write", "docker_container_start", "docker_cli_invocation", "target_code_execute", "external_network_access"],
+          "network_scope": "restricted_external",
+          "concurrency_policy": "serial",
+          "timeout_policy": "wrapper_enforced",
+          "failure_policy": "blocked",
+          "evidence_outputs": [{"path_family": "evidence/*", "artifact_type": "json"}, {"path_family": "evidence/*", "artifact_type": "log"}],
+          "confirmation_authority": "docker_oracle_material_only",
+          "controlled_wrapper": {"path": "scripts/run_verification_case.sh", "workspace_adapter": "bin/run-verification-case.sh", "contract_marker": "zhulong-tool-contract: docker-verification-v1; timeout=mandatory; sandbox-preflight=mandatory"},
+          "planner_status": "wrapper_required"
+        },
+        {
+          "name": "sandbox-preflight",
+          "kind": "controlled_wrapper",
+          "required": true,
+          "role": "Docker sandbox configuration safety preflight; it never confirms a finding",
+          "availability_commands": [],
+          "allowed_stages": ["verification", "severity_escalation", "variant_discovery"],
+          "execution_boundaries": ["workspace_write"],
+          "effects": ["workspace_evidence_write"],
+          "network_scope": "none",
+          "concurrency_policy": "serial",
+          "timeout_policy": "not_enforced",
+          "failure_policy": "fail_closed",
+          "evidence_outputs": [{"path_family": "runtime/sandbox-preflight-status.json", "artifact_type": "json"}],
+          "confirmation_authority": "none",
+          "controlled_wrapper": {"path": "scripts/check_sandbox_preflight.py", "workspace_adapter": "bin/check-sandbox-preflight.py", "contract_marker": "zhulong-tool-contract: sandbox-preflight-v1"},
+          "planner_status": "wrapper_required"
+        }
+      ]
+    },
+    {
+      "name": "local-review",
+      "tools": [
+        {
+          "name": "source-inspection",
+          "kind": "source_inspection",
+          "required": false,
+          "role": "local source inspection that never has confirmed authority",
+          "availability_commands": ["rg"],
+          "allowed_stages": ["recon", "candidate_generation", "triage"],
+          "execution_boundaries": ["host_read_only"],
+          "effects": ["source_read"],
+          "network_scope": "none",
+          "concurrency_policy": "parallel_safe",
+          "timeout_policy": "caller_required",
+          "failure_policy": "optional_unavailable",
+          "evidence_outputs": [],
+          "confirmation_authority": "none",
+          "controlled_wrapper": null,
+          "planner_status": "planning_only"
+        },
+        {
+          "name": "initial-probes-wrapper",
+          "kind": "controlled_wrapper",
+          "required": false,
+          "role": "fixed first-pass probe wrapper that records candidate-only evidence",
+          "availability_commands": [],
+          "allowed_stages": ["recon", "candidate_generation"],
+          "execution_boundaries": ["workspace_write", "host_cache_write", "external_network"],
+          "effects": ["source_read", "git_metadata_read", "workspace_evidence_write", "host_cache_write", "external_network_access"],
+          "network_scope": "public_external",
+          "concurrency_policy": "serial",
+          "timeout_policy": "not_enforced",
+          "failure_policy": "candidate_only",
+          "evidence_outputs": [{"path_family": "evidence/initial-probes/**", "artifact_type": "json"}, {"path_family": "evidence/initial-probes/**", "artifact_type": "log"}],
+          "confirmation_authority": "candidate_only",
+          "controlled_wrapper": {"path": "scripts/run_initial_probes.sh", "workspace_adapter": "bin/run-initial-probes.sh", "contract_marker": "zhulong-tool-contract: initial-probes-v1"},
+          "planner_status": "wrapper_required"
+        }
+      ]
+    },
+    {
+      "name": "broad-probe",
+      "tools": [
+        {
+          "name": "ship-safe",
+          "kind": "scanner",
+          "required": false,
+          "role": "broad first-pass security probe not implemented by the controlled initial wrapper",
+          "availability_commands": ["ship-safe"],
+          "allowed_stages": ["recon"],
+          "execution_boundaries": ["prohibited"],
+          "effects": [],
+          "network_scope": "none",
+          "concurrency_policy": "serial",
+          "timeout_policy": "not_executed",
+          "failure_policy": "optional_unavailable",
+          "evidence_outputs": [],
+          "confirmation_authority": "none",
+          "controlled_wrapper": null,
+          "planner_status": "prohibited"
+        },
+        {
+          "name": "semgrep",
+          "kind": "static_analysis",
+          "required": false,
+          "role": "SAST and custom-rule scanning through the fixed initial-probe wrapper",
+          "availability_commands": ["semgrep"],
+          "allowed_stages": ["recon", "candidate_generation"],
+          "execution_boundaries": ["workspace_write", "host_cache_write", "external_network"],
+          "effects": ["source_read", "workspace_evidence_write", "host_cache_write", "external_network_access"],
+          "network_scope": "public_external",
+          "concurrency_policy": "serial",
+          "timeout_policy": "not_enforced",
+          "failure_policy": "candidate_only",
+          "evidence_outputs": [{"path_family": "evidence/initial-probes/**", "artifact_type": "log"}],
+          "confirmation_authority": "candidate_only",
+          "controlled_wrapper": {"path": "scripts/run_initial_probes.sh", "workspace_adapter": "bin/run-initial-probes.sh", "contract_marker": "zhulong-tool-contract: initial-probes-v1"},
+          "planner_status": "wrapper_required"
+        },
+        {
+          "name": "codeql",
+          "kind": "static_analysis",
+          "required": false,
+          "role": "deeper static analysis requires a future constrained wrapper",
+          "availability_commands": ["codeql"],
+          "allowed_stages": ["recon", "candidate_generation"],
+          "execution_boundaries": ["prohibited"],
+          "effects": [],
+          "network_scope": "none",
+          "concurrency_policy": "serial",
+          "timeout_policy": "not_executed",
+          "failure_policy": "optional_unavailable",
+          "evidence_outputs": [],
+          "confirmation_authority": "none",
+          "controlled_wrapper": null,
+          "planner_status": "prohibited"
+        }
+      ]
+    },
+    {
+      "name": "dependency-and-sbom",
+      "tools": [
+        {
+          "name": "npm-audit",
+          "kind": "dependency",
+          "required": false,
+          "role": "Node dependency advisory collection through the fixed initial-probe wrapper",
+          "availability_commands": ["npm"],
+          "allowed_stages": ["recon"],
+          "execution_boundaries": ["workspace_write", "host_cache_write", "external_network"],
+          "effects": ["package_metadata_read", "workspace_evidence_write", "host_cache_write", "external_network_access"],
+          "network_scope": "public_external",
+          "concurrency_policy": "serial",
+          "timeout_policy": "not_enforced",
+          "failure_policy": "candidate_only",
+          "evidence_outputs": [{"path_family": "evidence/initial-probes/**", "artifact_type": "log"}],
+          "confirmation_authority": "candidate_only",
+          "controlled_wrapper": {"path": "scripts/run_initial_probes.sh", "workspace_adapter": "bin/run-initial-probes.sh", "contract_marker": "zhulong-tool-contract: initial-probes-v1"},
+          "planner_status": "wrapper_required"
+        },
+        {
+          "name": "maven-dependency-tree",
+          "kind": "dependency",
+          "required": false,
+          "role": "Maven dependency inventory through the fixed initial-probe wrapper",
+          "availability_commands": ["mvn"],
+          "allowed_stages": ["recon"],
+          "execution_boundaries": ["workspace_write", "host_cache_write", "external_network"],
+          "effects": ["package_metadata_read", "workspace_evidence_write", "host_cache_write", "external_network_access"],
+          "network_scope": "public_external",
+          "concurrency_policy": "serial",
+          "timeout_policy": "not_enforced",
+          "failure_policy": "candidate_only",
+          "evidence_outputs": [{"path_family": "evidence/initial-probes/**", "artifact_type": "log"}],
+          "confirmation_authority": "candidate_only",
+          "controlled_wrapper": {"path": "scripts/run_initial_probes.sh", "workspace_adapter": "bin/run-initial-probes.sh", "contract_marker": "zhulong-tool-contract: initial-probes-v1"},
+          "planner_status": "wrapper_required"
+        },
+        {
+          "name": "gradle-dependencies",
+          "kind": "dependency",
+          "required": false,
+          "role": "Gradle dependency inventory through the fixed initial-probe wrapper",
+          "availability_commands": ["gradle", "gradlew"],
+          "allowed_stages": ["recon"],
+          "execution_boundaries": ["workspace_write", "target_repo_write", "host_cache_write", "external_network"],
+          "effects": ["package_metadata_read", "target_repo_write", "workspace_evidence_write", "host_cache_write", "external_network_access"],
+          "network_scope": "public_external",
+          "concurrency_policy": "serial",
+          "timeout_policy": "not_enforced",
+          "failure_policy": "candidate_only",
+          "evidence_outputs": [{"path_family": "evidence/initial-probes/**", "artifact_type": "log"}],
+          "confirmation_authority": "candidate_only",
+          "controlled_wrapper": {"path": "scripts/run_initial_probes.sh", "workspace_adapter": "bin/run-initial-probes.sh", "contract_marker": "zhulong-tool-contract: initial-probes-v1"},
+          "planner_status": "wrapper_required"
+        },
+        {
+          "name": "dependency-check",
+          "kind": "dependency",
+          "required": false,
+          "role": "Java dependency analysis through the fixed initial-probe wrapper",
+          "availability_commands": ["dependency-check", "dependency-check.sh"],
+          "allowed_stages": ["recon"],
+          "execution_boundaries": ["workspace_write", "host_cache_write", "external_network"],
+          "effects": ["source_read", "workspace_evidence_write", "host_cache_write", "external_network_access"],
+          "network_scope": "public_external",
+          "concurrency_policy": "serial",
+          "timeout_policy": "not_enforced",
+          "failure_policy": "candidate_only",
+          "evidence_outputs": [{"path_family": "evidence/initial-probes/**", "artifact_type": "log"}],
+          "confirmation_authority": "candidate_only",
+          "controlled_wrapper": {"path": "scripts/run_initial_probes.sh", "workspace_adapter": "bin/run-initial-probes.sh", "contract_marker": "zhulong-tool-contract: initial-probes-v1"},
+          "planner_status": "wrapper_required"
+        },
+        {
+          "name": "composer-audit",
+          "kind": "dependency",
+          "required": false,
+          "role": "Composer advisory lookup has no constrained initial-probe implementation yet",
+          "availability_commands": ["composer"],
+          "allowed_stages": ["recon"],
+          "execution_boundaries": ["prohibited"],
+          "effects": [],
+          "network_scope": "none",
+          "concurrency_policy": "serial",
+          "timeout_policy": "not_executed",
+          "failure_policy": "optional_unavailable",
+          "evidence_outputs": [],
+          "confirmation_authority": "none",
+          "controlled_wrapper": null,
+          "planner_status": "prohibited"
+        },
+        {
+          "name": "composer-locked",
+          "kind": "dependency",
+          "required": false,
+          "role": "Composer lock inspection has no constrained initial-probe implementation yet",
+          "availability_commands": ["composer"],
+          "allowed_stages": ["recon"],
+          "execution_boundaries": ["prohibited"],
+          "effects": [],
+          "network_scope": "none",
+          "concurrency_policy": "serial",
+          "timeout_policy": "not_executed",
+          "failure_policy": "optional_unavailable",
+          "evidence_outputs": [],
+          "confirmation_authority": "none",
+          "controlled_wrapper": null,
+          "planner_status": "prohibited"
+        },
+        {
+          "name": "go-list-modules",
+          "kind": "dependency",
+          "required": false,
+          "role": "Go module inventory through the fixed initial-probe wrapper",
+          "availability_commands": ["go"],
+          "allowed_stages": ["recon"],
+          "execution_boundaries": ["workspace_write", "host_cache_write", "external_network"],
+          "effects": ["package_metadata_read", "workspace_evidence_write", "host_cache_write", "external_network_access"],
+          "network_scope": "public_external",
+          "concurrency_policy": "serial",
+          "timeout_policy": "not_enforced",
+          "failure_policy": "candidate_only",
+          "evidence_outputs": [{"path_family": "evidence/initial-probes/**", "artifact_type": "log"}],
+          "confirmation_authority": "candidate_only",
+          "controlled_wrapper": {"path": "scripts/run_initial_probes.sh", "workspace_adapter": "bin/run-initial-probes.sh", "contract_marker": "zhulong-tool-contract: initial-probes-v1"},
+          "planner_status": "wrapper_required"
+        },
+        {
+          "name": "govulncheck",
+          "kind": "dependency",
+          "required": false,
+          "role": "Go vulnerability advisory collection through the fixed initial-probe wrapper",
+          "availability_commands": ["govulncheck"],
+          "allowed_stages": ["recon"],
+          "execution_boundaries": ["workspace_write", "host_cache_write", "external_network"],
+          "effects": ["source_read", "workspace_evidence_write", "host_cache_write", "external_network_access"],
+          "network_scope": "public_external",
+          "concurrency_policy": "serial",
+          "timeout_policy": "not_enforced",
+          "failure_policy": "candidate_only",
+          "evidence_outputs": [{"path_family": "evidence/initial-probes/**", "artifact_type": "log"}],
+          "confirmation_authority": "candidate_only",
+          "controlled_wrapper": {"path": "scripts/run_initial_probes.sh", "workspace_adapter": "bin/run-initial-probes.sh", "contract_marker": "zhulong-tool-contract: initial-probes-v1"},
+          "planner_status": "wrapper_required"
+        },
+        {
+          "name": "osv-scanner",
+          "kind": "dependency",
+          "required": false,
+          "role": "dependency advisory collection through the fixed initial-probe wrapper",
+          "availability_commands": ["osv-scanner"],
+          "allowed_stages": ["recon"],
+          "execution_boundaries": ["workspace_write", "host_cache_write", "external_network"],
+          "effects": ["package_metadata_read", "workspace_evidence_write", "host_cache_write", "external_network_access"],
+          "network_scope": "public_external",
+          "concurrency_policy": "serial",
+          "timeout_policy": "not_enforced",
+          "failure_policy": "candidate_only",
+          "evidence_outputs": [{"path_family": "evidence/initial-probes/**", "artifact_type": "log"}],
+          "confirmation_authority": "candidate_only",
+          "controlled_wrapper": {"path": "scripts/run_initial_probes.sh", "workspace_adapter": "bin/run-initial-probes.sh", "contract_marker": "zhulong-tool-contract: initial-probes-v1"},
+          "planner_status": "wrapper_required"
+        },
+        {
+          "name": "trivy",
+          "kind": "scanner",
+          "required": false,
+          "role": "filesystem and dependency scanning through the fixed initial-probe wrapper",
+          "availability_commands": ["trivy"],
+          "allowed_stages": ["recon", "candidate_generation"],
+          "execution_boundaries": ["workspace_write", "host_cache_write", "external_network"],
+          "effects": ["source_read", "workspace_evidence_write", "host_cache_write", "external_network_access"],
+          "network_scope": "public_external",
+          "concurrency_policy": "serial",
+          "timeout_policy": "not_enforced",
+          "failure_policy": "candidate_only",
+          "evidence_outputs": [{"path_family": "evidence/initial-probes/**", "artifact_type": "log"}],
+          "confirmation_authority": "candidate_only",
+          "controlled_wrapper": {"path": "scripts/run_initial_probes.sh", "workspace_adapter": "bin/run-initial-probes.sh", "contract_marker": "zhulong-tool-contract: initial-probes-v1"},
+          "planner_status": "wrapper_required"
+        },
+        {
+          "name": "syft",
+          "kind": "sbom",
+          "required": false,
+          "role": "SBOM generation through the fixed initial-probe wrapper",
+          "availability_commands": ["syft"],
+          "allowed_stages": ["recon"],
+          "execution_boundaries": ["workspace_write", "host_cache_write", "external_network"],
+          "effects": ["source_read", "workspace_evidence_write", "host_cache_write", "external_network_access"],
+          "network_scope": "public_external",
+          "concurrency_policy": "serial",
+          "timeout_policy": "not_enforced",
+          "failure_policy": "candidate_only",
+          "evidence_outputs": [{"path_family": "evidence/initial-probes/**", "artifact_type": "sbom"}, {"path_family": "evidence/initial-probes/**", "artifact_type": "log"}],
+          "confirmation_authority": "candidate_only",
+          "controlled_wrapper": {"path": "scripts/run_initial_probes.sh", "workspace_adapter": "bin/run-initial-probes.sh", "contract_marker": "zhulong-tool-contract: initial-probes-v1"},
+          "planner_status": "wrapper_required"
+        },
+        {
+          "name": "grype",
+          "kind": "scanner",
+          "required": false,
+          "role": "SBOM vulnerability matching through the fixed initial-probe wrapper",
+          "availability_commands": ["grype"],
+          "allowed_stages": ["recon"],
+          "execution_boundaries": ["workspace_write", "host_cache_write", "external_network"],
+          "effects": ["source_read", "workspace_evidence_write", "host_cache_write", "external_network_access"],
+          "network_scope": "public_external",
+          "concurrency_policy": "serial",
+          "timeout_policy": "not_enforced",
+          "failure_policy": "candidate_only",
+          "evidence_outputs": [{"path_family": "evidence/initial-probes/**", "artifact_type": "log"}],
+          "confirmation_authority": "candidate_only",
+          "controlled_wrapper": {"path": "scripts/run_initial_probes.sh", "workspace_adapter": "bin/run-initial-probes.sh", "contract_marker": "zhulong-tool-contract: initial-probes-v1"},
+          "planner_status": "wrapper_required"
+        },
+        {
+          "name": "pip-audit",
+          "kind": "dependency",
+          "required": false,
+          "role": "Python advisory tool requires a future constrained wrapper",
+          "availability_commands": ["pip-audit"],
+          "allowed_stages": ["recon"],
+          "execution_boundaries": ["prohibited"],
+          "effects": [],
+          "network_scope": "none",
+          "concurrency_policy": "serial",
+          "timeout_policy": "not_executed",
+          "failure_policy": "optional_unavailable",
+          "evidence_outputs": [],
+          "confirmation_authority": "none",
+          "controlled_wrapper": null,
+          "planner_status": "prohibited"
+        },
+        {
+          "name": "cargo-audit",
+          "kind": "dependency",
+          "required": false,
+          "role": "Rust advisory tool requires a future constrained wrapper",
+          "availability_commands": ["cargo-audit"],
+          "allowed_stages": ["recon"],
+          "execution_boundaries": ["prohibited"],
+          "effects": [],
+          "network_scope": "none",
+          "concurrency_policy": "serial",
+          "timeout_policy": "not_executed",
+          "failure_policy": "optional_unavailable",
+          "evidence_outputs": [],
+          "confirmation_authority": "none",
+          "controlled_wrapper": null,
+          "planner_status": "prohibited"
+        }
+      ]
+    },
+    {
+      "name": "language-sast",
+      "tools": [
+        {
+          "name": "gosec",
+          "kind": "static_analysis",
+          "required": false,
+          "role": "Go security pattern scanning through the fixed initial-probe wrapper",
+          "availability_commands": ["gosec"],
+          "allowed_stages": ["recon", "candidate_generation"],
+          "execution_boundaries": ["workspace_write", "host_cache_write", "external_network"],
+          "effects": ["source_read", "workspace_evidence_write", "host_cache_write", "external_network_access"],
+          "network_scope": "public_external",
+          "concurrency_policy": "serial",
+          "timeout_policy": "not_enforced",
+          "failure_policy": "candidate_only",
+          "evidence_outputs": [{"path_family": "evidence/initial-probes/**", "artifact_type": "log"}],
+          "confirmation_authority": "candidate_only",
+          "controlled_wrapper": {"path": "scripts/run_initial_probes.sh", "workspace_adapter": "bin/run-initial-probes.sh", "contract_marker": "zhulong-tool-contract: initial-probes-v1"},
+          "planner_status": "wrapper_required"
+        },
+        {
+          "name": "golangci-lint",
+          "kind": "static_analysis",
+          "required": false,
+          "role": "Go lint aggregation through the fixed initial-probe wrapper",
+          "availability_commands": ["golangci-lint"],
+          "allowed_stages": ["recon", "candidate_generation"],
+          "execution_boundaries": ["workspace_write", "host_cache_write", "external_network"],
+          "effects": ["source_read", "workspace_evidence_write", "host_cache_write", "external_network_access"],
+          "network_scope": "public_external",
+          "concurrency_policy": "serial",
+          "timeout_policy": "not_enforced",
+          "failure_policy": "candidate_only",
+          "evidence_outputs": [{"path_family": "evidence/initial-probes/**", "artifact_type": "log"}],
+          "confirmation_authority": "candidate_only",
+          "controlled_wrapper": {"path": "scripts/run_initial_probes.sh", "workspace_adapter": "bin/run-initial-probes.sh", "contract_marker": "zhulong-tool-contract: initial-probes-v1"},
+          "planner_status": "wrapper_required"
+        },
+        {
+          "name": "spotbugs",
+          "kind": "static_analysis",
+          "required": false,
+          "role": "Java static analysis requires a future constrained wrapper",
+          "availability_commands": ["spotbugs"],
+          "allowed_stages": ["recon", "candidate_generation"],
+          "execution_boundaries": ["prohibited"],
+          "effects": [],
+          "network_scope": "none",
+          "concurrency_policy": "serial",
+          "timeout_policy": "not_executed",
+          "failure_policy": "optional_unavailable",
+          "evidence_outputs": [],
+          "confirmation_authority": "none",
+          "controlled_wrapper": null,
+          "planner_status": "prohibited"
+        },
+        {
+          "name": "findsecbugs",
+          "kind": "static_analysis",
+          "required": false,
+          "role": "SpotBugs security patterns require a future constrained wrapper",
+          "availability_commands": ["findsecbugs"],
+          "allowed_stages": ["recon", "candidate_generation"],
+          "execution_boundaries": ["prohibited"],
+          "effects": [],
+          "network_scope": "none",
+          "concurrency_policy": "serial",
+          "timeout_policy": "not_executed",
+          "failure_policy": "optional_unavailable",
+          "evidence_outputs": [],
+          "confirmation_authority": "none",
+          "controlled_wrapper": null,
+          "planner_status": "prohibited"
+        },
+        {
+          "name": "phpstan",
+          "kind": "static_analysis",
+          "required": false,
+          "role": "PHP static analysis requires a future constrained wrapper",
+          "availability_commands": ["phpstan"],
+          "allowed_stages": ["recon", "candidate_generation"],
+          "execution_boundaries": ["prohibited"],
+          "effects": [],
+          "network_scope": "none",
+          "concurrency_policy": "serial",
+          "timeout_policy": "not_executed",
+          "failure_policy": "optional_unavailable",
+          "evidence_outputs": [],
+          "confirmation_authority": "none",
+          "controlled_wrapper": null,
+          "planner_status": "prohibited"
+        },
+        {
+          "name": "psalm",
+          "kind": "static_analysis",
+          "required": false,
+          "role": "PHP static analysis requires a future constrained wrapper",
+          "availability_commands": ["psalm"],
+          "allowed_stages": ["recon", "candidate_generation"],
+          "execution_boundaries": ["prohibited"],
+          "effects": [],
+          "network_scope": "none",
+          "concurrency_policy": "serial",
+          "timeout_policy": "not_executed",
+          "failure_policy": "optional_unavailable",
+          "evidence_outputs": [],
+          "confirmation_authority": "none",
+          "controlled_wrapper": null,
+          "planner_status": "prohibited"
+        }
+      ]
+    },
+    {
+      "name": "secrets",
+      "tools": [
+        {
+          "name": "gitleaks",
+          "kind": "secret_scanner",
+          "required": false,
+          "role": "secret scanning through the fixed initial-probe wrapper",
+          "availability_commands": ["gitleaks"],
+          "allowed_stages": ["recon", "candidate_generation"],
+          "execution_boundaries": ["workspace_write", "host_cache_write", "external_network"],
+          "effects": ["source_read", "git_metadata_read", "workspace_evidence_write", "host_cache_write", "external_network_access"],
+          "network_scope": "public_external",
+          "concurrency_policy": "serial",
+          "timeout_policy": "not_enforced",
+          "failure_policy": "candidate_only",
+          "evidence_outputs": [{"path_family": "evidence/initial-probes/**", "artifact_type": "json"}, {"path_family": "evidence/initial-probes/**", "artifact_type": "log"}],
+          "confirmation_authority": "candidate_only",
+          "controlled_wrapper": {"path": "scripts/run_initial_probes.sh", "workspace_adapter": "bin/run-initial-probes.sh", "contract_marker": "zhulong-tool-contract: initial-probes-v1"},
+          "planner_status": "wrapper_required"
+        },
+        {
+          "name": "trufflehog",
+          "kind": "secret_scanner",
+          "required": false,
+          "role": "secret scanning requires a future constrained wrapper",
+          "availability_commands": ["trufflehog"],
+          "allowed_stages": ["recon", "candidate_generation"],
+          "execution_boundaries": ["prohibited"],
+          "effects": [],
+          "network_scope": "none",
+          "concurrency_policy": "serial",
+          "timeout_policy": "not_executed",
+          "failure_policy": "optional_unavailable",
+          "evidence_outputs": [],
+          "confirmation_authority": "none",
+          "controlled_wrapper": null,
+          "planner_status": "prohibited"
+        }
+      ]
+    },
+    {
+      "name": "dast",
+      "tools": [
+        {
+          "name": "nuclei",
+          "kind": "dast",
+          "required": false,
+          "role": "template DAST is prohibited until a live-target wrapper is added",
+          "availability_commands": ["nuclei"],
+          "allowed_stages": ["verification", "severity_escalation"],
+          "execution_boundaries": ["prohibited"],
+          "effects": [],
+          "network_scope": "none",
+          "concurrency_policy": "serial",
+          "timeout_policy": "not_executed",
+          "failure_policy": "fail_closed",
+          "evidence_outputs": [],
+          "confirmation_authority": "none",
+          "controlled_wrapper": null,
+          "planner_status": "prohibited"
+        },
+        {
+          "name": "ffuf",
+          "kind": "dast",
+          "required": false,
+          "role": "endpoint fuzzing is prohibited until a live-target wrapper is added",
+          "availability_commands": ["ffuf"],
+          "allowed_stages": ["verification", "severity_escalation"],
+          "execution_boundaries": ["prohibited"],
+          "effects": [],
+          "network_scope": "none",
+          "concurrency_policy": "serial",
+          "timeout_policy": "not_executed",
+          "failure_policy": "fail_closed",
+          "evidence_outputs": [],
+          "confirmation_authority": "none",
+          "controlled_wrapper": null,
+          "planner_status": "prohibited"
+        },
+        {
+          "name": "sqlmap",
+          "kind": "dast",
+          "required": false,
+          "role": "SQL injection probing is prohibited until a live-target wrapper is added",
+          "availability_commands": ["sqlmap"],
+          "allowed_stages": ["verification", "severity_escalation"],
+          "execution_boundaries": ["prohibited"],
+          "effects": [],
+          "network_scope": "none",
+          "concurrency_policy": "serial",
+          "timeout_policy": "not_executed",
+          "failure_policy": "fail_closed",
+          "evidence_outputs": [],
+          "confirmation_authority": "none",
+          "controlled_wrapper": null,
+          "planner_status": "prohibited"
+        },
+        {
+          "name": "owasp-zap",
+          "kind": "dast",
+          "required": false,
+          "role": "web DAST is prohibited until a live-target wrapper is added",
+          "availability_commands": ["zap.sh", "zaproxy", "zap-baseline.py"],
+          "allowed_stages": ["verification", "severity_escalation"],
+          "execution_boundaries": ["prohibited"],
+          "effects": [],
+          "network_scope": "none",
+          "concurrency_policy": "serial",
+          "timeout_policy": "not_executed",
+          "failure_policy": "fail_closed",
+          "evidence_outputs": [],
+          "confirmation_authority": "none",
+          "controlled_wrapper": null,
+          "planner_status": "prohibited"
+        }
+      ]
+    },
+    {
+      "name": "mcp-hardening",
+      "tools": [
+        {
+          "name": "mcpserver-audit",
+          "kind": "mcp_hardening",
+          "required": false,
+          "role": "third-party MCP hardening tool is planning-only",
+          "availability_commands": ["mcpserver-audit"],
+          "allowed_stages": ["recon"],
+          "execution_boundaries": ["host_read_only"],
+          "effects": ["source_read"],
+          "network_scope": "none",
+          "concurrency_policy": "serial",
+          "timeout_policy": "caller_required",
+          "failure_policy": "optional_unavailable",
+          "evidence_outputs": [],
+          "confirmation_authority": "none",
+          "controlled_wrapper": null,
+          "planner_status": "planning_only"
+        },
+        {
+          "name": "mcp-scanner",
+          "kind": "mcp_hardening",
+          "required": false,
+          "role": "third-party MCP scanner is planning-only",
+          "availability_commands": ["mcp-scanner"],
+          "allowed_stages": ["recon"],
+          "execution_boundaries": ["host_read_only"],
+          "effects": ["source_read"],
+          "network_scope": "none",
+          "concurrency_policy": "serial",
+          "timeout_policy": "caller_required",
+          "failure_policy": "optional_unavailable",
+          "evidence_outputs": [],
+          "confirmation_authority": "none",
+          "controlled_wrapper": null,
+          "planner_status": "planning_only"
+        }
+      ]
+    },
+    {
+      "name": "document-qa",
+      "tools": [
+        {
+          "name": "markitdown",
+          "kind": "document_qa",
+          "required": false,
+          "role": "local document readability inspection",
+          "availability_commands": ["markitdown"],
+          "allowed_stages": ["packaging", "finalization"],
+          "execution_boundaries": ["host_read_only"],
+          "effects": ["source_read"],
+          "network_scope": "none",
+          "concurrency_policy": "parallel_safe",
+          "timeout_policy": "caller_required",
+          "failure_policy": "optional_unavailable",
+          "evidence_outputs": [],
+          "confirmation_authority": "none",
+          "controlled_wrapper": null,
+          "planner_status": "planning_only"
+        },
+        {
+          "name": "libreoffice",
+          "kind": "document_qa",
+          "required": false,
+          "role": "headless document conversion requires an explicit local review step",
+          "availability_commands": ["soffice"],
+          "allowed_stages": ["packaging", "finalization"],
+          "execution_boundaries": ["host_cache_write"],
+          "effects": ["source_read", "host_cache_write", "document_generate"],
+          "network_scope": "none",
+          "concurrency_policy": "serial",
+          "timeout_policy": "caller_required",
+          "failure_policy": "optional_unavailable",
+          "evidence_outputs": [],
+          "confirmation_authority": "none",
+          "controlled_wrapper": null,
+          "planner_status": "planning_only"
+        }
+      ]
+    }
+  ]
 }

@@ -1,0 +1,2 @@
+{"blocker":null,"details":{"summary":"intake_started"},"event_name":"intake_started","event_type":"stage_transition","evidence_refs":["evidence/closure.json"],"expected_state_revision":0,"from_stage":null,"from_status":null,"next_actions":[],"plugin_version":"p9.5-closure-fixture","reason_code":"normal_progress","resume_step":null,"run_id":"run-7daadd85034046c2bd6a3a32bfdf3e5d","schema_version":2,"seq":1,"stage":"intake","subjects":["run:p9.5-closure"],"to_status":"running","transition_kind":"start","transition_policy_version":1,"ts":"2026-07-20T00:00:00Z"}
+{"broken"}

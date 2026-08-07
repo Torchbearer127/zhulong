@@ -1,0 +1,328 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zhulong.local/schemas/audit-timeline.schema.json",
+  "title": "Zhulong Derived Audit Timeline",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "projection_kind",
+    "non_authority_statement",
+    "protocol_mode",
+    "target",
+    "source_bindings",
+    "events",
+    "current_state",
+    "blockers",
+    "candidate_flows",
+    "docker",
+    "bundles",
+    "finalization",
+    "handoff",
+    "next_actions",
+    "integrity",
+    "non_claims"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "projection_kind": {"const": "derived_read_only_audit_timeline"},
+    "non_authority_statement": {
+      "const": "This offline timeline is a derived review view. It is not an authority source and grants no confirmation, disposition, execution, promotion, or finalization permission."
+    },
+    "protocol_mode": {"enum": ["r2", "legacy_r1"]},
+    "target": {"$ref": "#/$defs/target"},
+    "source_bindings": {
+      "type": "array",
+      "minItems": 3,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/source_binding"}
+    },
+    "events": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/event"}
+    },
+    "current_state": {"$ref": "#/$defs/current_state"},
+    "blockers": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/blocker"}
+    },
+    "candidate_flows": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/candidate_flow"}
+    },
+    "docker": {"$ref": "#/$defs/docker"},
+    "bundles": {"$ref": "#/$defs/bundles"},
+    "finalization": {"$ref": "#/$defs/status_ref"},
+    "handoff": {"$ref": "#/$defs/handoff"},
+    "next_actions": {"$ref": "#/$defs/next_actions"},
+    "integrity": {"$ref": "#/$defs/integrity"},
+    "non_claims": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1, "maxLength": 240}
+    }
+  },
+  "$defs": {
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 300,
+      "pattern": "^(?!/)(?!~)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*//)[^\\u0000-\\u001F]+$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "nullable_path": {
+      "oneOf": [{"$ref": "#/$defs/path"}, {"type": "null"}]
+    },
+    "nullable_sha256": {
+      "oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]
+    },
+    "nullable_text": {
+      "oneOf": [
+        {"type": "string", "minLength": 1, "maxLength": 240},
+        {"type": "null"}
+      ]
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "tested_ref", "contract_path", "contract_sha256", "validator_status"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1, "maxLength": 120},
+        "tested_ref": {"type": "string", "minLength": 1, "maxLength": 160},
+        "contract_path": {"$ref": "#/$defs/path"},
+        "contract_sha256": {"$ref": "#/$defs/sha256"},
+        "validator_status": {"const": "validated"}
+      }
+    },
+    "source_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "kind", "validator", "status"],
+      "properties": {
+        "path": {"$ref": "#/$defs/path"},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "kind": {
+          "enum": [
+            "journal", "state", "target_contract", "recon", "triage",
+            "candidate", "verdict", "disposition", "docker", "runtime",
+            "bundle", "recording", "other"
+          ]
+        },
+        "validator": {"type": "string", "minLength": 1, "maxLength": 120, "pattern": "^[A-Za-z0-9_.+ -]+$"},
+        "status": {"const": "validated"}
+      }
+    },
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seq", "revision", "stage", "event_type", "event_name",
+        "transition_kind", "from_status", "to_status", "reason_code",
+        "subjects", "evidence_refs", "blocker", "resume_step", "summary"
+      ],
+      "properties": {
+        "seq": {"oneOf": [{"type": "integer", "minimum": 1}, {"type": "null"}]},
+        "revision": {"oneOf": [{"type": "integer", "minimum": 1}, {"type": "null"}]},
+        "stage": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-z][a-z0-9_]*$"},
+        "event_type": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-z][a-z0-9_]*$"},
+        "event_name": {"type": "string", "minLength": 1, "maxLength": 120, "pattern": "^[a-z][a-z0-9_]*$"},
+        "transition_kind": {
+          "oneOf": [
+            {"enum": ["start", "observe", "advance", "pause", "block", "resume", "skip", "return", "reopen", "complete"]},
+            {"type": "null"}
+          ]
+        },
+        "from_status": {
+          "oneOf": [
+            {"type": "string", "minLength": 1, "maxLength": 32, "pattern": "^[a-z][a-z0-9_-]*$"},
+            {"type": "null"}
+          ]
+        },
+        "to_status": {"type": "string", "minLength": 1, "maxLength": 32, "pattern": "^[a-z][a-z0-9_-]*$"},
+        "reason_code": {"type": "string", "minLength": 1, "maxLength": 80, "pattern": "^[a-z][a-z0-9_]*$"},
+        "subjects": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 160}
+        },
+        "evidence_refs": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/path"}
+        },
+        "blocker": {"$ref": "#/$defs/nullable_text"},
+        "resume_step": {"$ref": "#/$defs/nullable_text"},
+        "summary": {"$ref": "#/$defs/nullable_text"}
+      }
+    },
+    "current_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run_id", "revision", "event_sequence", "stage", "status", "blocker", "resume_step"],
+      "properties": {
+        "run_id": {"oneOf": [{"type": "string", "minLength": 1, "maxLength": 160}, {"type": "null"}]},
+        "revision": {"oneOf": [{"type": "integer", "minimum": 1}, {"type": "null"}]},
+        "event_sequence": {"oneOf": [{"type": "integer", "minimum": 1}, {"type": "null"}]},
+        "stage": {"type": "string", "minLength": 1, "maxLength": 64},
+        "status": {"type": "string", "minLength": 1, "maxLength": 32, "pattern": "^[a-z][a-z0-9_-]*$"},
+        "blocker": {"$ref": "#/$defs/nullable_text"},
+        "resume_step": {"$ref": "#/$defs/nullable_text"}
+      }
+    },
+    "blocker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["seq", "active", "reason_code", "summary", "resume_step", "evidence_refs"],
+      "properties": {
+        "seq": {"oneOf": [{"type": "integer", "minimum": 1}, {"type": "null"}]},
+        "active": {"type": "boolean"},
+        "reason_code": {"type": "string", "minLength": 1, "maxLength": 80},
+        "summary": {"$ref": "#/$defs/nullable_text"},
+        "resume_step": {"$ref": "#/$defs/nullable_text"},
+        "evidence_refs": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/path"}}
+      }
+    },
+    "flow_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "path", "sha256"],
+      "properties": {
+        "status": {"type": "string", "minLength": 1, "maxLength": 80},
+        "path": {"$ref": "#/$defs/nullable_path"},
+        "sha256": {"$ref": "#/$defs/nullable_sha256"}
+      }
+    },
+    "bundle_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["classification", "path", "evidence_sha256", "link_basis"],
+      "properties": {
+        "classification": {"enum": ["not_present", "bundle_validated", "partial_confirmed_bundle", "validation_failed"]},
+        "path": {"$ref": "#/$defs/nullable_path"},
+        "evidence_sha256": {"$ref": "#/$defs/nullable_sha256"},
+        "link_basis": {
+          "enum": [
+            "not_present",
+            "validated_single_confirmed_flow_and_bundle"
+          ]
+        }
+      }
+    },
+    "candidate_flow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["candidate_id", "candidate_path", "candidate_sha256", "candidate_fingerprint", "verdict", "disposition", "bundle"],
+      "properties": {
+        "candidate_id": {"type": "string", "minLength": 1, "maxLength": 160, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:@/-]*$"},
+        "candidate_path": {"$ref": "#/$defs/path"},
+        "candidate_sha256": {"$ref": "#/$defs/sha256"},
+        "candidate_fingerprint": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+        "verdict": {"$ref": "#/$defs/flow_ref"},
+        "disposition": {"$ref": "#/$defs/flow_ref"},
+        "bundle": {"$ref": "#/$defs/bundle_ref"}
+      }
+    },
+    "docker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["verification_status", "hygiene_status", "hygiene_path", "hygiene_sha256", "baseline_status", "baseline_path", "baseline_sha256"],
+      "properties": {
+        "verification_status": {
+          "enum": [
+            "not_present",
+            "evidence_only_present",
+            "verdict_present",
+            "confirmed_verdict_present"
+          ]
+        },
+        "hygiene_status": {"type": "string", "minLength": 1, "maxLength": 80},
+        "hygiene_path": {"$ref": "#/$defs/nullable_path"},
+        "hygiene_sha256": {"$ref": "#/$defs/nullable_sha256"},
+        "baseline_status": {"type": "string", "minLength": 1, "maxLength": 80},
+        "baseline_path": {"$ref": "#/$defs/nullable_path"},
+        "baseline_sha256": {"$ref": "#/$defs/nullable_sha256"}
+      }
+    },
+    "bundle_item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bundle_id", "path", "classification", "evidence_sha256"],
+      "properties": {
+        "bundle_id": {"type": "string", "minLength": 1, "maxLength": 120},
+        "path": {"$ref": "#/$defs/path"},
+        "classification": {"enum": ["bundle_validated", "partial_confirmed_bundle", "validation_failed"]},
+        "evidence_sha256": {"$ref": "#/$defs/nullable_sha256"}
+      }
+    },
+    "bundles": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["validated", "partial", "failed", "items"],
+      "properties": {
+        "validated": {"type": "integer", "minimum": 0},
+        "partial": {"type": "integer", "minimum": 0},
+        "failed": {"type": "integer", "minimum": 0},
+        "items": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/bundle_item"}}
+      }
+    },
+    "status_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "path", "sha256"],
+      "properties": {
+        "status": {"type": "string", "minLength": 1, "maxLength": 80},
+        "path": {"$ref": "#/$defs/nullable_path"},
+        "sha256": {"$ref": "#/$defs/nullable_sha256"}
+      }
+    },
+    "handoff": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "path", "sha256", "integrity"],
+      "properties": {
+        "status": {"enum": ["not_present", "validated"]},
+        "path": {"$ref": "#/$defs/nullable_path"},
+        "sha256": {"$ref": "#/$defs/nullable_sha256"},
+        "integrity": {"type": "string", "minLength": 1, "maxLength": 80}
+      }
+    },
+    "next_actions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "path", "sha256", "classification", "blocking_codes"],
+      "properties": {
+        "status": {"enum": ["not_present", "validated"]},
+        "path": {"$ref": "#/$defs/nullable_path"},
+        "sha256": {"$ref": "#/$defs/nullable_sha256"},
+        "classification": {"type": "string", "minLength": 1, "maxLength": 80},
+        "blocking_codes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]{2,79}$"}
+        }
+      }
+    },
+    "integrity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "authority_digest", "issue_codes"],
+      "properties": {
+        "status": {"const": "valid"},
+        "authority_digest": {"$ref": "#/$defs/sha256"},
+        "issue_codes": {
+          "type": "array",
+          "maxItems": 0,
+          "items": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]{2,79}$"}
+        }
+      }
+    }
+  }
+}

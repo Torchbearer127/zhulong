@@ -240,6 +240,9 @@
     "verified_at": {
       "type": "string",
       "format": "date-time"
+    },
+    "candidate_binding": {
+      "$ref": "#/definitions/candidate_binding"
     }
   },
   "allOf": [
@@ -300,6 +303,16 @@
     }
   ],
   "definitions": {
+    "candidate_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocol_mode", "candidate_sha256", "fingerprint"],
+      "properties": {
+        "protocol_mode": {"const": "r2"},
+        "candidate_sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "fingerprint": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+      }
+    },
     "evidence_level": {
       "type": "string",
       "enum": [

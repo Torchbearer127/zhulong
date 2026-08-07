@@ -1,0 +1,9 @@
+Replay transcript: compose service proof
+COMMAND: docker compose -f attachments/poc/docker-compose.zhulong.yml up --abort-on-container-exit
+container logs:
+  target-1    | import worker accepted request from reviewer fixture
+  listener-1  | callback observed from target service
+  proof-1     | grep -Fq DIRECT_IMPACT_CONFIRMED /evidence/replay-output.log
+proof output: deterministic success marker verified by service oracle
+result: passed
+DIRECT_IMPACT_CONFIRMED

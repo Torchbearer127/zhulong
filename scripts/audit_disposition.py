@@ -3,12 +3,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import stat
 import subprocess
 import sys
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
+
+from candidate_identity import file_sha256
 
 from blocked_verification import detect_blocked_verification
 from validate_candidate import (
@@ -305,16 +309,12 @@ def workspace_relative(workspace: Path, path: Path) -> str:
 def resolve_under_workspace(workspace: Path, raw_path: str, label: str) -> Path:
     if not raw_path:
         raise DispositionUpdateError(f"{label} is required")
-    path = Path(raw_path).expanduser()
-    candidates = [path.resolve()] if path.is_absolute() else [(Path.cwd() / path).resolve(), (workspace / path).resolve()]
-    workspace_resolved = workspace.resolve()
-    for resolved in candidates:
-        try:
-            resolved.relative_to(workspace_resolved)
-            return resolved
-        except ValueError:
-            continue
-    raise DispositionUpdateError(f"{label} must stay under the workspace")
+    path, error = safe_workspace_path(workspace, raw_path, label=label)
+    if error:
+        raise DispositionUpdateError(error)
+    if path is None or not path.is_file():
+        raise DispositionUpdateError(f"{label} must reference an existing regular workspace file")
+    return path
 
 
 def disposition_record_from_candidate(
@@ -344,10 +344,19 @@ def disposition_record_from_candidate(
         "oracle_summary": oracle_summary,
         "updated_at": utc_now(),
     }
+    checked = validate_candidate(candidate_doc)
+    if checked.get("protocol_mode") == "r2":
+        record["candidate_protocol_mode"] = "r2"
+        record["candidate_sha256"] = file_sha256(candidate_path)
+        record["candidate_fingerprint"] = checked["fingerprint"]
     if verdict_path is not None:
         record["verdict_path"] = workspace_relative(workspace, verdict_path)
     if isinstance(verdict_doc, dict) and verdict_doc.get("evidence_level"):
         record["evidence_level"] = str(verdict_doc.get("evidence_level") or "").strip()
+    if isinstance(verdict_doc, dict):
+        record["verification_status"] = str(verdict_doc.get("verification_status") or "").strip()
+        record["disposition_recommendation"] = str(verdict_doc.get("disposition_recommendation") or "").strip()
+        record["verdict_candidate_id"] = str(verdict_doc.get("candidate_id") or "").strip()
     return record
 
 
@@ -540,22 +549,61 @@ def synthesize_disposition_ledger(
     }
 
 
-def safe_workspace_path(workspace: Path, value: str) -> tuple[Path | None, str | None]:
-    if not value:
+def safe_workspace_path(
+    workspace: Path,
+    value: str,
+    *,
+    label: str = "confirmed_bundle_path",
+) -> tuple[Path | None, str | None]:
+    """Resolve one workspace-relative path without following symlinks.
+
+    ``Path.resolve()`` is deliberately not used for authority inputs: resolving
+    first would make a symlink escape look like a legitimate in-workspace path.
+    The caller decides whether the final object must be a file or directory;
+    this helper only proves lexical containment and rejects symlink ancestors.
+    Diagnostics contain the supplied workspace-relative value, never the local
+    absolute workspace path.
+    """
+    raw_value = str(value or "").strip()
+    if not raw_value:
         return None, None
-    raw = Path(value)
+    if "\\" in raw_value:
+        return None, f"{label} must use a workspace-relative POSIX path: {raw_value}"
+    raw = PurePosixPath(raw_value)
     if raw.is_absolute():
-        return None, f"confirmed_bundle_path must be workspace-relative, got absolute path: {value}"
-    resolved = (workspace / raw).resolve()
+        return None, f"{label} must be workspace-relative: {raw_value}"
+    parts = raw.parts
+    if not parts or any(part in {"", ".", ".."} for part in parts):
+        return None, f"{label} contains an unsafe path component: {raw_value}"
+
+    workspace_root = workspace.resolve()
+    current = workspace_root
     try:
-        resolved.relative_to(workspace.resolve())
-    except ValueError:
-        return None, f"confirmed_bundle_path escapes workspace: {value}"
-    return resolved, None
+        root_info = os.lstat(current)
+    except OSError:
+        return None, f"{label} workspace root is not accessible"
+    if stat.S_ISLNK(root_info.st_mode) or not stat.S_ISDIR(root_info.st_mode):
+        return None, f"{label} workspace root is not a real directory"
+
+    for index, part in enumerate(parts):
+        current = current / part
+        try:
+            info = os.lstat(current)
+        except FileNotFoundError:
+            # A missing tail is safe to report to the caller, which can then
+            # distinguish a missing file from a missing directory or object.
+            return current, None
+        except OSError:
+            return None, f"{label} cannot be inspected: {raw_value}"
+        if stat.S_ISLNK(info.st_mode):
+            return None, f"{label} must not traverse a symlink: {raw_value}"
+        if index < len(parts) - 1 and not stat.S_ISDIR(info.st_mode):
+            return None, f"{label} has a non-directory ancestor: {raw_value}"
+    return current, None
 
 
 def rel_confirmed_path(path: Path, workspace: Path) -> str:
-    return path.resolve().relative_to(workspace.resolve()).as_posix()
+    return path.relative_to(workspace.resolve()).as_posix()
 
 
 def validator_path(workspace: Path) -> Path | None:
@@ -596,17 +644,123 @@ def load_valid_candidate_and_verdict(candidate_path: Path, verdict_path: Path) -
         candidate_doc = load_candidate(candidate_path)
         validate_candidate(candidate_doc)
     except CandidateValidationError as exc:
-        raise DispositionUpdateError(f"candidate validation failed: {exc}") from exc
+        raise DispositionUpdateError("candidate validation failed: production candidate validator rejected candidate.json") from exc
     try:
         verdict_doc = load_verdict(verdict_path)
         validate_verdict(verdict_doc)
         cross_check_candidate(candidate_path, verdict_doc)
-    except VerdictValidationError as exc:
-        raise DispositionUpdateError(f"verifier verdict validation failed: {exc}") from exc
+    except (CandidateValidationError, VerdictValidationError) as exc:
+        raise DispositionUpdateError("verifier verdict validation failed: production verifier validator rejected verifier-verdict.json") from exc
     verdict = str(verdict_doc.get("verdict") or "")
     if verdict not in VERDICT_DISPOSITION_STATUSES:
         raise DispositionUpdateError(f"verifier verdict cannot be mapped to disposition: {verdict or '<missing>'}")
     return candidate_doc, verdict_doc
+
+
+def validate_candidate_disposition_record(
+    workspace: Path,
+    record: dict[str, Any],
+) -> dict[str, Any]:
+    """Validate one ledger record against production candidate/verdict files."""
+    candidate_id = str(record.get("candidate_id") or "").strip()
+    label = candidate_id or "candidate disposition"
+    candidate_value = str(record.get("candidate_path") or "").strip()
+    status = str(record.get("status") or "").strip()
+    source = str(record.get("source") or "").strip()
+    if not candidate_value:
+        raise DispositionUpdateError(f"{label}: candidate_path is required")
+    candidate_path, path_error = safe_workspace_path(workspace, candidate_value, label="candidate_path")
+    if path_error:
+        raise DispositionUpdateError(f"{label}: {path_error}")
+    if candidate_path is None or not candidate_path.is_file():
+        raise DispositionUpdateError(f"{label}: candidate_path must reference an existing regular file")
+    try:
+        candidate_doc = load_candidate(candidate_path)
+        candidate_checked = validate_candidate(candidate_doc)
+    except CandidateValidationError as exc:
+        raise DispositionUpdateError(f"{label}: production candidate validator rejected candidate_path") from exc
+
+    actual_candidate_id = str(candidate_doc.get("candidate_id") or "")
+    if candidate_id != actual_candidate_id or candidate_checked.get("candidate_id") != candidate_id:
+        raise DispositionUpdateError(f"{label}: candidate_id does not match candidate.json")
+    if record.get("target_ref") != candidate_doc.get("target_ref"):
+        raise DispositionUpdateError(f"{label}: target_ref does not match candidate.json")
+    for field in ("title", "bug_class", "entrypoint", "claim"):
+        if field in record and record.get(field) != candidate_doc.get(field):
+            raise DispositionUpdateError(f"{label}: {field} does not match candidate.json")
+    candidate_poc = candidate_doc.get("poc") if isinstance(candidate_doc.get("poc"), dict) else {}
+    if "poc_path" in record and str(record.get("poc_path") or "") != str(candidate_poc.get("path") or ""):
+        raise DispositionUpdateError(f"{label}: poc_path does not match candidate.json")
+
+    if candidate_checked.get("protocol_mode") == "r2":
+        if record.get("candidate_protocol_mode") != "r2":
+            raise DispositionUpdateError(f"{label}: R2 candidate is missing candidate_protocol_mode=r2")
+        if record.get("candidate_sha256") != file_sha256(candidate_path):
+            raise DispositionUpdateError(f"{label}: candidate_sha256 does not match candidate.json")
+        if record.get("candidate_fingerprint") != candidate_checked.get("fingerprint"):
+            raise DispositionUpdateError(f"{label}: candidate_fingerprint does not match candidate.json")
+    elif any(key in record for key in ("candidate_protocol_mode", "candidate_sha256", "candidate_fingerprint")):
+        raise DispositionUpdateError(f"{label}: legacy R1 candidate must not claim Candidate R2 identity binding")
+
+    verdict_path: Path | None = None
+    verdict_doc: dict[str, Any] | None = None
+    verdict_checked: dict[str, Any] | None = None
+    verdict_value = str(record.get("verdict_path") or "").strip()
+    if status != "candidate":
+        if not verdict_value:
+            raise DispositionUpdateError(f"{label}: non-candidate disposition requires verdict_path")
+        verdict_path, path_error = safe_workspace_path(workspace, verdict_value, label="verdict_path")
+        if path_error:
+            raise DispositionUpdateError(f"{label}: {path_error}")
+        if verdict_path is None or not verdict_path.is_file():
+            raise DispositionUpdateError(f"{label}: verdict_path must reference an existing regular file")
+        try:
+            verdict_doc = load_verdict(verdict_path)
+            verdict_checked = validate_verdict(verdict_doc)
+            cross_check_candidate(candidate_path, verdict_doc)
+        except (CandidateValidationError, VerdictValidationError) as exc:
+            raise DispositionUpdateError(f"{label}: production verifier verdict validator rejected verdict_path") from exc
+        verdict_id = str(verdict_doc.get("candidate_id") or "")
+        if verdict_id != candidate_id or verdict_checked.get("candidate_id") != candidate_id:
+            raise DispositionUpdateError(f"{label}: verdict candidate_id does not match candidate disposition")
+        verdict_status = str(verdict_doc.get("verdict") or "")
+        if status != verdict_status:
+            raise DispositionUpdateError(f"{label}: ledger status does not match verifier verdict")
+        if record.get("target_ref") != verdict_doc.get("target_ref"):
+            raise DispositionUpdateError(f"{label}: target_ref does not match verifier verdict")
+        expected_fields = {
+            "verification_status": verdict_doc.get("verification_status"),
+            "disposition_recommendation": verdict_doc.get("disposition_recommendation"),
+            "verdict_candidate_id": verdict_id,
+        }
+        for field, expected in expected_fields.items():
+            if field in record and record.get(field) != expected:
+                raise DispositionUpdateError(f"{label}: {field} does not match verifier verdict")
+        evidence_level = str(verdict_doc.get("evidence_level") or "").strip()
+        if evidence_level and record.get("evidence_level") != evidence_level:
+            raise DispositionUpdateError(f"{label}: evidence_level does not match verifier verdict")
+        oracle = verdict_doc.get("oracle_result") if isinstance(verdict_doc.get("oracle_result"), dict) else {}
+        oracle_summary = str(oracle.get("summary") or "")
+        if oracle_summary and "oracle_summary" in record and str(record.get("oracle_summary") or "") != oracle_summary:
+            raise DispositionUpdateError(f"{label}: oracle_summary does not match verifier verdict")
+        if source != "verifier-verdict":
+            raise DispositionUpdateError(f"{label}: terminal disposition source must be verifier-verdict")
+    elif source != "candidate-contract":
+        raise DispositionUpdateError(f"{label}: candidate status must use candidate-contract source")
+
+    return {
+        "candidate_path": candidate_path,
+        "candidate": candidate_doc,
+        "candidate_checked": candidate_checked,
+        "verdict_path": verdict_path,
+        "verdict": verdict_doc,
+        "verdict_checked": verdict_checked,
+        "candidate_id": candidate_id,
+        "status": status,
+        "source": source,
+        "candidate_relative": candidate_path.relative_to(workspace.resolve()).as_posix(),
+        "verdict_relative": verdict_path.relative_to(workspace.resolve()).as_posix() if verdict_path else "",
+    }
 
 
 def update_ledger_from_verdict(workspace: Path, candidate_path: Path, verdict_path: Path) -> dict[str, Any]:
@@ -741,6 +895,7 @@ def validate_disposition_ledger(
 
     seen_ids: set[str] = set()
     seen_candidate_ids: set[str] = set()
+    validated_candidate_records: dict[str, dict[str, Any]] = {}
     confirmed_path_counts: dict[str, int] = {}
     state_counts: dict[str, int] = {state: 0 for state in STATES}
     candidate_status_counts: dict[str, int] = {status: 0 for status in sorted(VERDICT_DISPOSITION_STATUSES | {"candidate"})}
@@ -864,19 +1019,12 @@ def validate_disposition_ledger(
             errors.append(
                 f"{label}: confirmed_in_docker requires candidate.json and verifier-verdict.json references from verifier-verdict source."
             )
-        if status != "candidate" and not verdict_path:
-            errors.append(f"{label}: non-candidate disposition requires verdict_path.")
-        for path_label, value in (("candidate_path", candidate_path), ("verdict_path", verdict_path)):
-            if not value:
-                if path_label == "verdict_path" and status == "candidate":
-                    continue
-                errors.append(f"{label}: {path_label} is required.")
-                continue
-            path, path_error = safe_workspace_path(workspace, value)
-            if path_error:
-                errors.append(f"{label}: {path_error.replace('confirmed_bundle_path', path_label)}")
-            elif path is None or not path.exists() or not path.is_file():
-                errors.append(f"{label}: {path_label} does not exist as a file: {value}")
+        try:
+            validated_record = validate_candidate_disposition_record(workspace, record)
+            if candidate_id:
+                validated_candidate_records[candidate_id] = validated_record
+        except DispositionUpdateError as exc:
+            errors.append(str(exc))
 
     for bundle_dir in confirmed_bundle_dirs(workspace):
         rel_path = rel_confirmed_path(bundle_dir, workspace)
@@ -889,6 +1037,10 @@ def validate_disposition_ledger(
         if str(item.get("state") or "") in {"candidate", "unverified", "blocked"}
         or str(item.get("docker_status") or "") in MATERIAL_BLOCKING_DOCKER_STATUSES
     ]
+    unresolved.extend(
+        record for record in candidate_records
+        if str(record.get("status") or "") in {"candidate", "unverified", "blocked"}
+    )
     return {
         "ok": not errors,
         "errors": errors,
@@ -899,6 +1051,336 @@ def validate_disposition_ledger(
             "candidate_status_counts": {key: value for key, value in sorted(candidate_status_counts.items()) if value},
             "unresolved_count": len(unresolved),
             "confirmed_bundle_count": len(confirmed_bundle_dirs(workspace)),
+        },
+    }
+
+
+def _validated_bundle_entries(
+    workspace: Path,
+    bundle_summary: dict[str, Any],
+) -> tuple[list[tuple[str, Path]], list[str]]:
+    entries: list[tuple[str, Path]] = []
+    errors: list[str] = []
+    results = bundle_summary.get("results") if isinstance(bundle_summary, dict) else []
+    if not isinstance(results, list):
+        return entries, ["bundle validator returned no structured results"]
+    seen: set[str] = set()
+    for item in results:
+        if not isinstance(item, dict) or str(item.get("classification") or "") != "bundle_validated":
+            continue
+        raw = str(item.get("path") or item.get("name") or "").strip().replace("\\", "/")
+        if raw.startswith("confirmed/"):
+            relative = raw
+        else:
+            relative = f"{CONFIRMED_DIR}/{raw}"
+        path, path_error = safe_workspace_path(workspace, relative, label="confirmed bundle path")
+        if path_error or path is None or not path.is_dir():
+            errors.append(f"validated bundle {relative or '<missing>'} is not a safe real directory")
+            continue
+        canonical = path.relative_to(workspace.resolve()).as_posix()
+        if canonical in seen:
+            errors.append(f"duplicate validated bundle path: {canonical}")
+            continue
+        seen.add(canonical)
+        entries.append((canonical, path))
+    return entries, errors
+
+
+def _discover_candidate_documents(workspace: Path) -> tuple[dict[str, dict[str, Any]], list[str]]:
+    candidates_dir = workspace / "candidates"
+    documents: dict[str, dict[str, Any]] = {}
+    errors: list[str] = []
+    if not candidates_dir.exists():
+        return documents, errors
+    if candidates_dir.is_symlink() or not candidates_dir.is_dir():
+        return documents, ["candidates is not a safe real directory"]
+    for path in sorted(candidates_dir.rglob("candidate.json")):
+        relative = path.relative_to(workspace).as_posix()
+        safe_path, path_error = safe_workspace_path(workspace, relative, label="candidate path")
+        if path_error or safe_path is None or not safe_path.is_file():
+            errors.append(f"{relative}: candidate path is not a safe regular file")
+            continue
+        try:
+            document = load_candidate(safe_path)
+            checked = validate_candidate(document)
+        except CandidateValidationError:
+            errors.append(f"{relative}: production candidate validator rejected candidate")
+            continue
+        candidate_id = str(checked.get("candidate_id") or document.get("candidate_id") or "")
+        if candidate_id in documents:
+            errors.append(f"duplicate candidate_id in candidate files: {candidate_id}")
+            continue
+        documents[candidate_id] = {
+            "path": safe_path,
+            "relative": relative,
+            "document": document,
+            "checked": checked,
+        }
+    return documents, errors
+
+
+def _run_structured_validator(
+    workspace: Path,
+    validator_name: str,
+    flag: str,
+    relative: str,
+) -> tuple[dict[str, Any] | None, str | None]:
+    validator = workspace / "bin" / validator_name
+    if not validator.exists():
+        validator = Path(__file__).resolve().parent / validator_name
+    path, path_error = safe_workspace_path(workspace, relative, label=relative)
+    if path_error or path is None or not path.is_file():
+        return None, f"{relative} is missing or unsafe"
+    if not validator.is_file():
+        return None, f"{validator_name} is missing"
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(validator),
+            "--repo-root", str(workspace.parent),
+            "--workspace-dir", str(workspace),
+            flag, str(path),
+            "--json",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    try:
+        payload = json.loads(proc.stdout)
+    except (json.JSONDecodeError, ValueError):
+        return None, f"{relative} validator did not produce structured JSON"
+    if proc.returncode != 0 or payload.get("ok") is not True:
+        issue_codes = payload.get("issue_codes")
+        if isinstance(issue_codes, list):
+            stable_codes = sorted({str(code).strip() for code in issue_codes if str(code).strip()})
+            if stable_codes:
+                return payload, f"{relative} failed its production structured-result validator [{', '.join(stable_codes)}]"
+        return payload, f"{relative} failed its production structured-result validator"
+    return payload, None
+
+
+def _zero_candidate_recon_triage_gate(workspace: Path) -> tuple[bool, list[str]]:
+    errors: list[str] = []
+    recon_payload, recon_error = _run_structured_validator(
+        workspace,
+        "validate_recon_result.py",
+        "--recon-result",
+        "recon-result.json",
+    )
+    if recon_error:
+        errors.append(recon_error)
+    else:
+        recon_doc = read_json(workspace / "recon-result.json")
+        if recon_payload is None or recon_payload.get("status") != "complete":
+            errors.append("recon-result.json must be a production-valid complete coverage result")
+        if recon_doc.get("coverage_gaps") or recon_doc.get("unresolved_blockers"):
+            errors.append("recon-result.json must prove complete coverage with no gaps or blockers")
+        focus_refs = recon_doc.get("focus_refs")
+        if not isinstance(focus_refs, list) or not focus_refs:
+            errors.append("recon-result.json must expose non-empty structured coverage focus references")
+
+    # A complete Recon result is the authoritative zero-candidate proof.  A
+    # Triage batch is optional because the production Triage contract is an
+    # explicit batch of existing candidates and deliberately rejects an empty
+    # inventory.  If one is present, it must still validate and may not be
+    # used to smuggle an unrepresented candidate into the zero-candidate
+    # branch.
+    triage_path = workspace / "triage-batch.json"
+    if triage_path.exists():
+        triage_payload, triage_error = _run_structured_validator(
+            workspace,
+            "validate_triage_batch.py",
+            "--triage-batch",
+            "triage-batch.json",
+        )
+        if triage_error:
+            errors.append(triage_error)
+        else:
+            triage_doc = read_json(triage_path)
+            inventory = triage_doc.get("candidate_inventory")
+            if triage_payload is None or triage_payload.get("status") != "complete":
+                errors.append("triage-batch.json must be a production-valid complete structured result")
+            if not isinstance(inventory, list) or inventory:
+                errors.append("triage-batch.json cannot introduce candidates into the zero-candidate branch")
+    return not errors, errors
+
+
+def validate_workspace_confirmation_chain(
+    workspace: Path,
+    *,
+    result: str,
+    protocol_mode: str = "r2",
+    ledger: dict[str, Any] | None = None,
+    bundle_summary: dict[str, Any] | None = None,
+    disposition_validation: dict[str, Any] | None = None,
+    language: str = "auto",
+) -> dict[str, Any]:
+    """Validate the complete candidate -> verdict -> disposition -> bundle chain.
+
+    This read-only helper is the completion authority consumed by the finalizer,
+    handoff derivation, and the finalization assertion.  A standalone bundle
+    validator remains necessary but is never sufficient for completion.
+    """
+    workspace = workspace.resolve()
+    errors: list[str] = []
+    if ledger is None:
+        ledger = load_disposition_ledger(workspace)
+    if not isinstance(ledger, dict):
+        ledger = {}
+    if bundle_summary is None:
+        bundle_summary = run_bundle_validator(workspace, language)
+    if disposition_validation is None:
+        disposition_validation = validate_disposition_ledger(
+            workspace,
+            result=result,
+            ledger=ledger,
+            bundle_summary=bundle_summary,
+            language=language,
+        )
+    if not disposition_validation.get("ok"):
+        errors.extend(str(item) for item in disposition_validation.get("errors", []))
+
+    records = candidate_disposition_records(ledger)
+    validated_records: dict[str, dict[str, Any]] = {}
+    for record in records:
+        candidate_id = str(record.get("candidate_id") or "").strip()
+        try:
+            validated_records[candidate_id] = validate_candidate_disposition_record(workspace, record)
+        except DispositionUpdateError as exc:
+            errors.append(str(exc))
+
+    bundle_entries, bundle_errors = _validated_bundle_entries(workspace, bundle_summary)
+    errors.extend(bundle_errors)
+    validated_bundle_paths = {relative for relative, _path in bundle_entries}
+    items = ledger_items(ledger)
+    confirmed_items: dict[str, int] = {}
+    for item in items:
+        if str(item.get("state") or "") != "confirmed":
+            continue
+        raw = str(item.get("confirmed_bundle_path") or "").strip()
+        path, path_error = safe_workspace_path(workspace, raw, label="confirmed_bundle_path")
+        if path_error or path is None:
+            continue
+        relative = path.relative_to(workspace.resolve()).as_posix()
+        confirmed_items[relative] = confirmed_items.get(relative, 0) + 1
+
+    confirmed_records = {
+        candidate_id: value
+        for candidate_id, value in validated_records.items()
+        if value.get("status") == "confirmed_in_docker"
+    }
+    record_by_verdict: dict[str, tuple[str, dict[str, Any]]] = {}
+    for candidate_id, value in confirmed_records.items():
+        verdict_relative = str(value.get("verdict_relative") or "")
+        if not verdict_relative:
+            continue
+        if verdict_relative in record_by_verdict:
+            errors.append(f"duplicate confirmed disposition verdict path: {verdict_relative}")
+        else:
+            record_by_verdict[verdict_relative] = (candidate_id, value)
+
+    bundle_verdicts: dict[str, str] = {}
+    for bundle_relative, bundle_path in bundle_entries:
+        review_path = bundle_path / "validity-review.json"
+        review_relative = review_path.relative_to(workspace).as_posix()
+        safe_review, review_error = safe_workspace_path(workspace, review_relative, label="validity-review path")
+        if review_error or safe_review is None or not safe_review.is_file():
+            errors.append(f"{bundle_relative}: validated bundle must contain a safe validity-review.json")
+            continue
+        review = read_json(safe_review)
+        binding = review.get("source_binding") if isinstance(review, dict) else None
+        materials = binding.get("materials") if isinstance(binding, dict) else None
+        verdict_relative = str(materials.get("verifier_verdict") or "").strip() if isinstance(materials, dict) else ""
+        if not verdict_relative:
+            errors.append(f"{bundle_relative}: validity-review.json.source_binding.materials.verifier_verdict is required")
+            continue
+        verdict_path, verdict_error = safe_workspace_path(workspace, verdict_relative, label="verifier_verdict path")
+        if verdict_error or verdict_path is None or not verdict_path.is_file():
+            errors.append(f"{bundle_relative}: verifier verdict path is not a safe existing workspace file")
+            continue
+        canonical_verdict = verdict_path.relative_to(workspace.resolve()).as_posix()
+        if canonical_verdict != verdict_relative:
+            errors.append(f"{bundle_relative}: verifier verdict path is not canonical")
+        if canonical_verdict in bundle_verdicts.values():
+            errors.append(f"duplicate validated bundle verifier verdict path: {canonical_verdict}")
+        bundle_verdicts[bundle_relative] = canonical_verdict
+        match = record_by_verdict.get(canonical_verdict)
+        if match is None:
+            errors.append(f"{bundle_relative}: verifier verdict is not referenced by exactly one confirmed disposition")
+            continue
+        candidate_id, value = match
+        verdict_doc = value.get("verdict") if isinstance(value.get("verdict"), dict) else {}
+        candidate_doc = value.get("candidate") if isinstance(value.get("candidate"), dict) else {}
+        if str(verdict_doc.get("candidate_id") or "") != candidate_id:
+            errors.append(f"{bundle_relative}: verifier verdict candidate_id does not match disposition candidate_id")
+        if str(verdict_doc.get("verdict") or "") != "confirmed_in_docker":
+            errors.append(f"{bundle_relative}: bundle verifier verdict is not confirmed_in_docker")
+        if str(candidate_doc.get("candidate_id") or "") != candidate_id:
+            errors.append(f"{bundle_relative}: candidate.json candidate_id does not match disposition candidate_id")
+        bundle_target_ref = {
+            "target_config": str(materials.get("target_config") or "").strip(),
+            "tested_ref": str(binding.get("tested_ref") or "").strip(),
+        }
+        if candidate_doc.get("target_ref") != bundle_target_ref:
+            errors.append(f"{bundle_relative}: candidate target_ref does not match the bundle source binding")
+        if verdict_doc.get("target_ref") != bundle_target_ref:
+            errors.append(f"{bundle_relative}: verifier verdict target_ref does not match the bundle source binding")
+
+    if result == "completed_with_confirmed_bundles":
+        if not bundle_entries:
+            errors.append("completed_with_confirmed_bundles requires at least one standalone-validated bundle")
+        for bundle_relative in sorted(validated_bundle_paths):
+            if confirmed_items.get(bundle_relative) != 1:
+                errors.append(f"{bundle_relative}: validated bundle must map to exactly one confirmed legacy disposition item")
+        for bundle_relative, count in sorted(confirmed_items.items()):
+            if bundle_relative not in validated_bundle_paths or count != 1:
+                errors.append(f"{bundle_relative}: confirmed legacy disposition item is orphaned or duplicated")
+        for verdict_relative, (_candidate_id, _value) in sorted(record_by_verdict.items()):
+            if verdict_relative not in bundle_verdicts.values():
+                errors.append(f"{verdict_relative}: confirmed candidate disposition is orphaned from validated bundles")
+        if len(bundle_entries) != len(confirmed_items) or len(bundle_entries) != len(record_by_verdict):
+            errors.append("validated bundles, confirmed legacy disposition items, and confirmed candidate dispositions must be one-to-one")
+    elif result == "completed_no_confirmed_findings":
+        if bundle_entries:
+            errors.append("completed_no_confirmed_findings cannot contain validated confirmed bundles")
+        if confirmed_items:
+            errors.append("completed_no_confirmed_findings cannot contain confirmed legacy disposition items")
+        if confirmed_records:
+            errors.append("completed_no_confirmed_findings cannot contain confirmed candidate dispositions")
+        candidate_documents, candidate_errors = _discover_candidate_documents(workspace)
+        errors.extend(candidate_errors)
+        if candidate_documents:
+            for candidate_id in sorted(candidate_documents):
+                matches = [record for record in records if str(record.get("candidate_id") or "") == candidate_id]
+                if len(matches) != 1:
+                    errors.append(f"{candidate_id}: every candidate must have exactly one terminal verifier disposition")
+                    continue
+                status = str(matches[0].get("status") or "")
+                if status != "false_positive":
+                    errors.append(f"{candidate_id}: completed_no_confirmed_findings permits only false_positive terminal dispositions; found {status or 'missing'}")
+            for record in records:
+                if str(record.get("candidate_id") or "") not in candidate_documents:
+                    errors.append(f"{record.get('candidate_id') or '<missing>'}: candidate disposition is orphaned from candidate files")
+        else:
+            for record in records:
+                errors.append(f"{record.get('candidate_id') or '<missing>'}: candidate disposition is orphaned because no candidate file exists")
+            if protocol_mode != "legacy_r1":
+                zero_ok, zero_errors = _zero_candidate_recon_triage_gate(workspace)
+                if not zero_ok:
+                    errors.extend(zero_errors)
+        unresolved = int((disposition_validation.get("summary") or {}).get("unresolved_count") or 0)
+        if unresolved:
+            errors.append(f"completed_no_confirmed_findings has {unresolved} unresolved disposition item(s)")
+
+    return {
+        "ok": not errors,
+        "errors": errors,
+        "summary": {
+            "validated_bundle_count": len(bundle_entries),
+            "confirmed_legacy_item_count": len(confirmed_items),
+            "confirmed_candidate_disposition_count": len(confirmed_records),
+            "candidate_file_count": len(_discover_candidate_documents(workspace)[0]) if result == "completed_no_confirmed_findings" else None,
+            "bundle_verdict_paths": sorted(bundle_verdicts.values()),
         },
     }
 
@@ -929,6 +1411,10 @@ def unresolved_disposition_items(workspace: Path, limit: int = 5) -> tuple[dict[
         if str(item.get("state") or "") in {"candidate", "unverified", "blocked"}
         or str(item.get("docker_status") or "") in MATERIAL_BLOCKING_DOCKER_STATUSES
     ]
+    items.extend(
+        record for record in candidate_disposition_records(ledger)
+        if str(record.get("status") or "") in {"candidate", "unverified", "blocked"}
+    )
     items.sort(key=lambda item: (str(item.get("state") or ""), str(item.get("id") or "")))
     return ledger, items[:limit]
 
@@ -941,6 +1427,10 @@ def render_unresolved_disposition_lines(workspace: Path, limit: int = 5) -> list
         if str(item.get("state") or "") in {"candidate", "unverified", "blocked"}
         or str(item.get("docker_status") or "") in MATERIAL_BLOCKING_DOCKER_STATUSES
     ]
+    all_unresolved.extend(
+        record for record in candidate_disposition_records(ledger)
+        if str(record.get("status") or "") in {"candidate", "unverified", "blocked"}
+    )
     lines = [
         f"- Ledger: `{LEDGER_FILENAME}`" if ledger_path.exists() else f"- Ledger: `{LEDGER_FILENAME}` not written yet; synthesized preview below.",
         f"- Unresolved disposition items: `{len(all_unresolved)}`",

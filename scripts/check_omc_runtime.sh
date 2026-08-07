@@ -153,8 +153,7 @@ write_state_event() {
   [[ -n "$workspace" ]] || return 0
   writer="$(find_state_writer)"
   [[ -n "$writer" ]] || return 0
-  python3 "$writer" "$@" --workspace-dir "$workspace" --target-repo "$(cd "$workspace/.." && pwd)" || \
-    echo "[zhulong] WARNING: state write failed (non-fatal)." >&2
+  python3 "$writer" "$@" --workspace-dir "$workspace" --target-repo "$(cd "$workspace/.." && pwd)" --accept-current-revision >/dev/null
 }
 
 collect_current_session_ancestors() {
@@ -680,8 +679,9 @@ fi
 
 write_state_event \
   --event omc_runtime_checked \
-  --stage environment_checking \
-  --status running \
+  --stage current \
+  --status current \
+  --transition-kind observe \
   --event-status "$recommended_mode" \
   --message "$reason" \
   --details-json "{\"runtime_hygiene_status\":\"runtime/runtime-hygiene-status.json\"}"

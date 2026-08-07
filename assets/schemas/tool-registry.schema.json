@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/Torchbearer127/zhulong/main/assets/schemas/tool-registry.schema.json",
+  "title": "Zhulong Tool Registry",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "plugin", "tiers"],
+  "properties": {
+    "schema_version": {"type": "integer", "enum": [2]},
+    "plugin": {"type": "string", "const": "zhulong"},
+    "tiers": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/tier"}
+    }
+  },
+  "$defs": {
+    "stage": {
+      "type": "string",
+      "enum": ["intake", "recon", "candidate_generation", "triage", "verification", "severity_escalation", "variant_discovery", "packaging", "finalization", "recording"]
+    },
+    "boundary": {
+      "type": "string",
+      "enum": ["host_read_only", "workspace_write", "target_repo_write", "host_cache_write", "docker_exec", "external_network", "prohibited"]
+    },
+    "effect": {
+      "type": "string",
+      "enum": ["source_read", "git_metadata_read", "package_metadata_read", "workspace_evidence_write", "target_repo_write", "target_code_execute", "host_cache_write", "docker_container_start", "docker_cli_invocation", "external_network_access", "local_target_access", "document_generate"]
+    },
+    "pathFamily": {
+      "type": "string",
+      "minLength": 3,
+      "pattern": "^(?:evidence|runtime)/[A-Za-z0-9._/*-]+$"
+    },
+    "wrapper": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "contract_marker"],
+      "properties": {
+        "path": {"type": "string", "minLength": 3},
+        "workspace_adapter": {"type": "string", "minLength": 3},
+        "contract_marker": {"type": "string", "minLength": 12}
+      }
+    },
+    "evidenceOutput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path_family", "artifact_type"],
+      "properties": {
+        "path_family": {"$ref": "#/$defs/pathFamily"},
+        "artifact_type": {"type": "string", "enum": ["log", "json", "markdown", "sbom", "document"]}
+      }
+    },
+    "tool": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "kind", "required", "role", "availability_commands", "allowed_stages", "execution_boundaries", "effects", "network_scope", "concurrency_policy", "timeout_policy", "failure_policy", "evidence_outputs", "confirmation_authority", "controlled_wrapper", "planner_status"],
+      "properties": {
+        "name": {"type": "string", "minLength": 2, "pattern": "^[a-z0-9][a-z0-9._-]*$"},
+        "kind": {"type": "string", "enum": ["runtime", "controlled_wrapper", "source_inspection", "scanner", "static_analysis", "dependency", "sbom", "secret_scanner", "dast", "mcp_hardening", "document_qa", "source_control"]},
+        "required": {"type": "boolean"},
+        "role": {"type": "string", "minLength": 3},
+        "availability_commands": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+        "allowed_stages": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/stage"}, "uniqueItems": true},
+        "execution_boundaries": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/boundary"}, "uniqueItems": true},
+        "effects": {"type": "array", "items": {"$ref": "#/$defs/effect"}, "uniqueItems": true},
+        "network_scope": {"type": "string", "enum": ["none", "local_target_only", "restricted_external", "public_external"]},
+        "concurrency_policy": {"type": "string", "enum": ["serial", "parallel_safe", "bounded_parallel"]},
+        "timeout_policy": {"type": "string", "enum": ["wrapper_enforced", "caller_required", "not_enforced", "not_executed"]},
+        "failure_policy": {"type": "string", "enum": ["fail_closed", "candidate_only", "blocked", "optional_unavailable"]},
+        "evidence_outputs": {"type": "array", "items": {"$ref": "#/$defs/evidenceOutput"}},
+        "confirmation_authority": {"type": "string", "enum": ["none", "candidate_only", "docker_oracle_material_only"]},
+        "controlled_wrapper": {"type": ["object", "null"], "allOf": [{"if": {"type": "object"}, "then": {"$ref": "#/$defs/wrapper"}}]},
+        "planner_status": {"type": "string", "enum": ["recommended", "planning_only", "wrapper_required", "prohibited"]}
+      }
+    },
+    "tier": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "tools"],
+      "properties": {
+        "name": {"type": "string", "minLength": 2, "pattern": "^[a-z0-9][a-z0-9._-]*$"},
+        "tools": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/tool"}}
+      }
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "blocker": null,
+  "event_log_digest": "sha256:8453b4cc2e579d2daa6de326e2a37362e110452859acd061a9f594cc7e9b3584",
+  "last_event_at": "2026-07-25T00:00:07Z",
+  "last_event_name": "finalization_succeeded",
+  "last_event_seq": 7,
+  "last_event_type": "stage_transition",
+  "plugin": "zhulong",
+  "plugin_version": "timeline-fixture-r1",
+  "resume_step": null,
+  "run_id": "run-audit-timeline-fixture",
+  "schema_version": 2,
+  "stage": "finalization",
+  "state_revision": 7,
+  "status": "completed"
+}

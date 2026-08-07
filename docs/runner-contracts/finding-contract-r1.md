@@ -134,3 +134,15 @@ The validators are local contract checks only. They reject machine-local paths,
 parent traversal, secret-like text, broad Docker prune commands, dangerous PID
 kill patterns, Docker socket mounts, credential mounts, privileged runtime
 requests, and host-network runtime requests, but they never execute commands.
+
+## Candidate R2 compatibility
+
+Candidate Contract R2 adds recomputable identity, structured provenance, and
+candidate-only relationships while preserving R1. R1 is visibly classified as
+`legacy_r1` and is never silently upgraded. Fingerprints and duplicate metadata
+cannot verify or confirm a vulnerability. See
+[`candidate-identity-dedupe-r1.md`](candidate-identity-dedupe-r1.md).
+
+When a verdict cross-checks Candidate R2, `candidate_binding` must match the
+exact candidate file SHA-256 and independently recomputed fingerprint. This
+prevents identity drift without changing verifier authority.

@@ -2,11 +2,24 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import sys
 from pathlib import Path
 from typing import Any
+
+from audit_text_safety import tested_ref_value_kind
+
+from candidate_identity import (
+    IdentityError,
+    SHA256_RE,
+    canonical_json_bytes,
+    normalize_provenance,
+    resolve_regular_file,
+    safe_relative_path,
+    validate_identity,
+)
 
 
 TOP_LEVEL_KEYS = {
@@ -23,6 +36,7 @@ TOP_LEVEL_KEYS = {
     "evidence",
     "finder",
 }
+R2_TOP_LEVEL_KEYS = TOP_LEVEL_KEYS | {"identity", "provenance", "relationships"}
 CONFIRMED_LIKE_KEYS = {
     "confirmed",
     "confirmation",
@@ -184,10 +198,8 @@ def check_candidate_not_confirmed(candidate: dict[str, Any]) -> None:
             fail(f"candidate must not contain confirmed-like top-level wording: {key}")
 
 
-def validate_candidate(candidate: dict[str, Any]) -> dict[str, str]:
-    reject_unknown(candidate, TOP_LEVEL_KEYS, "$")
-    if candidate.get("schema_version") != 1:
-        fail("schema_version must be 1")
+def _validate_common_candidate(candidate: dict[str, Any], allowed_top_level: set[str]) -> tuple[str, str]:
+    reject_unknown(candidate, allowed_top_level, "$")
     check_candidate_not_confirmed(candidate)
 
     candidate_id = require_nonempty_string(candidate, "candidate_id", "$")
@@ -202,7 +214,10 @@ def validate_candidate(candidate: dict[str, Any]) -> dict[str, str]:
     target_ref = require_mapping(candidate, "target_ref", "$")
     reject_unknown(target_ref, {"target_config", "tested_ref"}, "$.target_ref")
     require_nonempty_string(target_ref, "target_config", "$.target_ref")
-    require_nonempty_string(target_ref, "tested_ref", "$.target_ref")
+    tested_ref = require_nonempty_string(target_ref, "tested_ref", "$.target_ref")
+    tested_ref_kind = tested_ref_value_kind(tested_ref)
+    if tested_ref_kind is not None:
+        fail(f"$.target_ref.tested_ref contains forbidden source-identity material of category {tested_ref_kind}")
 
     entrypoint = require_mapping(candidate, "entrypoint", "$")
     reject_unknown(entrypoint, {"id", "kind", "route"}, "$.entrypoint")
@@ -267,22 +282,123 @@ def validate_candidate(candidate: dict[str, Any]) -> dict[str, str]:
     require_nonempty_string(finder, "source", "$.finder")
     require_nonempty_string(finder, "created_at", "$.finder")
 
+    return candidate_id, status
+
+
+def _validate_relationship_reference(value: Any, path: str, candidate_id: str) -> dict[str, str]:
+    if not isinstance(value, dict):
+        fail(f"{path} must be an object")
+    reject_unknown(value, {"candidate_id", "fingerprint", "path", "sha256"}, path)
+    target_id = require_nonempty_string(value, "candidate_id", path)
+    if not re.fullmatch(r"CAND-[0-9A-Za-z._-]+", target_id):
+        fail(f"{path}.candidate_id is invalid")
+    if target_id == candidate_id:
+        fail(f"{path} must not self-reference")
+    fingerprint = require_nonempty_string(value, "fingerprint", path)
+    digest = require_nonempty_string(value, "sha256", path)
+    if not SHA256_RE.fullmatch(fingerprint):
+        fail(f"{path}.fingerprint must be sha256:<lowercase hex>")
+    if not SHA256_RE.fullmatch(digest):
+        fail(f"{path}.sha256 must be sha256:<lowercase hex>")
+    relative = require_nonempty_string(value, "path", path)
+    try:
+        safe_relative_path(relative, f"{path}.path")
+    except IdentityError as exc:
+        fail(str(exc))
+    return {"candidate_id": target_id, "fingerprint": fingerprint, "path": relative, "sha256": digest}
+
+
+def _validate_relationships(candidate: dict[str, Any]) -> None:
+    candidate_id = str(candidate["candidate_id"])
+    relationships = require_mapping(candidate, "relationships", "$")
+    reject_unknown(relationships, {"merged_from", "duplicate_of", "legacy_id_mapping"}, "$.relationships")
+    merged = require_list(relationships, "merged_from", "$.relationships")
+    seen: set[tuple[str, str, str, str]] = set()
+    for index, value in enumerate(merged):
+        ref = _validate_relationship_reference(value, f"$.relationships.merged_from[{index}]", candidate_id)
+        edge = (ref["candidate_id"], ref["fingerprint"], ref["path"], ref["sha256"])
+        if edge in seen:
+            fail("$.relationships.merged_from contains a duplicate edge")
+        seen.add(edge)
+    duplicate = relationships.get("duplicate_of")
+    if duplicate is not None:
+        _validate_relationship_reference(duplicate, "$.relationships.duplicate_of", candidate_id)
+        if merged:
+            fail("a subordinate candidate with duplicate_of must not also define merged_from")
+    mappings = require_list(relationships, "legacy_id_mapping", "$.relationships")
+    if not mappings:
+        fail("$.relationships.legacy_id_mapping must preserve at least one ID mapping")
+    mapping_pairs: set[tuple[str, str]] = set()
+    preserved = False
+    for index, mapping in enumerate(mappings):
+        path = f"$.relationships.legacy_id_mapping[{index}]"
+        if not isinstance(mapping, dict):
+            fail(f"{path} must be an object")
+        reject_unknown(mapping, {"legacy_candidate_id", "current_candidate_id"}, path)
+        legacy = require_nonempty_string(mapping, "legacy_candidate_id", path)
+        current = require_nonempty_string(mapping, "current_candidate_id", path)
+        if not re.fullmatch(r"CAND-[0-9A-Za-z._-]+", legacy) or not re.fullmatch(r"CAND-[0-9A-Za-z._-]+", current):
+            fail(f"{path} contains an invalid candidate ID")
+        if current != candidate_id:
+            fail(f"{path}.current_candidate_id must match candidate_id")
+        preserved = preserved or legacy == candidate_id
+        pair = (legacy, current)
+        if pair in mapping_pairs:
+            fail("$.relationships.legacy_id_mapping contains a duplicate mapping")
+        mapping_pairs.add(pair)
+    if not preserved:
+        fail("$.relationships.legacy_id_mapping must preserve the current candidate_id")
+
+
+def validate_candidate(candidate: dict[str, Any], *, repo_root: Path | None = None) -> dict[str, str]:
+    version = candidate.get("schema_version")
+    if version not in {1, 2}:
+        fail("schema_version must be exactly 1 or 2")
+    candidate_id, status = _validate_common_candidate(candidate, TOP_LEVEL_KEYS if version == 1 else R2_TOP_LEVEL_KEYS)
+    result = {"candidate_id": candidate_id, "status": status, "protocol_mode": "legacy_r1"}
+    if version == 2:
+        try:
+            identity = validate_identity(candidate, candidate.get("identity"))
+            provenance = normalize_provenance(candidate.get("provenance"))
+        except IdentityError as exc:
+            fail(str(exc))
+        if candidate.get("provenance") != provenance:
+            fail("provenance must be deduplicated and stored in canonical order")
+        _validate_relationships(candidate)
+        if repo_root is not None:
+            try:
+                resolve_regular_file(repo_root, identity["primary_source_path"], "identity.primary_source_path")
+            except IdentityError as exc:
+                fail(str(exc))
+        result.update({"protocol_mode": "r2", "fingerprint": identity["fingerprint"]})
     walk_strings(candidate)
-    return {"candidate_id": candidate_id, "status": status}
+    return result
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Validate a Zhulong candidate.json file.")
     parser.add_argument("candidate", help="Path to candidate.json")
+    parser.add_argument("--repo-root", help="Optional target repository root for R2 source-path containment checks")
+    parser.add_argument("--json", action="store_true", help="Emit deterministic JSON")
     args = parser.parse_args()
 
     try:
-        result = validate_candidate(load_candidate(Path(args.candidate)))
+        candidate_path = Path(args.candidate)
+        result = validate_candidate(load_candidate(candidate_path), repo_root=Path(args.repo_root) if args.repo_root else None)
     except ValidationError as exc:
+        if args.json:
+            print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False, sort_keys=True))
+            raise SystemExit(1)
         print(f"ERROR: {exc}", file=sys.stderr)
         raise SystemExit(1)
 
-    print(f"OK: candidate valid; candidate_id={result['candidate_id']} status={result['status']}")
+    if args.json:
+        print(json.dumps({"ok": True, **result}, ensure_ascii=False, sort_keys=True))
+    else:
+        print(
+            f"OK: candidate valid; candidate_id={result['candidate_id']} status={result['status']} "
+            f"protocol_mode={result['protocol_mode']}"
+        )
 
 
 if __name__ == "__main__":

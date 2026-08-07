@@ -1,0 +1,332 @@
+{
+  "schema_version": 2,
+  "runner_contract": "p9.5-closure-r2",
+  "closure_inventory": [
+    {
+      "path": "assets/fixtures/audit-state-protocol-r2/closure/blocked_verification/audit-events.jsonl",
+      "sha256": "sha256:4d60e3a2fdfdd1808bffb8765d5f448b4e4919ac0bc85c81424dd79a2af2869b"
+    },
+    {
+      "path": "assets/fixtures/audit-state-protocol-r2/closure/blocked_verification/stage-status.json",
+      "sha256": "sha256:5c054a9414d157740b7d744d7992bffd6a7b53ba95716ca0ea4e627122a567a2"
+    },
+    {
+      "path": "assets/fixtures/audit-state-protocol-r2/closure/completed_no_confirmed/audit-events.jsonl",
+      "sha256": "sha256:6e9ce2c44ec378b6d34e75663185563bd73e2ab766589948c0f565600d24845f"
+    },
+    {
+      "path": "assets/fixtures/audit-state-protocol-r2/closure/completed_no_confirmed/stage-status.json",
+      "sha256": "sha256:300a1f977bed034fa8aaea97575283904fd1bdcdff815a23382c88f19b7f3029"
+    },
+    {
+      "path": "assets/fixtures/audit-state-protocol-r2/closure/damaged/damage_middle.jsonl",
+      "sha256": "sha256:9221c90ae8727f429cdaa753f3c271f2d72793449b6b5c523dc9bd2f67b0e8df"
+    },
+    {
+      "path": "assets/fixtures/audit-state-protocol-r2/closure/damaged/damage_tail.jsonl",
+      "sha256": "sha256:71e24b35acb61c19ca949ac4826a606a9a5e42c5125abf1d01c81a8eec40f201"
+    },
+    {
+      "path": "assets/fixtures/audit-state-protocol-r2/closure/fake_completed/audit-events.jsonl",
+      "sha256": "sha256:05b37866564705d4d5bcde4b3867e3b3f7945cb1a11a364e9f7c58cc3f6ff61e"
+    },
+    {
+      "path": "assets/fixtures/audit-state-protocol-r2/closure/fake_completed/stage-status.json",
+      "sha256": "sha256:4547983a3147c9cf73a4cb2a80f56f67cd7faed6ac0e12395493191509e6a16d"
+    },
+    {
+      "path": "assets/fixtures/audit-state-protocol-r2/closure/modern_running/audit-events.jsonl",
+      "sha256": "sha256:3069c8953057c77ecf915a7374ecc469a0005bb12234b22f66c131ec98f4bd05"
+    },
+    {
+      "path": "assets/fixtures/audit-state-protocol-r2/closure/modern_running/stage-status.json",
+      "sha256": "sha256:7a273db35a0578910a805e6d03dfb9d639aa3650673ce484e05520d2dd751495"
+    },
+    {
+      "path": "assets/fixtures/audit-state-protocol-r2/closure/partial_commit/audit-events.jsonl",
+      "sha256": "sha256:05f133afbc954e3d3b8c7995c6923ceab4192cc611b46055bb0eaa7fc8940d80"
+    },
+    {
+      "path": "assets/fixtures/audit-state-protocol-r2/closure/recording_completed/audit-events.jsonl",
+      "sha256": "sha256:90f1cef46ae791c5206e5bc1567f15c6e06b91410c50a83084ec9d3ca6b856bf"
+    },
+    {
+      "path": "assets/fixtures/audit-state-protocol-r2/closure/recording_completed/stage-status.json",
+      "sha256": "sha256:08a4ef2bb79ecd30deaebdd55d9053507bc1f490d53206cec6e8e437be6e4b8d"
+    },
+    {
+      "path": "assets/fixtures/audit-state-protocol-r2/closure/recording_optional/audit-events.jsonl",
+      "sha256": "sha256:f7864fd48ba6168ab0722a50b23ad716da91d4b6635217ef8bcd8466ad15cfd7"
+    },
+    {
+      "path": "assets/fixtures/audit-state-protocol-r2/closure/recording_optional/stage-status.json",
+      "sha256": "sha256:003115ef300f7d1a1074bcbf1e19a99d5cf1354b31bba655038d799b7d3534d1"
+    },
+    {
+      "path": "assets/fixtures/audit-state-protocol-r2/closure/validated_bundle/audit-events.jsonl",
+      "sha256": "sha256:23464affb214f3db610ccd46e84e6d0117db08169fa128238648f2b6ad4284a3"
+    },
+    {
+      "path": "assets/fixtures/audit-state-protocol-r2/closure/validated_bundle/stage-status.json",
+      "sha256": "sha256:ff4476e25a1591aeafc1e375d05cfe3296eb9953f30fc2e254f48c9abbbd4cf2"
+    },
+    {
+      "path": "assets/fixtures/audit-state-protocol-r2/closure/variant_candidate/audit-events.jsonl",
+      "sha256": "sha256:612f21220ab0869495443e73ab42a9edc65c40730882005ba8673b838846dcb5"
+    },
+    {
+      "path": "assets/fixtures/audit-state-protocol-r2/closure/variant_candidate/stage-status.json",
+      "sha256": "sha256:0b368448cc8cea92bdc243521283d8e4589e598a32bc4976890581f121bca922"
+    }
+  ],
+  "fixtures": [
+    {
+      "id": "blocked-verification",
+      "protocol_mode": "r2",
+      "journal_classification": "complete_valid",
+      "transition_policy_classification": "transition_policy_v1",
+      "rebuildability_classification": "complete_from_journal",
+      "promotion_authority": "none",
+      "terminal_stage": "verification",
+      "terminal_status": "blocked",
+      "substantive_finalization_outcome": "blocked",
+      "files": [
+        {
+          "path": "assets/fixtures/audit-state-protocol-r2/closure/blocked_verification/audit-events.jsonl",
+          "sha256": "sha256:4d60e3a2fdfdd1808bffb8765d5f448b4e4919ac0bc85c81424dd79a2af2869b"
+        },
+        {
+          "path": "assets/fixtures/audit-state-protocol-r2/closure/blocked_verification/stage-status.json",
+          "sha256": "sha256:5c054a9414d157740b7d744d7992bffd6a7b53ba95716ca0ea4e627122a567a2"
+        }
+      ]
+    },
+    {
+      "id": "completed-no-confirmed",
+      "protocol_mode": "r2",
+      "journal_classification": "complete_valid",
+      "transition_policy_classification": "transition_policy_v1",
+      "rebuildability_classification": "complete_from_journal",
+      "promotion_authority": "none",
+      "terminal_stage": "finalization",
+      "terminal_status": "completed",
+      "substantive_finalization_outcome": "finalizer_required",
+      "files": [
+        {
+          "path": "assets/fixtures/audit-state-protocol-r2/closure/completed_no_confirmed/audit-events.jsonl",
+          "sha256": "sha256:6e9ce2c44ec378b6d34e75663185563bd73e2ab766589948c0f565600d24845f"
+        },
+        {
+          "path": "assets/fixtures/audit-state-protocol-r2/closure/completed_no_confirmed/stage-status.json",
+          "sha256": "sha256:300a1f977bed034fa8aaea97575283904fd1bdcdff815a23382c88f19b7f3029"
+        }
+      ]
+    },
+    {
+      "id": "damaged-journal-middle",
+      "protocol_mode": "r2",
+      "journal_classification": "journal_middle_corruption",
+      "transition_policy_classification": "not_applicable",
+      "rebuildability_classification": "blocked_journal_invalid",
+      "terminal_stage": "intake",
+      "terminal_status": "running",
+      "substantive_finalization_outcome": "rejected",
+      "promotion_authority": "none",
+      "files": [
+        {
+          "path": "assets/fixtures/audit-state-protocol-r2/closure/damaged/damage_middle.jsonl",
+          "sha256": "sha256:9221c90ae8727f429cdaa753f3c271f2d72793449b6b5c523dc9bd2f67b0e8df"
+        },
+        {
+          "path": "assets/fixtures/audit-state-protocol-r2/invalid-state-malformed-digest.json",
+          "sha256": "sha256:b1e15048c9e6891f2605758d795398cfb87623046eac84f2c18e02edd03eab65"
+        }
+      ]
+    },
+    {
+      "id": "damaged-journal-tail",
+      "protocol_mode": "r2",
+      "journal_classification": "journal_middle_corruption",
+      "transition_policy_classification": "not_applicable",
+      "rebuildability_classification": "blocked_journal_invalid",
+      "terminal_stage": "intake",
+      "terminal_status": "running",
+      "substantive_finalization_outcome": "rejected",
+      "promotion_authority": "none",
+      "files": [
+        {
+          "path": "assets/fixtures/audit-state-protocol-r2/closure/damaged/damage_tail.jsonl",
+          "sha256": "sha256:71e24b35acb61c19ca949ac4826a606a9a5e42c5125abf1d01c81a8eec40f201"
+        },
+        {
+          "path": "assets/fixtures/audit-state-protocol-r2/invalid-state-malformed-digest.json",
+          "sha256": "sha256:b1e15048c9e6891f2605758d795398cfb87623046eac84f2c18e02edd03eab65"
+        }
+      ]
+    },
+    {
+      "id": "legacy-r1",
+      "protocol_mode": "legacy_r1",
+      "journal_classification": "complete_valid",
+      "transition_policy_classification": "not_applicable",
+      "rebuildability_classification": "not_applicable_legacy_r1",
+      "terminal_stage": "workspace_preparing",
+      "terminal_status": "ok",
+      "substantive_finalization_outcome": "legacy_preflight_only",
+      "promotion_authority": "none",
+      "files": [
+        {
+          "path": "assets/fixtures/audit-state-protocol-r2/legacy-event-r1.json",
+          "sha256": "sha256:2514e668d5789b0caec512ebadccd59bbcce014c7f51040e1a17ee3881af4fcc"
+        },
+        {
+          "path": "assets/fixtures/audit-state-protocol-r2/legacy-state-r1.json",
+          "sha256": "sha256:c0051e2a17118ee5f16c6d032db91730a35737b121299d9f43bba9112d755078"
+        }
+      ]
+    },
+    {
+      "id": "modern-r2-running",
+      "protocol_mode": "r2",
+      "journal_classification": "complete_valid",
+      "transition_policy_classification": "transition_policy_v1",
+      "rebuildability_classification": "complete_from_journal",
+      "promotion_authority": "none",
+      "terminal_stage": "recon",
+      "terminal_status": "running",
+      "substantive_finalization_outcome": "not_finalized",
+      "files": [
+        {
+          "path": "assets/fixtures/audit-state-protocol-r2/closure/modern_running/audit-events.jsonl",
+          "sha256": "sha256:3069c8953057c77ecf915a7374ecc469a0005bb12234b22f66c131ec98f4bd05"
+        },
+        {
+          "path": "assets/fixtures/audit-state-protocol-r2/closure/modern_running/stage-status.json",
+          "sha256": "sha256:7a273db35a0578910a805e6d03dfb9d639aa3650673ce484e05520d2dd751495"
+        }
+      ]
+    },
+    {
+      "id": "partial-commit-rebuild",
+      "protocol_mode": "r2",
+      "journal_classification": "complete_valid",
+      "transition_policy_classification": "transition_policy_v1",
+      "rebuildability_classification": "complete_from_journal",
+      "promotion_authority": "none",
+      "terminal_stage": "recon",
+      "terminal_status": "running",
+      "substantive_finalization_outcome": "explicit_rebuild_required",
+      "files": [
+        {
+          "path": "assets/fixtures/audit-state-protocol-r2/closure/partial_commit/audit-events.jsonl",
+          "sha256": "sha256:05f133afbc954e3d3b8c7995c6923ceab4192cc611b46055bb0eaa7fc8940d80"
+        }
+      ]
+    },
+    {
+      "id": "recording-entered-completed",
+      "protocol_mode": "r2",
+      "journal_classification": "complete_valid",
+      "transition_policy_classification": "transition_policy_v1",
+      "rebuildability_classification": "complete_from_journal",
+      "promotion_authority": "none",
+      "terminal_stage": "recording",
+      "terminal_status": "completed",
+      "substantive_finalization_outcome": "recording_evidence_required",
+      "files": [
+        {
+          "path": "assets/fixtures/audit-state-protocol-r2/closure/recording_completed/audit-events.jsonl",
+          "sha256": "sha256:90f1cef46ae791c5206e5bc1567f15c6e06b91410c50a83084ec9d3ca6b856bf"
+        },
+        {
+          "path": "assets/fixtures/audit-state-protocol-r2/closure/recording_completed/stage-status.json",
+          "sha256": "sha256:08a4ef2bb79ecd30deaebdd55d9053507bc1f490d53206cec6e8e437be6e4b8d"
+        }
+      ]
+    },
+    {
+      "id": "recording-optional-skipped",
+      "protocol_mode": "r2",
+      "journal_classification": "complete_valid",
+      "transition_policy_classification": "transition_policy_v1",
+      "rebuildability_classification": "complete_from_journal",
+      "promotion_authority": "none",
+      "terminal_stage": "recording",
+      "terminal_status": "completed",
+      "substantive_finalization_outcome": "recording_skipped",
+      "files": [
+        {
+          "path": "assets/fixtures/audit-state-protocol-r2/closure/recording_optional/audit-events.jsonl",
+          "sha256": "sha256:f7864fd48ba6168ab0722a50b23ad716da91d4b6635217ef8bcd8466ad15cfd7"
+        },
+        {
+          "path": "assets/fixtures/audit-state-protocol-r2/closure/recording_optional/stage-status.json",
+          "sha256": "sha256:003115ef300f7d1a1074bcbf1e19a99d5cf1354b31bba655038d799b7d3534d1"
+        }
+      ]
+    },
+    {
+      "id": "state-only-fake-completed",
+      "protocol_mode": "r2",
+      "journal_classification": "complete_valid",
+      "transition_policy_classification": "transition_policy_v1",
+      "rebuildability_classification": "complete_from_journal",
+      "promotion_authority": "none",
+      "terminal_stage": "recon",
+      "terminal_status": "running",
+      "substantive_finalization_outcome": "rejected",
+      "files": [
+        {
+          "path": "assets/fixtures/audit-state-protocol-r2/closure/fake_completed/audit-events.jsonl",
+          "sha256": "sha256:05b37866564705d4d5bcde4b3867e3b3f7945cb1a11a364e9f7c58cc3f6ff61e"
+        },
+        {
+          "path": "assets/fixtures/audit-state-protocol-r2/closure/fake_completed/stage-status.json",
+          "sha256": "sha256:4547983a3147c9cf73a4cb2a80f56f67cd7faed6ac0e12395493191509e6a16d"
+        }
+      ]
+    },
+    {
+      "id": "validated-confirmed-bundle",
+      "protocol_mode": "r2",
+      "journal_classification": "complete_valid",
+      "transition_policy_classification": "transition_policy_v1",
+      "rebuildability_classification": "complete_from_journal",
+      "promotion_authority": "validated_bundle_only",
+      "terminal_stage": "finalization",
+      "terminal_status": "completed",
+      "substantive_finalization_outcome": "bundle_validator_required",
+      "files": [
+        {
+          "path": "assets/fixtures/audit-state-protocol-r2/closure/validated_bundle/audit-events.jsonl",
+          "sha256": "sha256:23464affb214f3db610ccd46e84e6d0117db08169fa128238648f2b6ad4284a3"
+        },
+        {
+          "path": "assets/fixtures/audit-state-protocol-r2/closure/validated_bundle/stage-status.json",
+          "sha256": "sha256:ff4476e25a1591aeafc1e375d05cfe3296eb9953f30fc2e254f48c9abbbd4cf2"
+        }
+      ]
+    },
+    {
+      "id": "variant-candidate-returned",
+      "protocol_mode": "r2",
+      "journal_classification": "complete_valid",
+      "transition_policy_classification": "transition_policy_v1",
+      "rebuildability_classification": "complete_from_journal",
+      "promotion_authority": "none",
+      "terminal_stage": "verification",
+      "terminal_status": "running",
+      "substantive_finalization_outcome": "candidate_only",
+      "files": [
+        {
+          "path": "assets/fixtures/audit-state-protocol-r2/closure/variant_candidate/audit-events.jsonl",
+          "sha256": "sha256:612f21220ab0869495443e73ab42a9edc65c40730882005ba8673b838846dcb5"
+        },
+        {
+          "path": "assets/fixtures/audit-state-protocol-r2/closure/variant_candidate/stage-status.json",
+          "sha256": "sha256:0b368448cc8cea92bdc243521283d8e4589e598a32bc4976890581f121bca922"
+        }
+      ]
+    }
+  ]
+}

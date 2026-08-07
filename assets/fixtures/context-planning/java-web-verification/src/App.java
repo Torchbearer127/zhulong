@@ -1,0 +1,2 @@
+@RestController
+class App {}

@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Torchbearer127/zhulong/blob/main/assets/schemas/workspace-checkpoint.schema.json",
+  "title": "Zhulong Workspace Checkpoint",
+  "description": "An immutable, lightweight snapshot index. It never stores raw evidence, prompts, credentials, or executable recovery commands.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "state_revision", "event_sequence", "event_digest", "tested_ref", "created_at", "provenance", "authoritative_inputs", "identifiers", "docker", "docker_baseline", "recon", "triage", "handoff_state", "resume"],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "state_revision": {"type": "integer", "minimum": 1},
+    "event_sequence": {"type": "integer", "minimum": 1},
+    "event_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "tested_ref": {"$ref": "#/$defs/tested_ref"},
+    "created_at": {"type": "string", "minLength": 1},
+    "provenance": {"$ref": "#/$defs/provenance"},
+    "authoritative_inputs": {"type": "array", "items": {"$ref": "#/$defs/input"}},
+    "identifiers": {"$ref": "#/$defs/identifiers"},
+    "docker": {"$ref": "#/$defs/status_ref"},
+    "docker_baseline": {"$ref": "#/$defs/status_ref"},
+    "recon": {"$ref": "#/$defs/status_ref"},
+    "triage": {"$ref": "#/$defs/status_ref"},
+    "handoff_state": {"$ref": "#/$defs/input"},
+    "resume": {"$ref": "#/$defs/resume"}
+  },
+  "$defs": {
+    "path": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?![A-Za-z]:[\\\\/])(?![A-Za-z][A-Za-z0-9+.-]*:)(?!~)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+"},
+    "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "candidate_id": {"type": "string", "pattern": "^CAND-[0-9A-Za-z._-]+$"},
+    "tested_ref": {
+      "type": "object", "additionalProperties": false, "required": ["value", "verified", "source_paths"],
+      "properties": {"value": {"type": ["string", "null"], "minLength": 1}, "verified": {"type": "boolean"}, "source_paths": {"type": "array", "items": {"$ref": "#/$defs/path"}}}
+    },
+    "provenance": {
+      "type": "object", "additionalProperties": false, "required": ["plugin", "plugin_version", "protocol_mode", "source", "authority_boundary"],
+      "properties": {"plugin": {"type": "string", "const": "zhulong"}, "plugin_version": {"type": "string", "minLength": 1}, "protocol_mode": {"type": "string", "enum": ["r2"]}, "source": {"type": "string", "enum": ["audit-events.jsonl", "state-and-journal"]}, "authority_boundary": {"type": "string", "const": "derived_snapshot_only"}}
+    },
+    "input": {"type": "object", "additionalProperties": false, "required": ["path", "sha256", "kind"], "properties": {"path": {"$ref": "#/$defs/path"}, "sha256": {"$ref": "#/$defs/sha256"}, "kind": {"type": "string", "minLength": 1}}},
+    "identifiers": {
+      "type": "object", "additionalProperties": false, "required": ["candidate_ids", "verdict_candidate_ids", "disposition_ids", "confirmed_bundle_ids"],
+      "properties": {"candidate_ids": {"type": "array", "items": {"$ref": "#/$defs/candidate_id"}}, "verdict_candidate_ids": {"type": "array", "items": {"$ref": "#/$defs/candidate_id"}}, "disposition_ids": {"type": "array", "items": {"type": "string", "minLength": 1}}, "confirmed_bundle_ids": {"type": "array", "items": {"type": "string", "minLength": 1}}}
+    },
+    "status_ref": {"type": "object", "additionalProperties": false, "required": ["status", "path", "sha256"], "properties": {"status": {"type": "string", "minLength": 1}, "path": {"oneOf": [{"$ref": "#/$defs/path"}, {"type": "null"}]}, "sha256": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]}}},
+    "resume": {
+      "type": "object", "additionalProperties": false, "required": ["available", "entrypoint", "parameters", "evidence_refs"],
+      "properties": {"available": {"type": "boolean"}, "step": {"type": ["string", "null"]}, "entrypoint": {"type": "string", "enum": ["none", "manual_review", "render_handoff_state", "validate_handoff_state", "resume_stage"]}, "parameters": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["name", "value"], "properties": {"name": {"type": "string", "enum": ["workspace-dir", "repo-root", "checkpoint", "artifact"]}, "value": {"$ref": "#/$defs/path"}}}}, "evidence_refs": {"type": "array", "items": {"$ref": "#/$defs/path"}}}
+    }
+  }
+}

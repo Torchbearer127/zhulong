@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "positive_cases": [
+    "complete-five-advisories",
+    "partial-unprocessed-candidate",
+    "blocked-batch-recovery",
+    "duplicate-chain",
+    "recon-complete-finalization",
+    "recon-partial-finalization",
+    "recon-blocked-finalization",
+    "triage-complete-finalization",
+    "triage-partial-finalization",
+    "triage-blocked-finalization"
+  ],
+  "negative_cases": [
+    "duplicate-self-reference",
+    "duplicate-cycle",
+    "duplicate-target-missing",
+    "candidate-digest-drift",
+    "candidate-id-path-swap",
+    "candidate-tested-ref-drift",
+    "candidate-path-escape",
+    "omitted-decision",
+    "duplicate-decision",
+    "processed-unprocessed-overlap",
+    "forbidden-confirmed-severity-verdict-disposition-bundle-fields",
+    "wrong-stage-result-type",
+    "wrong-result-digest",
+    "stale-revision",
+    "current-stage-status-mismatch",
+    "duplicate-finalization",
+    "symlink-result-lock-journal-state"
+  ]
+}

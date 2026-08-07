@@ -1,0 +1,158 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Torchbearer127/zhulong/blob/main/assets/schemas/triage-batch.schema.json",
+  "title": "Zhulong Triage Batch Contract R1",
+  "description": "Read-only advisory classification for an explicit batch of existing candidates. This contract is not a verifier verdict, disposition, confirmation, bundle, or execution authority.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "batch_id",
+    "status",
+    "target_binding",
+    "candidate_inventory",
+    "decisions",
+    "unprocessed_candidates",
+    "batch_gaps",
+    "batch_blockers",
+    "next_actions"
+  ],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "batch_id": {"type": "string", "pattern": "^TRIAGE-[0-9A-Za-z][0-9A-Za-z._-]*$"},
+    "status": {"type": "string", "enum": ["complete", "partial", "blocked"]},
+    "target_binding": {"$ref": "#/$defs/target_binding"},
+    "recon_binding": {"$ref": "#/$defs/recon_binding"},
+    "dedup_plan_binding": {"$ref": "#/$defs/dedup_plan_binding"},
+    "candidate_inventory": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/candidate_inventory_item"}
+    },
+    "decisions": {"type": "array", "items": {"$ref": "#/$defs/decision"}},
+    "unprocessed_candidates": {"type": "array", "items": {"$ref": "#/$defs/unprocessed_candidate"}},
+    "batch_gaps": {"type": "array", "items": {"$ref": "#/$defs/batch_gap"}},
+    "batch_blockers": {"type": "array", "items": {"$ref": "#/$defs/batch_blocker"}},
+    "next_actions": {"type": "array", "items": {"$ref": "#/$defs/next_action"}}
+  },
+  "$defs": {
+    "workspace_relative_path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?![A-Za-z]:[\\\\/])(?!file://)(?!https?://)(?!~)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+"
+    },
+    "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "candidate_id": {"type": "string", "pattern": "^CAND-[0-9A-Za-z._-]+$"},
+    "stable_code": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]{2,63}$"},
+    "text": {"type": "string", "minLength": 1},
+    "text_list": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/text"}},
+    "target_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target_contract_path", "target_contract_sha256", "tested_ref"],
+      "properties": {
+        "target_contract_path": {"$ref": "#/$defs/workspace_relative_path"},
+        "target_contract_sha256": {"$ref": "#/$defs/sha256"},
+        "tested_ref": {"$ref": "#/$defs/text"}
+      }
+    },
+    "recon_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "recon_id"],
+      "properties": {
+        "path": {"$ref": "#/$defs/workspace_relative_path"},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "recon_id": {"type": "string", "pattern": "^RECON-[0-9A-Za-z][0-9A-Za-z._-]*$"}
+      }
+    },
+    "dedup_plan_binding": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "sha256", "plan_id"],
+      "properties": {
+        "path": {"$ref": "#/$defs/workspace_relative_path"},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "plan_id": {"type": "string", "pattern": "^DEDUP-[0-9a-f]{16}$"}
+      }
+    },
+    "candidate_inventory_item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "candidate_id"],
+      "properties": {
+        "path": {"$ref": "#/$defs/workspace_relative_path"},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "candidate_id": {"$ref": "#/$defs/candidate_id"},
+        "fingerprint": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/sha256"}]}
+      }
+    },
+    "decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["candidate_id", "recommendation", "reason_code", "evidence", "next_action"],
+      "properties": {
+        "candidate_id": {"$ref": "#/$defs/candidate_id"},
+        "recommendation": {
+          "type": "string",
+          "enum": ["recommend_verification", "unverified", "blocked", "false_positive", "duplicate"]
+        },
+        "reason_code": {"$ref": "#/$defs/stable_code"},
+        "evidence": {"$ref": "#/$defs/text_list"},
+        "next_action": {"$ref": "#/$defs/text"},
+        "verification_reason": {"$ref": "#/$defs/text"},
+        "docker_applicability": {"type": "string", "enum": ["applicable", "manual_blocked", "unknown"]},
+        "required_evidence": {"$ref": "#/$defs/text_list"},
+        "verification_order": {"type": "integer", "minimum": 1},
+        "missing_evidence": {"$ref": "#/$defs/text_list"},
+        "blocker_code": {"$ref": "#/$defs/stable_code"},
+        "recovery_condition": {"$ref": "#/$defs/text"},
+        "resume_action": {"$ref": "#/$defs/text"},
+        "counterevidence": {"$ref": "#/$defs/text_list"},
+        "duplicate_of_candidate_id": {"$ref": "#/$defs/candidate_id"}
+      }
+    },
+    "unprocessed_candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["candidate_id", "reason_code", "evidence", "next_action"],
+      "properties": {
+        "candidate_id": {"$ref": "#/$defs/candidate_id"},
+        "reason_code": {"$ref": "#/$defs/stable_code"},
+        "evidence": {"$ref": "#/$defs/text_list"},
+        "next_action": {"$ref": "#/$defs/text"}
+      }
+    },
+    "batch_gap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "affected_candidate_ids", "evidence", "next_action"],
+      "properties": {
+        "code": {"$ref": "#/$defs/stable_code"},
+        "affected_candidate_ids": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/candidate_id"}},
+        "evidence": {"$ref": "#/$defs/text_list"},
+        "next_action": {"$ref": "#/$defs/text"}
+      }
+    },
+    "batch_blocker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "affected_candidate_ids", "evidence", "recovery_condition", "resume_action"],
+      "properties": {
+        "code": {"$ref": "#/$defs/stable_code"},
+        "affected_candidate_ids": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/candidate_id"}},
+        "evidence": {"$ref": "#/$defs/text_list"},
+        "recovery_condition": {"$ref": "#/$defs/text"},
+        "resume_action": {"$ref": "#/$defs/text"}
+      }
+    },
+    "next_action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action_id", "summary"],
+      "properties": {
+        "action_id": {"type": "string", "pattern": "^ACTION-[0-9A-Za-z][0-9A-Za-z._-]*$"},
+        "summary": {"$ref": "#/$defs/text"}
+      }
+    }
+  }
+}

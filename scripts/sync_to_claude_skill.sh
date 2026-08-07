@@ -44,6 +44,25 @@ sync_prompt_template() {
   fi
 }
 
+sanitize_installed_package() {
+  find "$DEST_DIR" -type f \( \
+    -name 'AGENTS.md' -o \
+    -name '*.hidden' -o \
+    -name '*.bak' -o \
+    -name '*.tmp' -o \
+    -name '*.orig' -o \
+    -name '*.rej' -o \
+    -name '*.pyc' -o \
+    -name '.DS_Store' \
+  \) -delete
+  find "$DEST_DIR" -depth \( \
+    -path '*/__pycache__' -o \
+    -path '*/__pycache__/*' -o \
+    -path '*/.omc' -o \
+    -path '*/.omc/*' \
+  \) -delete
+}
+
 prune_old_backups() {
   if [[ "${KEEP_BACKUPS}" =~ ^[0-9]+$ ]]; then
     :
@@ -115,6 +134,7 @@ cp -R "$PLUGIN_ROOT/assets" "$DEST_DIR/assets"
 cp -R "$PLUGIN_ROOT/docs" "$DEST_DIR/docs"
 cp "$PLUGIN_ROOT/README.md" "$DEST_DIR/README.plugin-package.md"
 cp "$PLUGIN_ROOT/docs/INSTALL.md" "$DEST_DIR/INSTALL.plugin-package.md"
+sanitize_installed_package
 sync_prompt_template
 prune_old_backups
 

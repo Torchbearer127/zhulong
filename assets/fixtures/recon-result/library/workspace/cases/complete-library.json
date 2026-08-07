@@ -1,0 +1,366 @@
+{
+  "schema_version": 1,
+  "recon_id": "RECON-LIBRARY-001",
+  "status": "complete",
+  "target_binding": {
+    "target_contract_path": "zhulong-target.yaml",
+    "target_contract_sha256": "sha256:5e2e0b2c97336f337f159c212702cd1dafedd4398fc8c53d02b384f03ecef7ab",
+    "tested_ref": "fixture-library-ref-001"
+  },
+  "attack_surface_binding": {
+    "path": "attack-surface.md",
+    "sha256": "sha256:333c79cfbf2fbc51ce019e1c94b944ffc3fd5813cda93b2543db9004c40ab24e"
+  },
+  "technology_stack": [
+    {
+      "id": "TECH-PYTHON",
+      "name": "Python",
+      "category": "language",
+      "summary": "The library is implemented as Python source.",
+      "source_refs": [
+        {
+          "path": "src/parser.py",
+          "start_line": 1,
+          "end_line": 4,
+          "symbol": "parse_document"
+        }
+      ],
+      "evidence_refs": [
+        {
+          "path": "evidence/recon-notes.md",
+          "section": "Stack"
+        }
+      ]
+    }
+  ],
+  "public_entrypoints": [],
+  "trust_boundaries": [
+    {
+      "id": "BOUNDARY-LIBRARY-CONSUMER",
+      "from_zone": "library consumer",
+      "to_zone": "parser API",
+      "controls": [
+        "caller-provided text",
+        "caller-provided options"
+      ],
+      "summary": "The consumer boundary is the public library API rather than a network route.",
+      "source_refs": [
+        {
+          "path": "src/parser.py",
+          "start_line": 1,
+          "end_line": 4,
+          "symbol": "parse_document"
+        }
+      ],
+      "evidence_refs": [
+        {
+          "path": "evidence/consumer-boundary.md",
+          "section": "Consumer boundary"
+        }
+      ]
+    }
+  ],
+  "high_risk_sinks": [
+    {
+      "id": "SINK-PARSER-OPTIONS",
+      "family": "parser",
+      "symbol": {
+        "name": "parse_document",
+        "kind": "public library API"
+      },
+      "controlled_inputs": [
+        "text",
+        "options"
+      ],
+      "summary": "The parser API transforms consumer-controlled text and options.",
+      "source_refs": [
+        {
+          "path": "src/parser.py",
+          "start_line": 1,
+          "end_line": 4,
+          "symbol": "parse_document"
+        }
+      ],
+      "evidence_refs": [
+        {
+          "path": "evidence/recon-notes.md",
+          "section": "API map"
+        }
+      ]
+    }
+  ],
+  "security_policy_explanations": [
+    {
+      "id": "POLICY-PARSER-OPTIONS",
+      "policy_type": "input_validation",
+      "explanation": "The parser records a strict option flag; consumer-side assumptions are kept separate from the library coverage record.",
+      "summary": "Parser option handling is recorded as a policy observation.",
+      "source_refs": [
+        {
+          "path": "src/parser.py",
+          "start_line": 1,
+          "end_line": 4,
+          "symbol": "parse_document"
+        }
+      ],
+      "evidence_refs": [
+        {
+          "path": "evidence/recon-notes.md",
+          "section": "Policy"
+        }
+      ]
+    }
+  ],
+  "default_deployment_assumptions": [
+    {
+      "id": "ASSUME-CONSUMER-APP",
+      "assumption": "A later review may construct a consumer application around the library API; no public service is assumed by default.",
+      "confidence": "observed",
+      "summary": "The default deployment assumption explicitly separates library behavior from consumer deployment.",
+      "source_refs": [
+        {
+          "path": "README.md",
+          "start_line": 1,
+          "end_line": 4
+        }
+      ],
+      "evidence_refs": [
+        {
+          "path": "evidence/consumer-boundary.md",
+          "section": "Consumer boundary"
+        }
+      ]
+    }
+  ],
+  "priority_areas": [
+    {
+      "id": "FOCUS-LIBRARY-PARSER",
+      "scope": {
+        "paths": [
+          "src/parser.py"
+        ],
+        "symbols": [
+          "parse_document"
+        ]
+      },
+      "reason": "The exported parser API is the stable consumer-controlled surface.",
+      "summary": "Prioritize the public parser API and option transformation.",
+      "source_refs": [
+        {
+          "path": "src/parser.py",
+          "start_line": 1,
+          "end_line": 4,
+          "symbol": "parse_document"
+        }
+      ],
+      "evidence_refs": [
+        {
+          "path": "attack-surface.md",
+          "section": "Library API"
+        }
+      ]
+    }
+  ],
+  "deferred_areas": [
+    {
+      "id": "DEFER-LIBRARY-CONSUMER-ORACLE",
+      "scope": {
+        "paths": [
+          "README.md"
+        ],
+        "symbols": []
+      },
+      "reason": "A concrete consumer application and runtime oracle are outside this Recon coverage record.",
+      "revisit_when": "When a consumer fixture is selected for independent verification.",
+      "summary": "Consumer deployment verification is deferred with an explicit boundary.",
+      "source_refs": [
+        {
+          "path": "README.md",
+          "start_line": 1,
+          "end_line": 4
+        }
+      ],
+      "evidence_refs": [
+        {
+          "path": "evidence/consumer-boundary.md",
+          "section": "Consumer boundary"
+        }
+      ]
+    }
+  ],
+  "coverage": {
+    "technology_stack": {
+      "status": "covered",
+      "item_ids": [
+        "TECH-PYTHON"
+      ],
+      "reason": "The Python library implementation is mapped to source and evidence.",
+      "basis": {
+        "source_refs": [
+          {
+            "path": "src/parser.py",
+            "start_line": 1,
+            "end_line": 4
+          }
+        ],
+        "evidence_refs": [
+          {
+            "path": "evidence/recon-notes.md"
+          }
+        ]
+      }
+    },
+    "public_entrypoints": {
+      "status": "not_applicable",
+      "item_ids": [],
+      "reason": "This target is a library package with no public HTTP, RPC, CLI, or network deployment entrypoint.",
+      "basis": {
+        "source_refs": [
+          {
+            "path": "src/parser.py",
+            "start_line": 1,
+            "end_line": 4
+          }
+        ],
+        "evidence_refs": [
+          {
+            "path": "attack-surface.md",
+            "section": "Library API"
+          }
+        ]
+      }
+    },
+    "trust_boundaries": {
+      "status": "covered",
+      "item_ids": [
+        "BOUNDARY-LIBRARY-CONSUMER"
+      ],
+      "reason": "The library consumer boundary is explicitly mapped.",
+      "basis": {
+        "source_refs": [
+          {
+            "path": "src/parser.py",
+            "start_line": 1,
+            "end_line": 4
+          }
+        ],
+        "evidence_refs": [
+          {
+            "path": "evidence/consumer-boundary.md"
+          }
+        ]
+      }
+    },
+    "high_risk_sinks": {
+      "status": "covered",
+      "item_ids": [
+        "SINK-PARSER-OPTIONS"
+      ],
+      "reason": "The parser API and caller-controlled options are mapped as a structured sink family.",
+      "basis": {
+        "source_refs": [
+          {
+            "path": "src/parser.py",
+            "start_line": 1,
+            "end_line": 4
+          }
+        ],
+        "evidence_refs": [
+          {
+            "path": "evidence/recon-notes.md"
+          }
+        ]
+      }
+    },
+    "security_policy_explanations": {
+      "status": "covered",
+      "item_ids": [
+        "POLICY-PARSER-OPTIONS"
+      ],
+      "reason": "Parser option policy handling is documented with source and evidence.",
+      "basis": {
+        "source_refs": [
+          {
+            "path": "src/parser.py",
+            "start_line": 1,
+            "end_line": 4
+          }
+        ],
+        "evidence_refs": [
+          {
+            "path": "evidence/recon-notes.md"
+          }
+        ]
+      }
+    },
+    "default_deployment_assumptions": {
+      "status": "covered",
+      "item_ids": [
+        "ASSUME-CONSUMER-APP"
+      ],
+      "reason": "The library-versus-consumer deployment boundary is explicit.",
+      "basis": {
+        "source_refs": [
+          {
+            "path": "README.md",
+            "start_line": 1,
+            "end_line": 4
+          }
+        ],
+        "evidence_refs": [
+          {
+            "path": "evidence/consumer-boundary.md"
+          }
+        ]
+      }
+    },
+    "priority_areas": {
+      "status": "covered",
+      "item_ids": [
+        "FOCUS-LIBRARY-PARSER"
+      ],
+      "reason": "The public parser API is the first review range.",
+      "basis": {
+        "source_refs": [
+          {
+            "path": "src/parser.py",
+            "start_line": 1,
+            "end_line": 4
+          }
+        ],
+        "evidence_refs": [
+          {
+            "path": "attack-surface.md"
+          }
+        ]
+      }
+    },
+    "deferred_areas": {
+      "status": "covered",
+      "item_ids": [
+        "DEFER-LIBRARY-CONSUMER-ORACLE"
+      ],
+      "reason": "The consumer runtime oracle is deferred with a revisit condition.",
+      "basis": {
+        "source_refs": [
+          {
+            "path": "README.md",
+            "start_line": 1,
+            "end_line": 4
+          }
+        ],
+        "evidence_refs": [
+          {
+            "path": "evidence/consumer-boundary.md"
+          }
+        ]
+      }
+    }
+  },
+  "coverage_gaps": [],
+  "unresolved_blockers": [],
+  "focus_refs": [
+    "FOCUS-LIBRARY-PARSER",
+    "DEFER-LIBRARY-CONSUMER-ORACLE"
+  ]
+}

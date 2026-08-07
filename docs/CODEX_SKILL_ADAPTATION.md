@@ -147,13 +147,14 @@ for source, Claude installed, and Codex installed selftests:
 - package README or install notes when selftest or operator handoff relies on
   them
 
-Repo-root `AGENTS.md` is intentionally outside this installed skill runtime
-boundary.
+Repo-root `AGENTS.md` and the source-maintainer guide `docs/AGENTS.md` are
+intentionally outside this installed skill runtime boundary.
 
 Installed copies must include the scripts and assets required by
 `scripts/selftest_plugin.py`, `scripts/resolve_skill_root.sh`,
 `scripts/zhulong_audit.sh`, bundle validation, Docker gates, workspace
-finalization, report rendering, and seeded variant helper validation.
+finalization, report rendering, seeded variant helper validation, and the
+read-only Recon coverage contract.
 
 ## Sync Exclusion Boundary
 
@@ -168,6 +169,7 @@ Sync implementations must not copy:
   secrets, or tokens
 - machine-local absolute paths or private target details
 - source-control internals from target repositories
+- source-only `AGENTS.md` instruction and maintainer files
 
 This exclusion boundary applies equally to Claude installed and Codex installed
 layouts.
@@ -203,6 +205,8 @@ running Codex itself. The Codex installed selftest verifies:
 - `scripts/resolve_skill_root.sh` prints the installed skill root
 - `scripts/zhulong_audit.sh --print-skill-root` prints the installed skill root
 - required reference docs are present
+- the Recon schema, template, validator, and positive/negative fixture matrix
+  are present and exercised through the real validator CLI
 - excluded workspace material is absent
 - no machine-local absolute paths or stale private target names are present
 - no broad Docker prune guidance or PID kill behavior is introduced

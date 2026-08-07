@@ -8,6 +8,10 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from audit_text_safety import tested_ref_value_kind
+
+from candidate_identity import SHA256_RE, file_sha256
+
 from validate_candidate import (
     ValidationError as CandidateValidationError,
     check_path_text,
@@ -43,6 +47,7 @@ TOP_LEVEL_KEYS = {
     "artifacts",
     "reason",
     "verified_at",
+    "candidate_binding",
 }
 PATH_KEYS = {"target_config", "path", "file", "artifact"}
 
@@ -195,7 +200,21 @@ def validate_verdict(verdict_doc: dict[str, Any]) -> dict[str, str]:
     target_ref = require_mapping(verdict_doc, "target_ref", "$")
     reject_unknown(target_ref, {"target_config", "tested_ref"}, "$.target_ref")
     require_nonempty_string(target_ref, "target_config", "$.target_ref")
-    require_nonempty_string(target_ref, "tested_ref", "$.target_ref")
+    tested_ref = require_nonempty_string(target_ref, "tested_ref", "$.target_ref")
+    tested_ref_kind = tested_ref_value_kind(tested_ref)
+    if tested_ref_kind is not None:
+        fail(f"$.target_ref.tested_ref contains forbidden source-identity material of category {tested_ref_kind}")
+
+    if "candidate_binding" in verdict_doc:
+        binding = require_mapping(verdict_doc, "candidate_binding", "$")
+        reject_unknown(binding, {"protocol_mode", "candidate_sha256", "fingerprint"}, "$.candidate_binding")
+        mode = require_nonempty_string(binding, "protocol_mode", "$.candidate_binding")
+        if mode != "r2":
+            fail("$.candidate_binding.protocol_mode must be r2")
+        for key in ("candidate_sha256", "fingerprint"):
+            value = require_nonempty_string(binding, key, "$.candidate_binding")
+            if not SHA256_RE.fullmatch(value):
+                fail(f"$.candidate_binding.{key} must be sha256:<lowercase hex>")
 
     environment = require_mapping(verdict_doc, "environment", "$")
     reject_unknown(
@@ -292,7 +311,7 @@ def validate_verdict(verdict_doc: dict[str, Any]) -> dict[str, str]:
 def cross_check_candidate(candidate_path: Path, verdict_doc: dict[str, Any]) -> None:
     try:
         candidate_doc = load_candidate(candidate_path)
-        validate_candidate(candidate_doc)
+        checked = validate_candidate(candidate_doc)
     except CandidateValidationError as exc:
         fail(f"candidate cross-check failed because candidate is invalid: {exc}")
 
@@ -300,6 +319,16 @@ def cross_check_candidate(candidate_path: Path, verdict_doc: dict[str, Any]) -> 
         fail("candidate cross-check failed: candidate_id mismatch")
     if verdict_doc.get("target_ref") != candidate_doc.get("target_ref"):
         fail("candidate cross-check failed: target_ref mismatch")
+    binding = verdict_doc.get("candidate_binding")
+    if checked.get("protocol_mode") == "r2":
+        if not isinstance(binding, dict):
+            fail("candidate cross-check failed: R2 candidate requires candidate_binding")
+        if binding.get("candidate_sha256") != file_sha256(candidate_path):
+            fail("candidate cross-check failed: candidate digest mismatch")
+        if binding.get("fingerprint") != checked.get("fingerprint"):
+            fail("candidate cross-check failed: candidate fingerprint mismatch")
+    elif binding is not None:
+        fail("candidate cross-check failed: legacy R1 candidate must not claim an R2 candidate_binding")
 
 
 def main() -> None:

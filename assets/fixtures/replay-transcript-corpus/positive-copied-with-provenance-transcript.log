@@ -1,0 +1,7 @@
+Copied replay transcript with portable provenance
+Run command: bash ./run-example-recording.sh quick docker
+RAW OUTPUT: replay helper copied stdout/stderr from a bundle-local staged evidence fixture
+RAW OUTPUT: service returned the expected proof token and the helper preserved it verbatim
+oracle check: grep -Fq DIRECT_IMPACT_CONFIRMED attachments/evidence/replay-output.log
+status=0
+DIRECT_IMPACT_CONFIRMED

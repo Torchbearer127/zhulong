@@ -60,6 +60,9 @@ checks, and final bundle validation all pass.
 - `scripts/validate_candidate.py`, `scripts/verify_candidate.py`, and
   `scripts/validate_verifier_verdict.py` own the candidate and independent
   verifier evidence-level contracts. They do not replace Docker execution.
+- `scripts/candidate_identity.py`, the explicit upgrade helper, and candidate
+  dedup plan builder/validator own Candidate R2 identity, provenance, and
+  candidate-only duplicate advice. They have no verifier or promotion authority.
 - `scripts/audit_disposition.py` owns disposition ledger validation.
 - `scripts/finalize_audit_workspace.py` and
   `scripts/assert_finalized_workspace.py` own final workspace and handoff/status
@@ -73,6 +76,10 @@ checks, and final bundle validation all pass.
   exact adoption, and strict hygiene.
 - `scripts/check_omc_runtime.sh` owns OMC/runtime hygiene. Teammate PIDs are
   review-only.
+- `assets/tool-registry.json`, its strict schema, and
+  `scripts/validate_tool_registry.py` own the local tool-effects contract for
+  the planner and named controlled wrappers. They do not sandbox native Agent
+  tools or replace candidate, verifier, disposition, or bundle gates.
 
 Do not solve recurring behavior problems by expanding launch prompts. If a rule
 must apply to every audit, encode it in the skill, reference docs, scripts,

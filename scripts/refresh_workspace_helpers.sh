@@ -113,6 +113,25 @@ copy_helper() {
   chmod +x "$dst"
 }
 
+copy_registry_asset() {
+  local src="$1"
+  local dst="$2"
+  if [[ ! -f "$src" ]]; then
+    echo "Missing required Tool Registry R2 asset: $src" >&2
+    exit 1
+  fi
+  cp "$src" "$dst"
+}
+
+write_controlled_adapter() {
+  local path="$1"
+  local marker="$2"
+  local executable="$3"
+  local interpreter="$4"
+  printf '%s\n' '#!/usr/bin/env bash' "$marker" 'set -euo pipefail' 'SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"' "exec $interpreter \"\$SCRIPT_DIR/../bin/$executable\" \"\$@\"" > "$path"
+  chmod +x "$path"
+}
+
 copy_helper_if_present() {
   local src="$1"
   local dst="$2"
@@ -126,12 +145,31 @@ copy_helper "$SKILL_DIR/scripts/asr_exec.sh" "$WORKSPACE_DIR/bin/asr-exec.sh"
 copy_helper "$SKILL_DIR/scripts/check_docker_gate.sh" "$WORKSPACE_DIR/bin/check-docker-gate.sh"
 copy_helper "$SKILL_DIR/scripts/check_omc_runtime.sh" "$WORKSPACE_DIR/bin/check_omc_runtime.sh"
 copy_helper_if_present "$SKILL_DIR/scripts/check_sandbox_preflight.py" "$WORKSPACE_DIR/bin/check-sandbox-preflight.py"
+copy_helper_if_present "$SKILL_DIR/scripts/validate_tool_registry.py" "$WORKSPACE_DIR/bin/validate_tool_registry.py"
+copy_registry_asset "$SKILL_DIR/assets/tool-registry.json" "$WORKSPACE_DIR/bin/tool-registry.json"
+copy_registry_asset "$SKILL_DIR/assets/schemas/tool-registry.schema.json" "$WORKSPACE_DIR/bin/tool-registry.schema.json"
 copy_helper "$SKILL_DIR/scripts/check_security_tooling.sh" "$WORKSPACE_DIR/bin/check_security_tooling.sh"
 copy_helper "$SKILL_DIR/scripts/run_initial_probes.sh" "$WORKSPACE_DIR/bin/run-initial-probes.sh"
 copy_helper_if_present "$SKILL_DIR/scripts/run_verification_case.sh" "$WORKSPACE_DIR/bin/run-verification-case.sh"
 copy_helper_if_present "$SKILL_DIR/scripts/manage_docker_resources.py" "$WORKSPACE_DIR/bin/manage-docker-resources.py"
 copy_helper_if_present "$SKILL_DIR/scripts/render_handoff_summary.py" "$WORKSPACE_DIR/bin/render-handoff-summary.py"
 copy_helper_if_present "$SKILL_DIR/scripts/workspace_state.py" "$WORKSPACE_DIR/bin/workspace_state.py"
+copy_helper_if_present "$SKILL_DIR/scripts/render_handoff_state.py" "$WORKSPACE_DIR/bin/render-handoff-state.py"
+copy_helper_if_present "$SKILL_DIR/scripts/validate_handoff_state.py" "$WORKSPACE_DIR/bin/validate-handoff-state.py"
+copy_helper_if_present "$SKILL_DIR/scripts/next_actions.py" "$WORKSPACE_DIR/bin/next_actions.py"
+copy_helper_if_present "$SKILL_DIR/scripts/render_next_actions.py" "$WORKSPACE_DIR/bin/render-next-actions.py"
+copy_helper_if_present "$SKILL_DIR/scripts/validate_next_actions.py" "$WORKSPACE_DIR/bin/validate-next-actions.py"
+copy_helper_if_present "$SKILL_DIR/scripts/audit_timeline.py" "$WORKSPACE_DIR/bin/audit_timeline.py"
+copy_helper_if_present "$SKILL_DIR/scripts/render_audit_timeline.py" "$WORKSPACE_DIR/bin/render-audit-timeline.py"
+copy_helper_if_present "$SKILL_DIR/scripts/validate_audit_timeline.py" "$WORKSPACE_DIR/bin/validate-audit-timeline.py"
+copy_helper_if_present "$SKILL_DIR/scripts/create_workspace_checkpoint.py" "$WORKSPACE_DIR/bin/create-workspace-checkpoint.py"
+copy_helper_if_present "$SKILL_DIR/scripts/validate_workspace_checkpoint.py" "$WORKSPACE_DIR/bin/validate-workspace-checkpoint.py"
+copy_registry_asset "$SKILL_DIR/assets/schemas/handoff-state.schema.json" "$WORKSPACE_DIR/bin/handoff-state.schema.json"
+copy_registry_asset "$SKILL_DIR/assets/schemas/workspace-checkpoint.schema.json" "$WORKSPACE_DIR/bin/workspace-checkpoint.schema.json"
+copy_registry_asset "$SKILL_DIR/assets/schemas/next-actions.schema.json" "$WORKSPACE_DIR/bin/next-actions.schema.json"
+copy_registry_asset "$SKILL_DIR/assets/schemas/audit-timeline.schema.json" "$WORKSPACE_DIR/bin/audit-timeline.schema.json"
+mkdir -p "$WORKSPACE_DIR/assets/schemas"
+copy_registry_asset "$SKILL_DIR/assets/schemas/audit-timeline.schema.json" "$WORKSPACE_DIR/assets/schemas/audit-timeline.schema.json"
 copy_helper "$SKILL_DIR/scripts/plan_security_toolchain.py" "$WORKSPACE_DIR/bin/plan-security-toolchain.py"
 copy_helper "$SKILL_DIR/scripts/scaffold_bilingual_findings.py" "$WORKSPACE_DIR/bin/scaffold-bilingual-findings.py"
 copy_helper "$SKILL_DIR/scripts/render_confirmed_vuln_docx.py" "$WORKSPACE_DIR/bin/render-confirmed-vuln-docx.py"
@@ -140,25 +178,61 @@ copy_helper_if_present "$SKILL_DIR/scripts/extract_variant_seed.py" "$WORKSPACE_
 copy_helper_if_present "$SKILL_DIR/scripts/find_variant_candidates.py" "$WORKSPACE_DIR/bin/find_variant_candidates.py"
 copy_helper "$SKILL_DIR/scripts/validate_all_report_bundles.py" "$WORKSPACE_DIR/bin/validate-all-report-bundles.py"
 copy_helper_if_present "$SKILL_DIR/scripts/write_audit_event.py" "$WORKSPACE_DIR/bin/write-audit-event.py"
+copy_helper_if_present "$SKILL_DIR/scripts/audit_state_io.py" "$WORKSPACE_DIR/bin/audit_state_io.py"
+copy_helper_if_present "$SKILL_DIR/scripts/audit_text_safety.py" "$WORKSPACE_DIR/bin/audit_text_safety.py"
+copy_helper_if_present "$SKILL_DIR/scripts/audit_transition_policy.py" "$WORKSPACE_DIR/bin/audit_transition_policy.py"
+copy_helper_if_present "$SKILL_DIR/scripts/validate_audit_protocol.py" "$WORKSPACE_DIR/bin/validate_audit_protocol.py"
+copy_helper_if_present "$SKILL_DIR/scripts/recover_audit_state.py" "$WORKSPACE_DIR/bin/recover-audit-state.py"
 copy_helper_if_present "$SKILL_DIR/scripts/validate_workspace_state.py" "$WORKSPACE_DIR/bin/validate-workspace-state.py"
 copy_helper_if_present "$SKILL_DIR/scripts/assert_finalized_workspace.py" "$WORKSPACE_DIR/bin/assert-finalized-workspace.py"
 copy_helper_if_present "$SKILL_DIR/scripts/blocked_verification.py" "$WORKSPACE_DIR/bin/blocked_verification.py"
 copy_helper_if_present "$SKILL_DIR/scripts/validate_target_contract.py" "$WORKSPACE_DIR/bin/validate_target_contract.py"
+copy_helper_if_present "$SKILL_DIR/scripts/validate_recon_result.py" "$WORKSPACE_DIR/bin/validate_recon_result.py"
+copy_helper_if_present "$SKILL_DIR/scripts/validate_recon_result.py" "$WORKSPACE_DIR/bin/validate-recon-result.py"
+copy_helper_if_present "$SKILL_DIR/scripts/validate_triage_batch.py" "$WORKSPACE_DIR/bin/validate-triage-batch.py"
+mkdir -p "$WORKSPACE_DIR/assets/schemas"
+copy_registry_asset "$SKILL_DIR/assets/schemas/recon-result.schema.json" "$WORKSPACE_DIR/assets/schemas/recon-result.schema.json"
+copy_registry_asset "$SKILL_DIR/assets/schemas/triage-batch.schema.json" "$WORKSPACE_DIR/assets/schemas/triage-batch.schema.json"
 copy_helper_if_present "$SKILL_DIR/scripts/validate_candidate.py" "$WORKSPACE_DIR/bin/validate_candidate.py"
+copy_helper_if_present "$SKILL_DIR/scripts/candidate_identity.py" "$WORKSPACE_DIR/bin/candidate_identity.py"
+copy_helper_if_present "$SKILL_DIR/scripts/upgrade_candidate_identity.py" "$WORKSPACE_DIR/bin/upgrade_candidate_identity.py"
+copy_helper_if_present "$SKILL_DIR/scripts/candidate_dedup.py" "$WORKSPACE_DIR/bin/candidate_dedup.py"
+copy_helper_if_present "$SKILL_DIR/scripts/build_candidate_dedup_plan.py" "$WORKSPACE_DIR/bin/build_candidate_dedup_plan.py"
+copy_helper_if_present "$SKILL_DIR/scripts/validate_candidate_dedup_plan.py" "$WORKSPACE_DIR/bin/validate_candidate_dedup_plan.py"
 copy_helper_if_present "$SKILL_DIR/scripts/validate_verifier_verdict.py" "$WORKSPACE_DIR/bin/validate_verifier_verdict.py"
 copy_helper_if_present "$SKILL_DIR/scripts/verify_candidate.py" "$WORKSPACE_DIR/bin/verify_candidate.py"
 copy_helper_if_present "$SKILL_DIR/scripts/audit_disposition.py" "$WORKSPACE_DIR/bin/audit_disposition.py"
 copy_helper_if_present "$SKILL_DIR/scripts/finalize_audit_workspace.py" "$WORKSPACE_DIR/bin/finalize-audit-workspace.py"
+
+write_controlled_adapter "$WORKSPACE_DIR/scripts/check-sandbox-preflight.py" '# zhulong-tool-contract: sandbox-preflight-v1' 'check-sandbox-preflight.py' 'python3'
+write_controlled_adapter "$WORKSPACE_DIR/scripts/run-initial-probes.sh" '# zhulong-tool-contract: initial-probes-v1' 'run-initial-probes.sh' 'bash'
+write_controlled_adapter "$WORKSPACE_DIR/scripts/run-verification-case.sh" '# zhulong-tool-contract: docker-verification-v1; timeout=mandatory; sandbox-preflight=mandatory' 'run-verification-case.sh' 'bash'
+write_controlled_adapter "$WORKSPACE_DIR/scripts/validate-tool-registry.py" '' 'validate_tool_registry.py' 'python3'
+write_controlled_adapter "$WORKSPACE_DIR/scripts/render-handoff-state.py" '' 'render-handoff-state.py' 'python3'
+write_controlled_adapter "$WORKSPACE_DIR/scripts/validate-handoff-state.py" '' 'validate-handoff-state.py' 'python3'
+write_controlled_adapter "$WORKSPACE_DIR/scripts/render-next-actions.py" '' 'render-next-actions.py' 'python3'
+write_controlled_adapter "$WORKSPACE_DIR/scripts/validate-next-actions.py" '' 'validate-next-actions.py' 'python3'
+write_controlled_adapter "$WORKSPACE_DIR/scripts/render-audit-timeline.py" '' 'render-audit-timeline.py' 'python3'
+write_controlled_adapter "$WORKSPACE_DIR/scripts/validate-audit-timeline.py" '' 'validate-audit-timeline.py' 'python3'
+write_controlled_adapter "$WORKSPACE_DIR/scripts/upgrade-candidate-identity.py" '' 'upgrade_candidate_identity.py' 'python3'
+write_controlled_adapter "$WORKSPACE_DIR/scripts/build-candidate-dedup-plan.py" '' 'build_candidate_dedup_plan.py' 'python3'
+write_controlled_adapter "$WORKSPACE_DIR/scripts/validate-candidate-dedup-plan.py" '' 'validate_candidate_dedup_plan.py' 'python3'
+write_controlled_adapter "$WORKSPACE_DIR/scripts/validate-recon-result.py" '' 'validate-recon-result.py' 'python3'
+write_controlled_adapter "$WORKSPACE_DIR/scripts/validate-triage-batch.py" '' 'validate-triage-batch.py' 'python3'
+write_controlled_adapter "$WORKSPACE_DIR/scripts/create-workspace-checkpoint.py" '' 'create-workspace-checkpoint.py' 'python3'
+write_controlled_adapter "$WORKSPACE_DIR/scripts/validate-workspace-checkpoint.py" '' 'validate-workspace-checkpoint.py' 'python3'
 
 if [[ -f "$WORKSPACE_DIR/bin/write-audit-event.py" ]]; then
   python3 "$WORKSPACE_DIR/bin/write-audit-event.py" \
     --workspace-dir "$WORKSPACE_DIR" \
     --target-repo "$(cd "$WORKSPACE_DIR/.." && pwd)" \
     --event workspace_helpers_refreshed \
-    --stage workspace_preparing \
-    --status running \
+    --stage current \
+    --status current \
+    --transition-kind observe \
     --event-status ok \
-    --message "Workspace helper scripts refreshed." || true
+    --message "Workspace helper scripts refreshed." \
+    --accept-current-revision
 fi
 
 cat <<EOF

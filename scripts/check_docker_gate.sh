@@ -40,8 +40,7 @@ write_state_event() {
   local writer
   writer="$(find_state_writer)"
   [[ -n "$writer" ]] || return 0
-  python3 "$writer" "$@" || \
-    echo "[zhulong] WARNING: state write failed (non-fatal)." >&2
+  python3 "$writer" "$@" --accept-current-revision >/dev/null
 }
 
 launcher_hint() {
@@ -211,8 +210,9 @@ if docker info >"$TMP_OUT" 2>&1; then
     --workspace-dir "$WORKSPACE_DIR" \
     --target-repo "$REPO_ROOT" \
     --event docker_gate_ready \
-    --stage environment_checking \
-    --status running \
+    --stage current \
+    --status current \
+    --transition-kind observe \
     --event-status ok \
     --message "Docker gate is ready."
   echo "docker_gate=ready"
@@ -225,7 +225,8 @@ docker_reason="$(head -n 1 "$TMP_OUT" | tr -d '\r' | sed 's/[[:space:]]*$//')"
 if [[ -z "$docker_reason" ]]; then
   docker_reason="docker info failed; Docker daemon or socket is unavailable."
 fi
-resume_step="Fix Docker/OrbStack, then run: bash $WORKSPACE_DIR/bin/check-docker-gate.sh --repo-root $REPO_ROOT"
+event_blocker="Docker availability check failed; inspect audit-log.md for the local diagnostic."
+resume_step="Fix Docker/OrbStack, then run: bash <workspace-dir>/bin/check-docker-gate.sh --repo-root <repo-root>"
 {
   echo ""
   echo "## $timestamp"
@@ -267,13 +268,14 @@ write_state_event \
   --workspace-dir "$WORKSPACE_DIR" \
   --target-repo "$REPO_ROOT" \
   --event docker_gate_blocked \
-  --stage environment_checking \
+  --stage current \
   --status blocked \
+  --transition-kind block \
   --event-status blocked \
   --message "Docker gate blocked verification." \
-  --blocker "$docker_reason" \
+  --blocker "$event_blocker" \
   --resume-step "$resume_step" \
-  --detail "audit_log=$LOG_FILE"
+  --evidence-ref "audit-log.md"
 
 render_handoff_summary
 handoff_hint="$WORKSPACE_DIR/handoff-summary.md"

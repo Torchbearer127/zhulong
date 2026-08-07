@@ -1,0 +1,289 @@
+{
+  "schema_version": 1,
+  "positive_cases": [
+    {
+      "id": "complete-service",
+      "scenario": "service",
+      "result": "workspace/cases/complete-service.json",
+      "status": "complete"
+    },
+    {
+      "id": "complete-library",
+      "scenario": "library",
+      "result": "workspace/cases/complete-library.json",
+      "status": "complete"
+    },
+    {
+      "id": "partial-service",
+      "scenario": "service",
+      "result": "workspace/cases/partial-service.json",
+      "status": "partial"
+    },
+    {
+      "id": "blocked-service",
+      "scenario": "service",
+      "result": "workspace/cases/blocked-service.json",
+      "status": "blocked"
+    }
+  ],
+  "negative_cases": [
+    {
+      "id": "missing-coverage-technology-stack",
+      "base": "complete-service",
+      "mutations": [
+        {
+          "kind": "drop",
+          "path": "coverage.technology_stack"
+        }
+      ],
+      "expected_codes": ["SCHEMA_INVALID"]
+    },
+    {
+      "id": "missing-coverage-public-entrypoints",
+      "base": "complete-service",
+      "mutations": [{"kind": "drop", "path": "coverage.public_entrypoints"}],
+      "expected_codes": ["SCHEMA_INVALID"]
+    },
+    {
+      "id": "missing-coverage-trust-boundaries",
+      "base": "complete-service",
+      "mutations": [{"kind": "drop", "path": "coverage.trust_boundaries"}],
+      "expected_codes": ["SCHEMA_INVALID"]
+    },
+    {
+      "id": "missing-coverage-high-risk-sinks",
+      "base": "complete-service",
+      "mutations": [{"kind": "drop", "path": "coverage.high_risk_sinks"}],
+      "expected_codes": ["SCHEMA_INVALID"]
+    },
+    {
+      "id": "missing-coverage-security-policies",
+      "base": "complete-service",
+      "mutations": [{"kind": "drop", "path": "coverage.security_policy_explanations"}],
+      "expected_codes": ["SCHEMA_INVALID"]
+    },
+    {
+      "id": "missing-coverage-deployment-assumptions",
+      "base": "complete-service",
+      "mutations": [{"kind": "drop", "path": "coverage.default_deployment_assumptions"}],
+      "expected_codes": ["SCHEMA_INVALID"]
+    },
+    {
+      "id": "missing-coverage-priority-areas",
+      "base": "complete-service",
+      "mutations": [{"kind": "drop", "path": "coverage.priority_areas"}],
+      "expected_codes": ["SCHEMA_INVALID"]
+    },
+    {
+      "id": "missing-coverage-deferred-areas",
+      "base": "complete-service",
+      "mutations": [{"kind": "drop", "path": "coverage.deferred_areas"}],
+      "expected_codes": ["SCHEMA_INVALID"]
+    },
+    {
+      "id": "complete-with-blocker",
+      "base": "complete-service",
+      "mutations": [
+        {
+          "kind": "copy",
+          "from_case": "blocked-service",
+          "from_path": "unresolved_blockers",
+          "path": "unresolved_blockers"
+        }
+      ],
+      "expected_codes": ["STATUS_SEMANTICS_INVALID"]
+    },
+    {
+      "id": "complete-with-gap",
+      "base": "complete-service",
+      "mutations": [
+        {
+          "kind": "copy",
+          "from_case": "partial-service",
+          "from_path": "coverage_gaps",
+          "path": "coverage_gaps"
+        }
+      ],
+      "expected_codes": ["STATUS_SEMANTICS_INVALID"]
+    },
+    {
+      "id": "partial-without-gap-or-blocker",
+      "base": "partial-service",
+      "mutations": [
+        {"kind": "set", "path": "coverage_gaps", "value": []},
+        {"kind": "set", "path": "unresolved_blockers", "value": []}
+      ],
+      "expected_codes": ["STATUS_SEMANTICS_INVALID"]
+    },
+    {
+      "id": "partial-without-next-action",
+      "base": "partial-service",
+      "mutations": [
+        {
+          "kind": "set",
+          "path": "coverage_gaps.0.next_action",
+          "value": {"action_id": "ACTION-INCOMPLETE"}
+        }
+      ],
+      "expected_codes": ["SCHEMA_INVALID", "STATUS_SEMANTICS_INVALID"]
+    },
+    {
+      "id": "blocked-without-blocker",
+      "base": "blocked-service",
+      "mutations": [{"kind": "set", "path": "unresolved_blockers", "value": []}],
+      "expected_codes": ["STATUS_SEMANTICS_INVALID"]
+    },
+    {
+      "id": "blocked-without-evidence",
+      "base": "blocked-service",
+      "mutations": [{"kind": "set", "path": "unresolved_blockers.0.basis.evidence_refs", "value": []}],
+      "expected_codes": ["SCHEMA_INVALID"]
+    },
+    {
+      "id": "blocked-without-resume-action",
+      "base": "blocked-service",
+      "mutations": [{"kind": "set", "path": "unresolved_blockers.0.resume_action", "value": {}}],
+      "expected_codes": ["SCHEMA_INVALID", "STATUS_SEMANTICS_INVALID"]
+    },
+    {
+      "id": "target-contract-digest-drift",
+      "base": "complete-service",
+      "mutations": [{"kind": "set", "path": "target_binding.target_contract_sha256", "value": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}],
+      "expected_codes": ["DIGEST_MISMATCH_TARGET_CONTRACT"]
+    },
+    {
+      "id": "attack-surface-digest-drift",
+      "base": "complete-service",
+      "mutations": [{"kind": "set", "path": "attack_surface_binding.sha256", "value": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}],
+      "expected_codes": ["DIGEST_MISMATCH_ATTACK_SURFACE"]
+    },
+    {
+      "id": "tested-ref-mismatch",
+      "base": "complete-service",
+      "mutations": [{"kind": "set", "path": "target_binding.tested_ref", "value": "different-tested-ref"}],
+      "expected_codes": ["TESTED_REF_MISMATCH"]
+    },
+    {
+      "id": "absolute-source-path",
+      "base": "complete-service",
+      "mutations": [{"kind": "set", "path": "technology_stack.0.source_refs.0.path", "value": "/private/fixture.py"}],
+      "expected_codes": ["SCHEMA_INVALID", "PATH_UNSAFE"]
+    },
+    {
+      "id": "parent-source-path",
+      "base": "complete-service",
+      "mutations": [{"kind": "set", "path": "technology_stack.0.source_refs.0.path", "value": "../fixture.py"}],
+      "expected_codes": ["SCHEMA_INVALID", "PATH_UNSAFE"]
+    },
+    {
+      "id": "uri-source-path",
+      "base": "complete-service",
+      "mutations": [{"kind": "set", "path": "technology_stack.0.source_refs.0.path", "value": "file://fixture.py"}],
+      "expected_codes": ["SCHEMA_INVALID", "PATH_UNSAFE"]
+    },
+    {
+      "id": "symlink-result-escape",
+      "base": "complete-service",
+      "mutations": [{"kind": "symlink_result"}],
+      "expected_codes": ["SYMLINK_ESCAPE"]
+    },
+    {
+      "id": "symlink-target-escape",
+      "base": "complete-service",
+      "mutations": [{"kind": "symlink_target"}],
+      "expected_codes": ["SYMLINK_ESCAPE"]
+    },
+    {
+      "id": "symlink-attack-surface-escape",
+      "base": "complete-service",
+      "mutations": [{"kind": "symlink_attack_surface"}],
+      "expected_codes": ["SYMLINK_ESCAPE"]
+    },
+    {
+      "id": "symlink-source-escape",
+      "base": "complete-service",
+      "mutations": [{"kind": "symlink_source"}],
+      "expected_codes": ["SYMLINK_ESCAPE"]
+    },
+    {
+      "id": "symlink-evidence-escape",
+      "base": "complete-service",
+      "mutations": [{"kind": "symlink_evidence"}],
+      "expected_codes": ["SYMLINK_ESCAPE"]
+    },
+    {
+      "id": "duplicate-id",
+      "base": "complete-service",
+      "mutations": [{"kind": "set", "path": "technology_stack.1.id", "value": "TECH-PYTHON"}],
+      "expected_codes": ["DUPLICATE_ID"]
+    },
+    {
+      "id": "dangling-focus-reference",
+      "base": "complete-service",
+      "mutations": [{"kind": "set", "path": "focus_refs", "value": ["FOCUS-MISSING"]}],
+      "expected_codes": ["DANGLING_REFERENCE"]
+    },
+    {
+      "id": "dangling-source-reference",
+      "base": "complete-service",
+      "mutations": [{"kind": "set", "path": "public_entrypoints.0.source_refs.0.path", "value": "src/missing.py"}],
+      "expected_codes": ["FILE_MISSING"]
+    },
+    {
+      "id": "dangling-evidence-reference",
+      "base": "complete-service",
+      "mutations": [{"kind": "set", "path": "public_entrypoints.0.evidence_refs.0.path", "value": "evidence/missing.md"}],
+      "expected_codes": ["FILE_MISSING"]
+    },
+    {
+      "id": "not-applicable-without-basis",
+      "base": "complete-library",
+      "mutations": [
+        {"kind": "set", "path": "coverage.public_entrypoints.basis", "value": {"source_refs": [], "evidence_refs": []}}
+      ],
+      "expected_codes": ["SCHEMA_INVALID", "NOT_APPLICABLE_UNJUSTIFIED"]
+    },
+    {
+      "id": "forbidden-permission-field",
+      "base": "complete-service",
+      "mutations": [{"kind": "set", "path": "severity", "value": "High"}],
+      "expected_codes": ["FORBIDDEN_PERMISSION", "SCHEMA_INVALID"]
+    },
+    {
+      "id": "covered-category-borrows-foreign-id",
+      "base": "complete-service",
+      "mutations": [
+        {"kind": "set", "path": "technology_stack", "value": []},
+        {"kind": "set", "path": "coverage.technology_stack.item_ids", "value": ["ENTRY-HTTP-IMPORT"]}
+      ],
+      "expected_codes": ["STATUS_SEMANTICS_INVALID"]
+    },
+    {
+      "id": "start-line-only-out-of-range",
+      "base": "complete-service",
+      "mutations": [
+        {"kind": "set", "path": "technology_stack.0.source_refs.0.start_line", "value": 9999},
+        {"kind": "drop", "path": "technology_stack.0.source_refs.0.end_line"}
+      ],
+      "expected_codes": ["SOURCE_REFERENCE_INVALID"]
+    },
+    {
+      "id": "candidate-object",
+      "base": "complete-service",
+      "mutations": [{"kind": "set", "path": "candidate", "value": {"candidate_id": "CAND-0001"}}],
+      "expected_codes": ["CANDIDATE_MATERIAL", "SCHEMA_INVALID"]
+    },
+    {
+      "id": "candidate-id-list",
+      "base": "complete-service",
+      "mutations": [{"kind": "set", "path": "focus_refs", "value": ["CAND-0001"]}],
+      "expected_codes": ["CANDIDATE_MATERIAL", "SCHEMA_INVALID"]
+    },
+    {
+      "id": "natural-language-only-complete",
+      "base": "complete-service",
+      "mutations": [{"kind": "natural_language_only"}],
+      "expected_codes": ["COVERAGE_TOO_THIN"]
+    }
+  ]
+}

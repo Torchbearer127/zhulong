@@ -1,0 +1,5 @@
+{
+  "schema_version": 1,
+  "positive_cases": ["handoff-stale-only", "recon-entrypoint-incomplete", "recon-trust-boundary-incomplete", "candidate-verdict-missing", "docker-oracle-unproven", "replay-material-missing", "severity-escalation-pending", "validated-bundle-variant-pending", "docker-cleanup-incomplete", "finalization-event-missing", "no-action", "stable-multiple-actions"],
+  "negative_cases": ["zero-bundle-variant-forgery", "candidate-note-confirmation-forgery", "markdown-note-injection", "invalid-authority", "handoff-drift", "fabricated-downstream-authority", "completed-action-repeated", "duplicate-or-unsorted-action", "unsafe-entrypoint", "unsafe-path", "symlink-input-output-parent", "concurrent-authority-change", "atomic-fault", "schema-only-validator", "r1-masquerading-as-r2"]
+}

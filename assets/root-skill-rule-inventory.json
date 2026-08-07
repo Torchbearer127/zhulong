@@ -1,0 +1,316 @@
+{
+  "schema_version": 1,
+  "inventory_id": "zhulong-root-skill-rules",
+  "rules": [
+    {
+      "rule_id": "ZR-DOCKER-ONLY",
+      "source_scope": "Plugin-Owned Hard Constraints: Docker-only PoC and no host fallback",
+      "rule_class": "hard_constraint",
+      "disposition": "retain_kernel",
+      "target": {"path": "skills/zhulong/SKILL.md", "section": "Core Safety Invariants"},
+      "carriers": [
+        {"type": "root_kernel", "path": "skills/zhulong/SKILL.md", "symbol": "PoCs, exploit payloads, and verification traffic run only inside Docker"},
+        {"type": "fixed_wrapper", "path": "scripts/run_verification_case.sh", "symbol": "no host fallback is provided"}
+      ],
+      "rationale": "Host fallback is a top-level safety boundary and remains visible before phase references load.",
+      "residual_boundary": "Docker availability alone is not confirmation; the verification and bundle gates still apply."
+    },
+    {
+      "rule_id": "ZR-CANDIDATE-ONLY",
+      "source_scope": "Static scanning, dependency, checklist, playbook, and LLM output routing",
+      "rule_class": "hard_constraint",
+      "disposition": "retain_kernel",
+      "target": {"path": "skills/zhulong/SKILL.md", "section": "Core Safety Invariants"},
+      "carriers": [
+        {"type": "root_kernel", "path": "skills/zhulong/SKILL.md", "symbol": "Scanner, static, dependency, checklist, playbook, and LLM results are"},
+        {"type": "production_validator", "path": "scripts/validate_tool_registry.py", "symbol": "SCANNER_AUTHORITY_FORBIDDEN"}
+      ],
+      "rationale": "Candidate-only routing prevents evidence-free promotion and must remain in the kernel.",
+      "residual_boundary": "A candidate may advance only through independent Docker verification and downstream gates."
+    },
+    {
+      "rule_id": "ZR-CONFIRMED-PATH",
+      "source_scope": "Confirmed requires attacker entrypoint, Docker oracle, verdict, disposition, and bundle",
+      "rule_class": "hard_constraint",
+      "disposition": "retain_kernel",
+      "target": {"path": "skills/zhulong/SKILL.md", "section": "Core Safety Invariants"},
+      "carriers": [
+        {"type": "root_kernel", "path": "skills/zhulong/SKILL.md", "symbol": "Confirmed requires a real attacker-controlled entrypoint"},
+        {"type": "production_schema", "path": "assets/schemas/verifier-verdict.schema.json", "symbol": "Only this contract may recommend confirmed_in_docker"},
+        {"type": "production_gate", "path": "scripts/audit_disposition.py", "symbol": "state=confirmed requires confirmed_bundle_path"}
+      ],
+      "rationale": "This is the central confirmation invariant and cannot depend on optional reading.",
+      "residual_boundary": "No single carrier alone grants final confirmed deliverable status."
+    },
+    {
+      "rule_id": "ZR-BLOCKED-NOT-COMPLETE",
+      "source_scope": "Blocked Docker/runtime verification versus no-confirmed completion",
+      "rule_class": "hard_constraint",
+      "disposition": "retain_kernel",
+      "target": {"path": "skills/zhulong/SKILL.md", "section": "Core Safety Invariants"},
+      "carriers": [
+        {"type": "root_kernel", "path": "skills/zhulong/SKILL.md", "symbol": "Blocked verification is not `completed_no_confirmed_findings`"},
+        {"type": "production_gate", "path": "scripts/finalize_audit_workspace.py", "symbol": "Blocked Docker/runtime verification prevents completed_no_confirmed_findings"}
+      ],
+      "rationale": "A runtime failure cannot be misreported as a clean security result.",
+      "residual_boundary": "Material unverified leads remain blocked until their explicit safety rationale or verification is complete."
+    },
+    {
+      "rule_id": "ZR-SOURCE-FIXTURE-BOUNDARY",
+      "source_scope": "Tested ref, source-bound validity, and fixture provenance limits",
+      "rule_class": "hard_constraint",
+      "disposition": "retain_kernel",
+      "target": {"path": "skills/zhulong/SKILL.md", "section": "Core Safety Invariants"},
+      "carriers": [
+        {"type": "root_kernel", "path": "skills/zhulong/SKILL.md", "symbol": "Bind every claim to the exact tested source ref"},
+        {"type": "production_schema", "path": "assets/schemas/bundle-contract.schema.json", "symbol": "fixture_provenance"}
+      ],
+      "rationale": "Source and fixture boundaries prevent stronger real-world claims than evidence supports.",
+      "residual_boundary": "Synthetic identity, privilege, secrets, or deployment properties never support upstream impact."
+    },
+    {
+      "rule_id": "ZR-UNSAFE-SANDBOX",
+      "source_scope": "Unsafe sandbox rejection cannot enter confirmed output",
+      "rule_class": "hard_constraint",
+      "disposition": "retain_kernel",
+      "target": {"path": "skills/zhulong/SKILL.md", "section": "Core Safety Invariants"},
+      "carriers": [
+        {"type": "root_kernel", "path": "skills/zhulong/SKILL.md", "symbol": "`rejected_unsafe_sandbox` never enters `confirmed/`"},
+        {"type": "fixed_wrapper", "path": "scripts/check_sandbox_preflight.py", "symbol": "REJECTED_STATUS = \"rejected_unsafe_sandbox\""}
+      ],
+      "rationale": "Unsafe execution must fail closed before any confirmation path.",
+      "residual_boundary": "Rewrite the verification case and rerun; never reinterpret rejection as evidence."
+    },
+    {
+      "rule_id": "ZR-CLEANUP-PID-SAFETY",
+      "source_scope": "Docker cleanup and OMC teammate PID hygiene",
+      "rule_class": "hard_constraint",
+      "disposition": "retain_kernel",
+      "target": {"path": "skills/zhulong/SKILL.md", "section": "Core Safety Invariants"},
+      "carriers": [
+        {"type": "root_kernel", "path": "skills/zhulong/SKILL.md", "symbol": "Never use broad Docker prune"},
+        {"type": "fixed_wrapper", "path": "scripts/check_omc_runtime.sh", "symbol": "Zhulong never signals teammate PIDs"}
+      ],
+      "rationale": "Cleanup must not destroy unrelated Docker resources or teammate processes.",
+      "residual_boundary": "Only exact audit-owned labeled resources may be applied after review; PID termination stays outside Zhulong."
+    },
+    {
+      "rule_id": "ZR-SEVERITY-VARIANT-SEPARATE",
+      "source_scope": "Severity escalation and seeded variant discovery are distinct closure passes",
+      "rule_class": "hard_constraint",
+      "disposition": "retain_kernel",
+      "target": {"path": "skills/zhulong/SKILL.md", "section": "Core Safety Invariants"},
+      "carriers": [
+        {"type": "root_kernel", "path": "skills/zhulong/SKILL.md", "symbol": "Severity escalation and seeded variant discovery are separate required"},
+        {"type": "production_schema", "path": "assets/schemas/bundle-contract.schema.json", "symbol": "severity_escalation_attempted"}
+      ],
+      "rationale": "Similarity search does not prove stronger impact, and impact testing does not cover variants.",
+      "residual_boundary": "Both passes remain independently evidence-bound."
+    },
+    {
+      "rule_id": "ZR-VARIANT-INDEPENDENT",
+      "source_scope": "Variant candidates require independent Docker reproduction and bundle",
+      "rule_class": "hard_constraint",
+      "disposition": "retain_kernel",
+      "target": {"path": "skills/zhulong/SKILL.md", "section": "Core Safety Invariants"},
+      "carriers": [
+        {"type": "root_kernel", "path": "skills/zhulong/SKILL.md", "symbol": "Each variant remains a candidate until its own Docker reproduction"},
+        {"type": "production_schema", "path": "assets/schemas/variant-seed.schema.json", "symbol": "does not confirm variants"}
+      ],
+      "rationale": "Seed resemblance cannot substitute for independent confirmation.",
+      "residual_boundary": "Candidate ranking and seed similarity remain auxiliary evidence only."
+    },
+    {
+      "rule_id": "ZR-BUNDLE-PROMOTION",
+      "source_scope": "Contract-first staging, final validation, batch validation, and promotion",
+      "rule_class": "hard_constraint",
+      "disposition": "retain_kernel",
+      "target": {"path": "skills/zhulong/SKILL.md", "section": "Core Safety Invariants"},
+      "carriers": [
+        {"type": "root_kernel", "path": "skills/zhulong/SKILL.md", "symbol": "Final bundles use contract-first staging"},
+        {"type": "production_gate", "path": "scripts/build_confirmed_bundle.py", "symbol": "confirmed/.staging/"}
+      ],
+      "rationale": "Direct writes to final confirmed output bypass atomic validation and promotion.",
+      "residual_boundary": "Preflight and all-errors diagnostics never replace final and batch validation."
+    },
+    {
+      "rule_id": "ZR-CANONICAL-FINALIZATION",
+      "source_scope": "Canonical finalization event and gate authority",
+      "rule_class": "hard_constraint",
+      "disposition": "retain_kernel",
+      "target": {"path": "skills/zhulong/SKILL.md", "section": "Core Safety Invariants"},
+      "carriers": [
+        {"type": "root_kernel", "path": "skills/zhulong/SKILL.md", "symbol": "Only the canonical finalization gate and event establish completion"},
+        {"type": "production_gate", "path": "scripts/finalize_audit_workspace.py", "symbol": "finalization_succeeded"}
+      ],
+      "rationale": "Derived summaries and state views must not manufacture completion.",
+      "residual_boundary": "Finalization remains contingent on the selected result and every upstream gate."
+    },
+    {
+      "rule_id": "ZR-RECORDING-OPT-IN",
+      "source_scope": "Recording occurs after bundle confirmation and is rollback-safe",
+      "rule_class": "hard_constraint",
+      "disposition": "retain_kernel",
+      "target": {"path": "skills/zhulong/SKILL.md", "section": "Core Safety Invariants"},
+      "carriers": [
+        {"type": "root_kernel", "path": "skills/zhulong/SKILL.md", "symbol": "Recording is an opt-in post-bundle gate"},
+        {"type": "production_schema", "path": "assets/schemas/recording-evidence.schema.json", "symbol": "\"rollback_safe\""}
+      ],
+      "rationale": "Recording failure must never damage or de-confirm the original bundle.",
+      "residual_boundary": "Recording evidence has no vulnerability confirmation authority."
+    },
+    {
+      "rule_id": "ZR-ADVISORY-NONAUTHORITY",
+      "source_scope": "Context plan, handoff, checkpoint, and next-actions authority boundary",
+      "rule_class": "hard_constraint",
+      "disposition": "retain_kernel",
+      "target": {"path": "skills/zhulong/SKILL.md", "section": "Core Safety Invariants"},
+      "carriers": [
+        {"type": "root_kernel", "path": "skills/zhulong/SKILL.md", "symbol": "Context plans, handoffs, checkpoints, and next-actions are advisory"},
+        {"type": "production_schema", "path": "assets/schemas/handoff-state.schema.json", "symbol": "It is not authority for candidates"}
+      ],
+      "rationale": "Derived context and state indexes cannot become implicit execution or confirmation gates.",
+      "residual_boundary": "Mandatory context means reading priority only and never proves actual reading or compliance."
+    },
+    {
+      "rule_id": "ZR-BUNDLE-PORTABILITY",
+      "source_scope": "Confirmed bundle path and private-material portability boundary",
+      "rule_class": "hard_constraint",
+      "disposition": "retain_kernel",
+      "target": {"path": "skills/zhulong/SKILL.md", "section": "Core Safety Invariants"},
+      "carriers": [
+        {"type": "root_kernel", "path": "skills/zhulong/SKILL.md", "symbol": "Confirmed bundles must not leak local absolute paths"},
+        {"type": "production_validator", "path": "scripts/validate_report_bundle.py", "symbol": "REPLAY_HELPER_ABSOLUTE_EVIDENCE_PATH"}
+      ],
+      "rationale": "Reviewer-facing bundles must be portable and must not disclose local or private context.",
+      "residual_boundary": "Bundle-relative paths and sanitized public issue text remain mandatory."
+    },
+    {
+      "rule_id": "ZR-INTAKE-RECON-PROTOCOL",
+      "source_scope": "Repository preparation, target identity, attack surface, and Recon result details",
+      "rule_class": "phase_protocol",
+      "disposition": "move_to_reference",
+      "target": {"path": "assets/references/audit-phase-intake-recon.md", "section": "Working path"},
+      "carriers": [
+        {"type": "reference", "path": "assets/references/audit-phase-intake-recon.md", "symbol": "recon-result.json"},
+        {"type": "production_validator", "path": "scripts/validate_recon_result.py", "symbol": "RECON_RESULT"}
+      ],
+      "rationale": "Detailed Recon operations are phase-scoped and backed by the Recon validator.",
+      "residual_boundary": "The kernel retains source identity and non-authority invariants."
+    },
+    {
+      "rule_id": "ZR-CANDIDATE-TRIAGE-PROTOCOL",
+      "source_scope": "Candidate identity, deduplication, triage batch, and narrow stage finalization",
+      "rule_class": "phase_protocol",
+      "disposition": "move_to_reference",
+      "target": {"path": "assets/references/audit-phase-candidate-triage.md", "section": "Working path"},
+      "carriers": [
+        {"type": "reference", "path": "assets/references/audit-phase-candidate-triage.md", "symbol": "triage-batch.json"},
+        {"type": "production_validator", "path": "scripts/validate_triage_batch.py", "symbol": "TRIAGE_BATCH"}
+      ],
+      "rationale": "Field and command detail belongs at candidate and triage time.",
+      "residual_boundary": "The kernel preserves candidate-only and blocked-not-complete boundaries."
+    },
+    {
+      "rule_id": "ZR-VERIFICATION-PROTOCOL",
+      "source_scope": "Sandbox, Docker wrapper, entrypoint, oracle, and severity operation details",
+      "rule_class": "phase_protocol",
+      "disposition": "move_to_reference",
+      "target": {"path": "assets/references/audit-phase-verification.md", "section": "Working path"},
+      "carriers": [
+        {"type": "reference", "path": "assets/references/audit-phase-verification.md", "symbol": "run_verification_case.sh"},
+        {"type": "fixed_wrapper", "path": "scripts/run_verification_case.sh", "symbol": "STABLE_LABELS="}
+      ],
+      "rationale": "Verification commands and exit routing are backed by the fixed Docker wrapper.",
+      "residual_boundary": "The kernel keeps Docker-only, attacker-entrypoint, and unsafe-sandbox invariants."
+    },
+    {
+      "rule_id": "ZR-VARIANT-PROTOCOL",
+      "source_scope": "Seed extraction, candidate search, file layout, and validation commands",
+      "rule_class": "phase_protocol",
+      "disposition": "move_to_reference",
+      "target": {"path": "assets/references/audit-phase-variant-discovery.md", "section": "Working path"},
+      "carriers": [
+        {"type": "reference", "path": "assets/references/audit-phase-variant-discovery.md", "symbol": "find_variant_candidates.py"},
+        {"type": "production_validator", "path": "scripts/validate_report_bundle.py", "symbol": "\"--variant-candidates\""}
+      ],
+      "rationale": "Variant mechanics are relevant only after a valid seed exists.",
+      "residual_boundary": "The kernel retains independent reproduction and separate severity-pass requirements."
+    },
+    {
+      "rule_id": "ZR-PACKAGING-FINALIZATION-PROTOCOL",
+      "source_scope": "Bundle fields, staging commands, cleanup procedure, disposition, and finalization details",
+      "rule_class": "phase_protocol",
+      "disposition": "move_to_reference",
+      "target": {"path": "assets/references/audit-phase-packaging-finalization.md", "section": "Working path"},
+      "carriers": [
+        {"type": "reference", "path": "assets/references/audit-phase-packaging-finalization.md", "symbol": "confirmed/.staging/<slug>"},
+        {"type": "production_gate", "path": "scripts/build_confirmed_bundle.py", "symbol": "atomic promote"}
+      ],
+      "rationale": "Long packaging and cleanup instructions are backed by production gates and phase references.",
+      "residual_boundary": "The kernel retains atomic promotion, portability, cleanup, and canonical finalization invariants."
+    },
+    {
+      "rule_id": "ZR-RECORDING-PROTOCOL",
+      "source_scope": "Recording identity, checkpoint, screenshots, archive, and rollback operations",
+      "rule_class": "phase_protocol",
+      "disposition": "move_to_reference",
+      "target": {"path": "assets/references/audit-phase-recording.md", "section": "Working path"},
+      "carriers": [
+        {"type": "reference", "path": "assets/references/audit-phase-recording.md", "symbol": "recording-evidence.json"},
+        {"type": "production_validator", "path": "scripts/validate_recording_evidence.py", "symbol": "RECORDING_MANIFEST_INVALID"}
+      ],
+      "rationale": "Recording operations apply only after bundle confirmation and have their own validator.",
+      "residual_boundary": "The kernel retains opt-in, post-bundle, and rollback-safe boundaries."
+    },
+    {
+      "rule_id": "ZR-CONTINUATION-PROTOCOL",
+      "source_scope": "R2 journal/state, handoff, checkpoint, next-actions, resume, and rebuild details",
+      "rule_class": "phase_protocol",
+      "disposition": "move_to_reference",
+      "target": {"path": "assets/references/audit-continuation-state.md", "section": "Working path"},
+      "carriers": [
+        {"type": "reference", "path": "assets/references/audit-continuation-state.md", "symbol": "audit-events.jsonl"},
+        {"type": "production_validator", "path": "scripts/validate_audit_protocol.py", "symbol": "audit-state protocol R2"}
+      ],
+      "rationale": "Continuation mechanics are cross-phase details backed by R2 validators and CAS.",
+      "residual_boundary": "The kernel retains derived-state non-authority and canonical finalization."
+    },
+    {
+      "rule_id": "ZR-LANGUAGE-PLAYBOOKS",
+      "source_scope": "Language playbook list and source-to-sink exploration detail",
+      "rule_class": "operational_guidance",
+      "disposition": "move_to_reference",
+      "target": {"path": "assets/references/audit-phase-intake-recon.md", "section": "Working path"},
+      "carriers": [
+        {"type": "reference", "path": "assets/references/audit-phase-intake-recon.md", "symbol": "attack-surface.md"}
+      ],
+      "rationale": "The context catalog selects relevant playbooks without listing every file in the root Skill.",
+      "residual_boundary": "Playbooks remain starting maps, never exhaustive fences or confirmation evidence."
+    },
+    {
+      "rule_id": "ZR-BUNDLE-DETAILS",
+      "source_scope": "DOCX, attachment, replay helper, pause, transcript, and diagnostic field details",
+      "rule_class": "operational_guidance",
+      "disposition": "move_to_reference",
+      "target": {"path": "assets/references/audit-phase-packaging-finalization.md", "section": "Working path"},
+      "carriers": [
+        {"type": "reference", "path": "assets/references/audit-phase-packaging-finalization.md", "symbol": "bundle-generation-checklist.md"}
+      ],
+      "rationale": "Reviewer artifact field detail already has dedicated references and validators.",
+      "residual_boundary": "The kernel retains contract-first staging, validation, portability, and one-vulnerability boundaries."
+    },
+    {
+      "rule_id": "ZR-DOCKER-HYGIENE-DETAILS",
+      "source_scope": "Docker baseline, adoption flags, exact resource cleanup, and strict-clean commands",
+      "rule_class": "operational_guidance",
+      "disposition": "move_to_reference",
+      "target": {"path": "assets/references/audit-phase-packaging-finalization.md", "section": "Working path"},
+      "carriers": [
+        {"type": "reference", "path": "assets/references/audit-phase-packaging-finalization.md", "symbol": "docker-resource-hygiene.md"}
+      ],
+      "rationale": "Cleanup procedure is lengthy and already isolated in the Docker hygiene reference.",
+      "residual_boundary": "The root kernel still forbids broad prune, baseline forgery, and teammate PID signaling."
+    }
+  ]
+}

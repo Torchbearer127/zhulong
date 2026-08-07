@@ -26,10 +26,21 @@ What it creates:
       check-docker-gate.sh
       check_omc_runtime.sh
       check_security_tooling.sh
+      validate-tool-registry.py
+      tool-registry.json
+      tool-registry.schema.json
       run-initial-probes.sh
       run-verification-case.sh
       manage-docker-resources.py
       render-handoff-summary.py
+      render-handoff-state.py
+      validate-handoff-state.py
+      render-next-actions.py
+      validate-next-actions.py
+      render-audit-timeline.py
+      validate-audit-timeline.py
+      create-workspace-checkpoint.py
+      validate-workspace-checkpoint.py
       plan-security-toolchain.py
       scaffold-bilingual-findings.py
       validate-report-bundle.py
@@ -43,10 +54,19 @@ What it creates:
       check-docker-gate.sh
       check_omc_runtime.sh
       check_security_tooling.sh
+      validate-tool-registry.py
       run-initial-probes.sh
       run-verification-case.sh
       manage-docker-resources.py
       render-handoff-summary.py
+      render-handoff-state.py
+      validate-handoff-state.py
+      render-next-actions.py
+      validate-next-actions.py
+      render-audit-timeline.py
+      validate-audit-timeline.py
+      create-workspace-checkpoint.py
+      validate-workspace-checkpoint.py
       plan-security-toolchain.py
       scaffold-bilingual-findings.py
       validate-report-bundle.py
@@ -72,6 +92,7 @@ EOF
 
 TARGET_DIR=""
 WORKSPACE_NAME=""
+WORKSPACE_NAME_EXPLICIT="0"
 OUTPUT_LANGUAGE="zh-CN"
 SUMMARY_LANGUAGE="zh-CN"
 FORCE="0"
@@ -84,6 +105,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     --workspace-name)
       WORKSPACE_NAME="${2:-}"
+      WORKSPACE_NAME_EXPLICIT="1"
       shift 2
       ;;
     --output-language)
@@ -161,7 +183,67 @@ SUMMARY_LANGUAGE="$(normalize_language "$SUMMARY_LANGUAGE")"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+if [[ -L "$TARGET_DIR" ]]; then
+  echo "Target directory must not be a symlink." >&2
+  exit 2
+fi
 TARGET_DIR="$(cd "$TARGET_DIR" && pwd)"
+if [[ "$WORKSPACE_NAME_EXPLICIT" == "1" && -z "$WORKSPACE_NAME" ]]; then
+  echo "--workspace-name must not be empty." >&2
+  exit 2
+fi
+if [[ -z "$WORKSPACE_NAME" ]]; then
+  WORKSPACE_NAME="$(generate_workspace_name "$TARGET_DIR")"
+fi
+
+validate_workspace_destination() {
+  python3 - "$TARGET_DIR" "$WORKSPACE_NAME" <<'PY'
+import os
+import re
+import stat
+import sys
+from pathlib import Path
+
+target = Path(sys.argv[1])
+name = sys.argv[2]
+if not (1 <= len(name) <= 128):
+    raise SystemExit("workspace name must contain 1..128 characters")
+if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", name):
+    raise SystemExit("workspace name must be one stable ASCII directory component")
+if name in {".", ".."} or name.startswith("."):
+    raise SystemExit("workspace name must not be dot-prefixed")
+
+target_info = os.lstat(target)
+if stat.S_ISLNK(target_info.st_mode) or not stat.S_ISDIR(target_info.st_mode):
+    raise SystemExit("target directory must be a real directory")
+candidate = target / name
+if candidate.parent != target:
+    raise SystemExit("workspace must be a direct child of the target directory")
+try:
+    candidate_info = os.lstat(candidate)
+except FileNotFoundError:
+    candidate_info = None
+if candidate_info is not None:
+    if stat.S_ISLNK(candidate_info.st_mode):
+        raise SystemExit("workspace destination must not be a symlink")
+    if not stat.S_ISDIR(candidate_info.st_mode):
+        raise SystemExit("existing workspace destination must be a real directory")
+
+latest = target / ".asr-latest-workspace"
+try:
+    latest_info = os.lstat(latest)
+except FileNotFoundError:
+    latest_info = None
+if latest_info is not None and (stat.S_ISLNK(latest_info.st_mode) or not stat.S_ISREG(latest_info.st_mode)):
+    raise SystemExit(".asr-latest-workspace must be absent or a regular file")
+PY
+}
+
+if ! validate_workspace_destination; then
+  echo "Unsafe --workspace-name or workspace destination; no workspace files were created." >&2
+  exit 2
+fi
+
 PLUGIN_VERSION="$(python3 - <<'PY' "$SKILL_DIR/.codex-plugin/plugin.json"
 import json
 import sys
@@ -174,9 +256,6 @@ except Exception:
     print("unknown")
 PY
 )"
-if [[ -z "$WORKSPACE_NAME" ]]; then
-  WORKSPACE_NAME="$(generate_workspace_name "$TARGET_DIR")"
-fi
 WORKSPACE_DIR="$TARGET_DIR/$WORKSPACE_NAME"
 
 copy_file() {
@@ -208,8 +287,7 @@ write_text_file() {
 write_state_event() {
   local writer="$SKILL_DIR/scripts/write_audit_event.py"
   [[ -f "$writer" ]] || return 0
-  python3 "$writer" "$@" || \
-    echo "[zhulong] WARNING: state write failed during workspace bootstrap (non-fatal)." >&2
+  python3 "$writer" "$@" --accept-current-revision >/dev/null
 }
 
 mkdir -p \
@@ -242,7 +320,39 @@ write_text_file "$WORKSPACE_DIR/asr-config.json" "{
   ]
 }
 "
-printf '%s\n' "$WORKSPACE_NAME" > "$TARGET_DIR/.asr-latest-workspace"
+python3 - "$TARGET_DIR/.asr-latest-workspace" "$WORKSPACE_NAME" <<'PY'
+import os
+import stat
+import sys
+import tempfile
+from pathlib import Path
+
+path = Path(sys.argv[1])
+value = sys.argv[2]
+try:
+    info = os.lstat(path)
+except FileNotFoundError:
+    info = None
+if info is not None and (stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode)):
+    raise SystemExit(".asr-latest-workspace became unsafe")
+fd, temporary = tempfile.mkstemp(prefix=".asr-latest-workspace.tmp-", dir=path.parent)
+try:
+    os.fchmod(fd, 0o600)
+    os.write(fd, (value + "\n").encode("utf-8"))
+    os.fsync(fd)
+    os.close(fd)
+    fd = -1
+    os.replace(temporary, path)
+    temporary = ""
+finally:
+    if fd >= 0:
+        os.close(fd)
+    if temporary:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+PY
 echo "write    $TARGET_DIR/.asr-latest-workspace"
 
 write_state_event \
@@ -252,6 +362,7 @@ write_state_event \
   --event workspace_created \
   --stage workspace_preparing \
   --status running \
+  --transition-kind start \
   --event-status ok \
   --message "Audit workspace created." \
   --detail "workspace_name=$WORKSPACE_NAME"
@@ -301,11 +412,28 @@ copy_file \
   "$WORKSPACE_DIR/bin/check-sandbox-preflight.py"
 chmod +x "$WORKSPACE_DIR/bin/check-sandbox-preflight.py"
 write_text_file "$WORKSPACE_DIR/scripts/check-sandbox-preflight.py" '#!/usr/bin/env bash
+# zhulong-tool-contract: sandbox-preflight-v1
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 exec python3 "$SCRIPT_DIR/../bin/check-sandbox-preflight.py" "$@"
 '
 chmod +x "$WORKSPACE_DIR/scripts/check-sandbox-preflight.py"
+copy_file \
+  "$SKILL_DIR/scripts/validate_tool_registry.py" \
+  "$WORKSPACE_DIR/bin/validate_tool_registry.py"
+chmod +x "$WORKSPACE_DIR/bin/validate_tool_registry.py"
+write_text_file "$WORKSPACE_DIR/scripts/validate-tool-registry.py" '#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec python3 "$SCRIPT_DIR/../bin/validate_tool_registry.py" "$@"
+'
+chmod +x "$WORKSPACE_DIR/scripts/validate-tool-registry.py"
+copy_file \
+  "$SKILL_DIR/assets/tool-registry.json" \
+  "$WORKSPACE_DIR/bin/tool-registry.json"
+copy_file \
+  "$SKILL_DIR/assets/schemas/tool-registry.schema.json" \
+  "$WORKSPACE_DIR/bin/tool-registry.schema.json"
 copy_file \
   "$SKILL_DIR/scripts/check_security_tooling.sh" \
   "$WORKSPACE_DIR/bin/check_security_tooling.sh"
@@ -321,6 +449,7 @@ copy_file \
   "$WORKSPACE_DIR/bin/run-initial-probes.sh"
 chmod +x "$WORKSPACE_DIR/bin/run-initial-probes.sh"
 write_text_file "$WORKSPACE_DIR/scripts/run-initial-probes.sh" '#!/usr/bin/env bash
+# zhulong-tool-contract: initial-probes-v1
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 exec bash "$SCRIPT_DIR/../bin/run-initial-probes.sh" "$@"
@@ -330,7 +459,11 @@ copy_file \
   "$SKILL_DIR/scripts/run_verification_case.sh" \
   "$WORKSPACE_DIR/bin/run-verification-case.sh"
 chmod +x "$WORKSPACE_DIR/bin/run-verification-case.sh"
+copy_file \
+  "$SKILL_DIR/scripts/evidence_io.py" \
+  "$WORKSPACE_DIR/bin/evidence_io.py"
 write_text_file "$WORKSPACE_DIR/scripts/run-verification-case.sh" '#!/usr/bin/env bash
+# zhulong-tool-contract: docker-verification-v1; timeout=mandatory; sandbox-preflight=mandatory
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 exec bash "$SCRIPT_DIR/../bin/run-verification-case.sh" "$@"
@@ -353,12 +486,75 @@ chmod +x "$WORKSPACE_DIR/bin/render-handoff-summary.py"
 copy_file \
   "$SKILL_DIR/scripts/workspace_state.py" \
   "$WORKSPACE_DIR/bin/workspace_state.py"
+copy_file "$SKILL_DIR/scripts/render_handoff_state.py" "$WORKSPACE_DIR/bin/render-handoff-state.py"
+copy_file "$SKILL_DIR/scripts/validate_handoff_state.py" "$WORKSPACE_DIR/bin/validate-handoff-state.py"
+copy_file "$SKILL_DIR/scripts/next_actions.py" "$WORKSPACE_DIR/bin/next_actions.py"
+copy_file "$SKILL_DIR/scripts/render_next_actions.py" "$WORKSPACE_DIR/bin/render-next-actions.py"
+copy_file "$SKILL_DIR/scripts/validate_next_actions.py" "$WORKSPACE_DIR/bin/validate-next-actions.py"
+copy_file "$SKILL_DIR/scripts/audit_timeline.py" "$WORKSPACE_DIR/bin/audit_timeline.py"
+copy_file "$SKILL_DIR/scripts/render_audit_timeline.py" "$WORKSPACE_DIR/bin/render-audit-timeline.py"
+copy_file "$SKILL_DIR/scripts/validate_audit_timeline.py" "$WORKSPACE_DIR/bin/validate-audit-timeline.py"
+copy_file "$SKILL_DIR/assets/schemas/audit-timeline.schema.json" "$WORKSPACE_DIR/bin/audit-timeline.schema.json"
+copy_file "$SKILL_DIR/assets/schemas/audit-timeline.schema.json" "$WORKSPACE_DIR/assets/schemas/audit-timeline.schema.json"
+copy_file "$SKILL_DIR/scripts/create_workspace_checkpoint.py" "$WORKSPACE_DIR/bin/create-workspace-checkpoint.py"
+copy_file "$SKILL_DIR/scripts/validate_workspace_checkpoint.py" "$WORKSPACE_DIR/bin/validate-workspace-checkpoint.py"
+copy_file "$SKILL_DIR/assets/schemas/handoff-state.schema.json" "$WORKSPACE_DIR/bin/handoff-state.schema.json"
+copy_file "$SKILL_DIR/assets/schemas/workspace-checkpoint.schema.json" "$WORKSPACE_DIR/bin/workspace-checkpoint.schema.json"
+copy_file "$SKILL_DIR/assets/schemas/next-actions.schema.json" "$WORKSPACE_DIR/bin/next-actions.schema.json"
 write_text_file "$WORKSPACE_DIR/scripts/render-handoff-summary.py" '#!/usr/bin/env bash
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 exec python3 "$SCRIPT_DIR/../bin/render-handoff-summary.py" "$@"
 '
 chmod +x "$WORKSPACE_DIR/scripts/render-handoff-summary.py"
+write_text_file "$WORKSPACE_DIR/scripts/render-handoff-state.py" '#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec python3 "$SCRIPT_DIR/../bin/render-handoff-state.py" "$@"
+'
+chmod +x "$WORKSPACE_DIR/scripts/render-handoff-state.py"
+write_text_file "$WORKSPACE_DIR/scripts/validate-handoff-state.py" '#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec python3 "$SCRIPT_DIR/../bin/validate-handoff-state.py" "$@"
+'
+chmod +x "$WORKSPACE_DIR/scripts/validate-handoff-state.py"
+write_text_file "$WORKSPACE_DIR/scripts/render-next-actions.py" '#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec python3 "$SCRIPT_DIR/../bin/render-next-actions.py" "$@"
+'
+chmod +x "$WORKSPACE_DIR/scripts/render-next-actions.py"
+write_text_file "$WORKSPACE_DIR/scripts/validate-next-actions.py" '#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec python3 "$SCRIPT_DIR/../bin/validate-next-actions.py" "$@"
+'
+chmod +x "$WORKSPACE_DIR/scripts/validate-next-actions.py"
+write_text_file "$WORKSPACE_DIR/scripts/render-audit-timeline.py" '#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec python3 "$SCRIPT_DIR/../bin/render-audit-timeline.py" "$@"
+'
+chmod +x "$WORKSPACE_DIR/scripts/render-audit-timeline.py"
+write_text_file "$WORKSPACE_DIR/scripts/validate-audit-timeline.py" '#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec python3 "$SCRIPT_DIR/../bin/validate-audit-timeline.py" "$@"
+'
+chmod +x "$WORKSPACE_DIR/scripts/validate-audit-timeline.py"
+write_text_file "$WORKSPACE_DIR/scripts/create-workspace-checkpoint.py" '#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec python3 "$SCRIPT_DIR/../bin/create-workspace-checkpoint.py" "$@"
+'
+chmod +x "$WORKSPACE_DIR/scripts/create-workspace-checkpoint.py"
+write_text_file "$WORKSPACE_DIR/scripts/validate-workspace-checkpoint.py" '#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec python3 "$SCRIPT_DIR/../bin/validate-workspace-checkpoint.py" "$@"
+'
+chmod +x "$WORKSPACE_DIR/scripts/validate-workspace-checkpoint.py"
 copy_file \
   "$SKILL_DIR/scripts/plan_security_toolchain.py" \
   "$WORKSPACE_DIR/bin/plan-security-toolchain.py"
@@ -433,12 +629,34 @@ copy_file \
   "$SKILL_DIR/scripts/write_audit_event.py" \
   "$WORKSPACE_DIR/bin/write-audit-event.py"
 chmod +x "$WORKSPACE_DIR/bin/write-audit-event.py"
+copy_file \
+  "$SKILL_DIR/scripts/audit_state_io.py" \
+  "$WORKSPACE_DIR/bin/audit_state_io.py"
+copy_file \
+  "$SKILL_DIR/scripts/audit_text_safety.py" \
+  "$WORKSPACE_DIR/bin/audit_text_safety.py"
+copy_file \
+  "$SKILL_DIR/scripts/audit_transition_policy.py" \
+  "$WORKSPACE_DIR/bin/audit_transition_policy.py"
+copy_file \
+  "$SKILL_DIR/scripts/validate_audit_protocol.py" \
+  "$WORKSPACE_DIR/bin/validate_audit_protocol.py"
+copy_file \
+  "$SKILL_DIR/scripts/recover_audit_state.py" \
+  "$WORKSPACE_DIR/bin/recover-audit-state.py"
+chmod +x "$WORKSPACE_DIR/bin/recover-audit-state.py"
 write_text_file "$WORKSPACE_DIR/scripts/write-audit-event.py" '#!/usr/bin/env bash
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 exec python3 "$SCRIPT_DIR/../bin/write-audit-event.py" "$@"
 '
 chmod +x "$WORKSPACE_DIR/scripts/write-audit-event.py"
+write_text_file "$WORKSPACE_DIR/scripts/recover-audit-state.py" '#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec python3 "$SCRIPT_DIR/../bin/recover-audit-state.py" "$@"
+'
+chmod +x "$WORKSPACE_DIR/scripts/recover-audit-state.py"
 copy_file \
   "$SKILL_DIR/scripts/validate_workspace_state.py" \
   "$WORKSPACE_DIR/bin/validate-workspace-state.py"
@@ -446,12 +664,42 @@ chmod +x "$WORKSPACE_DIR/bin/validate-workspace-state.py"
 copy_file \
   "$SKILL_DIR/scripts/workspace_state.py" \
   "$WORKSPACE_DIR/bin/workspace_state.py"
+copy_file \
+  "$SKILL_DIR/scripts/validate_recon_result.py" \
+  "$WORKSPACE_DIR/bin/validate_recon_result.py"
+copy_file \
+  "$SKILL_DIR/scripts/validate_recon_result.py" \
+  "$WORKSPACE_DIR/bin/validate-recon-result.py"
+copy_file \
+  "$SKILL_DIR/scripts/validate_triage_batch.py" \
+  "$WORKSPACE_DIR/bin/validate-triage-batch.py"
+copy_file \
+  "$SKILL_DIR/assets/schemas/recon-result.schema.json" \
+  "$WORKSPACE_DIR/assets/schemas/recon-result.schema.json"
+copy_file \
+  "$SKILL_DIR/assets/schemas/triage-batch.schema.json" \
+  "$WORKSPACE_DIR/assets/schemas/triage-batch.schema.json"
+chmod +x "$WORKSPACE_DIR/bin/validate_recon_result.py" \
+  "$WORKSPACE_DIR/bin/validate-recon-result.py" \
+  "$WORKSPACE_DIR/bin/validate-triage-batch.py"
 write_text_file "$WORKSPACE_DIR/scripts/validate-workspace-state.py" '#!/usr/bin/env bash
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 exec python3 "$SCRIPT_DIR/../bin/validate-workspace-state.py" "$@"
 '
 chmod +x "$WORKSPACE_DIR/scripts/validate-workspace-state.py"
+write_text_file "$WORKSPACE_DIR/scripts/validate-recon-result.py" '#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec python3 "$SCRIPT_DIR/../bin/validate-recon-result.py" "$@"
+'
+chmod +x "$WORKSPACE_DIR/scripts/validate-recon-result.py"
+write_text_file "$WORKSPACE_DIR/scripts/validate-triage-batch.py" '#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec python3 "$SCRIPT_DIR/../bin/validate-triage-batch.py" "$@"
+'
+chmod +x "$WORKSPACE_DIR/scripts/validate-triage-batch.py"
 copy_file \
   "$SKILL_DIR/scripts/assert_finalized_workspace.py" \
   "$WORKSPACE_DIR/bin/assert-finalized-workspace.py"
@@ -465,6 +713,11 @@ copy_file \
 copy_file \
   "$SKILL_DIR/scripts/validate_candidate.py" \
   "$WORKSPACE_DIR/bin/validate_candidate.py"
+copy_file "$SKILL_DIR/scripts/candidate_identity.py" "$WORKSPACE_DIR/bin/candidate_identity.py"
+copy_file "$SKILL_DIR/scripts/upgrade_candidate_identity.py" "$WORKSPACE_DIR/bin/upgrade_candidate_identity.py"
+copy_file "$SKILL_DIR/scripts/candidate_dedup.py" "$WORKSPACE_DIR/bin/candidate_dedup.py"
+copy_file "$SKILL_DIR/scripts/build_candidate_dedup_plan.py" "$WORKSPACE_DIR/bin/build_candidate_dedup_plan.py"
+copy_file "$SKILL_DIR/scripts/validate_candidate_dedup_plan.py" "$WORKSPACE_DIR/bin/validate_candidate_dedup_plan.py"
 copy_file \
   "$SKILL_DIR/scripts/validate_verifier_verdict.py" \
   "$WORKSPACE_DIR/bin/validate_verifier_verdict.py"
@@ -486,6 +739,24 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 exec python3 "$SCRIPT_DIR/../bin/validate_candidate.py" "$@"
 '
 chmod +x "$WORKSPACE_DIR/scripts/validate_candidate.py"
+write_text_file "$WORKSPACE_DIR/scripts/upgrade-candidate-identity.py" '#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec python3 "$SCRIPT_DIR/../bin/upgrade_candidate_identity.py" "$@"
+'
+chmod +x "$WORKSPACE_DIR/scripts/upgrade-candidate-identity.py"
+write_text_file "$WORKSPACE_DIR/scripts/build-candidate-dedup-plan.py" '#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec python3 "$SCRIPT_DIR/../bin/build_candidate_dedup_plan.py" "$@"
+'
+chmod +x "$WORKSPACE_DIR/scripts/build-candidate-dedup-plan.py"
+write_text_file "$WORKSPACE_DIR/scripts/validate-candidate-dedup-plan.py" '#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec python3 "$SCRIPT_DIR/../bin/validate_candidate_dedup_plan.py" "$@"
+'
+chmod +x "$WORKSPACE_DIR/scripts/validate-candidate-dedup-plan.py"
 write_text_file "$WORKSPACE_DIR/scripts/validate_verifier_verdict.py" '#!/usr/bin/env bash
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

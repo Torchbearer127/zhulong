@@ -1,0 +1,16 @@
+{
+  "blocker": null,
+  "event_log_digest": "sha256:c3938acd2c18400954b83875749b31edadf3af217fa3348dde31db7b6df4a078",
+  "last_event_at": "2026-07-25T00:00:06Z",
+  "last_event_name": "recon_reopened",
+  "last_event_seq": 6,
+  "last_event_type": "recovery",
+  "plugin": "zhulong",
+  "plugin_version": "timeline-fixture-r1",
+  "resume_step": null,
+  "run_id": "run-audit-timeline-fixture",
+  "schema_version": 2,
+  "stage": "recon",
+  "state_revision": 6,
+  "status": "running"
+}

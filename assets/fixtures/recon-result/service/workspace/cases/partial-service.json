@@ -1,0 +1,259 @@
+{
+  "schema_version": 1,
+  "recon_id": "RECON-SERVICE-PARTIAL-001",
+  "status": "partial",
+  "target_binding": {
+    "target_contract_path": "zhulong-target.yaml",
+    "target_contract_sha256": "sha256:142eed6c9749f99fe26e8de435f43f7d58d447bb76f70516fda72708dd744509",
+    "tested_ref": "fixture-service-ref-001"
+  },
+  "attack_surface_binding": {
+    "path": "attack-surface.md",
+    "sha256": "sha256:977ee46f69eac6bde639886c083c20f399b02b0e4f41023acfd3c26208844025"
+  },
+  "technology_stack": [
+    {
+      "id": "TECH-PYTHON",
+      "name": "Python",
+      "category": "language",
+      "summary": "Python source files define the fixture application handlers.",
+      "source_refs": [
+        {
+          "path": "src/app.py",
+          "start_line": 1,
+          "end_line": 9
+        }
+      ],
+      "evidence_refs": [
+        {
+          "path": "evidence/recon-notes.md"
+        }
+      ]
+    }
+  ],
+  "public_entrypoints": [
+    {
+      "id": "ENTRY-HTTP-IMPORT",
+      "kind": "http",
+      "route": {
+        "path": "/api/import",
+        "method": "POST",
+        "symbol": "import_url",
+        "input_fields": [
+          "url"
+        ]
+      },
+      "auth": {
+        "mode": "authenticated",
+        "mechanism": "application session"
+      },
+      "summary": "The known import route is recorded, but its complete surrounding entry map remains unfinished.",
+      "source_refs": [
+        {
+          "path": "src/app.py",
+          "start_line": 5,
+          "end_line": 8
+        }
+      ],
+      "evidence_refs": [
+        {
+          "path": "attack-surface.md"
+        }
+      ]
+    }
+  ],
+  "trust_boundaries": [],
+  "high_risk_sinks": [],
+  "security_policy_explanations": [],
+  "default_deployment_assumptions": [],
+  "priority_areas": [],
+  "deferred_areas": [],
+  "coverage": {
+    "technology_stack": {
+      "status": "covered",
+      "item_ids": [
+        "TECH-PYTHON"
+      ],
+      "reason": "The language map is complete for the current partial pass.",
+      "basis": {
+        "source_refs": [
+          {
+            "path": "src/app.py",
+            "start_line": 1,
+            "end_line": 9
+          }
+        ],
+        "evidence_refs": [
+          {
+            "path": "evidence/recon-notes.md"
+          }
+        ]
+      }
+    },
+    "public_entrypoints": {
+      "status": "unknown",
+      "item_ids": [],
+      "reason": "The import route is known, but the complete external entrypoint inventory is not finished.",
+      "basis": {
+        "source_refs": [
+          {
+            "path": "src/app.py",
+            "start_line": 5,
+            "end_line": 8
+          }
+        ],
+        "evidence_refs": [
+          {
+            "path": "attack-surface.md"
+          }
+        ]
+      }
+    },
+    "trust_boundaries": {
+      "status": "unknown",
+      "item_ids": [],
+      "reason": "The trust-boundary inventory is pending route and middleware review.",
+      "basis": {
+        "source_refs": [
+          {
+            "path": "src/app.py",
+            "start_line": 5,
+            "end_line": 8
+          }
+        ],
+        "evidence_refs": [
+          {
+            "path": "evidence/recon-notes.md"
+          }
+        ]
+      }
+    },
+    "high_risk_sinks": {
+      "status": "unknown",
+      "item_ids": [],
+      "reason": "The sink inventory is pending the remaining source-to-sink pass.",
+      "basis": {
+        "source_refs": [
+          {
+            "path": "src/app.py",
+            "start_line": 8,
+            "end_line": 8
+          }
+        ],
+        "evidence_refs": [
+          {
+            "path": "evidence/recon-notes.md"
+          }
+        ]
+      }
+    },
+    "security_policy_explanations": {
+      "status": "unknown",
+      "item_ids": [],
+      "reason": "Policy enforcement coverage is pending the remaining handler review.",
+      "basis": {
+        "source_refs": [
+          {
+            "path": "src/policy.py",
+            "start_line": 1,
+            "end_line": 3
+          }
+        ],
+        "evidence_refs": [
+          {
+            "path": "evidence/recon-notes.md"
+          }
+        ]
+      }
+    },
+    "default_deployment_assumptions": {
+      "status": "unknown",
+      "item_ids": [],
+      "reason": "Deployment assumptions are pending runtime configuration review.",
+      "basis": {
+        "source_refs": [
+          {
+            "path": "README.md",
+            "start_line": 1,
+            "end_line": 4
+          }
+        ],
+        "evidence_refs": [
+          {
+            "path": "evidence/deployment.md"
+          }
+        ]
+      }
+    },
+    "priority_areas": {
+      "status": "unknown",
+      "item_ids": [],
+      "reason": "Priority ordering is pending the complete entry and sink inventory.",
+      "basis": {
+        "source_refs": [
+          {
+            "path": "src/app.py",
+            "start_line": 5,
+            "end_line": 8
+          }
+        ],
+        "evidence_refs": [
+          {
+            "path": "attack-surface.md"
+          }
+        ]
+      }
+    },
+    "deferred_areas": {
+      "status": "unknown",
+      "item_ids": [],
+      "reason": "Deferred-range reasoning is pending the complete coverage map.",
+      "basis": {
+        "source_refs": [
+          {
+            "path": "README.md",
+            "start_line": 1,
+            "end_line": 4
+          }
+        ],
+        "evidence_refs": [
+          {
+            "path": "attack-surface.md"
+          }
+        ]
+      }
+    }
+  },
+  "coverage_gaps": [
+    {
+      "id": "GAP-ENTRYPOINT-MAP",
+      "code": "ENTRYPOINT_MAP_INCOMPLETE",
+      "summary": "The complete external entrypoint inventory is not yet mapped.",
+      "affected_coverage_ids": [
+        "ENTRY-HTTP-IMPORT"
+      ],
+      "basis": {
+        "source_refs": [
+          {
+            "path": "src/app.py",
+            "start_line": 5,
+            "end_line": 8
+          }
+        ],
+        "evidence_refs": [
+          {
+            "path": "evidence/recon-notes.md",
+            "section": "Open gap"
+          }
+        ]
+      },
+      "next_action": {
+        "action_id": "ACTION-MAP-ENTRYPOINTS",
+        "summary": "Review route registration and middleware files, then add each discovered entrypoint with source and evidence references.",
+        "completion_condition": "All in-scope external entrypoints have stable ENTRY-* IDs and covered status."
+      }
+    }
+  ],
+  "unresolved_blockers": [],
+  "focus_refs": []
+}

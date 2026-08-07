@@ -1,0 +1,10 @@
+{
+  "ts": "2026-07-18T00:00:00Z",
+  "event": "workspace_created",
+  "stage": "workspace_preparing",
+  "status": "ok",
+  "message": "Audit workspace created.",
+  "details": {
+    "workspace_name": "security-research-r1"
+  }
+}

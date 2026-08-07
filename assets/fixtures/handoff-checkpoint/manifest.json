@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "positive_cases": [
+    "r2-running-candidate-blocker",
+    "paused-blocked-recovery-material",
+    "completed-no-confirmed",
+    "completed-with-validated-bundle",
+    "same-revision-checkpoint-idempotence",
+    "legal-historical-checkpoint"
+  ],
+  "negative_cases": [
+    "malformed-journal-or-state",
+    "stale-handoff-revision",
+    "forged-confirmed-count",
+    "tested-ref-or-artifact-digest-drift",
+    "checkpoint-filename-mismatch",
+    "same-revision-conflicting-bytes",
+    "absolute-uri-traversal-backslash-path",
+    "symlink-input-output-parent",
+    "concurrent-event-append",
+    "atomic-temp-fsync-replace-fault",
+    "advisory-notes-cannot-confirm",
+    "docker-evidence-without-validated-bundle",
+    "unvalidated-recording-manifest",
+    "missing-or-invalid-validator",
+    "completion-claim-without-validated-bundle",
+    "validated-bundle-removed-after-completion",
+    "protocol-aware-completion-source-attribution"
+  ]
+}

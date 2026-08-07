@@ -97,3 +97,31 @@ This integration is not an autonomous runner, candidate discovery system,
 parallel agent scheduler, patch loop, re-attack loop, backend service,
 dashboard, queue, database, vector store, RAG service, MCP service, or Docker
 execution implementation.
+
+For Candidate R2, verifier and candidate-disposition records additionally bind
+the exact candidate SHA-256 and recomputed fingerprint. Ledger validation rejects
+later identity drift. This consistency binding does not make the fingerprint a
+confirmation or promotion authority.
+
+## Completion-chain authority
+
+The disposition ledger is consumed through the shared read-only completion helper,
+which joins candidate, verifier, disposition, and confirmed-bundle material. A
+non-candidate disposition must use safe workspace-relative regular candidate and
+verdict paths, pass the production validators, match candidate ID and target ref,
+and preserve verifier status, evidence, and `confirmed_in_docker` consistently.
+Candidate R2 records must also match the candidate file SHA-256 and fingerprint.
+
+For every validated bundle, the verifier path in
+`validity-review.json.source_binding.materials.verifier_verdict` must be a safe
+workspace file and must match exactly one `verdict_path` in a passed confirmed
+candidate disposition. Confirmed bundle directories, confirmed legacy ledger
+items, and confirmed candidate dispositions are one-to-one; duplicate and orphan
+links fail closed. Multiple valid bundles are supported.
+
+`completed_no_confirmed_findings` requires terminal `false_positive` dispositions
+for discovered candidates. Candidate, unverified, blocked, missing, duplicate,
+or orphaned records block the result. With no candidate files, the R2 caller must
+provide a production-valid Recon coverage result proving complete coverage and no
+gaps or blockers. This is a completion gate only; it does not turn a bundle or
+disposition into a replacement for the verifier contract.

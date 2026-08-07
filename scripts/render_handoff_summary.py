@@ -13,8 +13,13 @@ from audit_disposition import (
     render_unresolved_disposition_lines,
     validate_disposition_ledger,
 )
+from audit_state_io import AuditStateError, read_normalized_workspace_events
 from blocked_verification import detect_blocked_verification
-from workspace_state import inspect_workspace_state
+from workspace_state import (
+    HANDOFF_STATE_FILENAME,
+    generate_handoff_state,
+    inspect_workspace_state,
+)
 
 
 MAX_ROWS = 5
@@ -45,36 +50,11 @@ def read_json(path: Path) -> dict[str, Any]:
 
 
 def read_jsonl_tail(path: Path, limit: int = 5) -> list[dict[str, Any]]:
-    if not path.exists():
-        return []
-    events: list[dict[str, Any]] = []
-    for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            data = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(data, dict):
-            events.append(data)
-    return events[-limit:]
+    return read_jsonl(path)[-limit:]
 
 
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
-    if not path.exists():
-        return []
-    events: list[dict[str, Any]] = []
-    for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            data = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(data, dict):
-            events.append(data)
+    _state, events, _mode = read_normalized_workspace_events(path.parent)
     return events
 
 
@@ -446,8 +426,42 @@ def runtime_hygiene_lines(workspace: Path) -> list[str]:
     return lines
 
 
+def derived_handoff_lines(workspace: Path, handoff: dict[str, Any]) -> list[str]:
+    tested = handoff.get("tested_ref") if isinstance(handoff.get("tested_ref"), dict) else {}
+    counts = handoff.get("counts") if isinstance(handoff.get("counts"), dict) else {}
+    identifiers = handoff.get("identifiers") if isinstance(handoff.get("identifiers"), dict) else {}
+    lines = [
+        f"- Source: {file_status(workspace / HANDOFF_STATE_FILENAME, workspace)}",
+        f"- Protocol: `{handoff.get('protocol_mode')}`; revision: `{handoff.get('generated_from_revision') or 'legacy-no-r2-revision'}`; event sequence: `{handoff.get('generated_from_event_sequence') or 'not-applicable'}`",
+        f"- Tested ref: `{tested.get('value') or 'unknown'}`; verified: `{str(bool(tested.get('verified'))).lower()}`; source: `{tested.get('source_kind') or 'unknown'}`",
+        f"- Recon: `{handoff.get('recon', {}).get('status', 'unknown')}`; Triage: `{handoff.get('triage', {}).get('status', 'unknown')}`",
+        f"- Formal seeded variant analysis: `{handoff.get('variant_analysis', {}).get('status', 'unknown')}` ({handoff.get('variant_analysis', {}).get('summary', 'no summary')})",
+        f"- Candidates / verdicts / dispositions: `{counts.get('candidates', 0)}` / `{counts.get('verdicts', 0)}` / `{counts.get('dispositions', 0)}`",
+        f"- Confirmed bundle directories / validated bundles / partial-or-failed: `{counts.get('confirmed_bundle_dirs', 0)}` / `{counts.get('validated_confirmed_bundles', 0)}` / `{counts.get('partial_or_failed_confirmed_bundles', 0)}`",
+        f"- Docker: `{handoff.get('docker', {}).get('status', 'unknown')}`; runtime hygiene: `{handoff.get('runtime', {}).get('status', 'unknown')}`",
+        f"- Recording: `{handoff.get('recording', {}).get('status', 'unknown')}`; finalization: `{handoff.get('finalization', {}).get('status', 'unknown')}`",
+        f"- Handoff integrity: `{handoff.get('integrity', {}).get('overall', 'unknown')}`; issue codes: `{', '.join(str(item.get('code')) for item in handoff.get('integrity', {}).get('issues', []) if isinstance(item, dict)) or 'none'}`",
+        f"- Stable candidate IDs: `{', '.join(identifiers.get('candidate_ids', [])) or 'none'}`",
+    ]
+    revision = handoff.get("generated_from_revision")
+    checkpoint = workspace / "checkpoints" / f"{revision}.json" if isinstance(revision, int) else None
+    if checkpoint is not None and checkpoint.is_file() and not checkpoint.is_symlink():
+        lines.append(f"- Checkpoint pointer: `{rel_workspace(checkpoint, workspace)}`")
+    else:
+        lines.append("- Checkpoint pointer: _not created for this revision_")
+    notes = handoff.get("advisory_notes") if isinstance(handoff.get("advisory_notes"), dict) else {}
+    if notes.get("status") == "advisory":
+        lines.append(f"- Notes: `{notes.get('path')}` is advisory only; notes cannot create candidate, verdict, disposition, confirmation, or completion facts.")
+    else:
+        lines.append("- Notes: no agent-notes.md advisory pointer recorded.")
+    return lines
+
+
 def render(workspace: Path, repo_root: Path, output: Path) -> str:
-    status = read_json(workspace / "stage-status.json")
+    status, _events, _mode = read_normalized_workspace_events(workspace)
+    # The human summary is gated on the same current derived state used by the
+    # machine validator. Generation is bounded to handoff-state.json only.
+    handoff_state = generate_handoff_state(workspace, repo_root, write=True)
     workspace_state = inspect_workspace_state(workspace)
     events_path = workspace / "audit-events.jsonl"
     events = read_jsonl_tail(events_path)
@@ -468,6 +482,8 @@ def render(workspace: Path, repo_root: Path, output: Path) -> str:
     blocker = str(status.get("blocker") or "")
     resume_step = str(status.get("resume_step") or "")
     last_message = str(status.get("last_message") or "")
+    if not last_message and events:
+        last_message = str(event_details(events[-1]).get("summary") or "")
 
     lines: list[str] = [
         "<!-- schema_version: 1 -->",
@@ -490,6 +506,10 @@ def render(workspace: Path, repo_root: Path, output: Path) -> str:
         f"- Blocker: {blocker or '_none_'}",
         f"- Resume step: {resume_step or '_none_'}",
         *finalization_integrity_lines(workspace, status, workspace_state),
+        "",
+        "## Derived Handoff State",
+        "",
+        *derived_handoff_lines(workspace, handoff_state),
         "",
         "## Recommended First Reads",
         "",
@@ -603,8 +623,17 @@ def main() -> None:
         raise SystemExit(f"not a Zhulong audit workspace: {workspace}")
     repo_root = Path(args.repo_root).expanduser().resolve() if args.repo_root else workspace.parent.resolve()
     output = Path(args.output).expanduser().resolve() if args.output else workspace / "handoff-summary.md"
+    try:
+        rendered = render(workspace, repo_root, output)
+    except AuditStateError as exc:
+        raise SystemExit(
+            f"HANDOFF FAILED [{exc.code}]: {exc.message}; run <workspace>/bin/recover-audit-state.py "
+            "--workspace-dir <audit-workspace> --check --json"
+        ) from exc
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(render(workspace, repo_root, output), encoding="utf-8")
+    temporary = output.with_name(output.name + ".tmp")
+    temporary.write_text(rendered, encoding="utf-8")
+    temporary.replace(output)
     print(f"handoff_summary={rel_workspace(output, workspace)}")
 
 

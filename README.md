@@ -11,7 +11,7 @@ with Docker reproduction before confirmation.</strong></p>
 <em>是烛九阴，是谓烛龙。</em></p>
 
 <p>
-  <a href="#"><img alt="Version" src="https://img.shields.io/badge/version-0.4.0-blue.svg?style=flat-square" /></a>
+  <a href="#"><img alt="Version" src="https://img.shields.io/badge/version-0.6.0-blue.svg?style=flat-square" /></a>
   <a href="#"><img alt="Status" src="https://img.shields.io/badge/status-release-brightgreen.svg?style=flat-square" /></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-green.svg?style=flat-square" /></a>
   <a href="#quick-start"><img alt="Runtime" src="https://img.shields.io/badge/runtime-Local%20Agent-111111.svg?style=flat-square" /></a>
@@ -526,6 +526,11 @@ Completed:
 - [x] Reviewer-facing replay helpers with code context, vulnerability analysis, practical impact, and final evidence summary screens.
 - [x] Source-bound bundle contracts, validated staging promotion, and optional final recording evidence gates.
 - [x] Codex user-level skill support with installed selftest, platform-neutral launcher, and repo-root AGENTS.md guidance.
+- [x] File-backed, recoverable audit state with an append-only authority event log and derived workspace state.
+- [x] Structured handoff, immutable checkpoints, and machine-readable next-actions for fresh-context resume.
+- [x] Offline static audit timeline (JSON and HTML) with built-in safety sanitization for offline review.
+- [x] Candidate identity, fingerprinting, and deduplication so repeat findings are tracked consistently.
+- [x] State rebuild from the authority journal and revision-locked concurrent-write protection.
 
 Planned:
 

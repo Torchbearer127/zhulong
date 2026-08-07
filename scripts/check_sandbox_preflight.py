@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# zhulong-tool-contract: sandbox-preflight-v1
 from __future__ import annotations
 
 import argparse
@@ -8,6 +9,14 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+try:
+    import yaml
+    from yaml.tokens import AliasToken, AnchorToken
+    YAML_DYNAMIC_TOKEN_TYPES: tuple[type, ...] = (AnchorToken, AliasToken)
+except Exception:  # pragma: no cover - reported as a fail-closed finding
+    yaml = None
+    YAML_DYNAMIC_TOKEN_TYPES = ()
 
 
 REJECTED_STATUS = "rejected_unsafe_sandbox"
@@ -195,6 +204,109 @@ def scan_text(text: str, *, source: str, source_type: str) -> list[dict[str, Any
     return findings
 
 
+def _compose_finding(pattern: str, source: str, reason: str, *, excerpt: str = "") -> dict[str, Any]:
+    return finding(
+        label="dangerous_docker_config",
+        pattern=pattern,
+        source_type="compose_file",
+        source=source,
+        excerpt=excerpt,
+        reason=reason,
+    )
+
+
+def _path_overlaps_workspace(source: Path, workspace: Path | None) -> bool:
+    if workspace is None:
+        return False
+    try:
+        source_resolved = source.resolve(strict=False)
+        workspace_resolved = workspace.resolve(strict=False)
+        return (
+            source_resolved == workspace_resolved
+            or source_resolved in workspace_resolved.parents
+            or workspace_resolved in source_resolved.parents
+        )
+    except OSError:
+        return True
+
+
+def scan_compose_file(path_value: str, *, workspace: Path | None) -> list[dict[str, Any]]:
+    path = Path(path_value).expanduser()
+    if not path.is_absolute() and workspace is not None:
+        path = workspace / path
+    source = path.resolve(strict=False).as_posix()
+    if not path.is_file() or path.is_symlink():
+        return [_compose_finding("compose_file_unsafe", source, "Compose input must be an existing regular non-symlink file.")]
+    try:
+        text = path.read_text(encoding="utf-8", errors="strict")
+    except (OSError, UnicodeError):
+        return [_compose_finding("compose_yaml_unverifiable", source, "Compose input is not readable UTF-8 YAML.")]
+    findings = scan_text(text, source=source, source_type="compose_file")
+    if yaml is None:
+        findings.append(_compose_finding("compose_yaml_unverifiable", source, "A YAML parser is required to prove Compose sandbox boundaries."))
+        return findings
+    try:
+        tokens = list(yaml.scan(text))
+        document = yaml.safe_load(text)
+    except Exception:
+        findings.append(_compose_finding("compose_yaml_unverifiable", source, "Compose YAML could not be parsed safely."))
+        return findings
+    if any(isinstance(token, YAML_DYNAMIC_TOKEN_TYPES) for token in tokens):
+        findings.append(_compose_finding("compose_yaml_anchor_or_alias", source, "Compose anchors and aliases are not accepted for sandbox boundary fields."))
+    if not isinstance(document, dict) or not isinstance(document.get("services"), dict) or not document["services"]:
+        findings.append(_compose_finding("compose_services_unverifiable", source, "Compose services must be a non-empty static mapping."))
+        return findings
+
+    for service_name, service in document["services"].items():
+        service_label = str(service_name)
+        if not isinstance(service, dict):
+            findings.append(_compose_finding("compose_service_unverifiable", source, "Every Compose service must be a static mapping.", excerpt=service_label))
+            continue
+        if service.get("privileged") is not False:
+            findings.append(_compose_finding("privileged_not_static_false", source, "Every Compose service must declare literal privileged: false.", excerpt=service_label))
+        for field, host_value in (("network_mode", "host"), ("pid", "host"), ("ipc", "host"), ("uts", "host"), ("cgroup", "host"), ("userns_mode", "host")):
+            value = service.get(field)
+            if value is None:
+                continue
+            if not isinstance(value, str) or "${" in value or value.strip().lower() == host_value:
+                findings.append(_compose_finding(f"compose_{field}_unsafe", source, f"Compose {field} must not select or dynamically resolve a host boundary.", excerpt=service_label))
+
+        volumes = service.get("volumes", [])
+        if volumes is None:
+            volumes = []
+        if not isinstance(volumes, list):
+            findings.append(_compose_finding("compose_volumes_unverifiable", source, "Compose service volumes must be a static list.", excerpt=service_label))
+            continue
+        for volume in volumes:
+            bind_source = ""
+            bind_target = ""
+            read_only = False
+            if isinstance(volume, str):
+                parts = volume.split(":")
+                if len(parts) >= 2:
+                    bind_source, bind_target = parts[0], parts[1]
+                    read_only = any(part == "ro" for part in parts[2:])
+            elif isinstance(volume, dict):
+                if volume.get("type") == "bind" or "source" in volume:
+                    bind_source = str(volume.get("source") or "")
+                    bind_target = str(volume.get("target") or "")
+                    read_only = volume.get("read_only") is True
+            else:
+                findings.append(_compose_finding("compose_volume_unverifiable", source, "Compose volume entries must be static strings or mappings.", excerpt=service_label))
+                continue
+            if not bind_source:
+                continue
+            if "${" in bind_source or "${" in bind_target:
+                findings.append(_compose_finding("compose_volume_dynamic", source, "Compose bind mount boundaries must not use variable expansion.", excerpt=service_label))
+                continue
+            source_path = Path(bind_source).expanduser()
+            if not source_path.is_absolute():
+                source_path = path.parent / source_path
+            if (bind_target == "/workspace/evidence" or _path_overlaps_workspace(source_path, workspace)) and not read_only:
+                findings.append(_compose_finding("workspace_bind_writable", source, "Compose must not expose workspace or evidence control paths through a writable bind mount.", excerpt=service_label))
+    return findings
+
+
 def token_contains_docker_socket(token: str) -> bool:
     return "/var/run/docker.sock" in token
 
@@ -213,130 +325,57 @@ def option_equals_host(token: str, option: str) -> bool:
 
 def scan_docker_tokens(tokens: list[str], *, source: str) -> list[dict[str, Any]]:
     findings: list[dict[str, Any]] = []
-    for index, token in enumerate(tokens):
-        next_token = tokens[index + 1] if index + 1 < len(tokens) else ""
-        if token == "--privileged" or token.startswith("--privileged="):
-            add_unique(
-                findings,
-                finding(
-                    label="dangerous_shell_flag",
-                    pattern="docker_run_privileged",
-                    source_type="docker_run_args",
-                    source=source,
-                    excerpt=token,
-                    reason="Docker run command requests privileged mode.",
-                ),
-            )
-        if token in {"--network", "--net"} and next_token == "host":
-            add_unique(
-                findings,
-                finding(
-                    label="dangerous_shell_flag",
-                    pattern="docker_run_network_host",
-                    source_type="docker_run_args",
-                    source=source,
-                    excerpt=f"{token} {next_token}",
-                    reason="Docker run command requests host networking.",
-                ),
-            )
-        if option_equals_host(token, "--network") or option_equals_host(token, "--net"):
-            add_unique(
-                findings,
-                finding(
-                    label="dangerous_shell_flag",
-                    pattern="docker_run_network_host",
-                    source_type="docker_run_args",
-                    source=source,
-                    excerpt=token,
-                    reason="Docker run command requests host networking.",
-                ),
-            )
-        if token == "--pid" and next_token == "host":
-            add_unique(
-                findings,
-                finding(
-                    label="dangerous_shell_flag",
-                    pattern="docker_run_pid_host",
-                    source_type="docker_run_args",
-                    source=source,
-                    excerpt=f"{token} {next_token}",
-                    reason="Docker run command requests host PID namespace.",
-                ),
-            )
-        if option_equals_host(token, "--pid"):
-            add_unique(
-                findings,
-                finding(
-                    label="dangerous_shell_flag",
-                    pattern="docker_run_pid_host",
-                    source_type="docker_run_args",
-                    source=source,
-                    excerpt=token,
-                    reason="Docker run command requests host PID namespace.",
-                ),
-            )
-        if token in {"-v", "--volume"} and token_is_host_root_volume(next_token):
-            add_unique(
-                findings,
-                finding(
-                    label="dangerous_docker_config",
-                    pattern="host_root_mount",
-                    source_type="docker_run_args",
-                    source=source,
-                    excerpt=f"{token} {next_token}",
-                    reason="Docker volume mounts host root.",
-                ),
-            )
-        if (token.startswith("-v") and token_is_host_root_volume(token[2:])) or (
-            token.startswith("--volume=") and token_is_host_root_volume(token.split("=", 1)[1])
-        ):
-            add_unique(
-                findings,
-                finding(
-                    label="dangerous_docker_config",
-                    pattern="host_root_mount",
-                    source_type="docker_run_args",
-                    source=source,
-                    excerpt=token,
-                    reason="Docker volume mounts host root.",
-                ),
-            )
-        if token == "--mount" and token_is_host_root_volume(next_token):
-            add_unique(
-                findings,
-                finding(
-                    label="dangerous_docker_config",
-                    pattern="host_root_mount",
-                    source_type="docker_run_args",
-                    source=source,
-                    excerpt=f"{token} {next_token}",
-                    reason="Docker mount uses host root as bind source.",
-                ),
-            )
-        if token.startswith("--mount=") and token_is_host_root_volume(token.split("=", 1)[1]):
-            add_unique(
-                findings,
-                finding(
-                    label="dangerous_docker_config",
-                    pattern="host_root_mount",
-                    source_type="docker_run_args",
-                    source=source,
-                    excerpt=token,
-                    reason="Docker mount uses host root as bind source.",
-                ),
-            )
+    boundary_options = {
+        "--privileged": "docker_run_privileged",
+        "--cap-add": "docker_run_cap_add",
+        "--device": "docker_run_device",
+        "--device-cgroup-rule": "docker_run_device_cgroup_rule",
+        "--security-opt": "docker_run_security_opt",
+        "--userns": "docker_run_userns",
+        "--ipc": "docker_run_ipc",
+        "--pid": "docker_run_pid",
+        "--uts": "docker_run_uts",
+        "--cgroupns": "docker_run_cgroupns",
+        "--mount": "docker_run_mount",
+        "--volume": "docker_run_volume",
+        "-v": "docker_run_volume",
+        "--network": "docker_run_network_override",
+        "--net": "docker_run_network_override",
+        "--publish": "docker_run_publish",
+        "-p": "docker_run_publish",
+    }
+    safe_value_options = {
+        "--memory", "-m", "--memory-swap", "--memory-reservation", "--cpus",
+        "--cpu-shares", "--cpu-quota", "--cpu-period", "--pids-limit", "--shm-size", "--ulimit",
+    }
+    safe_flags = {"--read-only"}
+
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        option = token.split("=", 1)[0]
+        matched_boundary = next((name for name in boundary_options if option == name or (name in {"-v", "-p"} and token.startswith(name) and token != name)), None)
+        if matched_boundary is not None:
+            excerpt = token
+            needs_value = matched_boundary != "--privileged"
+            if "=" not in token and token == matched_boundary and needs_value:
+                if index + 1 < len(tokens):
+                    excerpt = f"{token} {tokens[index + 1]}"
+                    index += 1
+                else:
+                    add_unique(findings, finding(label="dangerous_shell_flag", pattern="docker_run_arg_missing_value", source_type="docker_run_args", source=source, excerpt=token, reason="Docker boundary option is missing its value."))
+            add_unique(findings, finding(label="dangerous_shell_flag", pattern=boundary_options[matched_boundary], source_type="docker_run_args", source=source, excerpt=excerpt, reason="Extra Docker arguments must not alter container isolation, devices, mounts, namespaces, security policy, network, or host exposure."))
+        elif option in safe_value_options:
+            if "=" not in token:
+                if index + 1 >= len(tokens) or tokens[index + 1].startswith("-"):
+                    add_unique(findings, finding(label="dangerous_shell_flag", pattern="docker_run_arg_missing_value", source_type="docker_run_args", source=source, excerpt=token, reason="Allowed resource option is missing its value."))
+                else:
+                    index += 1
+        elif token not in safe_flags:
+            add_unique(findings, finding(label="dangerous_shell_flag", pattern="docker_run_arg_unknown", source_type="docker_run_args", source=source, excerpt=token, reason="Unknown extra Docker arguments are not part of the verification wrapper safe resource allowlist."))
         if token_contains_docker_socket(token):
-            add_unique(
-                findings,
-                finding(
-                    label="credential_exposure_risk",
-                    pattern="docker_socket_mount",
-                    source_type="docker_run_args",
-                    source=source,
-                    excerpt=token,
-                    reason="Docker socket mount exposes host Docker control.",
-                ),
-            )
+            add_unique(findings, finding(label="credential_exposure_risk", pattern="docker_socket_mount", source_type="docker_run_args", source=source, excerpt=token, reason="Docker socket mount exposes host Docker control."))
+        index += 1
     return findings
 
 
@@ -363,7 +402,7 @@ def build_payload(args: argparse.Namespace) -> dict[str, Any]:
     findings: list[dict[str, Any]] = []
 
     for compose_file in args.compose_file:
-        findings.extend(scan_file(compose_file, source_type="compose_file", base=workspace))
+        findings.extend(scan_compose_file(compose_file, workspace=workspace))
     for shell_script in args.shell_script:
         findings.extend(scan_file(shell_script, source_type="shell_script", base=workspace))
     for input_file in args.input_file:
@@ -373,7 +412,8 @@ def build_payload(args: argparse.Namespace) -> dict[str, Any]:
 
     docker_tokens = list(args.docker_run_arg or [])
     if args.network:
-        docker_tokens.extend(["--network", args.network])
+        if args.network == "host" or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", args.network):
+            findings.append(finding(label="dangerous_shell_flag", pattern="docker_run_network_unsafe", source_type="docker_run_args", source="network", excerpt="--network", reason="Wrapper network selection must be a static non-host Docker network name."))
     if docker_tokens:
         findings.extend(scan_docker_tokens(docker_tokens, source="docker_run_args"))
         findings.extend(scan_text(" ".join(docker_tokens), source="docker_run_args", source_type="docker_run_args"))
@@ -394,21 +434,39 @@ def build_payload(args: argparse.Namespace) -> dict[str, Any]:
     return payload
 
 
-def write_status(workspace_value: str, payload: dict[str, Any]) -> None:
-    if not workspace_value:
-        return
-    workspace = Path(workspace_value).expanduser().resolve()
-    if not workspace.exists():
-        return
+def write_status(workspace_value: str, payload: dict[str, Any]) -> bool:
+    if not workspace_value or not payload.get("ok"):
+        return True
+    workspace = Path(workspace_value).expanduser()
+    if workspace.is_symlink() or not workspace.is_dir():
+        return False
     status_path = workspace / "runtime/sandbox-preflight-status.json"
-    status_path.parent.mkdir(parents=True, exist_ok=True)
-    status_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from evidence_io import SafeEvidenceError, atomic_write_json, ensure_host_directory
+
+        ensure_host_directory(workspace, status_path.parent)
+        atomic_write_json(workspace, status_path, payload)
+        return True
+    except (OSError, SafeEvidenceError):
+        return False
 
 
 def main() -> int:
     args = parse_args()
     payload = build_payload(args)
-    write_status(args.workspace_dir, payload)
+    if not write_status(args.workspace_dir, payload):
+        payload = dict(payload)
+        payload["ok"] = False
+        payload["status"] = REJECTED_STATUS
+        payload["labels"] = sorted(set(payload.get("labels", [])) | {"dangerous_docker_config"})
+        payload["findings"] = list(payload.get("findings", [])) + [
+            _compose_finding(
+                "sandbox_status_publish_failed",
+                str(args.workspace_dir),
+                "Sandbox status could not be published through host-owned safe I/O.",
+            )
+        ]
     print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
     return 0 if payload["ok"] else 1
 

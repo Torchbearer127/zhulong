@@ -8,9 +8,20 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from audit_disposition import LEDGER_FILENAME, validate_disposition_ledger
+from audit_disposition import (
+    LEDGER_FILENAME,
+    load_disposition_ledger,
+    validate_disposition_ledger,
+    validate_workspace_confirmation_chain,
+)
+from audit_state_io import AuditStateError, read_normalized_workspace_events
 from blocked_verification import detect_blocked_verification
-from workspace_state import inspect_workspace_state, validate_handoff_status_consistency
+from workspace_state import (
+    _completion_result_from_authority,
+    inspect_workspace_state,
+    validate_strict_docker_cleanliness_evidence,
+    validate_handoff_status_consistency,
+)
 
 
 SUCCESS_EVENT = "finalization_succeeded"
@@ -29,23 +40,6 @@ def load_json(path: Path) -> dict[str, Any]:
     except Exception:
         return {}
     return data if isinstance(data, dict) else {}
-
-
-def read_events(path: Path) -> list[dict[str, Any]]:
-    events: list[dict[str, Any]] = []
-    if not path.exists():
-        return events
-    for raw in path.read_text(encoding="utf-8", errors="ignore").splitlines():
-        line = raw.strip()
-        if not line:
-            continue
-        try:
-            data = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(data, dict):
-            events.append(data)
-    return events
 
 
 def event_details(event: dict[str, Any] | None) -> dict[str, Any]:
@@ -137,9 +131,11 @@ def validate_seeded_variant_discovery(workspace: Path) -> tuple[bool, list[str],
 
 
 def validate_finalization(workspace: Path) -> tuple[bool, list[str], dict[str, Any]]:
-    status = load_json(workspace / "stage-status.json")
-    events = read_events(workspace / "audit-events.jsonl")
-    docker_status = load_json(workspace / "docker" / "docker-cleanliness-status.json")
+    try:
+        status, events, mode = read_normalized_workspace_events(workspace)
+    except AuditStateError as exc:
+        guidance = "run <workspace>/bin/recover-audit-state.py --workspace-dir <audit-workspace> --check --json"
+        return False, [f"audit state invalid [{exc.code}]: {exc.message}; {guidance}"], {}
     blocked_summary = detect_blocked_verification(workspace)
     inspected_state = inspect_workspace_state(workspace)
     latest = latest_finalization(events)
@@ -168,12 +164,13 @@ def validate_finalization(workspace: Path) -> tuple[bool, list[str], dict[str, A
     if not completion_claimed(status):
         errors.append("stage-status.json does not declare a completed workspace; do not write a completion summary yet.")
     else:
-        if stage and stage != "completed":
-            errors.append(f"stage-status.json stage={stage!r} is not completed.")
+        expected_stage = "finalization" if status.get("schema_version") == 2 else "completed"
+        if stage and stage != expected_stage:
+            errors.append(f"stage-status.json stage={stage!r} is not {expected_stage!r}.")
         if state and state != "completed":
             errors.append(f"stage-status.json status={state!r} is not completed.")
 
-    result = declared_result(status, success_event)
+    result = _completion_result_from_authority(status, events, protocol_mode=mode)
     success_result = str(details.get("result") or "").strip()
     if result and result not in VALID_RESULTS:
         errors.append(f"declared completion result is not valid: {result}.")
@@ -226,20 +223,28 @@ def validate_finalization(workspace: Path) -> tuple[bool, list[str], dict[str, A
         for error in disposition_validation.get("errors", []):
             errors.append(f"{LEDGER_FILENAME}: {error}")
 
-    docker_clean_claim = details.get("docker_clean")
+    authority_chain = validate_workspace_confirmation_chain(
+        workspace,
+        result=result,
+        protocol_mode=mode,
+        ledger=load_disposition_ledger(workspace),
+        disposition_validation=disposition_validation,
+        language="auto",
+    )
+    if not authority_chain.get("ok"):
+        for error in authority_chain.get("errors", []):
+            errors.append(f"completion authority chain: {error}")
+
+    docker_evidence = validate_strict_docker_cleanliness_evidence(
+        workspace,
+        success_event,
+        previous_events=events[:success_index] if success_index is not None else events,
+    )
+    for error in docker_evidence.get("errors", []):
+        errors.append(f"Docker strict cleanliness evidence: {error}")
+    docker_status = docker_evidence.get("status") if isinstance(docker_evidence.get("status"), dict) else {}
     docker_clean = docker_status.get("clean")
     docker_strict = docker_status.get("strict")
-    if docker_clean_claim is True:
-        if not docker_status:
-            errors.append("finalization_succeeded claims docker_clean=true but docker-cleanliness-status.json is missing.")
-        elif docker_clean is not True or docker_strict is not True:
-            errors.append(
-                "finalization_succeeded claims docker_clean=true but docker-cleanliness-status.json is not clean=true and strict=true."
-            )
-    if docker_status and docker_clean is False:
-        errors.append("docker-cleanliness-status.json has clean=false; the workspace must remain blocked.")
-    if completion_claimed(status) and docker_status and docker_strict is False:
-        errors.append("completed workspace requires Docker strict cleanliness status strict=true.")
 
     summary = {
         "workspace": str(workspace),
@@ -250,6 +255,8 @@ def validate_finalization(workspace: Path) -> tuple[bool, list[str], dict[str, A
         "status": state,
         "docker_clean": docker_clean,
         "docker_strict": docker_strict,
+        "docker_cleanliness_path": docker_evidence.get("path"),
+        "docker_cleanliness_sha256": docker_evidence.get("sha256"),
         "blocked_verification": blocked_summary,
         "seeded_variant_discovery": variant_summary,
         "workspace_state": {

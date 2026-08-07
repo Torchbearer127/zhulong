@@ -1,0 +1,375 @@
+{
+  "schema_version": 1,
+  "recon_id": "RECON-REPLACE-WITH-STABLE-ID",
+  "status": "partial",
+  "target_binding": {
+    "target_contract_path": "zhulong-target.yaml",
+    "target_contract_sha256": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "tested_ref": "REPLACE-WITH-TARGET-CONTRACT-REF"
+  },
+  "attack_surface_binding": {
+    "path": "attack-surface.md",
+    "sha256": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+  },
+  "technology_stack": [
+    {
+      "id": "TECH-EXAMPLE-LANGUAGE",
+      "name": "Example language",
+      "category": "language",
+      "summary": "Replace this with an observed language or runtime component.",
+      "source_refs": [
+        {
+          "path": "src/example.py",
+          "symbol": "example_entry"
+        }
+      ],
+      "evidence_refs": [
+        {
+          "path": "evidence/recon-notes.md",
+          "section": "Technology"
+        }
+      ]
+    }
+  ],
+  "public_entrypoints": [
+    {
+      "id": "ENTRY-EXAMPLE",
+      "kind": "http",
+      "route": {
+        "path": "/replace/me",
+        "method": "POST",
+        "symbol": "example_entry",
+        "input_fields": [
+          "replace_me"
+        ]
+      },
+      "auth": {
+        "mode": "unknown",
+        "mechanism": "replace with observed authentication"
+      },
+      "summary": "Replace this with one structured public entrypoint, or use an evidence-backed not_applicable coverage record for a library.",
+      "source_refs": [
+        {
+          "path": "src/example.py",
+          "symbol": "example_entry"
+        }
+      ],
+      "evidence_refs": [
+        {
+          "path": "attack-surface.md",
+          "section": "External Entry Points"
+        }
+      ]
+    }
+  ],
+  "trust_boundaries": [
+    {
+      "id": "BOUNDARY-EXAMPLE",
+      "from_zone": "replace source zone",
+      "to_zone": "replace destination zone",
+      "controls": [
+        "replace with observed control"
+      ],
+      "summary": "Replace this with a structured trust-boundary observation.",
+      "source_refs": [
+        {
+          "path": "src/example.py",
+          "symbol": "example_entry"
+        }
+      ],
+      "evidence_refs": [
+        {
+          "path": "attack-surface.md",
+          "section": "Trust Boundaries"
+        }
+      ]
+    }
+  ],
+  "high_risk_sinks": [
+    {
+      "id": "SINK-EXAMPLE",
+      "family": "other",
+      "symbol": {
+        "name": "replace.sink",
+        "kind": "replace with observed sink"
+      },
+      "controlled_inputs": [
+        "replace_input"
+      ],
+      "summary": "Replace this with a source-bound high-risk sink observation; do not turn it into a finding.",
+      "source_refs": [
+        {
+          "path": "src/example.py",
+          "symbol": "example_sink"
+        }
+      ],
+      "evidence_refs": [
+        {
+          "path": "evidence/recon-notes.md",
+          "section": "Sinks"
+        }
+      ]
+    }
+  ],
+  "security_policy_explanations": [
+    {
+      "id": "POLICY-EXAMPLE",
+      "policy_type": "other",
+      "explanation": "Replace this with an evidence-backed explanation of the relevant security policy and its observed scope.",
+      "summary": "Replace this policy observation with a concrete source/evidence binding.",
+      "source_refs": [
+        {
+          "path": "src/example.py",
+          "symbol": "example_policy"
+        }
+      ],
+      "evidence_refs": [
+        {
+          "path": "evidence/recon-notes.md",
+          "section": "Policy"
+        }
+      ]
+    }
+  ],
+  "default_deployment_assumptions": [
+    {
+      "id": "ASSUME-EXAMPLE",
+      "assumption": "Replace this with an observed or explicitly unknown default deployment assumption.",
+      "confidence": "unknown",
+      "summary": "Deployment assumptions must remain separate from target identity and findings.",
+      "source_refs": [
+        {
+          "path": "README.md"
+        }
+      ],
+      "evidence_refs": [
+        {
+          "path": "evidence/deployment.md",
+          "section": "Defaults"
+        }
+      ]
+    }
+  ],
+  "priority_areas": [
+    {
+      "id": "FOCUS-EXAMPLE",
+      "scope": {
+        "paths": [
+          "src/example.py"
+        ],
+        "symbols": [
+          "example_entry"
+        ]
+      },
+      "reason": "Replace this with a source- and evidence-backed prioritization reason.",
+      "summary": "Replace this with the first review range.",
+      "source_refs": [
+        {
+          "path": "src/example.py",
+          "symbol": "example_entry"
+        }
+      ],
+      "evidence_refs": [
+        {
+          "path": "attack-surface.md",
+          "section": "Review Scope"
+        }
+      ]
+    }
+  ],
+  "deferred_areas": [
+    {
+      "id": "DEFER-EXAMPLE",
+      "scope": {
+        "paths": [
+          "docs/example.md"
+        ],
+        "symbols": []
+      },
+      "reason": "Replace this with a bounded reason for deferring the area.",
+      "revisit_when": "Replace this with an observable condition for revisiting the area.",
+      "summary": "Replace this with the deferred review range.",
+      "source_refs": [
+        {
+          "path": "docs/example.md"
+        }
+      ],
+      "evidence_refs": [
+        {
+          "path": "attack-surface.md",
+          "section": "Deferred Areas"
+        }
+      ]
+    }
+  ],
+  "coverage": {
+    "technology_stack": {
+      "status": "unknown",
+      "item_ids": [],
+      "reason": "Replace with covered or evidence-backed not_applicable status.",
+      "basis": {
+        "source_refs": [
+          {
+            "path": "src/example.py"
+          }
+        ],
+        "evidence_refs": [
+          {
+            "path": "evidence/recon-notes.md"
+          }
+        ]
+      }
+    },
+    "public_entrypoints": {
+      "status": "unknown",
+      "item_ids": [],
+      "reason": "Replace with covered entries or evidence-backed not_applicable for a library.",
+      "basis": {
+        "source_refs": [
+          {
+            "path": "src/example.py"
+          }
+        ],
+        "evidence_refs": [
+          {
+            "path": "attack-surface.md"
+          }
+        ]
+      }
+    },
+    "trust_boundaries": {
+      "status": "unknown",
+      "item_ids": [],
+      "reason": "Replace with the covered boundary IDs and basis.",
+      "basis": {
+        "source_refs": [
+          {
+            "path": "src/example.py"
+          }
+        ],
+        "evidence_refs": [
+          {
+            "path": "attack-surface.md"
+          }
+        ]
+      }
+    },
+    "high_risk_sinks": {
+      "status": "unknown",
+      "item_ids": [],
+      "reason": "Replace with structured sink coverage and basis.",
+      "basis": {
+        "source_refs": [
+          {
+            "path": "src/example.py"
+          }
+        ],
+        "evidence_refs": [
+          {
+            "path": "evidence/recon-notes.md"
+          }
+        ]
+      }
+    },
+    "security_policy_explanations": {
+      "status": "unknown",
+      "item_ids": [],
+      "reason": "Replace with structured policy coverage and basis.",
+      "basis": {
+        "source_refs": [
+          {
+            "path": "src/example.py"
+          }
+        ],
+        "evidence_refs": [
+          {
+            "path": "evidence/recon-notes.md"
+          }
+        ]
+      }
+    },
+    "default_deployment_assumptions": {
+      "status": "unknown",
+      "item_ids": [],
+      "reason": "Replace with explicit default deployment coverage and basis.",
+      "basis": {
+        "source_refs": [
+          {
+            "path": "README.md"
+          }
+        ],
+        "evidence_refs": [
+          {
+            "path": "evidence/deployment.md"
+          }
+        ]
+      }
+    },
+    "priority_areas": {
+      "status": "unknown",
+      "item_ids": [],
+      "reason": "Replace with the prioritized focus IDs and basis.",
+      "basis": {
+        "source_refs": [
+          {
+            "path": "src/example.py"
+          }
+        ],
+        "evidence_refs": [
+          {
+            "path": "attack-surface.md"
+          }
+        ]
+      }
+    },
+    "deferred_areas": {
+      "status": "unknown",
+      "item_ids": [],
+      "reason": "Replace with deferred IDs, reasons, revisit conditions, and basis.",
+      "basis": {
+        "source_refs": [
+          {
+            "path": "docs/example.md"
+          }
+        ],
+        "evidence_refs": [
+          {
+            "path": "attack-surface.md"
+          }
+        ]
+      }
+    }
+  },
+  "coverage_gaps": [
+    {
+      "id": "GAP-EXAMPLE",
+      "code": "REPLACE_GAP_CODE",
+      "summary": "Replace this with a real coverage gap and affected stable IDs.",
+      "affected_coverage_ids": [
+        "FOCUS-EXAMPLE"
+      ],
+      "basis": {
+        "source_refs": [
+          {
+            "path": "src/example.py"
+          }
+        ],
+        "evidence_refs": [
+          {
+            "path": "evidence/recon-notes.md"
+          }
+        ]
+      },
+      "next_action": {
+        "action_id": "ACTION-EXAMPLE",
+        "summary": "Replace this with an executable next review action.",
+        "completion_condition": "Replace this with an observable completion condition."
+      }
+    }
+  ],
+  "unresolved_blockers": [],
+  "focus_refs": [
+    "FOCUS-EXAMPLE",
+    "DEFER-EXAMPLE"
+  ]
+}

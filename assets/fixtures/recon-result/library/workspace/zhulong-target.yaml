@@ -1,0 +1,19 @@
+schema_version: 1
+target:
+  name: "fixture-library"
+  repo_root: "."
+  tested_ref: "fixture-library-ref-001"
+  language_hint:
+    - "python"
+runtime:
+  type: "manual-blocked"
+verify:
+  mode: "manual-required"
+scope:
+  entrypoints: []
+  trust_boundaries:
+    - "library caller -> parser API"
+  in_scope_bug_classes:
+    - "parser safety"
+  out_of_scope:
+    - "public network service behavior"

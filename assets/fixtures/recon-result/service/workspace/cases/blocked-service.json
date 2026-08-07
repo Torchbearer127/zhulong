@@ -1,0 +1,262 @@
+{
+  "schema_version": 1,
+  "recon_id": "RECON-SERVICE-BLOCKED-001",
+  "status": "blocked",
+  "target_binding": {
+    "target_contract_path": "zhulong-target.yaml",
+    "target_contract_sha256": "sha256:142eed6c9749f99fe26e8de435f43f7d58d447bb76f70516fda72708dd744509",
+    "tested_ref": "fixture-service-ref-001"
+  },
+  "attack_surface_binding": {
+    "path": "attack-surface.md",
+    "sha256": "sha256:977ee46f69eac6bde639886c083c20f399b02b0e4f41023acfd3c26208844025"
+  },
+  "technology_stack": [
+    {
+      "id": "TECH-PYTHON",
+      "name": "Python",
+      "category": "language",
+      "summary": "Python source files define the fixture application handlers.",
+      "source_refs": [
+        {
+          "path": "src/app.py",
+          "start_line": 1,
+          "end_line": 9
+        }
+      ],
+      "evidence_refs": [
+        {
+          "path": "evidence/recon-notes.md"
+        }
+      ]
+    }
+  ],
+  "public_entrypoints": [
+    {
+      "id": "ENTRY-HTTP-IMPORT",
+      "kind": "http",
+      "route": {
+        "path": "/api/import",
+        "method": "POST",
+        "symbol": "import_url",
+        "input_fields": [
+          "url"
+        ]
+      },
+      "auth": {
+        "mode": "authenticated",
+        "mechanism": "application session"
+      },
+      "summary": "The known import entrypoint remains available for local coverage.",
+      "source_refs": [
+        {
+          "path": "src/app.py",
+          "start_line": 5,
+          "end_line": 8
+        }
+      ],
+      "evidence_refs": [
+        {
+          "path": "attack-surface.md"
+        }
+      ]
+    }
+  ],
+  "trust_boundaries": [],
+  "high_risk_sinks": [],
+  "security_policy_explanations": [],
+  "default_deployment_assumptions": [],
+  "priority_areas": [],
+  "deferred_areas": [],
+  "coverage": {
+    "technology_stack": {
+      "status": "covered",
+      "item_ids": [
+        "TECH-PYTHON"
+      ],
+      "reason": "The language map is retained while runtime verification is blocked.",
+      "basis": {
+        "source_refs": [
+          {
+            "path": "src/app.py",
+            "start_line": 1,
+            "end_line": 9
+          }
+        ],
+        "evidence_refs": [
+          {
+            "path": "evidence/recon-notes.md"
+          }
+        ]
+      }
+    },
+    "public_entrypoints": {
+      "status": "covered",
+      "item_ids": [
+        "ENTRY-HTTP-IMPORT"
+      ],
+      "reason": "The known import route is recorded even though the runtime cannot currently be exercised.",
+      "basis": {
+        "source_refs": [
+          {
+            "path": "src/app.py",
+            "start_line": 5,
+            "end_line": 8
+          }
+        ],
+        "evidence_refs": [
+          {
+            "path": "attack-surface.md"
+          }
+        ]
+      }
+    },
+    "trust_boundaries": {
+      "status": "unknown",
+      "item_ids": [],
+      "reason": "Runtime startup is blocked before the complete middleware boundary can be checked.",
+      "basis": {
+        "source_refs": [
+          {
+            "path": "src/app.py",
+            "start_line": 5,
+            "end_line": 8
+          }
+        ],
+        "evidence_refs": [
+          {
+            "path": "evidence/recon-notes.md"
+          }
+        ]
+      }
+    },
+    "high_risk_sinks": {
+      "status": "unknown",
+      "item_ids": [],
+      "reason": "The sink review is blocked until the declared runtime prerequisite is restored.",
+      "basis": {
+        "source_refs": [
+          {
+            "path": "src/app.py",
+            "start_line": 8,
+            "end_line": 8
+          }
+        ],
+        "evidence_refs": [
+          {
+            "path": "evidence/recon-notes.md"
+          }
+        ]
+      }
+    },
+    "security_policy_explanations": {
+      "status": "unknown",
+      "item_ids": [],
+      "reason": "Policy enforcement cannot be reconciled with the running service while the image is missing.",
+      "basis": {
+        "source_refs": [
+          {
+            "path": "src/policy.py",
+            "start_line": 1,
+            "end_line": 3
+          }
+        ],
+        "evidence_refs": [
+          {
+            "path": "evidence/recon-notes.md"
+          }
+        ]
+      }
+    },
+    "default_deployment_assumptions": {
+      "status": "unknown",
+      "item_ids": [],
+      "reason": "The declared Compose service cannot be checked until its image prerequisite is available.",
+      "basis": {
+        "source_refs": [
+          {
+            "path": "README.md",
+            "start_line": 1,
+            "end_line": 4
+          }
+        ],
+        "evidence_refs": [
+          {
+            "path": "evidence/deployment.md"
+          }
+        ]
+      }
+    },
+    "priority_areas": {
+      "status": "unknown",
+      "item_ids": [],
+      "reason": "Priority ordering is retained as a blocker follow-up rather than asserted as complete.",
+      "basis": {
+        "source_refs": [
+          {
+            "path": "src/app.py",
+            "start_line": 5,
+            "end_line": 8
+          }
+        ],
+        "evidence_refs": [
+          {
+            "path": "attack-surface.md"
+          }
+        ]
+      }
+    },
+    "deferred_areas": {
+      "status": "unknown",
+      "item_ids": [],
+      "reason": "Deferred-range decisions wait for the blocked runtime prerequisite.",
+      "basis": {
+        "source_refs": [
+          {
+            "path": "README.md",
+            "start_line": 1,
+            "end_line": 4
+          }
+        ],
+        "evidence_refs": [
+          {
+            "path": "evidence/deployment.md"
+          }
+        ]
+      }
+    }
+  },
+  "coverage_gaps": [],
+  "unresolved_blockers": [
+    {
+      "id": "BLOCK-RUNTIME-IMAGE",
+      "code": "RUNTIME_IMAGE_MISSING",
+      "summary": "The declared Compose image is unavailable, so runtime-dependent Recon coverage cannot resume.",
+      "affected_coverage_ids": [
+        "ENTRY-HTTP-IMPORT"
+      ],
+      "basis": {
+        "source_refs": [
+          {
+            "path": "README.md",
+            "start_line": 1,
+            "end_line": 4
+          }
+        ],
+        "evidence_refs": [
+          {
+            "path": "evidence/deployment.md",
+            "section": "Blocked prerequisite"
+          }
+        ]
+      },
+      "recovery_condition": "The exact target image is available locally or through an approved equivalent registry.",
+      "resume_action": {
+        "action_id": "ACTION-RESTORE-RUNTIME",
+        "summary": "Restore the declared runtime image, rerun the target contract readiness checks, and resume the unknown coverage categories.",
+        "completion_condition": "The target service passes the declared readiness check and the affected coverage categories have fresh evidence."
+      }
+    }
+  ],
+  "focus_refs": []
+}

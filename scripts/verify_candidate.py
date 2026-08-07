@@ -14,6 +14,7 @@ from validate_candidate import (
     load_candidate,
     validate_candidate,
 )
+from candidate_identity import file_sha256
 from validate_target_contract import (
     ValidationError as TargetValidationError,
     load_contract,
@@ -185,6 +186,7 @@ def base_verdict(
     evidence_level: str | None = None,
     attacker_entrypoint: dict[str, Any] | None = None,
     replay_material: dict[str, Any] | None = None,
+    candidate_path: Path | None = None,
 ) -> dict[str, Any]:
     runtime_type = target_runtime_type(target_doc)
     if evidence_level is None:
@@ -226,6 +228,18 @@ def base_verdict(
         doc["attacker_entrypoint"] = attacker_entrypoint
     if replay_material is not None:
         doc["replay_material"] = replay_material
+    try:
+        checked = validate_candidate(candidate)
+    except CandidateValidationError:
+        checked = {"protocol_mode": "invalid"}
+    if checked.get("protocol_mode") == "r2":
+        if candidate_path is None:
+            raise VerifierError("R2 candidate verdict construction requires the exact candidate path")
+        doc["candidate_binding"] = {
+            "protocol_mode": "r2",
+            "candidate_sha256": file_sha256(candidate_path),
+            "fingerprint": checked["fingerprint"],
+        }
     return doc
 
 
@@ -281,6 +295,7 @@ def build_verdict(
     run_dir: Path,
     target_doc: dict[str, Any],
     candidate: dict[str, Any],
+    candidate_path: Path,
 ) -> dict[str, Any]:
     oracle_type = expected_oracle(candidate)
     runtime_type = target_runtime_type(target_doc)
@@ -288,17 +303,17 @@ def build_verdict(
     if runtime_type == "manual-blocked":
         reason = "target runtime is manual-blocked and non-confirmable by automatic verifier"
         write_log(run_dir, reason)
-        return base_verdict(candidate=candidate, target_doc=target_doc, verdict="blocked", oracle_type=oracle_type, oracle_success=False, reason=reason)
+        return base_verdict(candidate=candidate, target_doc=target_doc, verdict="blocked", oracle_type=oracle_type, oracle_success=False, reason=reason, candidate_path=candidate_path)
 
     if oracle_type not in SUPPORTED_ORACLES:
         reason = f"unsupported oracle type: {oracle_type}"
         write_log(run_dir, reason)
-        return base_verdict(candidate=candidate, target_doc=target_doc, verdict="blocked", oracle_type=oracle_type, oracle_success=False, reason=reason)
+        return base_verdict(candidate=candidate, target_doc=target_doc, verdict="blocked", oracle_type=oracle_type, oracle_success=False, reason=reason, candidate_path=candidate_path)
 
     if oracle_type == "manual_blocked":
         reason = "manual_blocked oracle is non-confirmable by automatic verifier"
         write_log(run_dir, reason)
-        return base_verdict(candidate=candidate, target_doc=target_doc, verdict="blocked", oracle_type=oracle_type, oracle_success=False, reason=reason)
+        return base_verdict(candidate=candidate, target_doc=target_doc, verdict="blocked", oracle_type=oracle_type, oracle_success=False, reason=reason, candidate_path=candidate_path)
 
     if args.dry_run_result:
         fixture_artifact = write_fixture_artifact(run_dir, args.dry_run_result, oracle_type)
@@ -317,6 +332,7 @@ def build_verdict(
                 reason=reason,
                 artifacts=[workspace_rel(log_path, workspace), workspace_rel(fixture_artifact, workspace)],
                 evidence_level="blocked_entrypoint_verification",
+                candidate_path=candidate_path,
             )
         reason = f"dry-run fixture produced {args.dry_run_result}; no Docker, PoC, replay, or network execution occurred"
         return base_verdict(
@@ -329,16 +345,17 @@ def build_verdict(
             artifacts=[workspace_rel(log_path, workspace), workspace_rel(fixture_artifact, workspace)]
             if args.dry_run_result != "blocked"
             else [],
+            candidate_path=candidate_path,
         )
 
     if args.allow_execute:
         reason = "Docker execution is not implemented in R1 verifier; no host-side PoC fallback was attempted"
         write_log(run_dir, reason)
-        return base_verdict(candidate=candidate, target_doc=target_doc, verdict="blocked", oracle_type=oracle_type, oracle_success=False, reason=reason)
+        return base_verdict(candidate=candidate, target_doc=target_doc, verdict="blocked", oracle_type=oracle_type, oracle_success=False, reason=reason, candidate_path=candidate_path)
 
     reason = "execution not requested; R1 verifier defaulted to dry-run/no-execute and did not prove the oracle"
     write_log(run_dir, reason)
-    return base_verdict(candidate=candidate, target_doc=target_doc, verdict="unverified", oracle_type=oracle_type, oracle_success=False, reason=reason)
+    return base_verdict(candidate=candidate, target_doc=target_doc, verdict="unverified", oracle_type=oracle_type, oracle_success=False, reason=reason, candidate_path=candidate_path)
 
 
 def main() -> int:
@@ -370,6 +387,7 @@ def main() -> int:
                 oracle_success=False,
                 reason=reason,
                 target_valid=False,
+                candidate_path=candidate_path,
             )
             write_and_validate(verdict, out_path, candidate_path)
             print(f"verdict=blocked")
@@ -389,6 +407,7 @@ def main() -> int:
                 oracle_success=False,
                 reason=reason,
                 candidate_valid=False,
+                candidate_path=candidate_path,
             )
             write_and_validate(verdict, out_path, candidate_path)
             print(f"verdict=blocked")
@@ -406,13 +425,14 @@ def main() -> int:
                 oracle_success=False,
                 reason=mismatch,
                 target_ref_matches=False,
+                candidate_path=candidate_path,
             )
             write_and_validate(verdict, out_path, candidate_path)
             print("verdict=blocked")
             print(f"verifier_verdict={out_path}")
             return 1
 
-        verdict = build_verdict(args=args, workspace=workspace, run_dir=run_dir, target_doc=target_doc, candidate=candidate)
+        verdict = build_verdict(args=args, workspace=workspace, run_dir=run_dir, target_doc=target_doc, candidate=candidate, candidate_path=candidate_path)
         write_and_validate(verdict, out_path, candidate_path)
     except VerifierError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

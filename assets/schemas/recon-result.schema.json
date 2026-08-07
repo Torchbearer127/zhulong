@@ -1,0 +1,948 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Torchbearer127/zhulong/blob/main/assets/schemas/recon-result.schema.json",
+  "title": "Zhulong Recon Coverage Contract R1",
+  "description": "Portable, read-only Recon coverage material. It binds a target contract and attack-surface digest but is not a finding, verdict, disposition, bundle, or stage-completion authority.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "recon_id",
+    "status",
+    "target_binding",
+    "attack_surface_binding",
+    "technology_stack",
+    "public_entrypoints",
+    "trust_boundaries",
+    "high_risk_sinks",
+    "security_policy_explanations",
+    "default_deployment_assumptions",
+    "priority_areas",
+    "deferred_areas",
+    "coverage",
+    "coverage_gaps",
+    "unresolved_blockers",
+    "focus_refs"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "recon_id": {
+      "type": "string",
+      "pattern": "^RECON-[0-9A-Za-z][0-9A-Za-z._-]*$"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "complete",
+        "partial",
+        "blocked"
+      ]
+    },
+    "target_binding": {
+      "$ref": "#/$defs/target_binding"
+    },
+    "attack_surface_binding": {
+      "$ref": "#/$defs/attack_surface_binding"
+    },
+    "technology_stack": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/technology"
+      }
+    },
+    "public_entrypoints": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/entrypoint"
+      }
+    },
+    "trust_boundaries": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/trust_boundary"
+      }
+    },
+    "high_risk_sinks": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/sink"
+      }
+    },
+    "security_policy_explanations": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/security_policy"
+      }
+    },
+    "default_deployment_assumptions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/deployment_assumption"
+      }
+    },
+    "priority_areas": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/priority_area"
+      }
+    },
+    "deferred_areas": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/deferred_area"
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "technology_stack",
+        "public_entrypoints",
+        "trust_boundaries",
+        "high_risk_sinks",
+        "security_policy_explanations",
+        "default_deployment_assumptions",
+        "priority_areas",
+        "deferred_areas"
+      ],
+      "properties": {
+        "technology_stack": {
+          "$ref": "#/$defs/coverage_record"
+        },
+        "public_entrypoints": {
+          "$ref": "#/$defs/coverage_record"
+        },
+        "trust_boundaries": {
+          "$ref": "#/$defs/coverage_record"
+        },
+        "high_risk_sinks": {
+          "$ref": "#/$defs/coverage_record"
+        },
+        "security_policy_explanations": {
+          "$ref": "#/$defs/coverage_record"
+        },
+        "default_deployment_assumptions": {
+          "$ref": "#/$defs/coverage_record"
+        },
+        "priority_areas": {
+          "$ref": "#/$defs/coverage_record"
+        },
+        "deferred_areas": {
+          "$ref": "#/$defs/coverage_record"
+        }
+      }
+    },
+    "coverage_gaps": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/coverage_gap"
+      }
+    },
+    "unresolved_blockers": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/blocker"
+      }
+    },
+    "focus_refs": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^(?:FOCUS|DEFER)-[0-9A-Za-z][0-9A-Za-z._-]*$"
+      }
+    }
+  },
+  "$defs": {
+    "workspace_relative_path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?![A-Za-z]:[\\\\/])(?!file://)(?!https?://)(?!~)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+"
+    },
+    "repo_relative_path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?![A-Za-z]:[\\\\/])(?!file://)(?!https?://)(?!~)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "stable_id": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9]*-[0-9A-Za-z][0-9A-Za-z._-]*$"
+    },
+    "stable_code": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9_]{2,63}$"
+    },
+    "source_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/repo_relative_path"
+        },
+        "start_line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "end_line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "symbol": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "evidence_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/workspace_relative_path"
+        },
+        "section": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "evidence_basis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_refs",
+        "evidence_refs"
+      ],
+      "properties": {
+        "source_refs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/source_ref"
+          }
+        },
+        "evidence_refs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/evidence_ref"
+          }
+        }
+      }
+    },
+    "target_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "target_contract_path",
+        "target_contract_sha256",
+        "tested_ref"
+      ],
+      "properties": {
+        "target_contract_path": {
+          "$ref": "#/$defs/workspace_relative_path"
+        },
+        "target_contract_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "tested_ref": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "attack_surface_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "const": "attack-surface.md"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "technology": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "category",
+        "summary",
+        "source_refs",
+        "evidence_refs"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^TECH-[0-9A-Za-z][0-9A-Za-z._-]*$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "category": {
+          "type": "string",
+          "enum": [
+            "language",
+            "framework",
+            "runtime",
+            "dependency",
+            "storage",
+            "other"
+          ]
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_refs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/source_ref"
+          }
+        },
+        "evidence_refs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/evidence_ref"
+          }
+        }
+      }
+    },
+    "route": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "method": {
+          "type": "string",
+          "minLength": 1
+        },
+        "symbol": {
+          "type": "string",
+          "minLength": 1
+        },
+        "command": {
+          "type": "string",
+          "minLength": 1
+        },
+        "api_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "input_fields": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "anyOf": [
+        {
+          "required": [
+            "path"
+          ]
+        },
+        {
+          "required": [
+            "symbol"
+          ]
+        },
+        {
+          "required": [
+            "command"
+          ]
+        },
+        {
+          "required": [
+            "api_name"
+          ]
+        }
+      ]
+    },
+    "auth": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode"
+      ],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "anonymous",
+            "authenticated",
+            "admin",
+            "unknown",
+            "not_applicable"
+          ]
+        },
+        "mechanism": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "entrypoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "route",
+        "auth",
+        "summary",
+        "source_refs",
+        "evidence_refs"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^ENTRY-[0-9A-Za-z][0-9A-Za-z._-]*$"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "http",
+            "api",
+            "rpc",
+            "cli",
+            "library",
+            "worker",
+            "plugin",
+            "other"
+          ]
+        },
+        "route": {
+          "$ref": "#/$defs/route"
+        },
+        "auth": {
+          "$ref": "#/$defs/auth"
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_refs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/source_ref"
+          }
+        },
+        "evidence_refs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/evidence_ref"
+          }
+        }
+      }
+    },
+    "trust_boundary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "from_zone",
+        "to_zone",
+        "controls",
+        "summary",
+        "source_refs",
+        "evidence_refs"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^BOUNDARY-[0-9A-Za-z][0-9A-Za-z._-]*$"
+        },
+        "from_zone": {
+          "type": "string",
+          "minLength": 1
+        },
+        "to_zone": {
+          "type": "string",
+          "minLength": 1
+        },
+        "controls": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_refs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/source_ref"
+          }
+        },
+        "evidence_refs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/evidence_ref"
+          }
+        }
+      }
+    },
+    "sink": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "family",
+        "symbol",
+        "controlled_inputs",
+        "summary",
+        "source_refs",
+        "evidence_refs"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^SINK-[0-9A-Za-z][0-9A-Za-z._-]*$"
+        },
+        "family": {
+          "type": "string",
+          "enum": [
+            "network",
+            "filesystem",
+            "subprocess",
+            "parser",
+            "template",
+            "database",
+            "serialization",
+            "other"
+          ]
+        },
+        "symbol": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "name"
+          ],
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "kind": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "controlled_inputs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_refs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/source_ref"
+          }
+        },
+        "evidence_refs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/evidence_ref"
+          }
+        }
+      }
+    },
+    "security_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "policy_type",
+        "explanation",
+        "summary",
+        "source_refs",
+        "evidence_refs"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^POLICY-[0-9A-Za-z][0-9A-Za-z._-]*$"
+        },
+        "policy_type": {
+          "type": "string",
+          "enum": [
+            "input_validation",
+            "authentication",
+            "authorization",
+            "output_encoding",
+            "sandboxing",
+            "resource_limit",
+            "dependency_policy",
+            "other"
+          ]
+        },
+        "explanation": {
+          "type": "string",
+          "minLength": 1
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_refs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/source_ref"
+          }
+        },
+        "evidence_refs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/evidence_ref"
+          }
+        }
+      }
+    },
+    "deployment_assumption": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "assumption",
+        "confidence",
+        "summary",
+        "source_refs",
+        "evidence_refs"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^ASSUME-[0-9A-Za-z][0-9A-Za-z._-]*$"
+        },
+        "assumption": {
+          "type": "string",
+          "minLength": 1
+        },
+        "confidence": {
+          "type": "string",
+          "enum": [
+            "observed",
+            "assumed",
+            "unknown"
+          ]
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_refs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/source_ref"
+          }
+        },
+        "evidence_refs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/evidence_ref"
+          }
+        }
+      }
+    },
+    "area_scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "paths",
+        "symbols"
+      ],
+      "properties": {
+        "paths": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/repo_relative_path"
+          }
+        },
+        "symbols": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "priority_area": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "scope",
+        "reason",
+        "summary",
+        "source_refs",
+        "evidence_refs"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^FOCUS-[0-9A-Za-z][0-9A-Za-z._-]*$"
+        },
+        "scope": {
+          "$ref": "#/$defs/area_scope"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_refs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/source_ref"
+          }
+        },
+        "evidence_refs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/evidence_ref"
+          }
+        }
+      }
+    },
+    "deferred_area": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "scope",
+        "reason",
+        "revisit_when",
+        "summary",
+        "source_refs",
+        "evidence_refs"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^DEFER-[0-9A-Za-z][0-9A-Za-z._-]*$"
+        },
+        "scope": {
+          "$ref": "#/$defs/area_scope"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revisit_when": {
+          "type": "string",
+          "minLength": 1
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_refs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/source_ref"
+          }
+        },
+        "evidence_refs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/evidence_ref"
+          }
+        }
+      }
+    },
+    "coverage_record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "item_ids",
+        "reason",
+        "basis"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "covered",
+            "not_applicable",
+            "unknown"
+          ]
+        },
+        "item_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/stable_id"
+          }
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "basis": {
+          "$ref": "#/$defs/evidence_basis"
+        }
+      }
+    },
+    "action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "action_id",
+        "summary",
+        "completion_condition"
+      ],
+      "properties": {
+        "action_id": {
+          "type": "string",
+          "pattern": "^ACTION-[0-9A-Za-z][0-9A-Za-z._-]*$"
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "completion_condition": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "coverage_gap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "code",
+        "summary",
+        "affected_coverage_ids",
+        "basis",
+        "next_action"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^GAP-[0-9A-Za-z][0-9A-Za-z._-]*$"
+        },
+        "code": {
+          "$ref": "#/$defs/stable_code"
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "affected_coverage_ids": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/stable_id"
+          }
+        },
+        "basis": {
+          "$ref": "#/$defs/evidence_basis"
+        },
+        "next_action": {
+          "$ref": "#/$defs/action"
+        }
+      }
+    },
+    "blocker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "code",
+        "summary",
+        "affected_coverage_ids",
+        "basis",
+        "recovery_condition",
+        "resume_action"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^BLOCK-[0-9A-Za-z][0-9A-Za-z._-]*$"
+        },
+        "code": {
+          "$ref": "#/$defs/stable_code"
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "affected_coverage_ids": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/stable_id"
+          }
+        },
+        "basis": {
+          "$ref": "#/$defs/evidence_basis"
+        },
+        "recovery_condition": {
+          "type": "string",
+          "minLength": 1
+        },
+        "resume_action": {
+          "$ref": "#/$defs/action"
+        }
+      }
+    }
+  }
+}

@@ -7,7 +7,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from workspace_state import validate_handoff_status_consistency
+from audit_state_io import AuditStateError, normalize_workspace_state
+from workspace_state import validate_handoff_state_current, validate_handoff_status_consistency
 
 
 REQUIRED_STATUS_FIELDS = {
@@ -28,46 +29,11 @@ def fail(message: str) -> None:
     raise SystemExit(f"FAILED: {message}")
 
 
-def load_status(path: Path) -> dict[str, Any]:
-    if not path.exists():
-        fail(f"missing {path.name}")
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        fail(f"{path.name} is not valid JSON: {exc}")
-    if not isinstance(data, dict):
-        fail(f"{path.name} must contain a JSON object")
-    return data
-
-
 def resolve_workspace_value(repo_root: Path, value: str) -> Path:
     candidate = Path(value).expanduser()
     if candidate.is_absolute():
         return candidate.resolve()
     return (repo_root / candidate).resolve()
-
-
-def validate_events(path: Path) -> int:
-    if not path.exists():
-        fail(f"missing {path.name}")
-    count = 0
-    with path.open("r", encoding="utf-8") as fh:
-        for line_no, line in enumerate(fh, start=1):
-            raw = line.strip()
-            if not raw:
-                continue
-            try:
-                data = json.loads(raw)
-            except json.JSONDecodeError as exc:
-                fail(f"{path.name}:{line_no} is not valid JSON: {exc}")
-            if not isinstance(data, dict):
-                fail(f"{path.name}:{line_no} must be a JSON object")
-            if not str(data.get("ts", "")).strip():
-                fail(f"{path.name}:{line_no} is missing ts")
-            if not str(data.get("event", "")).strip():
-                fail(f"{path.name}:{line_no} is missing event")
-            count += 1
-    return count
 
 
 def main() -> None:
@@ -96,17 +62,21 @@ def main() -> None:
 
     repo_root = Path(args.repo_root).expanduser().resolve() if args.repo_root else workspace.parent
 
-    status_path = workspace / "stage-status.json"
-    events_path = workspace / "audit-events.jsonl"
-    status = load_status(status_path)
-    event_count = validate_events(events_path)
+    try:
+        normalized = normalize_workspace_state(workspace)
+    except AuditStateError as exc:
+        fail(
+            f"{exc.code}: {exc.message}; run <workspace>/bin/recover-audit-state.py "
+            "--workspace-dir <audit-workspace> --check --json"
+        )
+    status = normalized["state"]
+    event_count = int(normalized["event_count"])
+    mode = str(normalized["mode"])
 
-    missing = sorted(field for field in REQUIRED_STATUS_FIELDS if field not in status)
-    if missing:
-        fail(f"stage-status.json is missing required fields: {', '.join(missing)}")
-
-    if status.get("schema_version") != 1:
-        fail("stage-status.json schema_version must be 1")
+    if mode == "legacy_r1":
+        missing = sorted(field for field in REQUIRED_STATUS_FIELDS if field not in status)
+        if missing:
+            fail(f"stage-status.json is missing required fields: {', '.join(missing)}")
     if status.get("plugin") != "zhulong":
         fail("stage-status.json plugin must be zhulong")
 
@@ -114,15 +84,16 @@ def main() -> None:
     if status_value not in {"running", "paused", "blocked", "completed"}:
         fail(f"stage-status.json status is invalid: {status_value or '<missing>'}")
 
-    workspace_value = str(status.get("workspace", "")).strip()
-    if not workspace_value:
-        fail("stage-status.json workspace is empty")
-    resolved_workspace = resolve_workspace_value(repo_root, workspace_value)
-    if resolved_workspace != workspace:
-        fail(
-            "stage-status.json workspace mismatch: "
-            f"expected {workspace}, got {workspace_value}"
-        )
+    if mode == "legacy_r1":
+        workspace_value = str(status.get("workspace", "")).strip()
+        if not workspace_value:
+            fail("stage-status.json workspace is empty")
+        resolved_workspace = resolve_workspace_value(repo_root, workspace_value)
+        if resolved_workspace != workspace:
+            fail(
+                "stage-status.json workspace mismatch: "
+                f"expected {workspace}, got {workspace_value}"
+            )
 
     latest_marker = repo_root / ".asr-latest-workspace"
     if latest_marker.exists() and not args.skip_latest_check:
@@ -152,7 +123,14 @@ def main() -> None:
         first = str(errors[0]) if errors else "unknown handoff/status consistency error"
         fail(f"handoff/status consistency failed: {first}")
 
-    print(f"WORKSPACE STATE OK: {workspace} ({event_count} events)")
+    handoff_path = workspace / "handoff-state.json"
+    if handoff_path.exists() or handoff_path.is_symlink():
+        handoff_consistency = validate_handoff_state_current(workspace, repo_root)
+        if not handoff_consistency.get("ok"):
+            codes = ", ".join(str(code) for code in handoff_consistency.get("issue_codes", [])) or "HANDOFF_UNVERIFIABLE"
+            fail(f"handoff-state.json is stale or unverifiable: {codes}")
+
+    print(f"WORKSPACE STATE OK: {workspace} ({event_count} events; mode={mode})")
 
 
 if __name__ == "__main__":

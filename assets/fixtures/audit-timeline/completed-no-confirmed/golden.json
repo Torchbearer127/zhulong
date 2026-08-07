@@ -1,0 +1,233 @@
+{
+  "blockers": [],
+  "bundles": {
+    "failed": 0,
+    "items": [],
+    "partial": 0,
+    "validated": 0
+  },
+  "candidate_flows": [],
+  "current_state": {
+    "blocker": null,
+    "event_sequence": 7,
+    "resume_step": null,
+    "revision": 7,
+    "run_id": "run-audit-timeline-fixture",
+    "stage": "finalization",
+    "status": "completed"
+  },
+  "docker": {
+    "baseline_path": "docker/docker-resource-baseline.json",
+    "baseline_sha256": "sha256:68d442164e29c41047268d885f1f2a78dedc498fd341aba8400202abf9aa5052",
+    "baseline_status": "present",
+    "hygiene_path": "docker/docker-cleanliness-status.json",
+    "hygiene_sha256": "sha256:9a7beed72a93ca32e88e4e33ea5dd97df6d8323fe40131fd87118f0df833b991",
+    "hygiene_status": "clean",
+    "verification_status": "not_present"
+  },
+  "events": [
+    {
+      "blocker": null,
+      "event_name": "intake_started",
+      "event_type": "stage_transition",
+      "evidence_refs": [],
+      "from_status": null,
+      "reason_code": "normal_progress",
+      "resume_step": null,
+      "revision": 1,
+      "seq": 1,
+      "stage": "intake",
+      "subjects": [],
+      "summary": "Protocol fixture event 1: intake_started.",
+      "to_status": "running",
+      "transition_kind": "start"
+    },
+    {
+      "blocker": null,
+      "event_name": "recon_started",
+      "event_type": "stage_transition",
+      "evidence_refs": [],
+      "from_status": "running",
+      "reason_code": "normal_progress",
+      "resume_step": null,
+      "revision": 2,
+      "seq": 2,
+      "stage": "recon",
+      "subjects": [],
+      "summary": "Protocol fixture event 2: recon_started.",
+      "to_status": "running",
+      "transition_kind": "advance"
+    },
+    {
+      "blocker": null,
+      "event_name": "candidate_generation_started",
+      "event_type": "stage_transition",
+      "evidence_refs": [],
+      "from_status": "running",
+      "reason_code": "normal_progress",
+      "resume_step": null,
+      "revision": 3,
+      "seq": 3,
+      "stage": "candidate_generation",
+      "subjects": [],
+      "summary": "Protocol fixture event 3: candidate_generation_started.",
+      "to_status": "running",
+      "transition_kind": "advance"
+    },
+    {
+      "blocker": null,
+      "event_name": "triage_started",
+      "event_type": "stage_transition",
+      "evidence_refs": [],
+      "from_status": "running",
+      "reason_code": "normal_progress",
+      "resume_step": null,
+      "revision": 4,
+      "seq": 4,
+      "stage": "triage",
+      "subjects": [],
+      "summary": "Protocol fixture event 4: triage_started.",
+      "to_status": "running",
+      "transition_kind": "advance"
+    },
+    {
+      "blocker": null,
+      "event_name": "verification_started",
+      "event_type": "stage_transition",
+      "evidence_refs": [],
+      "from_status": "running",
+      "reason_code": "normal_progress",
+      "resume_step": null,
+      "revision": 5,
+      "seq": 5,
+      "stage": "verification",
+      "subjects": [],
+      "summary": "Protocol fixture event 5: verification_started.",
+      "to_status": "running",
+      "transition_kind": "advance"
+    },
+    {
+      "blocker": null,
+      "event_name": "finalization_started",
+      "event_type": "stage_transition",
+      "evidence_refs": [],
+      "from_status": "running",
+      "reason_code": "normal_progress",
+      "resume_step": null,
+      "revision": 6,
+      "seq": 6,
+      "stage": "finalization",
+      "subjects": [],
+      "summary": "Protocol fixture event 6: finalization_started.",
+      "to_status": "running",
+      "transition_kind": "advance"
+    },
+    {
+      "blocker": null,
+      "event_name": "finalization_succeeded",
+      "event_type": "stage_transition",
+      "evidence_refs": [],
+      "from_status": "running",
+      "reason_code": "normal_progress",
+      "resume_step": null,
+      "revision": 7,
+      "seq": 7,
+      "stage": "finalization",
+      "subjects": [],
+      "summary": "Protocol fixture event 7: finalization_succeeded.",
+      "to_status": "completed",
+      "transition_kind": "complete"
+    }
+  ],
+  "finalization": {
+    "path": "audit-events.jsonl",
+    "sha256": "sha256:8453b4cc2e579d2daa6de326e2a37362e110452859acd061a9f594cc7e9b3584",
+    "status": "completed"
+  },
+  "handoff": {
+    "integrity": "not_present",
+    "path": null,
+    "sha256": null,
+    "status": "not_present"
+  },
+  "integrity": {
+    "authority_digest": "sha256:99097d7921fec5ff8e1004959498f17996e7faf592b636c90a1aa16a8cc23dad",
+    "issue_codes": [],
+    "status": "valid"
+  },
+  "next_actions": {
+    "blocking_codes": [],
+    "classification": "not_present",
+    "path": null,
+    "sha256": null,
+    "status": "not_present"
+  },
+  "non_authority_statement": "This offline timeline is a derived review view. It is not an authority source and grants no confirmation, disposition, execution, promotion, or finalization permission.",
+  "non_claims": [
+    "It does not prove that an Agent read any referenced material.",
+    "It does not contain hidden reasoning or conversation content.",
+    "It does not run Docker, PoC, replay, scanners, network requests, models, or Agents.",
+    "Confirmed status still requires the existing verdict, disposition, Docker, and bundle validators."
+  ],
+  "projection_kind": "derived_read_only_audit_timeline",
+  "protocol_mode": "r2",
+  "schema_version": 1,
+  "source_bindings": [
+    {
+      "kind": "disposition",
+      "path": "audit-disposition.json",
+      "sha256": "sha256:6f5868a5e60f625d48f2f212e1ae37b570d8a5fc64dafc75cac1b9072047cca1",
+      "status": "validated",
+      "validator": "audit_disposition.py"
+    },
+    {
+      "kind": "docker",
+      "path": "docker/docker-cleanliness-status.json",
+      "sha256": "sha256:9a7beed72a93ca32e88e4e33ea5dd97df6d8323fe40131fd87118f0df833b991",
+      "status": "validated",
+      "validator": "workspace_state.py"
+    },
+    {
+      "kind": "docker",
+      "path": "docker/docker-resource-baseline.json",
+      "sha256": "sha256:68d442164e29c41047268d885f1f2a78dedc498fd341aba8400202abf9aa5052",
+      "status": "validated",
+      "validator": "workspace_state.py"
+    },
+    {
+      "kind": "journal",
+      "path": "audit-events.jsonl",
+      "sha256": "sha256:8453b4cc2e579d2daa6de326e2a37362e110452859acd061a9f594cc7e9b3584",
+      "status": "validated",
+      "validator": "audit_state_io.py+audit_transition_policy.py"
+    },
+    {
+      "kind": "recon",
+      "path": "recon-result.json",
+      "sha256": "sha256:ce31a8372cfe2f54becfb3ca9d4776ac2a46c24986dd952df63c18704b843b5d",
+      "status": "validated",
+      "validator": "validate_recon_result.py"
+    },
+    {
+      "kind": "state",
+      "path": "stage-status.json",
+      "sha256": "sha256:4ee1e548a7f66c92299b75043892e7b809935068eafc512b2b4c31b62a1acd2f",
+      "status": "validated",
+      "validator": "audit_state_io.py"
+    },
+    {
+      "kind": "target_contract",
+      "path": "zhulong-target.yaml",
+      "sha256": "sha256:142eed6c9749f99fe26e8de435f43f7d58d447bb76f70516fda72708dd744509",
+      "status": "validated",
+      "validator": "validate_target_contract.py"
+    }
+  ],
+  "target": {
+    "contract_path": "zhulong-target.yaml",
+    "contract_sha256": "sha256:142eed6c9749f99fe26e8de435f43f7d58d447bb76f70516fda72708dd744509",
+    "name": "fixture-service",
+    "tested_ref": "fixture-service-ref-001",
+    "validator_status": "validated"
+  }
+}

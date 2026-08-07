@@ -7,6 +7,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from audit_text_safety import tested_ref_value_kind
+
 try:
     import yaml
 except Exception as exc:  # pragma: no cover - dependency check path
@@ -151,7 +153,10 @@ def validate_target(contract: dict[str, Any]) -> dict[str, bool | str]:
     target = require_mapping(contract, "target", "$")
     require_nonempty_string(target, "name", "$.target")
     require_nonempty_string(target, "repo_root", "$.target")
-    require_nonempty_string(target, "tested_ref", "$.target")
+    tested_ref = require_nonempty_string(target, "tested_ref", "$.target")
+    tested_ref_kind = tested_ref_value_kind(tested_ref)
+    if tested_ref_kind is not None:
+        fail(f"$.target.tested_ref contains forbidden source-identity material of category {tested_ref_kind}")
     language_hint = require_list(target, "language_hint", "$.target")
     if not language_hint or any(not isinstance(item, str) or not item.strip() for item in language_hint):
         fail("$.target.language_hint must contain at least one non-empty string")

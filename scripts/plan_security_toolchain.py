@@ -9,6 +9,8 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from validate_tool_registry import flatten_tools, load_validated_registry
+
 
 STACK_MARKERS = {
     "node": ["package.json", "pnpm-lock.yaml", "yarn.lock", "package-lock.json"],
@@ -43,6 +45,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--target-dir", required=True)
     parser.add_argument("--workspace-dir")
+    parser.add_argument("--registry", help="Optional Tool Registry R2 path for read-only validation and planning tests.")
     parser.add_argument("--format", choices=["json", "text"], default="text")
     return parser.parse_args()
 
@@ -360,33 +363,33 @@ def choose_tools(root: Path, stacks: list[str], attack_surface: list[str]) -> di
         plan["sast"].append("codeql")
 
     if "node" in stacks and tool_available("npm") and ((root / "package-lock.json").exists() or (root / "npm-shrinkwrap.json").exists()):
-        plan["dependency"].append("npm audit")
+        plan["dependency"].append("npm-audit")
     if "python" in stacks and tool_available("pip-audit"):
         plan["dependency"].append("pip-audit")
     if "rust" in stacks and tool_available("cargo-audit"):
-        plan["dependency"].append("cargo audit")
+        plan["dependency"].append("cargo-audit")
     if "java" in stacks:
         if (root / "pom.xml").exists() and tool_available("mvn"):
-            plan["dependency"].append("maven dependency:tree")
+            plan["dependency"].append("maven-dependency-tree")
         if ((root / "build.gradle").exists() or (root / "build.gradle.kts").exists()) and (tool_available("gradle") or (root / "gradlew").exists()):
-            plan["dependency"].append("gradle dependencies")
+            plan["dependency"].append("gradle-dependencies")
         if tool_available("dependency-check", "dependency-check.sh"):
-            plan["dependency"].append("OWASP Dependency-Check")
+            plan["dependency"].append("dependency-check")
         if tool_available("spotbugs"):
             plan["sast"].append("spotbugs")
         if tool_available("findsecbugs"):
             plan["sast"].append("findsecbugs")
     if "php" in stacks:
         if tool_available("composer"):
-            plan["dependency"].append("composer audit")
-            plan["dependency"].append("composer show --locked")
+            plan["dependency"].append("composer-audit")
+            plan["dependency"].append("composer-locked")
         if tool_available("phpstan"):
             plan["sast"].append("phpstan")
         if tool_available("psalm"):
             plan["sast"].append("psalm")
     if "go" in stacks:
         if tool_available("go"):
-            plan["dependency"].append("go list -m all")
+            plan["dependency"].append("go-list-modules")
         if tool_available("govulncheck"):
             plan["dependency"].append("govulncheck")
         if tool_available("gosec"):
@@ -414,17 +417,17 @@ def choose_tools(root: Path, stacks: list[str], attack_surface: list[str]) -> di
         if tool_available("ffuf"):
             plan["dast"].append("ffuf")
         if tool_available("zap.sh", "zaproxy", "zap-baseline.py"):
-            plan["dast"].append("owasp zap")
+            plan["dast"].append("owasp-zap")
     if tool_available("sqlmap"):
-        plan["dast"].append("sqlmap (only after a live injectable endpoint exists in Docker)")
+        plan["dast"].append("sqlmap")
 
     if "docker" in stacks:
         if tool_available("trivy"):
-            plan["verification"].append("trivy image")
+            plan["verification"].append("trivy")
         if tool_available("syft"):
-            plan["verification"].append("syft sbom")
+            plan["verification"].append("syft")
         if tool_available("grype"):
-            plan["verification"].append("grype image")
+            plan["verification"].append("grype")
 
     if tool_available("mcpserver-audit"):
         plan["hardening"].append("mcpserver-audit")
@@ -503,31 +506,14 @@ def discover_workspace_dir(root: Path, cli_workspace_dir: str | None) -> Path:
 
 
 def command_hints(root: Path, workspace_dir: Path, plan: dict[str, list[str]]) -> list[str]:
-    hints: list[str] = [f"bash {workspace_dir}/bin/run-initial-probes.sh --repo-root {root} --workspace-dir {workspace_dir}"]
-    if "ship-safe" in plan.get("broad_probe", []):
-        hints.append(f"ship-safe {root}")
-    if "semgrep" in plan.get("sast", []):
-        hints.append(f"semgrep scan --config auto {root}")
-    if "osv-scanner" in plan.get("dependency", []):
-        hints.append(
-            f"bash {workspace_dir}/bin/run-initial-probes.sh --repo-root {root} --workspace-dir {workspace_dir} "
-            "# preferred: classifies osv-scanner 'No package sources found' as skipped"
-        )
-    if "trivy" in plan.get("dependency", []):
-        hints.append(f"trivy fs {root}")
-    if "syft" in plan.get("dependency", []):
-        hints.append(f"syft dir:{root}")
-    if "grype" in plan.get("dependency", []):
-        hints.append(f"grype dir:{root}")
-    if "gitleaks" in plan.get("secrets", []):
-        hints.append(f"gitleaks detect -s {root}")
-    if "trufflehog" in plan.get("secrets", []):
-        hints.append(f"trufflehog filesystem {root}")
-    if "nuclei" in plan.get("dast", []):
-        hints.append("nuclei -u http://<docker-service-host>:<port>")
-    if any("ffuf" == item for item in plan.get("dast", [])):
-        hints.append("ffuf -u http://<docker-service-host>:<port>/FUZZ -w <wordlist>")
-    return hints
+    initial_probe_tools = {
+        "semgrep", "gitleaks", "npm-audit", "maven-dependency-tree", "gradle-dependencies",
+        "dependency-check", "go-list-modules", "govulncheck", "gosec", "golangci-lint",
+        "osv-scanner", "trivy", "syft", "grype",
+    }
+    if any(tool in initial_probe_tools for values in plan.values() for tool in values):
+        return [f"bash {workspace_dir}/bin/run-initial-probes.sh --repo-root {root} --workspace-dir {workspace_dir}"]
+    return []
 
 
 def specialized_playbooks(stacks: list[str], attack_surface: list[str]) -> list[str]:
@@ -770,10 +756,57 @@ def local_knowledge_checklists(root: Path, stacks: list[str], attack_surface: li
     return checklists
 
 
-def build_result(root: Path, workspace_dir: Path) -> dict[str, Any]:
+def contract_locations(registry_override: str | None) -> tuple[Path, Path, Path]:
+    script_dir = Path(__file__).resolve().parent
+    skill_root = script_dir.parent
+    workspace_registry = script_dir / "tool-registry.json"
+    if workspace_registry.is_file():
+        registry = Path(registry_override).expanduser().resolve() if registry_override else workspace_registry
+        return skill_root, registry, script_dir / "tool-registry.schema.json"
+    registry = Path(registry_override).expanduser().resolve() if registry_override else skill_root / "assets/tool-registry.json"
+    return skill_root, registry, skill_root / "assets/schemas/tool-registry.schema.json"
+
+
+def tool_metadata(tier: str, tool: dict[str, Any], *, available: bool) -> dict[str, Any]:
+    planner_status = str(tool["planner_status"])
+    return {
+        "name": tool["name"],
+        "tier": tier,
+        "availability": "available" if available else "unavailable",
+        "recommendation": "recommended" if planner_status == "wrapper_required" else planner_status,
+        "execution_requirement": planner_status,
+        "role": tool["role"],
+        "allowed_stages": tool["allowed_stages"],
+        "execution_boundaries": tool["execution_boundaries"],
+        "effects": tool["effects"],
+        "network_scope": tool["network_scope"],
+        "concurrency_policy": tool["concurrency_policy"],
+        "timeout_policy": tool["timeout_policy"],
+        "failure_policy": tool["failure_policy"],
+        "evidence_outputs": tool["evidence_outputs"],
+        "confirmation_authority": tool["confirmation_authority"],
+        "controlled_wrapper": tool["controlled_wrapper"],
+    }
+
+
+def build_result(root: Path, workspace_dir: Path, registry: dict[str, Any]) -> dict[str, Any]:
     stacks = detect_stack(root)
     attack_surface = detect_attack_surface(root)
     plan = choose_tools(root, stacks, attack_surface)
+    flattened = flatten_tools(registry)
+    catalog = {str(tool["name"]): (tier, tool) for tier, tool in flattened}
+    selected: dict[str, list[dict[str, Any]]] = {}
+    for category, names in plan.items():
+        selected[category] = []
+        for name in sorted(set(names)):
+            if name not in catalog:
+                raise RuntimeError(f"planner selected unknown registry tool: {name}")
+            tier, tool = catalog[name]
+            selected[category].append(tool_metadata(tier, tool, available=True))
+    catalog_output = [
+        tool_metadata(tier, tool, available=tool_available(*tool.get("availability_commands", [])))
+        for tier, tool in sorted(flattened, key=lambda item: (item[0], str(item[1].get("name", ""))))
+    ]
     return {
         "target_dir": str(root),
         "workspace_dir": str(workspace_dir),
@@ -783,9 +816,12 @@ def build_result(root: Path, workspace_dir: Path) -> dict[str, Any]:
         "local_knowledge_checklists": local_knowledge_checklists(root, stacks, attack_surface),
         "audit_focus": audit_focus(stacks, attack_surface),
         "attack_surface_guidance": attack_surface_guidance(stacks, attack_surface),
-        "recommended_tools": plan,
+        "recommended_tools": selected,
+        "tool_catalog": catalog_output,
         "command_hints": command_hints(root, workspace_dir, plan),
         "execution_notes": [
+            "The Tool Registry is a Zhulong-local declaration. It does not intercept native Agent tool calls and never grants confirmation authority.",
+            "Tools marked wrapper_required may be invoked only through their fixed Zhulong wrapper; planning-only and prohibited entries have no raw command hint.",
             "Treat first-pass scanner non-zero exits as findings or environmental notes unless they clearly indicate a broken command.",
             "Read <audit-workspace>/evidence/initial-probes/initial-probes-summary.json before interpreting raw scanner logs.",
             "Initial probe statuses are ran_ok, skipped_tool_missing, skipped_no_package_sources, failed_nonfatal, and failed_fatal.",
@@ -810,7 +846,12 @@ def render_text(result: dict[str, Any]) -> str:
     tools = result["recommended_tools"]
     for category in ("broad_probe", "sast", "dependency", "secrets", "dast", "verification", "hardening", "document_qa"):
         if category in tools:
-            lines.append(f"- {category}: {', '.join(tools[category])}")
+            values = tools[category]
+            formatted = [
+                f"{item['name']} ({item['availability']}; {item['recommendation']}; {item['execution_requirement']})"
+                for item in values
+            ]
+            lines.append(f"- {category}: {', '.join(formatted)}")
     if result["command_hints"]:
         lines.extend(["", "command_hints:"])
         for hint in result["command_hints"]:
@@ -849,7 +890,12 @@ def main() -> None:
     if not root.exists() or not root.is_dir():
         raise SystemExit(f"target directory does not exist: {root}")
     workspace_dir = discover_workspace_dir(root, args.workspace_dir)
-    result = build_result(root, workspace_dir)
+    skill_root, registry_path, schema_path = contract_locations(args.registry)
+    registry, issues = load_validated_registry(skill_root, registry_path, schema_path)
+    if issues or registry is None:
+        codes = ", ".join(dict.fromkeys(issue.code for issue in issues)) or "REGISTRY_INVALID"
+        raise SystemExit(f"Tool Registry validation failed closed: {codes}")
+    result = build_result(root, workspace_dir, registry)
     if args.format == "json":
         print(json.dumps(result, ensure_ascii=False, indent=2))
     else:

@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import hashlib
 import importlib.util
+import io
 import os
 import re
 import shutil
@@ -13,6 +14,7 @@ import tempfile
 import time
 import zipfile
 from pathlib import Path
+from unittest import mock
 from xml.etree import ElementTree as ET
 
 
@@ -28,12 +30,75 @@ REPLAY_TRANSCRIPT_CORPUS_FILES = [
     "assets/fixtures/replay-transcript-corpus/negative-copied-without-provenance.log",
 ]
 
+AUDIT_STATE_PROTOCOL_R2_FIXTURE_FILES = [
+    "assets/fixtures/audit-state-protocol-r2/fixture-manifest.json",
+    "assets/fixtures/audit-state-protocol-r2/line-ending-cases.json",
+    "assets/fixtures/audit-state-protocol-r2/valid-event-r2.json",
+    "assets/fixtures/audit-state-protocol-r2/valid-state-r2.json",
+    "assets/fixtures/audit-state-protocol-r2/valid-events-r2.jsonl",
+    "assets/fixtures/audit-state-protocol-r2/valid-policy-events-r2.jsonl",
+    "assets/fixtures/audit-state-protocol-r2/valid-new-event-r2.json",
+    "assets/fixtures/audit-state-protocol-r2/legacy-event-r1.json",
+    "assets/fixtures/audit-state-protocol-r2/legacy-state-r1.json",
+    "assets/fixtures/audit-state-protocol-r2/invalid-event-missing-seq.json",
+    "assets/fixtures/audit-state-protocol-r2/invalid-event-stage.json",
+    "assets/fixtures/audit-state-protocol-r2/invalid-event-status.json",
+    "assets/fixtures/audit-state-protocol-r2/invalid-event-reason-code.json",
+    "assets/fixtures/audit-state-protocol-r2/invalid-event-absolute-evidence.json",
+    "assets/fixtures/audit-state-protocol-r2/invalid-event-parent-evidence.json",
+    "assets/fixtures/audit-state-protocol-r2/invalid-event-file-uri-evidence.json",
+    "assets/fixtures/audit-state-protocol-r2/invalid-event-https-uri-evidence.json",
+    "assets/fixtures/audit-state-protocol-r2/invalid-event-unexpected-property.json",
+    "assets/fixtures/audit-state-protocol-r2/invalid-event-incomplete-transition-metadata.json",
+    "assets/fixtures/audit-state-protocol-r2/invalid-event-unknown-transition-kind.json",
+    "assets/fixtures/audit-state-protocol-r2/invalid-state-negative-revision.json",
+    "assets/fixtures/audit-state-protocol-r2/invalid-state-malformed-digest.json",
+    "assets/fixtures/audit-state-protocol-r2/invalid-events-zero-seq.jsonl",
+    "assets/fixtures/audit-state-protocol-r2/invalid-events-duplicate-seq.jsonl",
+    "assets/fixtures/audit-state-protocol-r2/invalid-events-nonmonotonic-seq.jsonl",
+    "assets/fixtures/audit-state-protocol-r2/invalid-events-truncated.jsonl",
+    "assets/fixtures/audit-state-protocol-r2/invalid-events-seq-gap.jsonl",
+    "assets/fixtures/audit-state-protocol-r2/invalid-events-revision-chain.jsonl",
+    "assets/fixtures/audit-state-protocol-r2/invalid-events-run-id-drift.jsonl",
+    "assets/fixtures/audit-state-protocol-r2/invalid-events-middle-corruption.jsonl",
+]
+
+RECON_RESULT_FIXTURE_FILES = [
+    "assets/fixtures/recon-result/README.md",
+    "assets/fixtures/recon-result/manifest.json",
+    "assets/fixtures/recon-result/service/repo/README.md",
+    "assets/fixtures/recon-result/service/repo/src/app.py",
+    "assets/fixtures/recon-result/service/repo/src/policy.py",
+    "assets/fixtures/recon-result/service/workspace/zhulong-target.yaml",
+    "assets/fixtures/recon-result/service/workspace/attack-surface.md",
+    "assets/fixtures/recon-result/service/workspace/evidence/recon-notes.md",
+    "assets/fixtures/recon-result/service/workspace/evidence/deployment.md",
+    "assets/fixtures/recon-result/service/workspace/cases/complete-service.json",
+    "assets/fixtures/recon-result/service/workspace/cases/partial-service.json",
+    "assets/fixtures/recon-result/service/workspace/cases/blocked-service.json",
+    "assets/fixtures/recon-result/library/repo/README.md",
+    "assets/fixtures/recon-result/library/repo/src/parser.py",
+    "assets/fixtures/recon-result/library/workspace/zhulong-target.yaml",
+    "assets/fixtures/recon-result/library/workspace/attack-surface.md",
+    "assets/fixtures/recon-result/library/workspace/evidence/recon-notes.md",
+    "assets/fixtures/recon-result/library/workspace/evidence/consumer-boundary.md",
+    "assets/fixtures/recon-result/library/workspace/cases/complete-library.json",
+]
+
 REQUIRED_FILES = [
     ".claude-plugin/plugin.json",
     ".codex-plugin/plugin.json",
     "AGENTS.md",
     "README.md",
     "assets/tool-registry.json",
+    "assets/schemas/tool-registry.schema.json",
+    "assets/context-catalog.json",
+    "assets/schemas/context-catalog.schema.json",
+    "assets/schemas/context-plan.schema.json",
+    "assets/fixtures/context-planning/README.md",
+    "assets/fixtures/context-planning/manifest.json",
+    "assets/fixtures/tool-registry/README.md",
+    "assets/fixtures/tool-registry/manifest.json",
     "assets/confirmed-vuln-report-template.docx",
     "assets/examples/confirmed-findings.example.json",
     "assets/examples/zhulong-target.example.yaml",
@@ -51,15 +116,38 @@ REQUIRED_FILES = [
     "assets/references/p8-bundle-generation-dogfood-report.md",
     "assets/references/p8-real-historical-bundle-dogfood-report.md",
     "assets/references/p8-real-historical-bundle-dogfood-metrics.json",
+    "assets/references/p9-protocol-chain-real-workspace-dogfood-report.md",
+    "assets/references/p9-protocol-chain-real-workspace-dogfood-metrics.json",
     "assets/references/variant-seed-template.md",
     "assets/schemas/bundle-contract.schema.json",
     "assets/schemas/variant-seed.schema.json",
     "assets/schemas/zhulong-target.schema.json",
     "assets/schemas/candidate.schema.json",
+    "assets/schemas/candidate-identity-input.schema.json",
+    "assets/schemas/candidate-dedup-inventory.schema.json",
+    "assets/schemas/candidate-dedup-plan.schema.json",
+    "assets/fixtures/candidate-identity/README.md",
+    "assets/fixtures/candidate-identity/manifest.json",
     "assets/schemas/verifier-verdict.schema.json",
     "assets/schemas/recording-evidence.schema.json",
+    "assets/schemas/audit-event.schema.json",
+    "assets/schemas/stage-status.schema.json",
+    "assets/schemas/recon-result.schema.json",
+    "assets/schemas/triage-batch.schema.json",
+    "assets/schemas/handoff-state.schema.json",
+    "assets/schemas/workspace-checkpoint.schema.json",
+    "assets/schemas/next-actions.schema.json",
+    "assets/schemas/audit-timeline.schema.json",
+    "assets/fixtures/next-actions/manifest.json",
+    "assets/fixtures/audit-timeline/README.md",
+    "assets/fixtures/audit-timeline/manifest.json",
+    "assets/references/recon-result-template.json",
+    "assets/fixtures/triage-batch/README.md",
+    "assets/fixtures/triage-batch/manifest.json",
     "assets/fixtures/recording-evidence/README.md",
     "assets/fixtures/recording-evidence/manifest.template.json",
+    "assets/fixtures/handoff-checkpoint/README.md",
+    "assets/fixtures/handoff-checkpoint/manifest.json",
     "assets/references/java-web-audit-playbook.md",
     "assets/references/go-web-audit-playbook.md",
     "assets/references/nodejs-library-audit-playbook.md",
@@ -81,9 +169,24 @@ REQUIRED_FILES = [
     "scripts/check_security_tooling.sh",
     "scripts/run_initial_probes.sh",
     "scripts/run_verification_case.sh",
+    "scripts/evidence_io.py",
     "scripts/manage_docker_resources.py",
     "scripts/workspace_state.py",
     "scripts/render_handoff_summary.py",
+    "scripts/render_handoff_state.py",
+    "scripts/validate_handoff_state.py",
+    "scripts/create_workspace_checkpoint.py",
+    "scripts/validate_workspace_checkpoint.py",
+    "scripts/next_actions.py",
+    "scripts/render_next_actions.py",
+    "scripts/validate_next_actions.py",
+    "scripts/audit_timeline.py",
+    "scripts/render_audit_timeline.py",
+    "scripts/validate_audit_timeline.py",
+    "scripts/selftest_audit_timeline.py",
+    "docs/runner-contracts/next-actions-contract-r1.md",
+    "docs/runner-contracts/audit-timeline-r1.md",
+    "docs/runner-contracts/candidate-identity-dedupe-r1.md",
     "scripts/assert_finalized_workspace.py",
     "scripts/audit_disposition.py",
     "scripts/blocked_verification.py",
@@ -91,15 +194,34 @@ REQUIRED_FILES = [
     "scripts/sync_to_claude_skill.sh",
     "scripts/sync_to_codex_skill.sh",
     "scripts/write_audit_event.py",
+    "scripts/audit_state_io.py",
+    "scripts/audit_text_safety.py",
+    "scripts/audit_transition_policy.py",
+    "scripts/validate_audit_protocol.py",
+    "scripts/recover_audit_state.py",
+    "scripts/selftest_audit_state_protocol.py",
     "scripts/validate_workspace_state.py",
     "scripts/validate_target_contract.py",
+    "scripts/validate_recon_result.py",
+    "scripts/validate_triage_batch.py",
+    "scripts/finalize_stage.py",
     "scripts/validate_candidate.py",
+    "scripts/candidate_identity.py",
+    "scripts/upgrade_candidate_identity.py",
+    "scripts/candidate_dedup.py",
+    "scripts/build_candidate_dedup_plan.py",
+    "scripts/validate_candidate_dedup_plan.py",
     "scripts/validate_verifier_verdict.py",
     "scripts/validate_bundle_contract.py",
     "scripts/build_confirmed_bundle.py",
     "scripts/p8_dogfood_metrics.py",
     "scripts/verify_candidate.py",
     "scripts/plan_security_toolchain.py",
+    "scripts/validate_tool_registry.py",
+    "scripts/context_catalog.py",
+    "scripts/validate_context_catalog.py",
+    "scripts/plan_audit_context.py",
+    "scripts/validate_context_plan.py",
     "scripts/render_confirmed_vuln_docx.py",
     "scripts/recording_identity.py",
     "scripts/auto_record_bundle.py",
@@ -114,7 +236,15 @@ REQUIRED_FILES = [
     "docs/runner-contracts/finding-contract-r1.md",
     "docs/runner-contracts/independent-verifier-r1.md",
     "docs/runner-contracts/disposition-integration-r1.md",
+    "docs/runner-contracts/candidate-identity-dedupe-r1.md",
     "docs/runner-contracts/contract-layer-r1-closure.md",
+    "docs/runner-contracts/audit-state-protocol-r2.md",
+    "docs/runner-contracts/recon-result-contract-r1.md",
+    "docs/runner-contracts/triage-batch-contract-r1.md",
+    "docs/runner-contracts/tool-effects-execution-boundaries-r1.md",
+    "docs/runner-contracts/context-planning-r1.md",
+    "assets/fixtures/audit-state-protocol-r2/fixture-manifest.json",
+    "assets/fixtures/audit-state-protocol-r2/line-ending-cases.json",
     "assets/fixtures/contracts/confirmed_ssrf/zhulong-target.yaml",
     "assets/fixtures/contracts/confirmed_ssrf/candidate.json",
     "assets/fixtures/contracts/confirmed_ssrf/verifier-verdict.json",
@@ -141,15 +271,39 @@ REQUIRED_FILES = [
     "assets/fixtures/p8-real-historical-bundle-dogfood/workspaces/historical-sample-02/confirmed/historical-draft-bundle/README.sanitized.md",
     "assets/fixtures/p8-real-historical-bundle-dogfood/workspaces/historical-sample-03/confirmed/.contracts/historical-sample-03.bundle-contract.json",
     *REPLAY_TRANSCRIPT_CORPUS_FILES,
+    *AUDIT_STATE_PROTOCOL_R2_FIXTURE_FILES,
+    *RECON_RESULT_FIXTURE_FILES,
     "skills/zhulong/SKILL.md",
     "templates/claude-skill/SKILL.md",
 ]
 
 INSTALLED_SKILL_REQUIRED_FILES = [
     "SKILL.md",
+    "assets/schemas/next-actions.schema.json",
+    "assets/schemas/audit-timeline.schema.json",
+    "assets/fixtures/next-actions/manifest.json",
+    "assets/fixtures/audit-timeline/README.md",
+    "assets/fixtures/audit-timeline/manifest.json",
+    "docs/runner-contracts/next-actions-contract-r1.md",
+    "docs/runner-contracts/audit-timeline-r1.md",
+    "scripts/next_actions.py",
+    "scripts/render_next_actions.py",
+    "scripts/validate_next_actions.py",
+    "scripts/audit_timeline.py",
+    "scripts/render_audit_timeline.py",
+    "scripts/validate_audit_timeline.py",
+    "scripts/selftest_audit_timeline.py",
     "README.plugin-package.md",
     "INSTALL.plugin-package.md",
     "assets/tool-registry.json",
+    "assets/schemas/tool-registry.schema.json",
+    "assets/context-catalog.json",
+    "assets/schemas/context-catalog.schema.json",
+    "assets/schemas/context-plan.schema.json",
+    "assets/fixtures/context-planning/README.md",
+    "assets/fixtures/context-planning/manifest.json",
+    "assets/fixtures/tool-registry/README.md",
+    "assets/fixtures/tool-registry/manifest.json",
     "assets/confirmed-vuln-report-template.docx",
     "assets/references/docker-resource-hygiene.md",
     "assets/references/docker-registry-fallbacks.example.json",
@@ -160,15 +314,33 @@ INSTALLED_SKILL_REQUIRED_FILES = [
     "assets/references/p8-bundle-generation-dogfood-report.md",
     "assets/references/p8-real-historical-bundle-dogfood-report.md",
     "assets/references/p8-real-historical-bundle-dogfood-metrics.json",
+    "assets/references/p9-protocol-chain-real-workspace-dogfood-report.md",
+    "assets/references/p9-protocol-chain-real-workspace-dogfood-metrics.json",
     "assets/references/variant-seed-template.md",
     "assets/schemas/bundle-contract.schema.json",
     "assets/schemas/variant-seed.schema.json",
     "assets/schemas/zhulong-target.schema.json",
     "assets/schemas/candidate.schema.json",
+    "assets/schemas/candidate-identity-input.schema.json",
+    "assets/schemas/candidate-dedup-inventory.schema.json",
+    "assets/schemas/candidate-dedup-plan.schema.json",
+    "assets/fixtures/candidate-identity/README.md",
+    "assets/fixtures/candidate-identity/manifest.json",
     "assets/schemas/verifier-verdict.schema.json",
     "assets/schemas/recording-evidence.schema.json",
+    "assets/schemas/audit-event.schema.json",
+    "assets/schemas/stage-status.schema.json",
+    "assets/schemas/recon-result.schema.json",
+    "assets/schemas/triage-batch.schema.json",
+    "assets/schemas/handoff-state.schema.json",
+    "assets/schemas/workspace-checkpoint.schema.json",
+    "assets/references/recon-result-template.json",
+    "assets/fixtures/triage-batch/README.md",
+    "assets/fixtures/triage-batch/manifest.json",
     "assets/fixtures/recording-evidence/README.md",
     "assets/fixtures/recording-evidence/manifest.template.json",
+    "assets/fixtures/handoff-checkpoint/README.md",
+    "assets/fixtures/handoff-checkpoint/manifest.json",
     "assets/examples/zhulong-target.example.yaml",
     "assets/examples/candidate.example.json",
     "assets/examples/verifier-verdict.example.json",
@@ -188,8 +360,15 @@ INSTALLED_SKILL_REQUIRED_FILES = [
     "scripts/check_security_tooling.sh",
     "scripts/run_initial_probes.sh",
     "scripts/run_verification_case.sh",
+    "scripts/evidence_io.py",
     "scripts/manage_docker_resources.py",
     "scripts/workspace_state.py",
+    "scripts/audit_state_io.py",
+    "scripts/audit_text_safety.py",
+    "scripts/audit_transition_policy.py",
+    "scripts/validate_audit_protocol.py",
+    "scripts/recover_audit_state.py",
+    "scripts/selftest_audit_state_protocol.py",
     "scripts/render_confirmed_vuln_docx.py",
     "scripts/recording_identity.py",
     "scripts/auto_record_bundle.py",
@@ -198,7 +377,20 @@ INSTALLED_SKILL_REQUIRED_FILES = [
     "scripts/find_variant_candidates.py",
     "scripts/validate_report_bundle.py",
     "scripts/validate_target_contract.py",
+    "scripts/validate_recon_result.py",
+    "scripts/validate_tool_registry.py",
+    "scripts/context_catalog.py",
+    "scripts/validate_context_catalog.py",
+    "scripts/plan_audit_context.py",
+    "scripts/validate_context_plan.py",
+    "scripts/validate_triage_batch.py",
+    "scripts/finalize_stage.py",
     "scripts/validate_candidate.py",
+    "scripts/candidate_identity.py",
+    "scripts/upgrade_candidate_identity.py",
+    "scripts/candidate_dedup.py",
+    "scripts/build_candidate_dedup_plan.py",
+    "scripts/validate_candidate_dedup_plan.py",
     "scripts/validate_verifier_verdict.py",
     "scripts/validate_bundle_contract.py",
     "scripts/build_confirmed_bundle.py",
@@ -210,11 +402,23 @@ INSTALLED_SKILL_REQUIRED_FILES = [
     "scripts/audit_disposition.py",
     "scripts/blocked_verification.py",
     "scripts/render_handoff_summary.py",
+    "scripts/render_handoff_state.py",
+    "scripts/validate_handoff_state.py",
+    "scripts/create_workspace_checkpoint.py",
+    "scripts/validate_workspace_checkpoint.py",
     "docs/runner-contracts/target-contract-r1.md",
     "docs/runner-contracts/finding-contract-r1.md",
     "docs/runner-contracts/independent-verifier-r1.md",
     "docs/runner-contracts/disposition-integration-r1.md",
+    "docs/runner-contracts/candidate-identity-dedupe-r1.md",
     "docs/runner-contracts/contract-layer-r1-closure.md",
+    "docs/runner-contracts/audit-state-protocol-r2.md",
+    "docs/runner-contracts/recon-result-contract-r1.md",
+    "docs/runner-contracts/triage-batch-contract-r1.md",
+    "docs/runner-contracts/tool-effects-execution-boundaries-r1.md",
+    "docs/runner-contracts/context-planning-r1.md",
+    "assets/fixtures/audit-state-protocol-r2/fixture-manifest.json",
+    "assets/fixtures/audit-state-protocol-r2/line-ending-cases.json",
     "assets/fixtures/contracts/confirmed_ssrf/zhulong-target.yaml",
     "assets/fixtures/contracts/confirmed_ssrf/candidate.json",
     "assets/fixtures/contracts/confirmed_ssrf/verifier-verdict.json",
@@ -241,6 +445,8 @@ INSTALLED_SKILL_REQUIRED_FILES = [
     "assets/fixtures/p8-real-historical-bundle-dogfood/workspaces/historical-sample-02/confirmed/historical-draft-bundle/README.sanitized.md",
     "assets/fixtures/p8-real-historical-bundle-dogfood/workspaces/historical-sample-03/confirmed/.contracts/historical-sample-03.bundle-contract.json",
     *REPLAY_TRANSCRIPT_CORPUS_FILES,
+    *AUDIT_STATE_PROTOCOL_R2_FIXTURE_FILES,
+    *RECON_RESULT_FIXTURE_FILES,
 ]
 
 P8_RUNTIME_FILES = [
@@ -449,9 +655,18 @@ FORBIDDEN_INSTALLED_TOP_LEVEL = [
     "AGENTS.md",
 ]
 
+PACKAGE_RESIDUE_SUFFIXES = (".hidden", ".bak", ".tmp", ".orig", ".rej", ".pyc")
+PACKAGE_RESIDUE_NAMES = {"AGENTS.md", ".DS_Store"}
+PACKAGE_RESIDUE_DIR_NAMES = {"__pycache__", ".omc"}
+
 
 def run(command: list[str], cwd: Path) -> None:
-    proc = subprocess.run(command, cwd=cwd, capture_output=True, text=True)
+    env = {
+        **os.environ,
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTHONPYCACHEPREFIX": str(Path(tempfile.gettempdir()) / "zhulong-selftest-pycache"),
+    }
+    proc = subprocess.run(command, cwd=cwd, env=env, capture_output=True, text=True)
     if proc.returncode != 0:
         output = ((proc.stdout or "") + (proc.stderr or "")).strip()
         raise SystemExit(f"FAILED: {' '.join(command)}\n{output}")
@@ -571,6 +786,22 @@ def require_text(path: Path, needle: str, label: str) -> None:
         raise SystemExit(f"FAILED: missing expected text for {label}: {needle}")
 
 
+def require_installed_package_hygiene(root: Path, label: str) -> None:
+    issues: list[str] = []
+    for path in root.rglob("*"):
+        if path.name in PACKAGE_RESIDUE_DIR_NAMES and path.is_dir():
+            issues.append(path.relative_to(root).as_posix() + "/")
+        elif path.is_file() and (
+            path.name in PACKAGE_RESIDUE_NAMES
+            or path.name.endswith(PACKAGE_RESIDUE_SUFFIXES)
+        ):
+            issues.append(path.relative_to(root).as_posix())
+    if issues:
+        raise SystemExit(
+            f"FAILED: {label} contains forbidden package residue: {sorted(issues)}"
+        )
+
+
 def forbid_text(path: Path, needle: str, label: str) -> None:
     content = path.read_text(encoding="utf-8")
     if needle in content:
@@ -592,6 +823,597 @@ def require_files(root: Path, rels: list[str], label: str) -> None:
     for rel in rels:
         if not (root / rel).exists():
             raise SystemExit(f"FAILED: missing {label} file: {root / rel}")
+
+
+def exercise_tool_registry_contract(skill_root: Path) -> None:
+    """Exercise the production registry validator and planner without tools or network."""
+    validator = skill_root / "scripts/validate_tool_registry.py"
+    planner = skill_root / "scripts/plan_security_toolchain.py"
+    registry_path = skill_root / "assets/tool-registry.json"
+    schema_path = skill_root / "assets/schemas/tool-registry.schema.json"
+    manifest_path = skill_root / "assets/fixtures/tool-registry/manifest.json"
+    require_files(
+        skill_root,
+        [
+            "scripts/validate_tool_registry.py",
+            "scripts/plan_security_toolchain.py",
+            "assets/tool-registry.json",
+            "assets/schemas/tool-registry.schema.json",
+            "assets/fixtures/tool-registry/README.md",
+            "assets/fixtures/tool-registry/manifest.json",
+        ],
+        "tool registry contract",
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if manifest.get("schema_version") != 1 or manifest.get("execution_policy") != "offline-production-validator-and-planner-only":
+        raise SystemExit("FAILED: tool registry fixture manifest is not the expected offline contract")
+    forbidden_execution = set(manifest.get("forbidden_execution", []))
+    if not {"docker", "poc", "scanner", "network", "package_manager", "github", "llm"}.issubset(forbidden_execution):
+        raise SystemExit("FAILED: tool registry fixture manifest is missing the offline execution exclusions")
+
+    canonical = json.loads(registry_path.read_text(encoding="utf-8"))
+    if canonical.get("schema_version") != 2:
+        raise SystemExit("FAILED: Tool Registry schema_version must be numeric 2")
+
+    def tool(document: dict, name: str) -> dict:
+        for tier in document["tiers"]:
+            for entry in tier["tools"]:
+                if entry["name"] == name:
+                    return entry
+        raise SystemExit(f"FAILED: Tool Registry selftest could not find {name}")
+
+    def invoke(registry: Path, *declared: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [
+                sys.executable,
+                str(validator),
+                "--skill-root",
+                str(skill_root),
+                "--registry",
+                str(registry),
+                "--schema",
+                str(schema_path),
+                *declared,
+                "--json",
+            ],
+            cwd=skill_root,
+            capture_output=True,
+            text=True,
+        )
+
+    def payload_for(proc: subprocess.CompletedProcess[str], label: str) -> dict:
+        try:
+            return json.loads(proc.stdout)
+        except json.JSONDecodeError as exc:
+            raise SystemExit(f"FAILED: {label} did not emit JSON: {proc.stdout!r} {proc.stderr!r}") from exc
+
+    canonical_result = invoke(registry_path)
+    if canonical_result.returncode != 0:
+        raise SystemExit(f"FAILED: canonical Tool Registry rejected: {canonical_result.stdout}\n{canonical_result.stderr}")
+    canonical_payload = payload_for(canonical_result, "canonical Tool Registry")
+    if canonical_payload.get("authority") != "tool_metadata_only" or canonical_payload.get("tool_count", 0) < 30:
+        raise SystemExit("FAILED: canonical Tool Registry returned unexpected metadata authority or tool count")
+
+    for declared in (
+        ("--tool", "source-inspection", "--stage", "recon", "--boundary", "host_read_only", "--effect", "source_read"),
+        ("--tool", "semgrep", "--stage", "recon", "--boundary", "workspace_write", "--effect", "workspace_evidence_write"),
+        ("--tool", "docker-verification-wrapper", "--stage", "verification", "--boundary", "docker_exec", "--effect", "target_code_execute"),
+    ):
+        result = invoke(registry_path, *declared)
+        if result.returncode != 0 or not payload_for(result, "declared Tool Registry use").get("ok"):
+            raise SystemExit(f"FAILED: declared Tool Registry use should be allowed: {declared}")
+
+    with tempfile.TemporaryDirectory(prefix="zhulong-tool-registry-") as tempdir:
+        temp_root = Path(tempdir)
+
+        def clone() -> dict:
+            return json.loads(json.dumps(canonical))
+
+        def reject(label: str, document: dict, expected_code: str) -> None:
+            sample = temp_root / f"{label}.json"
+            sample.write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            result = invoke(sample)
+            payload = payload_for(result, label)
+            if result.returncode == 0 or expected_code not in payload.get("issue_codes", []):
+                raise SystemExit(f"FAILED: {label} did not reject with {expected_code}: {payload}")
+
+        unknown_enum = clone()
+        tool(unknown_enum, "semgrep")["effects"] = ["unknown_effect"]
+        reject("unknown-enum", unknown_enum, "SCHEMA_INVALID")
+
+        duplicate = clone()
+        tool(duplicate, "gh")["name"] = "docker"
+        reject("duplicate-tool", duplicate, "DUPLICATE_TOOL")
+
+        prohibited_effect = clone()
+        tool(prohibited_effect, "docker")["effects"] = ["source_read"]
+        reject("prohibited-effect", prohibited_effect, "PROHIBITED_EFFECTS_FORBIDDEN")
+
+        external_boundary_without_scope = clone()
+        external_boundary_tool = tool(external_boundary_without_scope, "source-inspection")
+        external_boundary_tool["execution_boundaries"] = ["host_read_only", "external_network"]
+        reject("external-boundary-without-scope", external_boundary_without_scope, "NETWORK_SCOPE_BOUNDARY_CONFLICT")
+
+        external_scope_without_boundary = clone()
+        tool(external_scope_without_boundary, "source-inspection")["network_scope"] = "public_external"
+        reject("external-scope-without-boundary", external_scope_without_boundary, "NETWORK_SCOPE_BOUNDARY_CONFLICT")
+
+        active_dast_without_network = clone()
+        active_dast_tool = tool(active_dast_without_network, "nuclei")
+        active_dast_tool["execution_boundaries"] = ["workspace_write"]
+        active_dast_tool["effects"] = ["workspace_evidence_write"]
+        active_dast_tool["network_scope"] = "none"
+        active_dast_tool["timeout_policy"] = "caller_required"
+        active_dast_tool["evidence_outputs"] = [{"path_family": "evidence/dast/*.json", "artifact_type": "json"}]
+        active_dast_tool["confirmation_authority"] = "candidate_only"
+        active_dast_tool["controlled_wrapper"] = {
+            "path": "scripts/run_initial_probes.sh",
+            "contract_marker": "zhulong-tool-contract: initial-probes-v1",
+        }
+        active_dast_tool["planner_status"] = "wrapper_required"
+        reject("active-dast-without-network", active_dast_without_network, "DAST_NETWORK_BOUNDARY_MISSING")
+
+        missing_wrapper = clone()
+        tool(missing_wrapper, "semgrep")["controlled_wrapper"] = None
+        reject("missing-wrapper", missing_wrapper, "WRAPPER_REQUIRED")
+
+        raw_authority = clone()
+        tool(raw_authority, "docker")["confirmation_authority"] = "docker_oracle_material_only"
+        reject("raw-docker-authority", raw_authority, "RAW_DOCKER_AUTHORITY_FORBIDDEN")
+
+        dast_authority = clone()
+        tool(dast_authority, "nuclei")["confirmation_authority"] = "docker_oracle_material_only"
+        reject("raw-dast-authority", dast_authority, "SCANNER_AUTHORITY_FORBIDDEN")
+
+        missing_evidence = clone()
+        tool(missing_evidence, "semgrep")["evidence_outputs"] = []
+        reject("missing-evidence", missing_evidence, "WORKSPACE_EVIDENCE_MISSING")
+
+        timeout_marker = clone()
+        timeout_marker_tool = tool(timeout_marker, "docker-verification-wrapper")
+        timeout_marker_tool["controlled_wrapper"]["contract_marker"] = "zhulong-tool-contract: docker-verification-v1"
+        reject("timeout-marker", timeout_marker, "TIMEOUT_CONTRACT_MISSING")
+
+        sandbox_marker = clone()
+        sandbox_marker_tool = tool(sandbox_marker, "docker-verification-wrapper")
+        sandbox_marker_tool["controlled_wrapper"]["contract_marker"] = "zhulong-tool-contract: docker-verification-v1; timeout=mandatory"
+        reject("sandbox-marker", sandbox_marker, "SANDBOX_CONTRACT_MISSING")
+
+        for name, unsafe_path, expected_code in (
+            ("wrapper-absolute", "/tmp/wrapper.sh", "WRAPPER_PATH_UNSAFE"),
+            ("wrapper-uri", "file:///tmp/wrapper.sh", "WRAPPER_PATH_UNSAFE"),
+            ("wrapper-traversal", "scripts/../run_initial_probes.sh", "WRAPPER_PATH_UNSAFE"),
+            ("wrapper-backslash", "scripts\\run_initial_probes.sh", "WRAPPER_PATH_UNSAFE"),
+            ("wrapper-directory", "scripts", "WRAPPER_TYPE_INVALID"),
+        ):
+            unsafe = clone()
+            tool(unsafe, "semgrep")["controlled_wrapper"]["path"] = unsafe_path
+            reject(name, unsafe, expected_code)
+
+        unsafe_evidence = clone()
+        tool(unsafe_evidence, "semgrep")["evidence_outputs"][0]["path_family"] = "evidence/../../outside.log"
+        reject("evidence-traversal", unsafe_evidence, "EVIDENCE_PATH_UNSAFE")
+
+        confirmed_role = clone()
+        tool(confirmed_role, "source-inspection")["role"] = "confirmed text is not confirmation authority"
+        sample = temp_root / "confirmed-role-text.json"
+        sample.write_text(json.dumps(confirmed_role, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        role_result = invoke(sample)
+        if role_result.returncode != 0 or not payload_for(role_result, "confirmed role text").get("ok"):
+            raise SystemExit("FAILED: ordinary role text mentioning confirmed was treated as an authority")
+        if tool(confirmed_role, "source-inspection")["confirmation_authority"] != "none":
+            raise SystemExit("FAILED: source-inspection authority changed while testing role text")
+
+        misuse = invoke(
+            registry_path,
+            "--tool", "source-inspection", "--stage", "verification", "--boundary", "docker_exec", "--effect", "target_code_execute",
+        )
+        misuse_payload = payload_for(misuse, "declared stage misuse")
+        expected_misuse = {"TOOL_STAGE_FORBIDDEN", "TOOL_BOUNDARY_FORBIDDEN", "TOOL_EFFECT_FORBIDDEN"}
+        if misuse.returncode == 0 or not expected_misuse.issubset(set(misuse_payload.get("issue_codes", []))):
+            raise SystemExit(f"FAILED: declared stage misuse did not fail closed: {misuse_payload}")
+
+        target = temp_root / "target"
+        workspace = target / "security-research-tool-contract"
+        target.mkdir()
+        workspace.mkdir()
+        (target / "package.json").write_text('{"name":"tool-contract-fixture"}\n', encoding="utf-8")
+        (workspace / "asr-config.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "workspace_root": workspace.name,
+                    "workspace_created_at": "2026-07-21T00:00:00Z",
+                    "confirmed_output_dir": f"{workspace.name}/confirmed",
+                }
+            ) + "\n",
+            encoding="utf-8",
+        )
+        plan_result = subprocess.run(
+            [sys.executable, str(planner), "--target-dir", str(target), "--workspace-dir", str(workspace), "--format", "json"],
+            cwd=skill_root,
+            capture_output=True,
+            text=True,
+        )
+        if plan_result.returncode != 0:
+            raise SystemExit(f"FAILED: Tool Registry planner rejected canonical input: {plan_result.stdout}\n{plan_result.stderr}")
+        plan = payload_for(plan_result, "Tool Registry planner")
+        catalog = {entry["name"]: entry for entry in plan.get("tool_catalog", [])}
+        if catalog.get("source-inspection", {}).get("confirmation_authority") != "none":
+            raise SystemExit("FAILED: source inspection received confirmation authority in planner metadata")
+        if catalog.get("semgrep", {}).get("confirmation_authority") != "candidate_only":
+            raise SystemExit("FAILED: scanner planner metadata is not candidate-only")
+        if catalog.get("docker-verification-wrapper", {}).get("confirmation_authority") != "docker_oracle_material_only":
+            raise SystemExit("FAILED: controlled Docker wrapper metadata lost oracle-material authority")
+        hints = plan.get("command_hints", [])
+        forbidden_hints = ("docker ", "nuclei", "ffuf", "sqlmap", "zap", "http://", "https://")
+        if any(any(token in hint.lower() for token in forbidden_hints) or "run-initial-probes.sh" not in hint for hint in hints):
+            raise SystemExit(f"FAILED: planner exposed a raw tool hint: {hints}")
+
+        bad_registry = clone()
+        bad_registry["schema_version"] = 99
+        bad_path = temp_root / "planner-bad-registry.json"
+        bad_path.write_text(json.dumps(bad_registry, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        bad_plan = subprocess.run(
+            [sys.executable, str(planner), "--target-dir", str(target), "--workspace-dir", str(workspace), "--registry", str(bad_path), "--format", "json"],
+            cwd=skill_root,
+            capture_output=True,
+            text=True,
+        )
+        if bad_plan.returncode == 0 or "Tool Registry validation failed closed" not in (bad_plan.stdout + bad_plan.stderr):
+            raise SystemExit("FAILED: planner accepted an invalid registry override")
+
+    print("TOOL REGISTRY SELFTEST PASSED: offline schema/authority/wrapper/planner matrix")
+
+
+def exercise_context_planning_contract(skill_root: Path) -> None:
+    """Exercise production advisory planning without opening references or running tools."""
+    catalog = skill_root / "assets/context-catalog.json"
+    catalog_validator = skill_root / "scripts/validate_context_catalog.py"
+    planner = skill_root / "scripts/plan_audit_context.py"
+    plan_validator = skill_root / "scripts/validate_context_plan.py"
+    manifest = json.loads((skill_root / "assets/fixtures/context-planning/manifest.json").read_text(encoding="utf-8"))
+    if manifest.get("execution_policy") != "offline-production-catalog-planner-validator-only":
+        raise SystemExit("FAILED: context planning fixture is not offline-only")
+    if not {"docker", "poc", "scanner", "network", "package_manager", "llm", "agent"}.issubset(set(manifest.get("forbidden_execution", []))):
+        raise SystemExit("FAILED: context planning fixture omissions weaken offline boundary")
+    run([sys.executable, str(catalog_validator), "--skill-root", str(skill_root), "--catalog", str(catalog), "--json"], skill_root)
+    fixture_root = skill_root / "assets/fixtures/context-planning"
+    cases = (("generic-recon", "recon", []), ("node-web-recon", "recon", []), ("python-library-candidate-generation", "candidate_generation", []), ("java-web-verification", "verification", []), ("ssrf-verification", "verification", ["ssrf"]))
+    golden = manifest.get("golden_selection")
+    if not isinstance(golden, dict) or set(golden) != {name for name, _, _ in cases}:
+        raise SystemExit("FAILED: context planning golden selection fixture is incomplete")
+    expected_negative_cases = manifest.get("negative_cases")
+    if not isinstance(expected_negative_cases, list) or any(not isinstance(value, str) for value in expected_negative_cases) or len(expected_negative_cases) != len(set(expected_negative_cases)):
+        raise SystemExit("FAILED: context planning negative-case manifest is not a unique label set")
+    executed_negative_cases: set[str] = set()
+
+    def record_negative(label: str) -> None:
+        if label in executed_negative_cases:
+            raise SystemExit(f"FAILED: context planning negative case ran twice: {label}")
+        executed_negative_cases.add(label)
+
+    with tempfile.TemporaryDirectory(prefix="zhulong-context-plan-") as tempdir:
+        root = Path(tempdir)
+        plans: dict[str, bytes] = {}
+        for name, phase, bugs in cases:
+            output = root / f"{name}.json"
+            run([sys.executable, str(planner), "--target-dir", str(fixture_root / name), "--phase", phase, *sum((["--bug-class", item] for item in bugs), []), "--output", str(output), "--json"], skill_root)
+            run([sys.executable, str(plan_validator), "--skill-root", str(skill_root), "--catalog", str(catalog), "--plan", str(output), "--json"], skill_root)
+            plan = json.loads(output.read_text(encoding="utf-8")); plans[name] = output.read_bytes()
+            if any(str(skill_root) in value for value in json.dumps(plan, ensure_ascii=False).split()):
+                raise SystemExit("FAILED: context plan leaked a local absolute skill path")
+            expected = golden[name]
+            if not isinstance(expected, dict) or any(plan.get(group) != expected.get(group) for group in ("mandatory", "optional", "deferred")):
+                raise SystemExit(f"FAILED: context planner selection drifted from static golden: {name}")
+        repeat = root / "repeat.json"
+        run_with_env([sys.executable, str(planner), "--target-dir", str(fixture_root / "node-web-recon"), "--phase", "recon", "--output", str(repeat), "--json"], skill_root, {"LC_ALL": "C", "TZ": "UTC"})
+        if repeat.read_bytes() != plans["node-web-recon"]:
+            raise SystemExit("FAILED: repeated context plan was not byte-identical")
+        locale_plan = root / "locale.json"
+        run_with_env([sys.executable, str(planner), "--target-dir", str(fixture_root / "node-web-recon"), "--phase", "recon", "--output", str(locale_plan), "--json"], skill_root, {"LC_ALL": "C", "TZ": "Asia/Shanghai"})
+        if locale_plan.read_bytes() != plans["node-web-recon"]:
+            raise SystemExit("FAILED: context plan changed with locale/timezone")
+        record_negative("locale-timezone-determinism")
+        canonical = json.loads(catalog.read_text(encoding="utf-8"))
+
+        def expect_catalog_failure(label: str, value: dict, code: str, validation_root: Path = skill_root, record_case: bool = True) -> None:
+            path = root / f"{label}.catalog.json"; path.write_text(json.dumps(value), encoding="utf-8")
+            proc = subprocess.run([sys.executable, str(catalog_validator), "--skill-root", str(validation_root), "--catalog", str(path), "--json"], cwd=skill_root, capture_output=True, text=True)
+            try:
+                issue_codes = json.loads(proc.stdout).get("issue_codes", [])
+            except json.JSONDecodeError as exc:
+                raise SystemExit(f"FAILED: {label} catalog diagnostic was not JSON") from exc
+            if proc.returncode == 0 or code not in issue_codes:
+                raise SystemExit(f"FAILED: {label} did not reject {code}")
+            if record_case:
+                record_negative(label)
+
+        def expect_plan_failure(label: str, value: dict, code: str) -> None:
+            path = root / f"{label}.plan.json"; path.write_text(json.dumps(value), encoding="utf-8")
+            proc = subprocess.run([sys.executable, str(plan_validator), "--skill-root", str(skill_root), "--catalog", str(catalog), "--plan", str(path), "--json"], cwd=skill_root, capture_output=True, text=True)
+            try:
+                issue_codes = json.loads(proc.stdout).get("issue_codes", [])
+            except json.JSONDecodeError as exc:
+                raise SystemExit(f"FAILED: {label} plan diagnostic was not JSON") from exc
+            if proc.returncode == 0 or code not in issue_codes:
+                raise SystemExit(f"FAILED: {label} did not reject {code}")
+            record_negative(label)
+
+        bad = json.loads(json.dumps(canonical)); bad["unknown"] = True; expect_catalog_failure("unknown-field", bad, "CONTEXT_CATALOG_SCHEMA_INVALID")
+        bad = json.loads(json.dumps(canonical)); bad["modules"].append(dict(bad["modules"][0])); expect_catalog_failure("duplicate-module", bad, "CONTEXT_CATALOG_DUPLICATE_ID")
+        for label, value in (("absolute-reference-path", "/tmp/context.md"), ("uri-reference-path", "file:///tmp/context.md"), ("traversal-reference-path", "assets/references/../context.md"), ("backslash-reference-path", "assets/references\\context.md")):
+            bad = json.loads(json.dumps(canonical)); bad["modules"][0]["path"] = value; expect_catalog_failure(label, bad, "CONTEXT_REFERENCE_PATH_UNSAFE")
+        bad = json.loads(json.dumps(canonical)); bad["modules"][0]["stacks"] = ["unknown"]; expect_catalog_failure("unknown-selector", bad, "CONTEXT_CATALOG_SCHEMA_INVALID")
+        bad = json.loads(json.dumps(canonical)); bad["modules"][0]["phases"] = ["unknown"]; expect_catalog_failure("unknown-phase", bad, "CONTEXT_CATALOG_SCHEMA_INVALID")
+        bad = json.loads(json.dumps(canonical)); bad["non_authority_statement"] = "This catalog does not grant read authority."; expect_catalog_failure("authority-drift", bad, "CONTEXT_CATALOG_AUTHORITY_INVALID", record_case=False)
+
+        temporary_layout = root / "temporary-layout"
+        shutil.copytree(skill_root / "assets", temporary_layout / "assets")
+        reference_dir = temporary_layout / "assets/references"
+        (reference_dir / "reference-symlink.md").symlink_to(reference_dir / "repo-preparation.md")
+        (reference_dir / "reference-directory.md").mkdir()
+        for label, reference, code in (("reference-symlink", "assets/references/reference-symlink.md", "CONTEXT_REFERENCE_SYMLINK"), ("missing-reference", "assets/references/missing-reference.md", "CONTEXT_REFERENCE_MISSING"), ("directory-reference", "assets/references/reference-directory.md", "CONTEXT_REFERENCE_TYPE_INVALID")):
+            bad = json.loads(json.dumps(canonical)); bad["modules"][0]["path"] = reference; expect_catalog_failure(label, bad, code, temporary_layout)
+
+        scope_cases = {
+            "dogfood-reference": ["p8-bundle-generation-dogfood-report.md", "p8-real-historical-bundle-dogfood-report.md", "p8-real-historical-bundle-dogfood-metrics.json", "p9-protocol-chain-real-workspace-dogfood-report.md", "p9-protocol-chain-real-workspace-dogfood-metrics.json"],
+            "template-reference": ["bundle-contract-template.json", "claude-code-invocation-template.md", "false-positive-template.md", "final-summary-template.md", "recon-result-template.json", "unverified-lead-template.md", "variant-seed-template.md"],
+            "example-json-reference": ["docker-registry-fallbacks.example.json"],
+        }
+        for label, basenames in scope_cases.items():
+            for basename in basenames:
+                bad = json.loads(json.dumps(canonical)); bad["modules"][0]["path"] = f"assets/references/{basename}"
+                path = root / f"{label}-{basename}.catalog.json"; path.write_text(json.dumps(bad), encoding="utf-8")
+                proc = subprocess.run([sys.executable, str(catalog_validator), "--skill-root", str(skill_root), "--catalog", str(path), "--json"], cwd=skill_root, capture_output=True, text=True)
+                payload = json.loads(proc.stdout)
+                scope_issue = next((issue for issue in payload.get("issues", []) if issue.get("code") == "CONTEXT_REFERENCE_SCOPE_FORBIDDEN"), None)
+                if proc.returncode == 0 or scope_issue is None or scope_issue.get("path") != "$.modules[0].path" or basename in scope_issue.get("message", ""):
+                    raise SystemExit(f"FAILED: {label} accepted forbidden reference basename")
+            record_negative(label)
+        bad = json.loads(json.dumps(canonical)); bad["modules"][0]["path"] = "assets/references/dogfood-missing-report.md"
+        path = root / "dogfood-scope-before-lstat.catalog.json"; path.write_text(json.dumps(bad), encoding="utf-8")
+        proc = subprocess.run([sys.executable, str(catalog_validator), "--skill-root", str(skill_root), "--catalog", str(path), "--json"], cwd=skill_root, capture_output=True, text=True)
+        if proc.returncode == 0 or "CONTEXT_REFERENCE_SCOPE_FORBIDDEN" not in json.loads(proc.stdout).get("issue_codes", []):
+            raise SystemExit("FAILED: forbidden scope was not checked before reference lstat")
+        for basename in ("attacker-container-pattern.md", "omc-runtime-stability.md", "output-language-and-path-contract.md"):
+            bad = json.loads(json.dumps(canonical)); bad["modules"][0]["path"] = f"assets/references/{basename}"
+            path = root / f"ordinary-{basename}.catalog.json"; path.write_text(json.dumps(bad), encoding="utf-8")
+            proc = subprocess.run([sys.executable, str(catalog_validator), "--skill-root", str(skill_root), "--catalog", str(path), "--json"], cwd=skill_root, capture_output=True, text=True)
+            if proc.returncode != 0 or "CONTEXT_REFERENCE_SCOPE_FORBIDDEN" in json.loads(proc.stdout).get("issue_codes", []):
+                raise SystemExit("FAILED: ordinary unregistered reference was treated as forbidden scope")
+
+        forged = json.loads(plans["node-web-recon"]); forged["optional"][0]["path"] = "assets/references/ssrf-checklist.md"; expect_plan_failure("forged-plan-module", forged, "CONTEXT_PLAN_SELECTION_INVALID")
+        duplicate = json.loads(plans["node-web-recon"]); duplicate["mandatory"].append(duplicate["optional"][0]); expect_plan_failure("duplicate-plan-module", duplicate, "CONTEXT_PLAN_MODULE_DUPLICATE")
+        missing = json.loads(plans["node-web-recon"]); missing["mandatory"].pop(); expect_plan_failure("missing-baseline", missing, "CONTEXT_PLAN_SELECTION_INVALID")
+        reason_drift = json.loads(plans["node-web-recon"]); reason_drift["optional"][0]["reason_code"] = "WRONG_REASON"; expect_plan_failure("selector-reason-drift", reason_drift, "CONTEXT_PLAN_SELECTION_INVALID")
+        noncanonical = json.loads(plans["node-web-recon"]); noncanonical["deferred"].reverse(); expect_plan_failure("noncanonical-order", noncanonical, "CONTEXT_PLAN_SELECTION_INVALID")
+        catalog_drift = json.loads(plans["node-web-recon"]); catalog_drift["catalog"]["digest"] = "sha256:" + "0" * 64; expect_plan_failure("catalog-digest-drift", catalog_drift, "CONTEXT_PLAN_CATALOG_DRIFT")
+        authority_drift = json.loads(plans["node-web-recon"]); authority_drift["authority"] = "loaded"; expect_plan_failure("authority-drift", authority_drift, "CONTEXT_PLAN_AUTHORITY_INVALID")
+        unknown_claim = json.loads(plans["node-web-recon"]); unknown_claim["non_claims"].append("does prove a module was read"); expect_plan_failure("unknown-claim", unknown_claim, "CONTEXT_PLAN_NON_CLAIMS_INVALID")
+        unknown_facts = json.loads(plans["node-web-recon"]); unknown_facts["input_facts"]["attack_surface_hints"].append("unrecognized-surface"); expect_plan_failure("unknown-plan-input-fact", unknown_facts, "CONTEXT_PLAN_INPUT_FACT_UNKNOWN")
+        unsafe_output = root / "unsafe-output.json"; unsafe_output.symlink_to(root / "target")
+        run_expect_fail([sys.executable, str(planner), "--target-dir", str(fixture_root / "generic-recon"), "--phase", "recon", "--output", str(unsafe_output)], skill_root, "output path must not be a symlink")
+        record_negative("output-symlink")
+    if set(expected_negative_cases) != executed_negative_cases:
+        missing = sorted(set(expected_negative_cases) - executed_negative_cases)
+        unexpected = sorted(executed_negative_cases - set(expected_negative_cases))
+        raise SystemExit(f"FAILED: context planning manifest coverage mismatch: missing={missing}, unexpected={unexpected}")
+    print("CONTEXT PLANNING SELFTEST PASSED: offline catalog/path/selection/determinism matrix")
+
+
+def exercise_root_skill_kernel_contract(skill_root: Path) -> None:
+    """Validate kernel -> phase reference -> production carrier relationships."""
+    inventory_path = skill_root / "assets/root-skill-rule-inventory.json"
+    inventory_schema = skill_root / "assets/schemas/root-skill-rule-inventory.schema.json"
+    inventory_validator = skill_root / "scripts/validate_root_skill_rule_inventory.py"
+    source_skill = skill_root / "skills/zhulong/SKILL.md"
+    template_skill = skill_root / "templates/claude-skill/SKILL.md"
+    if not source_skill.exists():
+        source_skill = skill_root / "SKILL.md"
+        template_skill = source_skill
+    for path in (inventory_path, inventory_schema, inventory_validator):
+        if not path.is_file() or path.is_symlink():
+            raise SystemExit(f"FAILED: root Skill kernel contract file missing: {path.name}")
+    run([
+        sys.executable,
+        str(inventory_validator),
+        "--skill-root",
+        str(skill_root),
+        "--inventory",
+        str(inventory_path),
+        "--json",
+    ], skill_root)
+
+    skill_text = source_skill.read_text(encoding="utf-8")
+    if source_skill.read_bytes() != template_skill.read_bytes():
+        raise SystemExit("FAILED: source and template root Skills are not byte-identical")
+    invariants = (
+        "PoCs, exploit payloads, and verification traffic run only inside Docker",
+        "Scanner, static, dependency, checklist, playbook, and LLM results are",
+        "Confirmed requires a real attacker-controlled entrypoint",
+        "Blocked verification is not `completed_no_confirmed_findings`",
+        "Bind every claim to the exact tested source ref",
+        "`rejected_unsafe_sandbox` never enters `confirmed/`",
+        "Never use broad Docker prune",
+        "Severity escalation and seeded variant discovery are separate required",
+        "Each variant remains a candidate until its own Docker reproduction",
+        "Final bundles use contract-first staging",
+        "Only the canonical finalization gate and event establish completion",
+        "Recording is an opt-in post-bundle gate",
+        "Context plans, handoffs, checkpoints, and next-actions are advisory",
+        "Confirmed bundles must not leak local absolute paths",
+    )
+    for invariant in invariants:
+        if invariant not in skill_text:
+            raise SystemExit(f"FAILED: root Skill kernel invariant missing: {invariant}")
+    for obsolete_inventory_heading in ("## Installed Skill Runtime Contents", "## Standard Execution Order"):
+        if obsolete_inventory_heading in skill_text:
+            raise SystemExit("FAILED: root Skill still duplicates the full operational inventory")
+
+    inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
+    catalog = json.loads((skill_root / "assets/context-catalog.json").read_text(encoding="utf-8"))
+    catalog_paths = {item["path"] for item in catalog["modules"]}
+    phase_paths = {
+        "assets/references/audit-phase-intake-recon.md",
+        "assets/references/audit-phase-candidate-triage.md",
+        "assets/references/audit-phase-verification.md",
+        "assets/references/audit-phase-variant-discovery.md",
+        "assets/references/audit-phase-packaging-finalization.md",
+        "assets/references/audit-phase-recording.md",
+        "assets/references/audit-continuation-state.md",
+    }
+    if not phase_paths.issubset(catalog_paths):
+        raise SystemExit("FAILED: one or more phase references are absent from the context catalog")
+    for path in phase_paths:
+        reference = skill_root / path
+        if not reference.is_file() or reference.is_symlink():
+            raise SystemExit(f"FAILED: phase reference is not a regular file: {path}")
+        basename = reference.name
+        if "dogfood" in basename or basename.endswith(("-template.md", "-template.json", ".example.json")):
+            raise SystemExit(f"FAILED: phase reference triggers forbidden catalog scope: {basename}")
+    catalog_modules = {item["path"]: item for item in catalog["modules"]}
+    phases = {"intake", "recon", "candidate_generation", "verification", "severity_escalation", "packaging", "finalization", "variant_discovery"}
+    for phase in phases:
+        if not any(module["selection_policy"] == "baseline" and phase in module["phases"] and module["path"] in phase_paths for module in catalog["modules"]):
+            raise SystemExit(f"FAILED: phase lacks a deterministic phase-reference baseline: {phase}")
+
+    mutation_cases: list[tuple[str, callable]] = []
+
+    def mutate(label: str, fn: callable) -> None:
+        mutation_cases.append((label, fn))
+
+    mutate("duplicate-id", lambda value: value["rules"].__setitem__(1, {**value["rules"][1], "rule_id": value["rules"][0]["rule_id"]}))
+    mutate("empty-carriers", lambda value: value["rules"][0].__setitem__("carriers", []))
+    mutate("unknown-carrier", lambda value: value["rules"][0]["carriers"][0].__setitem__("type", "document"))
+    mutate("absolute-carrier", lambda value: value["rules"][0]["carriers"][0].__setitem__("path", "/tmp/x"))
+    mutate("uri-carrier", lambda value: value["rules"][0]["carriers"][0].__setitem__("path", "file:///tmp/x"))
+    mutate("backslash-carrier", lambda value: value["rules"][0]["carriers"][0].__setitem__("path", "scripts\\x.py"))
+    mutate("traversal-carrier", lambda value: value["rules"][0]["carriers"][0].__setitem__("path", "scripts/../x.py"))
+    mutate("outside-allowlist", lambda value: value["rules"][0]["carriers"][0].__setitem__("path", "README.md"))
+    mutate("missing-carrier", lambda value: value["rules"][0]["carriers"][0].__setitem__("path", "scripts/not-present.py"))
+    mutate("wrong-symbol", lambda value: value["rules"][0]["carriers"][1].__setitem__("symbol", "NOT_A_REAL_SYMBOL"))
+    mutate("production-symbol-missing", lambda value: value["rules"][0]["carriers"][1].pop("symbol"))
+    mutate("retain-without-kernel", lambda value: value["rules"][0].__setitem__("carriers", value["rules"][0]["carriers"][1:]))
+    mutate("retain-target-reference", lambda value: value["rules"][0]["target"].__setitem__("path", "assets/references/audit-phase-verification.md"))
+    mutate("move-target-kernel", lambda value: value["rules"][14]["target"].__setitem__("path", "skills/zhulong/SKILL.md"))
+    mutate("move-without-reference", lambda value: value["rules"][14].__setitem__("carriers", value["rules"][14]["carriers"][1:]))
+    mutate("hard-move-reference-only", lambda value: (value["rules"][0].__setitem__("disposition", "move_to_reference"), value["rules"][0].__setitem__("target", {"path": "assets/references/audit-phase-verification.md", "section": "Working path"}), value["rules"][0].__setitem__("carriers", [{"type": "reference", "path": "assets/references/audit-phase-verification.md", "symbol": "Working path"}])))
+    mutate("uncataloged-reference", lambda value: value["rules"][14]["target"].__setitem__("path", "assets/references/attacker-container-pattern.md"))
+    mutate("unknown-rule-class", lambda value: value["rules"][0].__setitem__("rule_class", "advice"))
+    mutate("unknown-disposition", lambda value: value["rules"][0].__setitem__("disposition", "drop"))
+    mutate("unknown-rule-field", lambda value: value["rules"][0].__setitem__("authority", True))
+    mutate("absolute-target", lambda value: value["rules"][14]["target"].__setitem__("path", "/tmp/ref.md"))
+    mutate("empty-rules", lambda value: value.__setitem__("rules", []))
+
+    with tempfile.TemporaryDirectory(prefix="zhulong-root-kernel-") as tempdir:
+        temp_root = Path(tempdir)
+        for label, fn in mutation_cases:
+            mutated = json.loads(json.dumps(inventory))
+            fn(mutated)
+            mutation_path = temp_root / f"{label}.json"
+            mutation_path.write_text(json.dumps(mutated), encoding="utf-8")
+            proc = subprocess.run([
+                sys.executable,
+                str(inventory_validator),
+                "--skill-root",
+                str(skill_root),
+                "--inventory",
+                str(mutation_path),
+                "--json",
+            ], cwd=skill_root, capture_output=True, text=True)
+            if proc.returncode == 0:
+                raise SystemExit(f"FAILED: root Skill inventory mutation passed: {label}")
+        removed = skill_text.replace(invariants[0], "removed invariant", 1)
+        if removed == skill_text or invariants[0] in removed:
+            raise SystemExit("FAILED: root invariant removal mutation was ineffective")
+        layout = temp_root / "layout"
+        required_paths = {"assets/context-catalog.json"}
+        for rule in inventory["rules"]:
+            required_paths.update(carrier["path"] for carrier in rule["carriers"])
+        for relative in sorted(required_paths):
+            source = skill_root / relative
+            if relative == "skills/zhulong/SKILL.md" and not source.exists():
+                source = skill_root / "SKILL.md"
+            destination = layout / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, destination)
+        deleted_carrier = layout / "scripts/run_verification_case.sh"
+        deleted_carrier.unlink()
+        proc = subprocess.run([
+            sys.executable,
+            str(inventory_validator),
+            "--skill-root",
+            str(layout),
+            "--inventory",
+            str(inventory_path),
+            "--json",
+        ], cwd=skill_root, capture_output=True, text=True)
+        if proc.returncode == 0:
+            raise SystemExit("FAILED: deleted production carrier did not fail closed")
+        shutil.copy2(skill_root / "scripts/run_verification_case.sh", deleted_carrier)
+        layout_skill = layout / "skills/zhulong/SKILL.md"
+        layout_skill.write_text(removed, encoding="utf-8")
+        proc = subprocess.run([
+            sys.executable,
+            str(inventory_validator),
+            "--skill-root",
+            str(layout),
+            "--inventory",
+            str(inventory_path),
+            "--json",
+        ], cwd=skill_root, capture_output=True, text=True)
+        if proc.returncode == 0:
+            raise SystemExit("FAILED: removed root invariant did not fail closed")
+    print(f"ROOT SKILL KERNEL SELFTEST PASSED: {len(mutation_cases) + 2} fail-closed mutations")
+
+
+def exercise_workspace_tool_registry_snapshot(skill_root: Path, workspace: Path) -> None:
+    expected_pairs = (
+        (skill_root / "assets/tool-registry.json", workspace / "bin/tool-registry.json"),
+        (skill_root / "assets/schemas/tool-registry.schema.json", workspace / "bin/tool-registry.schema.json"),
+        (skill_root / "scripts/validate_tool_registry.py", workspace / "bin/validate_tool_registry.py"),
+        (skill_root / "scripts/plan_security_toolchain.py", workspace / "bin/plan-security-toolchain.py"),
+    )
+    for source, copied in expected_pairs:
+        if not copied.is_file() or source.read_bytes() != copied.read_bytes():
+            raise SystemExit(f"FAILED: workspace Tool Registry snapshot drift: {source} != {copied}")
+    run(
+        [
+            sys.executable,
+            str(workspace / "bin/validate_tool_registry.py"),
+            "--skill-root", str(workspace),
+            "--registry", str(workspace / "bin/tool-registry.json"),
+            "--schema", str(workspace / "bin/tool-registry.schema.json"),
+            "--tool", "initial-probes-wrapper",
+            "--stage", "recon",
+            "--boundary", "workspace_write",
+            "--effect", "workspace_evidence_write",
+            "--json",
+        ],
+        workspace,
+    )
+    for adapter, marker in (
+        (workspace / "scripts/run-initial-probes.sh", "zhulong-tool-contract: initial-probes-v1"),
+        (workspace / "scripts/run-verification-case.sh", "zhulong-tool-contract: docker-verification-v1; timeout=mandatory; sandbox-preflight=mandatory"),
+        (workspace / "scripts/check-sandbox-preflight.py", "zhulong-tool-contract: sandbox-preflight-v1"),
+    ):
+        require_text(adapter, marker, "workspace controlled-wrapper marker")
+    outside_output = workspace.parent / "tool-registry-outside-output"
+    rejected_output = subprocess.run(
+        [
+            "bash",
+            str(workspace / "bin/run-initial-probes.sh"),
+            "--repo-root", str(workspace.parent),
+            "--workspace-dir", str(workspace),
+            "--output-dir", str(outside_output),
+        ],
+        cwd=workspace,
+        capture_output=True,
+        text=True,
+    )
+    if rejected_output.returncode == 0 or "--output-dir must stay under" not in (rejected_output.stdout + rejected_output.stderr) or outside_output.exists():
+        raise SystemExit("FAILED: initial-probe wrapper accepted or wrote an output path outside workspace evidence")
 
 
 def load_validate_report_bundle_module(root: Path):
@@ -882,15 +1704,14 @@ def exercise_p8_closure_contracts(root: Path) -> None:
     else:
         skill_path = root / "SKILL.md"
 
-    require_text(skill_path, "## Bundle Builder Path", "P8 skill bundle builder section")
-    require_text(skill_path, "Before creating `confirmed/<slug>`, validate", "P8 skill contract-first path")
-    require_text(skill_path, "Do not hand-create final", "P8 skill no hand-created final dirs")
-    require_text(skill_path, "`confirmed/.staging/<slug>`", "P8 skill staging path")
-    require_text(skill_path, "validate_report_bundle.py --all-errors", "P8 skill all-errors diagnostic path")
-    require_text(skill_path, "workflow gates only; Docker evidence and final bundle validation remain required", "P8 skill confirmation boundary")
-    require_text(skill_path, "validate_all_report_bundles.py", "P8 skill validate-all path")
-    require_text(skill_path, "seeded variant discovery", "P8 skill seeded variant closure")
-    require_text(skill_path, "finalization", "P8 skill finalization closure")
+    require_text(skill_path, "## Confirmed bundle path", "root kernel confirmed bundle section")
+    require_text(skill_path, "Final bundles use contract-first staging", "root kernel atomic bundle invariant")
+    packaging_reference = root / "assets/references/audit-phase-packaging-finalization.md"
+    require_text(packaging_reference, "confirmed/.staging/<slug>", "phase reference staging path")
+    require_text(packaging_reference, "validate_all_report_bundles.py", "phase reference batch validation")
+    require_text(packaging_reference, "finalization event", "phase reference canonical finalization")
+    require_text(root / "scripts/build_confirmed_bundle.py", "atomic promote", "production bundle promotion carrier")
+    require_text(root / "scripts/validate_report_bundle.py", "REPLAY_HELPER_ABSOLUTE_EVIDENCE_PATH", "production portability carrier")
 
     docs = [
         root / "docs/WORKFLOW_DETAILS.md",
@@ -1240,6 +2061,386 @@ def exercise_p8_real_historical_dogfood(root: Path) -> None:
         raise SystemExit(f"FAILED: P8 real historical sample 03 lost replay registration rejection: {sorted(sample03_codes)}")
 
 
+def exercise_p9_protocol_chain_real_workspace_dogfood(root: Path) -> None:
+    report_path = root / "assets/references/p9-protocol-chain-real-workspace-dogfood-report.md"
+    metrics_path = root / "assets/references/p9-protocol-chain-real-workspace-dogfood-metrics.json"
+    require_files(root, [str(report_path.relative_to(root)), str(metrics_path.relative_to(root))], "P9.12.1 protocol-chain dogfood")
+
+    report_text = report_path.read_text(encoding="utf-8")
+    required_headings = (
+        "## 结论",
+        "## 边界与 Non-Claims",
+        "## 历史 R1 样本保留",
+        "## 真实 R2 Pilot：目标、Bootstrap 与协议链",
+        "## Real-Copy CAS",
+        "## Real-Copy Rebuild",
+        "## Fresh-Context Agent B",
+        "## Deterministic R2 Fixture Regression",
+        "## Original Workspace Immutability",
+        "## Metrics 与资格计算",
+        "## 最终判定",
+    )
+    for heading in required_headings:
+        if heading not in report_text:
+            raise SystemExit(f"FAILED: P9.12.1 report heading missing: {heading}")
+    for phrase in (
+        "本次 P9.12.1 结果为 **passed**",
+        "旧实现报告与旧 cross-audit 文档仍作为历史记录保留",
+        "不把它们计入真实 R2 acceptance",
+        "STATE_REVISION_CONFLICT",
+        "journal before/after SHA-256 相同且 byte-identical",
+        "correct 为 9，unknown 为 0，incorrect 为 0",
+        "file mutation violations 为 0",
+        "fixture regression 继续单独计量，永远不计入 real-workspace acceptance",
+        "closure eligibility 为 `eligible_for_next_phase`",
+    ):
+        if phrase not in report_text:
+            raise SystemExit(f"FAILED: P9.12.1 report result phrase missing: {phrase}")
+
+    metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
+
+    def is_digest(value: object) -> bool:
+        return isinstance(value, str) and bool(re.fullmatch(r"[0-9a-f]{64}", value))
+
+    def evaluate_payload(doc: dict) -> bool:
+        if (
+            doc.get("schema_version") != 1
+            or doc.get("measurement_type") != "real_workspace_protocol_dogfood"
+            or doc.get("result") != "passed"
+            or doc.get("blocker_statement") is not None
+            or doc.get("closure_eligibility") != "eligible_for_next_phase"
+        ):
+            return False
+
+        samples = doc.get("historical_r1_samples")
+        expected_categories = {
+            "sample-no-confirmed": "no_confirmed",
+            "sample-blocked-verification": "blocked_verification",
+            "sample-validated-bundle": "validated_confirmed_bundle",
+        }
+        if not isinstance(samples, list) or len(samples) != 3:
+            return False
+        actual_categories = {
+            str(item.get("sample_id")): str(item.get("category"))
+            for item in samples
+            if isinstance(item, dict)
+        }
+        if actual_categories != expected_categories or any(
+            not isinstance(item, dict)
+            or item.get("protocol_mode") != "legacy_r1"
+            or item.get("selection_gate_passed") is not True
+            or item.get("counts_toward_real_r2_acceptance") is not False
+            for item in samples
+        ):
+            return False
+
+        aggregate = doc.get("aggregate")
+        if not isinstance(aggregate, dict):
+            return False
+        historical_aggregate = {
+            "historical_sample_count": len(samples),
+            "historical_validator_invocation_count": sum(int(item.get("validator_invocation_count", 0)) for item in samples),
+            "historical_derived_artifact_write_count": sum(int(item.get("derived_artifact_write_count", 0)) for item in samples),
+            "historical_sanitization_count": sum(int(item.get("sanitization_count", 0)) for item in samples),
+            "historical_contradiction_count": sum(int(item.get("contradiction_count", 0)) for item in samples),
+        }
+        if any(aggregate.get(key) != value for key, value in historical_aggregate.items()):
+            return False
+
+        pilot = doc.get("real_r2_pilot")
+        contract = pilot.get("target_contract") if isinstance(pilot, dict) else None
+        bootstrap = pilot.get("bootstrap") if isinstance(pilot, dict) else None
+        derived = pilot.get("derived_artifacts") if isinstance(pilot, dict) else None
+        if not all(isinstance(value, dict) for value in (pilot, contract, bootstrap, derived)):
+            return False
+        if not (
+            pilot.get("origin") == "production_bootstrap_on_real_repository_copy"
+            and pilot.get("protocol_mode") == "r2"
+            and isinstance(pilot.get("tested_ref_digest"), str)
+            and bool(re.fullmatch(r"[0-9a-f]{40}", pilot.get("tested_ref_digest")))
+            and contract.get("repo_root") == "."
+            and contract.get("tested_ref_matches_copy_head") is True
+            and contract.get("validator_result") == "passed"
+            and bootstrap.get("production_bootstrap_invoked") is True
+            and bootstrap.get("initial_event_written") is True
+            and bootstrap.get("observation_event_written") is True
+            and bootstrap.get("event_count") == 2
+            and bootstrap.get("state_revision") == 2
+            and bootstrap.get("scope_is_empty") is True
+            and bootstrap.get("authority_fact_count") == 0
+            and bootstrap.get("verification_executed") is False
+            and bootstrap.get("docker_resources_created") == 0
+            and bootstrap.get("symlink_count") == 0
+            and is_digest(bootstrap.get("baseline_manifest_sha256"))
+            and derived.get("handoff_integrity") == "valid"
+            and derived.get("tested_ref_verified") is True
+            and derived.get("no_authority_facts") is True
+            and pilot.get("original_copy_mutation_violations") == 0
+            and pilot.get("counts_toward_real_r2_acceptance") is True
+        ):
+            return False
+
+        cas = doc.get("real_copy_cas")
+        if not isinstance(cas, dict) or not (
+            cas.get("measurement_type") == "real_r2_copy_cas_conflict"
+            and cas.get("origin") == "real_r2_pilot_copy"
+            and cas.get("protocol_mode") == "r2"
+            and cas.get("writer_process_count") == 2
+            and cas.get("pids_distinct") is True
+            and cas.get("success_count") == 1
+            and cas.get("conflict_count") == 1
+            and cas.get("conflict_code") == "STATE_REVISION_CONFLICT"
+            and cas.get("loser_journal_committed") is False
+            and cas.get("loser_state_view_updated") is False
+            and cas.get("loser_authority_mutation_count") == 0
+            and cas.get("authority_fact_delta") == 0
+            and cas.get("counts_toward_real_r2_acceptance") is True
+        ):
+            return False
+
+        rebuild = doc.get("real_copy_rebuild")
+        if not isinstance(rebuild, dict) or not (
+            rebuild.get("measurement_type") == "real_r2_copy_state_rebuild"
+            and rebuild.get("origin") == "real_r2_pilot_copy"
+            and rebuild.get("protocol_mode") == "r2"
+            and rebuild.get("corruption_detected_by_read_only_check") is True
+            and rebuild.get("check_result") == "drift_detected"
+            and rebuild.get("check_issue_codes") == ["STATE_REVISION_MISMATCH"]
+            and rebuild.get("check_was_read_only") is True
+            and rebuild.get("apply_mode") == "explicit_digest_cas"
+            and rebuild.get("apply_success") is True
+            and is_digest(rebuild.get("journal_before_sha256"))
+            and rebuild.get("journal_before_sha256") == rebuild.get("journal_after_sha256")
+            and rebuild.get("journal_byte_identical") is True
+            and is_digest(rebuild.get("rebuilt_state_sha256"))
+            and rebuild.get("rebuilt_state_sha256") == rebuild.get("pilot_state_sha256")
+            and rebuild.get("state_canonical_json_equivalent") is True
+            and rebuild.get("journal_mutation_violations") == 0
+            and rebuild.get("authority_fact_delta") == 0
+            and rebuild.get("counts_toward_real_r2_acceptance") is True
+        ):
+            return False
+
+        fresh = doc.get("fresh_context")
+        receipt = fresh.get("receipt") if isinstance(fresh, dict) else None
+        comparison = fresh.get("comparison") if isinstance(fresh, dict) else None
+        agent_b = fresh.get("agent_b_observation") if isinstance(fresh, dict) else None
+        agent_a = fresh.get("agent_a_expected") if isinstance(fresh, dict) else None
+        if not all(isinstance(value, dict) for value in (fresh, receipt, comparison, agent_b, agent_a)):
+            return False
+        if not (
+            fresh.get("method") == "platform_subagent_opaque_tool_identity"
+            and fresh.get("mechanism") == "platform_subagent"
+            and fresh.get("tool_version") == "multi_agent_v1"
+            and fresh.get("fork_context") is False
+            and fresh.get("attempt_count") == 1
+            and is_digest(receipt.get("child_identity_sha256"))
+            and receipt.get("parent_identity_sha256") is None
+            and receipt.get("parent_identity_exposed") is False
+            and receipt.get("parent_child_distinct") is True
+            and receipt.get("pid_distinct") is None
+            and receipt.get("resume") is False
+            and is_digest(receipt.get("input_sha256"))
+            and is_digest(receipt.get("allowed_input_digest"))
+            and is_digest(receipt.get("observation_sha256"))
+            and receipt.get("timestamps_present") is True
+            and receipt.get("exit_status") == "completed"
+            and receipt.get("raw_chat_saved") is False
+            and receipt.get("hidden_reasoning_saved") is False
+            and comparison.get("key_field_count") == 9
+            and comparison.get("correct_field_count") == 9
+            and comparison.get("unknown_field_count") == 0
+            and comparison.get("incorrect_field_count") == 0
+            and comparison.get("critical_incorrect_count") == 0
+            and comparison.get("result") == "passed"
+            and fresh.get("workspace_mutation_violations") == 0
+            and fresh.get("counts_toward_real_r2_acceptance") is True
+        ):
+            return False
+        observation_keys = {
+            "protocol_mode",
+            "target_contract_valid",
+            "tested_ref_verified",
+            "event_chain_valid",
+            "handoff_state_valid",
+            "checkpoint_valid",
+            "next_actions_valid",
+            "scope_is_empty",
+            "authority_facts_absent",
+        }
+        if set(agent_b) != observation_keys or set(agent_a) != observation_keys or agent_b != agent_a:
+            return False
+        if agent_b.get("protocol_mode") != "r2" or any(
+            agent_b.get(key) is not True for key in observation_keys - {"protocol_mode"}
+        ):
+            return False
+
+        original = doc.get("original_workspaces")
+        if not isinstance(original, dict) or not (
+            original.get("manifest_root_count") == 4
+            and original.get("before_after_file_manifest_equal") is True
+            and original.get("before_after_symlink_manifest_equal") is True
+            and original.get("mutation_violations") == 0
+            and original.get("symlink_mutation_violations") == 0
+        ):
+            return False
+
+        fixture = doc.get("deterministic_fixture_regression")
+        if not isinstance(fixture, dict) or not (
+            fixture.get("measurement_type") == "deterministic_r2_fixture_regression"
+            and fixture.get("counts_toward_real_workspace_acceptance") is False
+            and fixture.get("concurrent_writer_success_count") == 1
+            and fixture.get("concurrent_writer_conflict_count") == 1
+            and fixture.get("recovery_check_count") == 1
+            and fixture.get("recovery_apply_count") == 1
+            and fixture.get("journal_mutation_violations") == 0
+            and fixture.get("rebuilt_state_valid") is True
+        ):
+            return False
+
+        acceptance = doc.get("real_workspace_acceptance")
+        if not isinstance(acceptance, dict):
+            return False
+        cas_satisfied = (
+            cas.get("success_count") == 1
+            and cas.get("conflict_count") == 1
+            and cas.get("loser_journal_committed") is False
+            and cas.get("pids_distinct") is True
+        )
+        rebuild_satisfied = (
+            rebuild.get("apply_success") is True
+            and rebuild.get("journal_byte_identical") is True
+            and rebuild.get("state_canonical_json_equivalent") is True
+            and rebuild.get("journal_mutation_violations") == 0
+        )
+        fresh_satisfied = (
+            comparison.get("correct_field_count") == comparison.get("key_field_count")
+            and comparison.get("unknown_field_count") == 0
+            and comparison.get("incorrect_field_count") == 0
+            and receipt.get("parent_child_distinct") is True
+            and receipt.get("resume") is False
+        )
+        expected_acceptance = {
+            "real_r2_workspace_count": int(pilot.get("counts_toward_real_r2_acceptance") is True),
+            "cas_conflict_on_real_copy_satisfied": cas_satisfied,
+            "state_rebuild_on_real_copy_satisfied": rebuild_satisfied,
+            "fresh_context_isolation_satisfied": fresh_satisfied,
+            "original_workspace_mutation_violations": original.get("mutation_violations"),
+            "full_regression_passed": doc.get("p9_1_p9_11_regression_result") == "passed",
+        }
+        expected_acceptance["eligible_for_next_phase"] = (
+            expected_acceptance["real_r2_workspace_count"] > 0
+            and expected_acceptance["cas_conflict_on_real_copy_satisfied"] is True
+            and expected_acceptance["state_rebuild_on_real_copy_satisfied"] is True
+            and expected_acceptance["fresh_context_isolation_satisfied"] is True
+            and expected_acceptance["original_workspace_mutation_violations"] == 0
+            and expected_acceptance["full_regression_passed"] is True
+        )
+        if any(acceptance.get(key) != value for key, value in expected_acceptance.items()):
+            return False
+        if doc.get("p9_1_p9_11_regression_result") != "passed":
+            return False
+        if not {
+            "does not measure token use",
+            "does not prove or reconfirm a vulnerability",
+            "fixture results do not satisfy real-workspace CAS or rebuild acceptance",
+            "phase closure eligibility does not authorize execution of out-of-scope workloads",
+        }.issubset(set(doc.get("non_claims") or [])):
+            return False
+        return True
+
+    if not evaluate_payload(metrics):
+        raise SystemExit("FAILED: P9.12.1 metrics are not a positive ledger-derived result")
+    aggregate = metrics["aggregate"]
+    derived_aggregate = {
+        "real_r2_pilot_count": int(metrics["real_r2_pilot"]["counts_toward_real_r2_acceptance"] is True),
+        "real_copy_cas_success_count": metrics["real_copy_cas"]["success_count"],
+        "real_copy_cas_conflict_count": metrics["real_copy_cas"]["conflict_count"],
+        "real_copy_rebuild_apply_count": int(metrics["real_copy_rebuild"]["apply_success"] is True),
+        "fresh_context_attempt_count": metrics["fresh_context"]["attempt_count"],
+        "fresh_context_correct_field_count": metrics["fresh_context"]["comparison"]["correct_field_count"],
+        "fresh_context_unknown_field_count": metrics["fresh_context"]["comparison"]["unknown_field_count"],
+        "fresh_context_incorrect_field_count": metrics["fresh_context"]["comparison"]["incorrect_field_count"],
+        "fixture_count": 1,
+        "original_workspace_mutation_violations": metrics["original_workspaces"]["mutation_violations"],
+        "p9_1_p9_11_regression_passed": metrics["p9_1_p9_11_regression_result"] == "passed",
+    }
+    if any(aggregate.get(key) != value for key, value in derived_aggregate.items()):
+        raise SystemExit("FAILED: P9.12.1 aggregate is not derived from detailed ledgers")
+
+    # Fail-closed mutation checks stay in memory: this exercise is static-only.
+    mutations = (
+        ("pilot synthetic origin", ("real_r2_pilot", "origin"), "synthetic_mini_repo"),
+        ("pilot fixture origin", ("real_r2_pilot", "origin"), "fixture"),
+        ("CAS fixture origin", ("real_copy_cas", "origin"), "fixture"),
+        ("rebuild synthetic origin", ("real_copy_rebuild", "origin"), "synthetic_mini_repo"),
+        ("CAS measurement type", ("real_copy_cas", "measurement_type"), "synthetic_cas_conflict"),
+        ("rebuild measurement type", ("real_copy_rebuild", "measurement_type"), "fixture_state_rebuild"),
+        ("CAS loser journal flag", ("real_copy_cas", "loser_journal_committed"), True),
+        ("rebuild journal identity", ("real_copy_rebuild", "journal_byte_identical"), False),
+        ("fixture acceptance flag", ("deterministic_fixture_regression", "counts_toward_real_workspace_acceptance"), True),
+        ("historical protocol", ("historical_r1_samples", 0, "protocol_mode"), "r2"),
+        ("fresh comparison", ("fresh_context", "comparison", "incorrect_field_count"), 1),
+    )
+    for label, path, value in mutations:
+        mutated = json.loads(json.dumps(metrics))
+        cursor = mutated
+        for component in path[:-1]:
+            cursor = cursor[component]
+        cursor[path[-1]] = value
+        if evaluate_payload(mutated):
+            raise SystemExit(f"FAILED: P9.12.1 fail-closed mutation accepted: {label}")
+
+    # This checker is deliberately static: it must not launch workload or agent processes.
+    import ast
+
+    source = Path(__file__).read_text(encoding="utf-8")
+    start = source.index("def exercise_p9_protocol_chain_real_workspace_dogfood")
+    end = source.index("\ndef valid_target_contract_yaml", start) + 1
+    function_tree = ast.parse(source[start:end])
+    disallowed_calls = {
+        "subprocess.run",
+        "subprocess.Popen",
+        "subprocess.check_call",
+        "subprocess.check_output",
+        "os.system",
+        "socket.socket",
+        "requests.get",
+        "urllib.request.urlopen",
+        "spawn_agent",
+        "multi_agent_v1__spawn_agent",
+    }
+    for node in ast.walk(function_tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
+            call_name = f"{node.func.value.id}.{node.func.attr}"
+        elif isinstance(node.func, ast.Name):
+            call_name = node.func.id
+        else:
+            call_name = ""
+        if call_name in disallowed_calls:
+            raise SystemExit(f"FAILED: P9.12.1 static checker invoked disallowed call: {call_name}")
+
+    public_text = report_text + "\n" + metrics_path.read_text(encoding="utf-8")
+    forbidden_patterns = (
+        r"/Users/",
+        r"/home/",
+        r"security-research-\d{8}",
+        r"app-platform",
+        r"nexent",
+        r"atomcode",
+        r"fit-framework",
+        r"agent-store",
+        r"BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY",
+        r"sk-[A-Za-z0-9]{16,}",
+        r"(?:^|[^a-z])(?:session|child|parent)[ _-]?id\s*[:=]\s*[0-9a-f]{8}-[0-9a-f-]{27,}",
+        r"docker (?:system|builder|buildx) prune",
+        r"kill -(?:9|TERM|KILL)",
+    )
+    for pattern in forbidden_patterns:
+        if re.search(pattern, public_text, re.IGNORECASE):
+            raise SystemExit(f"FAILED: P9.12.1 public artifacts leaked forbidden pattern: {pattern}")
 def valid_target_contract_yaml(*, runtime_type: str = "docker-compose", entrypoints: str | None = None) -> str:
     scope_entrypoints = entrypoints
     if scope_entrypoints is None:
@@ -1413,6 +2614,14 @@ def exercise_target_contract_validator(plugin_root: Path) -> None:
             "operator-local absolute path",
         )
 
+        for index, unsafe_ref in enumerate(("/Users/alice/source", "（/Users/alice/secret.txt）", "`/Users/alice/secret.txt`", "ghp_SELFTEST_TOKEN", "file:///private/ref", "sha256:\nunsafe"), start=1):
+            unsafe_tested_ref = valid_target_contract_yaml().replace('tested_ref: "local-state"', f"tested_ref: {json.dumps(unsafe_ref)}")
+            run_expect_fail(
+                [sys.executable, str(validator), str(write_case(f"unsafe-tested-ref-{index}", unsafe_tested_ref))],
+                plugin_root,
+                "forbidden source-identity material",
+            )
+
         traversal_path = valid_target_contract_yaml().replace(
             'compose_file: "docker-compose.zhulong.yml"',
             'compose_file: "../docker-compose.yml"',
@@ -1459,6 +2668,312 @@ def exercise_target_contract_validator(plugin_root: Path) -> None:
                 plugin_root,
                 "must not request privileged",
             )
+
+
+def exercise_recon_result_contract(plugin_root: Path) -> None:
+    fixture_root = plugin_root / "assets/fixtures/recon-result"
+    manifest_path = fixture_root / "manifest.json"
+    schema_path = plugin_root / "assets/schemas/recon-result.schema.json"
+    template_path = plugin_root / "assets/references/recon-result-template.json"
+    validator = plugin_root / "scripts/validate_recon_result.py"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    template = json.loads(template_path.read_text(encoding="utf-8"))
+
+    if schema.get("title") != "Zhulong Recon Coverage Contract R1":
+        raise SystemExit("FAILED: Recon result schema title mismatch")
+    if schema.get("$schema") != "https://json-schema.org/draft/2020-12/schema":
+        raise SystemExit("FAILED: Recon result schema must declare Draft 2020-12")
+    if not str(schema.get("$id", "")).startswith("https://github.com/"):
+        raise SystemExit("FAILED: Recon result schema must use a repository-backed $id")
+
+    def assert_closed_objects(value, path: str = "$") -> None:
+        if isinstance(value, dict):
+            if value.get("type") == "object" and value.get("additionalProperties") is not False:
+                raise SystemExit(f"FAILED: Recon result schema leaves object open: {path}")
+            for key, child in value.items():
+                assert_closed_objects(child, f"{path}.{key}")
+        elif isinstance(value, list):
+            for index, child in enumerate(value):
+                assert_closed_objects(child, f"{path}[{index}]")
+
+    assert_closed_objects(schema)
+    for field in (
+        "schema_version",
+        "recon_id",
+        "target_binding",
+        "attack_surface_binding",
+        "coverage",
+        "coverage_gaps",
+        "unresolved_blockers",
+        "focus_refs",
+    ):
+        if field not in template or template[field] is None:
+            raise SystemExit(f"FAILED: Recon result template lacks representative field: {field}")
+    if template.get("status") != "partial":
+        raise SystemExit("FAILED: Recon result template must demonstrate partial coverage")
+    if manifest.get("schema_version") != 1:
+        raise SystemExit("FAILED: Recon result fixture manifest schema_version mismatch")
+
+    help_proc = subprocess.run(
+        [sys.executable, str(validator), "--help"],
+        cwd=plugin_root,
+        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+        capture_output=True,
+        text=True,
+    )
+    help_output = (help_proc.stdout or "") + (help_proc.stderr or "")
+    if help_proc.returncode != 0 or "--recon-result" not in help_output or "--json" not in help_output:
+        raise SystemExit(f"FAILED: Recon result validator CLI help is incomplete:\n{help_output}")
+
+    def clone(value):
+        return json.loads(json.dumps(value))
+
+    def path_parts(expression: str) -> list[str | int]:
+        parts: list[str | int] = []
+        for component in expression.split("."):
+            if not component:
+                raise SystemExit(f"FAILED: malformed fixture mutation path: {expression}")
+            if component.isdigit():
+                parts.append(int(component))
+            else:
+                parts.append(component)
+        return parts
+
+    def get_at(value, expression: str):
+        current = value
+        for part in path_parts(expression):
+            current = current[part]
+        return current
+
+    def parent_at(value, expression: str):
+        parts = path_parts(expression)
+        if not parts:
+            raise SystemExit(f"FAILED: empty fixture mutation path: {expression}")
+        current = value
+        for part in parts[:-1]:
+            current = current[part]
+        return current, parts[-1]
+
+    def set_at(value, expression: str, replacement) -> None:
+        parent, leaf = parent_at(value, expression)
+        if isinstance(parent, dict) and isinstance(leaf, str):
+            parent[leaf] = clone(replacement)
+        elif isinstance(parent, list) and isinstance(leaf, int):
+            parent[leaf] = clone(replacement)
+        else:
+            raise SystemExit(f"FAILED: invalid fixture mutation target: {expression}")
+
+    def drop_at(value, expression: str) -> None:
+        parent, leaf = parent_at(value, expression)
+        if isinstance(parent, dict) and isinstance(leaf, str):
+            del parent[leaf]
+        elif isinstance(parent, list) and isinstance(leaf, int):
+            parent.pop(leaf)
+        else:
+            raise SystemExit(f"FAILED: invalid fixture drop target: {expression}")
+
+    def snapshot_tree(root: Path) -> dict[str, bytes]:
+        snapshot: dict[str, bytes] = {}
+        for base, directories, files in os.walk(root, followlinks=False):
+            for name in [*directories, *files]:
+                path = Path(base) / name
+                rel = path.relative_to(root).as_posix()
+                if path.is_symlink():
+                    snapshot[rel] = b"SYMLINK:" + os.readlink(path).encode("utf-8")
+                elif path.is_file():
+                    snapshot[rel] = path.read_bytes()
+        return snapshot
+
+    positive_cases = manifest.get("positive_cases", [])
+    positive_by_id: dict[str, dict] = {}
+    positive_case_meta: dict[str, dict] = {}
+    for case in positive_cases:
+        case_id = case["id"]
+        scenario_root = fixture_root / case["scenario"]
+        result_path = scenario_root / case["result"]
+        positive_by_id[case_id] = json.loads(result_path.read_text(encoding="utf-8"))
+        positive_case_meta[case_id] = case
+
+    def run_validator_case(
+        repo_root: Path,
+        workspace_dir: Path,
+        result_path: Path,
+        *,
+        expect_ok: bool,
+        expected_codes: list[str],
+        label: str,
+    ) -> dict:
+        before_repo = snapshot_tree(repo_root)
+        before_workspace = snapshot_tree(workspace_dir)
+        with tempfile.TemporaryDirectory(prefix="zhulong-recon-cache-") as cache_dir:
+            env = {
+                **os.environ,
+                "PYTHONDONTWRITEBYTECODE": "1",
+                "PYTHONPYCACHEPREFIX": cache_dir,
+            }
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    str(validator),
+                    "--repo-root",
+                    str(repo_root),
+                    "--workspace-dir",
+                    str(workspace_dir),
+                    "--recon-result",
+                    str(result_path),
+                    "--json",
+                ],
+                cwd=plugin_root,
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+        output = (proc.stdout or "") + (proc.stderr or "")
+        for local_path in (repo_root.resolve(), workspace_dir.resolve()):
+            if str(local_path) in output:
+                raise SystemExit(f"FAILED: Recon validator leaked a local path for {label}: {output}")
+        try:
+            payload = json.loads(proc.stdout)
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise SystemExit(f"FAILED: Recon validator did not return JSON for {label}: {output}") from exc
+        if proc.returncode == 0 and not expect_ok:
+            raise SystemExit(f"FAILED: negative Recon fixture unexpectedly passed: {label}\n{output}")
+        if proc.returncode != 0 and expect_ok:
+            raise SystemExit(f"FAILED: positive Recon fixture failed: {label}\n{output}")
+        if bool(payload.get("ok")) != expect_ok:
+            raise SystemExit(f"FAILED: Recon validator ok flag mismatch for {label}: {payload}")
+        codes = set(payload.get("issue_codes", []))
+        missing_codes = [code for code in expected_codes if code not in codes]
+        if missing_codes:
+            raise SystemExit(
+                f"FAILED: Recon validator missed expected issue code(s) for {label}: {missing_codes}\n{output}"
+            )
+        after_repo = snapshot_tree(repo_root)
+        after_workspace = snapshot_tree(workspace_dir)
+        if before_repo != after_repo or before_workspace != after_workspace:
+            raise SystemExit(f"FAILED: Recon validator mutated source or workspace material for {label}")
+        return payload
+
+    for case in positive_cases:
+        scenario_root = fixture_root / case["scenario"]
+        run_validator_case(
+            scenario_root / "repo",
+            scenario_root / "workspace",
+            scenario_root / case["result"],
+            expect_ok=True,
+            expected_codes=[],
+            label=case["id"],
+        )
+
+    for case in manifest.get("negative_cases", []):
+        base_id = case["base"]
+        if base_id not in positive_by_id:
+            raise SystemExit(f"FAILED: negative Recon fixture references unknown base case: {base_id}")
+        base_meta = positive_case_meta[base_id]
+        with tempfile.TemporaryDirectory(prefix=f"zhulong-recon-{case['id']}-") as tempdir:
+            temp_root = Path(tempdir)
+            repo_root = temp_root / "repo"
+            workspace_dir = temp_root / "workspace"
+            scenario_root = fixture_root / base_meta["scenario"]
+            shutil.copytree(scenario_root / "repo", repo_root)
+            shutil.copytree(scenario_root / "workspace", workspace_dir)
+            data = clone(positive_by_id[base_id])
+            symlink_kind: str | None = None
+            for mutation in case.get("mutations", []):
+                kind = mutation["kind"]
+                if kind == "drop":
+                    drop_at(data, mutation["path"])
+                elif kind == "set":
+                    set_at(data, mutation["path"], mutation.get("value"))
+                elif kind == "copy":
+                    source_case = mutation["from_case"]
+                    set_at(data, mutation["path"], get_at(positive_by_id[source_case], mutation["from_path"]))
+                elif kind in {
+                    "symlink_result",
+                    "symlink_target",
+                    "symlink_attack_surface",
+                    "symlink_source",
+                    "symlink_evidence",
+                }:
+                    symlink_kind = kind
+                elif kind == "natural_language_only":
+                    for category in (
+                        "technology_stack",
+                        "public_entrypoints",
+                        "trust_boundaries",
+                        "high_risk_sinks",
+                        "security_policy_explanations",
+                        "default_deployment_assumptions",
+                        "priority_areas",
+                        "deferred_areas",
+                    ):
+                        data[category] = []
+                        data["coverage"][category]["item_ids"] = []
+                        data["coverage"][category]["reason"] = "未发现问题"
+                    data["focus_refs"] = []
+                else:
+                    raise SystemExit(f"FAILED: unknown Recon fixture mutation kind: {kind}")
+
+            outside_dir = temp_root / "outside"
+            outside_dir.mkdir()
+
+            def make_escape_symlink(path: Path, name: str, content: bytes) -> None:
+                outside_path = outside_dir / name
+                outside_path.write_bytes(content)
+                if path.exists() or path.is_symlink():
+                    path.unlink()
+                path.symlink_to(outside_path)
+
+            result_path = workspace_dir / "recon-result.json"
+            if symlink_kind == "symlink_result":
+                make_escape_symlink(result_path, "result.json", json.dumps(data).encode("utf-8"))
+            else:
+                result_path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+                if symlink_kind == "symlink_target":
+                    target_path = workspace_dir / "zhulong-target.yaml"
+                    make_escape_symlink(target_path, "target.yaml", target_path.read_bytes())
+                elif symlink_kind == "symlink_attack_surface":
+                    surface_path = workspace_dir / "attack-surface.md"
+                    make_escape_symlink(surface_path, "attack-surface.md", surface_path.read_bytes())
+                elif symlink_kind == "symlink_source":
+                    source_path = repo_root / "src/app.py"
+                    make_escape_symlink(source_path, "app.py", source_path.read_bytes())
+                elif symlink_kind == "symlink_evidence":
+                    evidence_path = workspace_dir / "evidence/recon-notes.md"
+                    make_escape_symlink(evidence_path, "recon-notes.md", evidence_path.read_bytes())
+
+            run_validator_case(
+                repo_root,
+                workspace_dir,
+                result_path,
+                expect_ok=False,
+                expected_codes=case["expected_codes"],
+                label=case["id"],
+            )
+
+    with tempfile.TemporaryDirectory(prefix="zhulong-recon-partial-blocker-") as tempdir:
+        temp_root = Path(tempdir)
+        repo_root = temp_root / "repo"
+        workspace_dir = temp_root / "workspace"
+        scenario_root = fixture_root / positive_case_meta["complete-service"]["scenario"]
+        shutil.copytree(scenario_root / "repo", repo_root)
+        shutil.copytree(scenario_root / "workspace", workspace_dir)
+        data = clone(positive_by_id["complete-service"])
+        data["status"] = "partial"
+        data["unresolved_blockers"] = clone(positive_by_id["blocked-service"]["unresolved_blockers"])
+        result_path = workspace_dir / "recon-result.json"
+        result_path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        run_validator_case(
+            repo_root,
+            workspace_dir,
+            result_path,
+            expect_ok=True,
+            expected_codes=[],
+            label="partial-with-blocker-only",
+        )
+
+    print("RECON RESULT SELFTEST PASSED: schema/CLI/status/reference/read-only matrix")
 
 
 def valid_candidate_contract(overrides: dict | None = None) -> dict:
@@ -2266,8 +3781,13 @@ def exercise_bundle_contract_validator(plugin_root: Path) -> None:
         raise SystemExit("FAILED: bundle contract validator help is missing --repo-root")
 
 
-def build_wrapper_source_finding(plugin_root: Path, repo_dir: Path, workspace: Path) -> str:
-    slug = "demo-app_Path_Traversal_高危漏洞报告"
+def build_wrapper_source_finding(
+    plugin_root: Path,
+    repo_dir: Path,
+    workspace: Path,
+    *,
+    slug: str = "demo-app_Path_Traversal_高危漏洞报告",
+) -> str:
     (repo_dir / "docker").mkdir(parents=True, exist_ok=True)
     (repo_dir / "poc").mkdir(parents=True, exist_ok=True)
     (repo_dir / "evidence").mkdir(parents=True, exist_ok=True)
@@ -2662,7 +4182,7 @@ def exercise_finding_contract_validators(plugin_root: Path) -> None:
     verdict_example = plugin_root / "assets/examples/verifier-verdict.example.json"
 
     candidate_schema = json.loads((plugin_root / "assets/schemas/candidate.schema.json").read_text(encoding="utf-8"))
-    if candidate_schema.get("title") != "Zhulong Candidate Finding Contract R1":
+    if candidate_schema.get("title") != "Zhulong Candidate Finding Contract R1/R2":
         raise SystemExit("FAILED: candidate schema title mismatch")
     if str(candidate_schema.get("$id", "")).startswith("https://zhulong.local/"):
         raise SystemExit("FAILED: candidate schema must not use a placeholder $id URI")
@@ -2736,6 +4256,15 @@ def exercise_finding_contract_validators(plugin_root: Path) -> None:
             "operator-local absolute path",
         )
 
+        for index, unsafe_ref in enumerate(("/Users/alice/source", "ghp_SELFTEST_TOKEN", "sha256:\nunsafe"), start=1):
+            unsafe_candidate_ref = json_clone(valid_candidate_contract())
+            unsafe_candidate_ref["target_ref"]["tested_ref"] = unsafe_ref
+            run_expect_fail(
+                [sys.executable, str(candidate_validator), str(write_json_fixture(tmp / f"candidate-unsafe-tested-ref-{index}.json", unsafe_candidate_ref))],
+                plugin_root,
+                "forbidden source-identity material",
+            )
+
         traversal_path = json_clone(valid_candidate_contract())
         traversal_path["poc"]["path"] = "../poc/reproduce.sh"
         run_expect_fail(
@@ -2761,6 +4290,14 @@ def exercise_finding_contract_validators(plugin_root: Path) -> None:
 
         good_verdict = write_json_fixture(tmp / "verdict-good.json", valid_verifier_verdict())
         run([sys.executable, str(verdict_validator), "--candidate", str(good_candidate), str(good_verdict)], plugin_root)
+
+        unsafe_verdict_ref = json_clone(valid_verifier_verdict())
+        unsafe_verdict_ref["target_ref"]["tested_ref"] = "/private/tmp/secret-ref"
+        run_expect_fail(
+            [sys.executable, str(verdict_validator), str(write_json_fixture(tmp / "verdict-unsafe-tested-ref.json", unsafe_verdict_ref))],
+            plugin_root,
+            "forbidden source-identity material",
+        )
 
         confirmed_failure_cases = [
             ("fresh-container-false", ("environment", "fresh_container"), False, "fresh_container=true"),
@@ -2915,6 +4452,25 @@ def exercise_independent_verifier(plugin_root: Path) -> None:
             raise SystemExit("FAILED: no-execute verifier did not produce unverified oracle mismatch")
         if not (workspace / "verifier/CAND-0001/runs/no-execute/verifier.log").exists():
             raise SystemExit("FAILED: verifier run directory was not created under workspace")
+
+        out_allow_execute = verdict_path(suffix="allow-execute-blocked.json")
+        allow_execute_output = run_verify(
+            target,
+            candidate,
+            out_allow_execute,
+            run_id="allow-execute-blocked",
+            extra=["--allow-execute"],
+        )
+        if "verdict=blocked" not in allow_execute_output:
+            raise SystemExit("FAILED: R1 --allow-execute did not remain explicitly blocked")
+        allow_execute_doc = assert_valid_verdict(candidate, out_allow_execute)
+        if (
+            allow_execute_doc["verdict"] != "blocked"
+            or "Docker execution is not implemented in R1 verifier" not in allow_execute_doc.get("reason", "")
+        ):
+            raise SystemExit("FAILED: R1 --allow-execute boundary changed")
+        if docker_marker.exists():
+            raise SystemExit("FAILED: R1 --allow-execute invoked Docker")
 
         manual_target = write_target("manual-target.yaml", valid_target_contract_yaml(runtime_type="manual-blocked"))
         manual_candidate_doc = candidate_doc()
@@ -3087,9 +4643,9 @@ def exercise_disposition_integration(plugin_root: Path) -> None:
                     "--workspace",
                     str(workspace),
                     "--candidate",
-                    str(candidate),
+                    str(candidate.relative_to(workspace)),
                     "--verdict",
-                    str(verdict),
+                    str(verdict.relative_to(workspace)),
                     "--update-from-verdict",
                 ],
                 plugin_root,
@@ -3257,9 +4813,9 @@ def exercise_contract_fixture_chain(plugin_root: Path) -> None:
                     "--workspace",
                     str(workspace),
                     "--candidate",
-                    str(candidate_path),
+                    str(candidate_path.relative_to(workspace)),
                     "--verdict",
-                    str(verdict_path),
+                    str(verdict_path.relative_to(workspace)),
                     "--update-from-verdict",
                 ],
                 plugin_root,
@@ -4937,6 +6493,8 @@ def run_sandbox_preflight(
     *,
     expected_returncode: int,
 ) -> dict:
+    status_path = workspace / "runtime/sandbox-preflight-status.json"
+    status_before = status_path.read_bytes() if status_path.exists() else None
     output = run_capture_with_env(
         [
             sys.executable,
@@ -4959,9 +6517,12 @@ def run_sandbox_preflight(
     for key in ("checked_at", "ok", "status", "findings", "labels", "resume_step", "review_only"):
         if key not in status:
             raise SystemExit(f"FAILED: sandbox preflight missing status field: {key}")
-    status_path = workspace / "runtime/sandbox-preflight-status.json"
-    if not status_path.exists():
+    if expected_returncode == 0 and not status_path.exists():
         raise SystemExit("FAILED: sandbox preflight did not write runtime/sandbox-preflight-status.json")
+    if expected_returncode != 0:
+        status_after = status_path.read_bytes() if status_path.exists() else None
+        if status_after != status_before:
+            raise SystemExit("FAILED: rejected sandbox preflight wrote runtime status before Docker execution")
     return status
 
 
@@ -5064,6 +6625,7 @@ def exercise_sandbox_preflight(script_path: Path, workspace: Path, plugin_root: 
         "services:\n"
         "  attacker:\n"
         "    image: alpine:3.20\n"
+        "    privileged: false\n"
         "    labels:\n"
         "      org.zhulong.managed: \"true\"\n"
         "    cap_drop:\n"
@@ -5084,6 +6646,44 @@ def exercise_sandbox_preflight(script_path: Path, workspace: Path, plugin_root: 
 
 
 def exercise_runner_sandbox_rejection(run_script: Path, workspace: Path, plugin_root: Path) -> None:
+    writer = plugin_root / "scripts/write_audit_event.py"
+
+    def write_transition(name: str, stage: str, transition_kind: str) -> None:
+        run(
+            [
+                sys.executable,
+                str(writer),
+                "--workspace-dir",
+                str(workspace),
+                "--event",
+                name,
+                "--stage",
+                stage,
+                "--status",
+                "running",
+                "--transition-kind",
+                transition_kind,
+                "--message",
+                "Seed the bounded sandbox-rejection policy path.",
+                "--accept-current-revision",
+            ],
+            plugin_root,
+        )
+
+    state_path = workspace / "stage-status.json"
+    if not state_path.exists():
+        write_transition("sandbox_policy_started", "intake", "start")
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    if state.get("stage") != "intake" or state.get("status") != "running":
+        raise SystemExit("FAILED: sandbox-rejection selftest requires an intake/running workspace")
+    for name, stage in [
+        ("sandbox_recon_started", "recon"),
+        ("sandbox_candidates_started", "candidate_generation"),
+        ("sandbox_triage_started", "triage"),
+        ("sandbox_verification_started", "verification"),
+    ]:
+        write_transition(name, stage, "advance")
+
     fakebin = workspace / "fakebin"
     fakebin.mkdir(parents=True, exist_ok=True)
     docker_log = workspace / "runtime/docker-called.log"
@@ -5095,6 +6695,9 @@ def exercise_runner_sandbox_rejection(run_script: Path, workspace: Path, plugin_
         encoding="utf-8",
     )
     fake_docker.chmod(0o755)
+
+    status_path = workspace / "runtime/sandbox-preflight-status.json"
+    status_before = status_path.read_bytes() if status_path.exists() else None
 
     output = run_capture_with_env(
         [
@@ -5128,13 +6731,477 @@ def exercise_runner_sandbox_rejection(run_script: Path, workspace: Path, plugin_
     if docker_log.exists():
         raise SystemExit("FAILED: run_verification_case.sh called docker after sandbox preflight rejection")
     result_path = workspace / "evidence/unsafe-host-network/verification-result.json"
-    result = json.loads(result_path.read_text(encoding="utf-8"))
-    if result.get("status") != "rejected_unsafe_sandbox":
-        raise SystemExit(f"FAILED: runner result did not persist rejected_unsafe_sandbox: {result}")
-    status_path = workspace / "runtime/sandbox-preflight-status.json"
-    status = json.loads(status_path.read_text(encoding="utf-8"))
-    if status.get("status") != "rejected_unsafe_sandbox" or not status.get("review_only"):
-        raise SystemExit(f"FAILED: runtime sandbox status is not rejected review-only: {status}")
+    if result_path.exists():
+        raise SystemExit("FAILED: rejected sandbox preflight created wrapper evidence before Docker execution")
+    status_after = status_path.read_bytes() if status_path.exists() else None
+    if status_after != status_before:
+        raise SystemExit("FAILED: rejected runner changed the prior runtime sandbox status")
+
+
+def exercise_verification_wrapper_state_boundary(plugin_root: Path, temp_root: Path) -> None:
+    wrapper = plugin_root / "scripts/run_verification_case.sh"
+    writer = plugin_root / "scripts/write_audit_event.py"
+    matrix_root = temp_root / "verification-wrapper-state-boundary"
+    matrix_root.mkdir(parents=True, exist_ok=True)
+
+    def authority_fingerprint(workspace: Path) -> dict[str, object]:
+        result: dict[str, object] = {}
+        for name in ("audit-events.jsonl", "stage-status.json"):
+            path = workspace / name
+            if path.is_symlink():
+                result[name] = {
+                    "kind": "symlink",
+                    "target": os.readlink(path),
+                    "target_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                }
+            elif path.exists():
+                result[name] = {
+                    "kind": "regular",
+                    "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                }
+            else:
+                result[name] = {"kind": "missing"}
+        return result
+
+    def write_transition(
+        workspace: Path,
+        event: str,
+        stage: str,
+        transition_kind: str,
+        *,
+        status: str = "running",
+        extra: list[str] | None = None,
+    ) -> None:
+        command = [
+            sys.executable,
+            str(writer),
+            "--workspace-dir",
+            str(workspace),
+            "--event",
+            event,
+            "--stage",
+            stage,
+            "--status",
+            status,
+            "--transition-kind",
+            transition_kind,
+            "--message",
+            "Seed the verification-wrapper state-boundary selftest.",
+            "--accept-current-revision",
+        ]
+        if extra:
+            command.extend(extra)
+        run(command, plugin_root)
+
+    def make_workspace(name: str, stage: str | None, status: str = "running") -> Path:
+        workspace = matrix_root / name
+        workspace.mkdir(parents=True, exist_ok=True)
+        (workspace / "asr-config.json").write_text('{"schema_version":1}\n', encoding="utf-8")
+        (workspace / "audit-log.md").write_text("# Audit Log\n", encoding="utf-8")
+        if stage is None:
+            return workspace
+        event_prefix = name.replace("-", "_")
+        write_transition(workspace, f"{event_prefix}_intake", "intake", "start")
+        ordered = ["recon", "candidate_generation", "triage", "verification"]
+        for next_stage in ordered:
+            if ordered.index(next_stage) > ordered.index(stage):
+                break
+            write_transition(workspace, f"{event_prefix}_{next_stage}", next_stage, "advance")
+        if status == "completed":
+            write_transition(workspace, f"{event_prefix}_completed", stage, "complete", status="completed")
+        elif status == "blocked":
+            write_transition(
+                workspace,
+                f"{event_prefix}_blocked",
+                stage,
+                "block",
+                status="blocked",
+                extra=[
+                    "--blocker",
+                    "A verification prerequisite is unavailable.",
+                    "--resume-step",
+                    "Resolve the prerequisite and explicitly retry this verification case.",
+                ],
+            )
+        return workspace
+
+    def install_fake_docker(workspace: Path) -> tuple[Path, Path]:
+        fakebin = workspace / "fakebin"
+        fakebin.mkdir(exist_ok=True)
+        call_log = workspace / "docker-cli.log"
+        poc_log = workspace / "poc-command.log"
+        fake_docker = fakebin / "docker"
+        fake_docker.write_text(
+            "#!/usr/bin/env bash\n"
+            "printf '%s\\n' \"$*\" >> \"$ZHULONG_DOCKER_CALL_LOG\"\n"
+            "if [[ \"$1\" == \"info\" && \"$ZHULONG_STUB_BEHAVIOR\" == \"drift_before\" ]]; then\n"
+            "  python3 \"$ZHULONG_WRITER\" --workspace-dir \"$ZHULONG_TEST_WORKSPACE\" "
+            "--event concurrent_stage_drift --stage severity_escalation --status running "
+            "--transition-kind advance --from-stage verification --from-status running "
+            "--message 'Concurrent writer moved the stage.' --accept-current-revision >/dev/null\n"
+            "fi\n"
+            "if [[ \"$1\" == \"info\" && \"$ZHULONG_STUB_BEHAVIOR\" == \"writer_missing\" ]]; then\n"
+            "  mv \"$ZHULONG_TEST_WRITER\" \"$ZHULONG_TEST_WRITER.hidden\"\n"
+            "fi\n"
+            "if [[ \"$1\" == \"info\" && \"$ZHULONG_STUB_BEHAVIOR\" == \"blocked\" ]]; then exit 1; fi\n"
+            "if [[ \"$1\" == \"run\" ]]; then\n"
+            "  printf 'poc-command\\n' >> \"$ZHULONG_POC_COMMAND_LOG\"\n"
+            "  evidence=''\n"
+            "  for arg in \"$@\"; do\n"
+            "    case \"$arg\" in\n"
+            "      type=bind,source=*,target=/workspace/evidence*) evidence=\"${arg#type=bind,source=}\"; evidence=\"${evidence%%,target=/workspace/evidence*}\" ;;\n"
+            "    esac\n"
+            "  done\n"
+            "  case \"$ZHULONG_STUB_BEHAVIOR\" in\n"
+            "    stdout_symlink) rm -f \"$evidence/stdout.log\"; ln -s \"$ZHULONG_STUB_MARKER\" \"$evidence/stdout.log\" ;;\n"
+            "    stdout_hardlink) rm -f \"$evidence/stdout.log\"; ln \"$ZHULONG_STUB_MARKER\" \"$evidence/stdout.log\" ;;\n"
+            "    stdout_fifo) rm -f \"$evidence/stdout.log\"; mkfifo \"$evidence/stdout.log\" ;;\n"
+            "    stdout_dir) rm -f \"$evidence/stdout.log\"; mkdir \"$evidence/stdout.log\" ;;\n"
+            "    result_symlink) rm -f \"$evidence/verification-result.json\"; ln -s ../../stage-status.json \"$evidence/verification-result.json\" ;;\n"
+            "    ancestor_symlink) mv \"$evidence\" \"$evidence.real\"; ln -s \"$(basename \"$evidence.real\")\" \"$evidence\" ;;\n"
+            "    running_replace) (sleep 0.05; rm -f \"$evidence/stdout.log\"; ln -s \"$ZHULONG_STUB_MARKER\" \"$evidence/stdout.log\") & ;;\n"
+            "  esac\n"
+            "  if [[ \"$ZHULONG_STUB_BEHAVIOR\" == \"drift_after\" ]]; then\n"
+            "    python3 \"$ZHULONG_WRITER\" --workspace-dir \"$ZHULONG_TEST_WORKSPACE\" "
+            "--event concurrent_postrun_drift --stage severity_escalation --status running "
+            "--transition-kind advance --from-stage verification --from-status running "
+            "--message 'Concurrent writer moved the stage after Docker.' --accept-current-revision >/dev/null\n"
+            "  fi\n"
+            "  if [[ \"$ZHULONG_STUB_BEHAVIOR\" == \"not_reproduced\" ]]; then printf 'no-match\\n'; exit 0; fi\n"
+            "  if [[ \"$ZHULONG_STUB_BEHAVIOR\" == \"timeout\" ]]; then exit 124; fi\n"
+            "  printf 'ZHULONG_STUB_ORACLE\\n'\n"
+            "fi\n"
+            "exit 0\n",
+            encoding="utf-8",
+        )
+        fake_docker.chmod(0o755)
+        return call_log, poc_log
+
+    def invoke(
+        workspace: Path,
+        case_id: str,
+        *,
+        behavior: str = "confirmed",
+        run_script: Path = wrapper,
+        test_writer: Path | None = None,
+        evidence_dir: Path | None = None,
+    ) -> tuple[subprocess.CompletedProcess[str], dict[str, object], list[str], list[str]]:
+        call_log, poc_log = install_fake_docker(workspace)
+        fakebin = workspace / "fakebin"
+        marker = workspace / "stub-external-marker.txt"
+        marker.write_text("marker-before\n", encoding="utf-8")
+        environment = {
+            **os.environ,
+            "PATH": f"{fakebin}{os.pathsep}{os.environ.get('PATH', '')}",
+            "ZHULONG_DOCKER_CALL_LOG": str(call_log),
+            "ZHULONG_POC_COMMAND_LOG": str(poc_log),
+            "ZHULONG_STUB_BEHAVIOR": behavior,
+            "ZHULONG_WRITER": str(writer),
+            "ZHULONG_TEST_WORKSPACE": str(workspace),
+            "ZHULONG_TEST_WRITER": str(test_writer or writer),
+            "ZHULONG_STUB_MARKER": str(marker),
+        }
+        command = [
+            "bash",
+            str(run_script),
+            "--workspace-dir",
+            str(workspace),
+            "--case-id",
+            case_id,
+            "--mode",
+            "docker-run",
+            "--image",
+            "stub:local",
+            "--timeout-seconds",
+            "10",
+            "--expected-oracle",
+            "ZHULONG_STUB_ORACLE",
+        ]
+        if evidence_dir is not None:
+            command.extend(["--evidence-dir", str(evidence_dir)])
+        command.extend(["--", "true"])
+        proc = subprocess.run(
+            command,
+            cwd=plugin_root,
+            env=environment,
+            capture_output=True,
+            text=True,
+        )
+        result_path = workspace / "evidence" / case_id / "verification-result.json"
+        result = json.loads(result_path.read_text(encoding="utf-8")) if result_path.exists() else {}
+        docker_calls = call_log.read_text(encoding="utf-8").splitlines() if call_log.exists() else []
+        poc_calls = poc_log.read_text(encoding="utf-8").splitlines() if poc_log.exists() else []
+        return proc, result, docker_calls, poc_calls
+
+    def event_names(workspace: Path) -> list[str]:
+        return [
+            json.loads(line)["event_name"]
+            for line in (workspace / "audit-events.jsonl").read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+
+    for name, stage, status in (
+        ("wrong-candidate", "candidate_generation", "running"),
+        ("wrong-triage-running", "triage", "running"),
+        ("wrong-triage-completed", "triage", "completed"),
+        ("wrong-verification-completed", "verification", "completed"),
+    ):
+        workspace = make_workspace(name, stage, status)
+        before = authority_fingerprint(workspace)
+        proc, result, docker_calls, poc_calls = invoke(workspace, name)
+        if proc.returncode == 0 or result.get("status") != "blocked_state_precondition":
+            raise SystemExit(f"FAILED: wrong-stage case did not fail closed: {name}: {proc.stdout}{proc.stderr}")
+        if result.get("code") != "VERIFICATION_STATE_PRECONDITION_FAILED":
+            raise SystemExit(f"FAILED: wrong-stage case did not use stable precondition code: {name}")
+        if result.get("docker_invoked") or result.get("poc_command_invoked") or result.get("oracle_matched"):
+            raise SystemExit(f"FAILED: wrong-stage case claimed Docker or oracle execution: {name}")
+        if docker_calls or poc_calls:
+            raise SystemExit(f"FAILED: wrong-stage case invoked stubbed Docker: {name}: {docker_calls}")
+        if authority_fingerprint(workspace) != before:
+            raise SystemExit(f"FAILED: wrong-stage case mutated journal/state: {name}")
+
+    confirmed_workspace = make_workspace("valid-confirmed", "verification")
+    proc, result, docker_calls, poc_calls = invoke(confirmed_workspace, "valid-confirmed")
+    if proc.returncode != 0 or result.get("status") != "confirmed_in_docker":
+        raise SystemExit(f"FAILED: verification/running confirmed path failed: {proc.stdout}{proc.stderr}")
+    if event_names(confirmed_workspace)[-2:] != ["verification_case_started", "verification_case_completed"]:
+        raise SystemExit("FAILED: confirmed path did not commit start then result observations")
+    if len(poc_calls) != 1 or not any(call.startswith("run ") for call in docker_calls):
+        raise SystemExit("FAILED: confirmed path did not invoke exactly one PoC container command")
+
+    for attack in ("stdout_symlink", "stdout_hardlink", "stdout_fifo", "stdout_dir", "result_symlink", "ancestor_symlink", "running_replace"):
+        attack_workspace = make_workspace(f"attack-{attack}", "verification")
+        before = authority_fingerprint(attack_workspace)
+        before_events = event_names(attack_workspace)
+        proc, result, _docker_calls, _poc_calls = invoke(attack_workspace, f"attack-{attack}", behavior=attack)
+        if proc.returncode == 0:
+            raise SystemExit(f"FAILED: malicious Docker stub unexpectedly confirmed {attack}")
+        if result and result.get("status") == "confirmed_in_docker":
+            raise SystemExit(f"FAILED: malicious Docker stub influenced confirmed result for {attack}: {result}")
+        after_events = event_names(attack_workspace)
+        if after_events != before_events and after_events != before_events + ["verification_case_started"]:
+            raise SystemExit(f"FAILED: malicious Docker stub appended an unauthorized authority event for {attack}: {after_events}")
+        if json.loads((attack_workspace / "stage-status.json").read_text(encoding="utf-8")).get("status") != "running":
+            raise SystemExit(f"FAILED: malicious Docker stub changed workflow authority for {attack}")
+        marker = attack_workspace / "stub-external-marker.txt"
+        if marker.read_text(encoding="utf-8") != "marker-before\n":
+            raise SystemExit(f"FAILED: malicious Docker stub changed external marker for {attack}")
+
+    rejected_workspace = make_workspace("valid-rejected", "verification")
+    proc, result, _, poc_calls = invoke(rejected_workspace, "valid-rejected", behavior="not_reproduced")
+    if proc.returncode == 0 or result.get("status") != "rejected_not_reproducible":
+        raise SystemExit("FAILED: not-reproduced path did not preserve the Docker evidence status")
+    if event_names(rejected_workspace)[-2:] != ["verification_case_started", "verification_case_rejected"]:
+        raise SystemExit("FAILED: not-reproduced path did not use same-stage observations")
+    if len(poc_calls) != 1:
+        raise SystemExit("FAILED: not-reproduced path did not invoke exactly one PoC command")
+
+    blocked_workspace = make_workspace("valid-blocked", "verification")
+    proc, result, docker_calls, poc_calls = invoke(blocked_workspace, "valid-blocked", behavior="blocked")
+    state = json.loads((blocked_workspace / "stage-status.json").read_text(encoding="utf-8"))
+    last_event = json.loads((blocked_workspace / "audit-events.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+    if proc.returncode == 0 or result.get("status") != "blocked_docker_unavailable":
+        raise SystemExit("FAILED: blocked verification result did not fail closed")
+    if last_event.get("transition_kind") != "block" or state.get("stage") != "verification" or state.get("status") != "blocked":
+        raise SystemExit("FAILED: blocked result did not use verification/running -> verification/blocked")
+    if len(docker_calls) != 1 or poc_calls:
+        raise SystemExit("FAILED: Docker-unavailable result crossed the PoC boundary")
+
+    resume_workspace = make_workspace("valid-resume", "verification", "blocked")
+    proc, result, _, poc_calls = invoke(resume_workspace, "valid-resume")
+    if proc.returncode != 0 or result.get("status") != "confirmed_in_docker":
+        raise SystemExit("FAILED: explicit verification/blocked retry did not resume and complete")
+    if event_names(resume_workspace)[-3:] != [
+        "verification_case_resumed",
+        "verification_case_started",
+        "verification_case_completed",
+    ]:
+        raise SystemExit("FAILED: explicit blocked retry event sequence is incorrect")
+    if len(poc_calls) != 1:
+        raise SystemExit("FAILED: explicit blocked retry did not invoke exactly one PoC command")
+
+    invalid_workspaces: list[tuple[str, Path]] = []
+    missing_state = make_workspace("missing-state", "verification")
+    (missing_state / "stage-status.json").unlink()
+    invalid_workspaces.append(("missing-state", missing_state))
+
+    stale_state = make_workspace("stale-state", "verification")
+    stale_doc = json.loads((stale_state / "stage-status.json").read_text(encoding="utf-8"))
+    stale_doc["last_event_name"] = "stale_view"
+    (stale_state / "stage-status.json").write_text(json.dumps(stale_doc, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    invalid_workspaces.append(("stale-state", stale_state))
+
+    corrupt_journal = make_workspace("corrupt-journal", "verification")
+    with (corrupt_journal / "audit-events.jsonl").open("a", encoding="utf-8") as stream:
+        stream.write("{not-json}\n")
+    invalid_workspaces.append(("corrupt-journal", corrupt_journal))
+
+    journal_symlink = make_workspace("journal-symlink", "verification")
+    journal_target = journal_symlink / "journal-target"
+    (journal_symlink / "audit-events.jsonl").rename(journal_target)
+    (journal_symlink / "audit-events.jsonl").symlink_to(journal_target.name)
+    invalid_workspaces.append(("journal-symlink", journal_symlink))
+
+    state_symlink = make_workspace("state-symlink", "verification")
+    state_target = state_symlink / "state-target"
+    (state_symlink / "stage-status.json").rename(state_target)
+    (state_symlink / "stage-status.json").symlink_to(state_target.name)
+    invalid_workspaces.append(("state-symlink", state_symlink))
+
+    protocol_mismatch = make_workspace("protocol-mismatch", "verification")
+    legacy_state = {
+        "schema_version": 1,
+        "plugin": "zhulong",
+        "plugin_version": "selftest",
+        "stage": "candidate_verifying",
+        "status": "running",
+        "last_event_at": "2026-07-31T00:00:00Z",
+        "blocker": None,
+        "resume_step": None,
+        "workspace": "<workspace>",
+        "target_repo": "<repo>",
+        "last_event": "legacy",
+        "last_message": "legacy",
+    }
+    (protocol_mismatch / "stage-status.json").write_text(
+        json.dumps(legacy_state, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    invalid_workspaces.append(("protocol-mismatch", protocol_mismatch))
+
+    for name, workspace in invalid_workspaces:
+        before = authority_fingerprint(workspace)
+        proc, result, docker_calls, poc_calls = invoke(workspace, name)
+        if proc.returncode == 0 or result.get("status") != "blocked_state_precondition":
+            raise SystemExit(f"FAILED: invalid R2 authority case did not reject: {name}")
+        if docker_calls or poc_calls:
+            raise SystemExit(f"FAILED: invalid R2 authority case invoked Docker: {name}")
+        if authority_fingerprint(workspace) != before:
+            raise SystemExit(f"FAILED: invalid R2 authority case mutated authority bytes: {name}")
+
+    drift_workspace = make_workspace("concurrent-drift-before", "verification")
+    proc, result, docker_calls, poc_calls = invoke(drift_workspace, "concurrent-drift-before", behavior="drift_before")
+    if proc.returncode == 0 or result.get("status") != "blocked_authority_event_commit":
+        raise SystemExit("FAILED: concurrent pre-start stage drift did not fail closed")
+    if poc_calls or any(call.startswith("run ") for call in docker_calls):
+        raise SystemExit("FAILED: concurrent pre-start stage drift allowed the PoC command")
+    if "verification_case_started" in event_names(drift_workspace):
+        raise SystemExit("FAILED: concurrent pre-start stage drift appended a start event")
+
+    isolated = matrix_root / "isolated-layout"
+    shutil.copytree(plugin_root / "scripts", isolated / "scripts")
+    shutil.copytree(plugin_root / "assets", isolated / "assets")
+    writer_failure = make_workspace("start-writer-failure", "verification")
+    isolated_writer = isolated / "scripts/write_audit_event.py"
+    proc, result, docker_calls, poc_calls = invoke(
+        writer_failure,
+        "start-writer-failure",
+        behavior="writer_missing",
+        run_script=isolated / "scripts/run_verification_case.sh",
+        test_writer=isolated_writer,
+    )
+    if proc.returncode == 0 or result.get("status") != "blocked_authority_event_commit":
+        raise SystemExit(
+            "FAILED: start-event writer failure did not fail closed: "
+            f"exit={proc.returncode} result={result} stdout={proc.stdout} stderr={proc.stderr}"
+        )
+    if poc_calls or any(call.startswith("run ") for call in docker_calls):
+        raise SystemExit("FAILED: start-event writer failure allowed the PoC command")
+
+    post_drift = make_workspace("concurrent-drift-after", "verification")
+    proc, result, _, poc_calls = invoke(post_drift, "concurrent-drift-after", behavior="drift_after")
+    if proc.returncode == 0 or result.get("wrapper_status") != "blocked_authority_event_commit":
+        raise SystemExit("FAILED: post-run authority commit failure was reported as complete")
+    if result.get("status") != "confirmed_in_docker" or not result.get("oracle_matched") or len(poc_calls) != 1:
+        raise SystemExit("FAILED: post-run authority failure did not preserve the Docker evidence truth")
+    if result.get("authority_event_committed") is not False:
+        raise SystemExit("FAILED: post-run authority failure claimed an event commit")
+
+    legacy_workspace = make_workspace("legacy-r1", None)
+    legacy_event = {
+        "ts": "2026-07-31T00:00:00Z",
+        "event": "legacy_seed",
+        "stage": "candidate_verifying",
+        "status": "running",
+        "message": "legacy baseline",
+        "details": {},
+    }
+    (legacy_workspace / "audit-events.jsonl").write_text(json.dumps(legacy_event, sort_keys=True) + "\n", encoding="utf-8")
+    (legacy_workspace / "stage-status.json").write_text(
+        json.dumps(legacy_state, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    legacy_before = authority_fingerprint(legacy_workspace)
+    proc, result, docker_calls, poc_calls = invoke(legacy_workspace, "legacy-r1")
+    if proc.returncode != 0 or result.get("status") != "confirmed_in_docker":
+        raise SystemExit("FAILED: R1 wrapper compatibility changed")
+    if authority_fingerprint(legacy_workspace) == legacy_before or len(docker_calls) != 3 or len(poc_calls) != 1:
+        raise SystemExit("FAILED: R1 wrapper baseline mutation/execution behavior changed")
+
+    no_state = make_workspace("no-state", None)
+    no_state_before = authority_fingerprint(no_state)
+    proc, result, docker_calls, poc_calls = invoke(no_state, "no-state")
+    if proc.returncode == 0 or result.get("status") != "blocked_state_precondition":
+        raise SystemExit("FAILED: no-state wrapper did not fail closed before execution")
+    if (
+        result.get("code") != "VERIFICATION_STATE_PRECONDITION_FAILED"
+        or result.get("state_issue_code") != "AUTHORITATIVE_STATE_MISSING"
+    ):
+        raise SystemExit("FAILED: no-state path did not expose the stable missing-authority precondition")
+    if authority_fingerprint(no_state) != no_state_before:
+        raise SystemExit("FAILED: no-state path silently created or upgraded audit authority")
+    if docker_calls or poc_calls:
+        raise SystemExit("FAILED: no-state wrapper crossed the Docker or PoC boundary")
+
+    for index, invalid_case_id in enumerate((".hidden", "..", "bad case", "case/slash", r"case\\slash"), start=1):
+        invalid_case_workspace = make_workspace(f"invalid-case-id-{index}", None)
+        before = authority_fingerprint(invalid_case_workspace)
+        proc, _result, docker_calls, poc_calls = invoke(invalid_case_workspace, invalid_case_id)
+        if proc.returncode != 2:
+            raise SystemExit(f"FAILED: unsafe case ID was not rejected before execution: {invalid_case_id!r}")
+        if docker_calls or poc_calls:
+            raise SystemExit(f"FAILED: unsafe case ID crossed the Docker or PoC boundary: {invalid_case_id!r}")
+        if authority_fingerprint(invalid_case_workspace) != before:
+            raise SystemExit(f"FAILED: unsafe case ID mutated authority bytes: {invalid_case_id!r}")
+        if (invalid_case_workspace / "evidence").exists():
+            raise SystemExit(f"FAILED: unsafe case ID created an evidence directory: {invalid_case_id!r}")
+
+    custom_evidence_workspace = make_workspace("custom-evidence-dir", None)
+    custom_evidence_before = authority_fingerprint(custom_evidence_workspace)
+    proc, _result, docker_calls, poc_calls = invoke(
+        custom_evidence_workspace,
+        "valid-case",
+        evidence_dir=custom_evidence_workspace / "evidence" / "other-case",
+    )
+    if proc.returncode != 2 or docker_calls or poc_calls:
+        raise SystemExit("FAILED: custom evidence directory outside the case boundary was accepted")
+    if authority_fingerprint(custom_evidence_workspace) != custom_evidence_before:
+        raise SystemExit("FAILED: rejected custom evidence directory mutated authority bytes")
+
+    external_evidence = matrix_root / "external-evidence-target"
+    external_evidence.mkdir(parents=True, exist_ok=True)
+    symlink_evidence_workspace = make_workspace("symlink-evidence-dir", None)
+    (symlink_evidence_workspace / "evidence").symlink_to(external_evidence, target_is_directory=True)
+    symlink_before = authority_fingerprint(symlink_evidence_workspace)
+    proc, _result, docker_calls, poc_calls = invoke(symlink_evidence_workspace, "valid-case")
+    if proc.returncode != 2 or docker_calls or poc_calls:
+        raise SystemExit("FAILED: symlink evidence ancestor was accepted")
+    if authority_fingerprint(symlink_evidence_workspace) != symlink_before:
+        raise SystemExit("FAILED: rejected symlink evidence directory mutated authority bytes")
+
+    for workspace in matrix_root.iterdir():
+        if not workspace.is_dir():
+            continue
+        forbidden = [
+            workspace / "audit-disposition.json",
+            workspace / "confirmed",
+            workspace / "finalization-result.json",
+            workspace / "verifier",
+        ]
+        if any(path.exists() for path in forbidden):
+            raise SystemExit(f"FAILED: wrapper state-boundary selftest created authority side effects: {workspace.name}")
+
+    print("VERIFICATION WRAPPER STATE BOUNDARY SELFTEST PASSED")
 
 
 def exercise_sandbox_ledger_guard(workspace: Path, plugin_root: Path) -> None:
@@ -5164,6 +7231,55 @@ def exercise_sandbox_ledger_guard(workspace: Path, plugin_root: Path) -> None:
         raise SystemExit(f"FAILED: rejected_unsafe_sandbox entered confirmed ledger state: {matches}")
     if not any(item.get("state") in {"blocked", "unverified"} for item in matches):
         raise SystemExit(f"FAILED: rejected_unsafe_sandbox must stay blocked/unverified: {matches}")
+
+
+def exercise_structured_blocker_cli(plugin_root: Path) -> None:
+    """Exercise structured blocker precedence and same-identity recovery through a subprocess."""
+    with tempfile.TemporaryDirectory(prefix="zhulong-structured-blocker-") as tempdir:
+        workspace = Path(tempdir) / "workspace"
+        result_path = workspace / "evidence/C1/verification-result.json"
+        result_path.parent.mkdir(parents=True)
+        blocked = {
+            "schema_version": 1,
+            "case_id": "C1",
+            "status": "blocked_missing_image",
+            "classification_reason": "fixture blocker",
+            "authority_event_committed": True,
+        }
+        result_path.write_text(json.dumps(blocked, sort_keys=True) + "\n", encoding="utf-8")
+
+        probe = (
+            "import json,sys; sys.path.insert(0, sys.argv[2]); "
+            "from blocked_verification import detect_blocked_verification; "
+            "print(json.dumps(detect_blocked_verification(__import__('pathlib').Path(sys.argv[1])), sort_keys=True))"
+        )
+        blocked_proc = subprocess.run(
+            [sys.executable, "-c", probe, str(workspace), str(plugin_root / "scripts")],
+            cwd=plugin_root,
+            capture_output=True,
+            text=True,
+        )
+        if blocked_proc.returncode != 0:
+            raise SystemExit(f"FAILED: structured blocker subprocess failed: {blocked_proc.stderr}")
+        blocked_payload = json.loads(blocked_proc.stdout)
+        if blocked_payload.get("blocked") is not True or blocked_payload.get("structured_fact_count", 0) < 1:
+            raise SystemExit(f"FAILED: structured blocked_missing_image was not authoritative: {blocked_payload}")
+
+        resolved = dict(blocked)
+        resolved.update({"status": "confirmed_in_docker", "oracle_matched": True})
+        result_path.write_text(json.dumps(resolved, sort_keys=True) + "\n", encoding="utf-8")
+        resolved_proc = subprocess.run(
+            [sys.executable, "-c", probe, str(workspace), str(plugin_root / "scripts")],
+            cwd=plugin_root,
+            capture_output=True,
+            text=True,
+        )
+        if resolved_proc.returncode != 0:
+            raise SystemExit(f"FAILED: structured blocker recovery subprocess failed: {resolved_proc.stderr}")
+        resolved_payload = json.loads(resolved_proc.stdout)
+        if resolved_payload.get("blocked") is not False or "case:C1" not in resolved_payload.get("resolved_identities", []):
+            raise SystemExit(f"FAILED: same-identity confirmed result did not clear blocker: {resolved_payload}")
+    print("STRUCTURED BLOCKER SELFTEST PASSED: blocked facts first, same-identity recovery only")
 
 
 def exercise_recording_evidence_gate(plugin_root: Path) -> None:
@@ -5826,6 +7942,2784 @@ def exercise_recording_evidence_gate(plugin_root: Path) -> None:
         print("RECORDING SELFTEST PASSED: identity/media/screenshot/transaction and semantic checkpoint gates")
 
 
+def exercise_audit_state_protocol_r2(plugin_root: Path) -> None:
+    """Exercise the R2 protocol as a read-only, schema-shaped contract."""
+
+    validator = plugin_root / "scripts/validate_audit_protocol.py"
+    fixture_root = plugin_root / "assets/fixtures/audit-state-protocol-r2"
+    schemas = {
+        "audit-event.schema.json": (
+            "https://github.com/Torchbearer127/zhulong/blob/main/assets/schemas/audit-event.schema.json"
+        ),
+        "stage-status.schema.json": (
+            "https://github.com/Torchbearer127/zhulong/blob/main/assets/schemas/stage-status.schema.json"
+        ),
+    }
+
+    def assert_strict_object_boundaries(value: object, label: str) -> None:
+        if isinstance(value, dict):
+            if value.get("type") == "object" and value.get("additionalProperties") is not False:
+                raise SystemExit(
+                    "FAILED: R2 schema object does not reject unknown properties: " + label
+                )
+            for key, child in value.items():
+                assert_strict_object_boundaries(child, f"{label}.{key}")
+        elif isinstance(value, list):
+            for index, child in enumerate(value):
+                assert_strict_object_boundaries(child, f"{label}[{index}]")
+
+    loaded_schemas: dict[str, dict[str, object]] = {}
+    for filename, expected_id in schemas.items():
+        schema_path = plugin_root / "assets/schemas" / filename
+        try:
+            schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise SystemExit(f"FAILED: R2 schema is not valid JSON: {schema_path}: {exc}") from exc
+        if not isinstance(schema, dict):
+            raise SystemExit(f"FAILED: R2 schema root is not an object: {schema_path}")
+        if schema.get("$schema") != "https://json-schema.org/draft/2020-12/schema":
+            raise SystemExit(f"FAILED: R2 schema has the wrong draft declaration: {schema_path}")
+        if schema.get("$id") != expected_id:
+            raise SystemExit(f"FAILED: R2 schema has the wrong canonical GitHub $id: {schema_path}")
+        assert_strict_object_boundaries(schema, filename)
+        loaded_schemas[filename] = schema
+
+    expected_stages = [
+        "intake",
+        "recon",
+        "candidate_generation",
+        "triage",
+        "verification",
+        "severity_escalation",
+        "variant_discovery",
+        "packaging",
+        "finalization",
+        "recording",
+    ]
+    expected_statuses = ["running", "paused", "blocked", "completed"]
+    expected_transition_kinds = [
+        "start",
+        "observe",
+        "advance",
+        "pause",
+        "block",
+        "resume",
+        "skip",
+        "return",
+        "reopen",
+        "complete",
+    ]
+    expected_event_types = ["stage_transition", "state_observation", "checkpoint", "recovery", "recording"]
+    expected_reason_codes = [
+        "normal_progress",
+        "operator_request",
+        "prerequisite_missing",
+        "policy_or_safety_block",
+        "verification_blocked",
+        "validation_failed",
+        "external_dependency",
+        "manual_review_required",
+        "interrupted",
+        "recovery_requested",
+        "scope_change",
+        "not_applicable",
+    ]
+    required_event_fields = {
+        "schema_version",
+        "seq",
+        "run_id",
+        "ts",
+        "stage",
+        "event_type",
+        "event_name",
+        "from_status",
+        "to_status",
+        "reason_code",
+        "subjects",
+        "evidence_refs",
+        "next_actions",
+        "expected_state_revision",
+        "details",
+    }
+    required_state_fields = {
+        "schema_version",
+        "plugin",
+        "plugin_version",
+        "run_id",
+        "state_revision",
+        "last_event_seq",
+        "event_log_digest",
+        "stage",
+        "status",
+        "last_event_at",
+        "last_event_type",
+        "last_event_name",
+        "blocker",
+        "resume_step",
+    }
+    event_schema = loaded_schemas["audit-event.schema.json"]
+    state_schema = loaded_schemas["stage-status.schema.json"]
+    if not required_event_fields.issubset(set(event_schema.get("required", []))):
+        raise SystemExit("FAILED: R2 event schema is missing required protocol fields")
+    if not required_state_fields.issubset(set(state_schema.get("required", []))):
+        raise SystemExit("FAILED: R2 state schema is missing required protocol fields")
+    for schema_name, schema in loaded_schemas.items():
+        definitions = schema.get("$defs")
+        if not isinstance(definitions, dict):
+            raise SystemExit(f"FAILED: R2 schema has no definitions: {schema_name}")
+        if definitions.get("stage", {}).get("enum") != expected_stages:
+            raise SystemExit(f"FAILED: R2 schema stage enum drifted: {schema_name}")
+        if definitions.get("status", {}).get("enum") != expected_statuses:
+            raise SystemExit(f"FAILED: R2 schema status enum drifted: {schema_name}")
+    event_definitions = event_schema["$defs"]
+    if not isinstance(event_definitions, dict):
+        raise SystemExit("FAILED: R2 event schema definitions are malformed")
+    if event_definitions.get("event_type", {}).get("enum") != expected_event_types:
+        raise SystemExit("FAILED: R2 event schema event_type enum drifted")
+    if event_definitions.get("reason_code", {}).get("enum") != expected_reason_codes:
+        raise SystemExit("FAILED: R2 event schema reason_code enum drifted")
+    if event_definitions.get("transition_kind", {}).get("enum") != expected_transition_kinds:
+        raise SystemExit("FAILED: R2 event schema transition_kind enum drifted")
+
+    protocol_doc = plugin_root / "docs/runner-contracts/audit-state-protocol-r2.md"
+    require_text(protocol_doc, "audit-events.jsonl", "R2 audit journal authority wording")
+    require_text(protocol_doc, "P9.2", "R2 deferred lock/CAS wording")
+    require_text(protocol_doc, "P9.3", "R2 deferred transition graph wording")
+    require_text(protocol_doc, "P9.4", "R2 deferred rebuild/migration wording")
+    for workflow_doc in [
+        plugin_root / "docs/WORKFLOW_DETAILS.md",
+        plugin_root / "docs/WORKFLOW_DETAILS.zh-CN.md",
+    ]:
+        if workflow_doc.exists():
+            require_text(
+                workflow_doc,
+                "runner-contracts/audit-state-protocol-r2.md",
+                f"R2 workflow link in {workflow_doc.name}",
+            )
+
+    def assert_success(
+        flag: str,
+        path: Path,
+        *,
+        expected_mode: str,
+        expected_record_count: int,
+        expected_transition_policy: str | None = None,
+    ) -> None:
+        output = run_capture(
+            [sys.executable, str(validator), flag, str(path), "--json"],
+            plugin_root,
+        )
+        try:
+            payload = json.loads(output)
+        except json.JSONDecodeError as exc:
+            raise SystemExit(f"FAILED: R2 validator did not emit JSON for {path}: {output}") from exc
+        if payload.get("ok") is not True:
+            raise SystemExit(f"FAILED: R2 validator reported unsuccessful fixture: {path}: {payload}")
+        if payload.get("mode") != expected_mode:
+            raise SystemExit(
+                f"FAILED: R2 validator mode mismatch for {path}: "
+                f"expected {expected_mode}, got {payload.get('mode')}"
+            )
+        if payload.get("record_count") != expected_record_count:
+            raise SystemExit(
+                f"FAILED: R2 validator record count mismatch for {path}: "
+                f"expected {expected_record_count}, got {payload.get('record_count')}"
+            )
+        if (
+            expected_transition_policy is not None
+            and payload.get("transition_policy") != expected_transition_policy
+        ):
+            raise SystemExit(
+                f"FAILED: R2 validator transition policy mismatch for {path}: "
+                f"expected {expected_transition_policy}, got {payload.get('transition_policy')}"
+            )
+
+    def assert_failure(
+        flag: str,
+        path: Path,
+        *,
+        expected_code: str,
+        expected_line: int | None = None,
+    ) -> None:
+        proc = subprocess.run(
+            [sys.executable, str(validator), flag, str(path), "--json"],
+            cwd=plugin_root,
+            capture_output=True,
+            text=True,
+        )
+        output = ((proc.stdout or "") + (proc.stderr or "")).strip()
+        if proc.returncode == 0:
+            raise SystemExit(f"FAILED: R2 invalid fixture unexpectedly passed: {path}")
+        try:
+            payload = json.loads(output)
+        except json.JSONDecodeError as exc:
+            raise SystemExit(
+                f"FAILED: R2 validator error was not deterministic JSON for {path}: {output}"
+            ) from exc
+        if payload.get("code") != expected_code:
+            raise SystemExit(
+                f"FAILED: R2 validator error code mismatch for {path}: "
+                f"expected {expected_code}, got {payload.get('code')}"
+            )
+        if expected_line is not None and payload.get("line") != expected_line:
+            raise SystemExit(
+                f"FAILED: R2 validator line mismatch for {path}: "
+                f"expected {expected_line}, got {payload.get('line')}"
+            )
+
+    fixture_snapshot = {
+        path.relative_to(fixture_root).as_posix(): path.read_bytes()
+        for path in sorted(fixture_root.iterdir())
+        if path.is_file()
+    }
+    if set(fixture_snapshot) != {
+        Path(rel).name for rel in AUDIT_STATE_PROTOCOL_R2_FIXTURE_FILES
+    }:
+        raise SystemExit("FAILED: R2 fixture inventory differs from the selftest inventory")
+
+    valid_event = json.loads((fixture_root / "valid-event-r2.json").read_text(encoding="utf-8"))
+    valid_state = json.loads((fixture_root / "valid-state-r2.json").read_text(encoding="utf-8"))
+    for event_field, state_field in [
+        ("run_id", "run_id"),
+        ("seq", "last_event_seq"),
+        ("ts", "last_event_at"),
+        ("event_type", "last_event_type"),
+        ("event_name", "last_event_name"),
+    ]:
+        if valid_event.get(event_field) != valid_state.get(state_field):
+            raise SystemExit(
+                "FAILED: positive R2 state fixture does not match its event fixture: "
+                f"{event_field} != {state_field}"
+            )
+
+    assert_success(
+        "--event",
+        fixture_root / "valid-event-r2.json",
+        expected_mode="r2",
+        expected_record_count=1,
+    )
+    assert_success(
+        "--event",
+        fixture_root / "valid-new-event-r2.json",
+        expected_mode="r2",
+        expected_record_count=1,
+        expected_transition_policy="transition_policy_v1",
+    )
+    assert_success(
+        "--state",
+        fixture_root / "valid-state-r2.json",
+        expected_mode="r2",
+        expected_record_count=1,
+    )
+    assert_success(
+        "--events-jsonl",
+        fixture_root / "valid-events-r2.jsonl",
+        expected_mode="r2",
+        expected_record_count=2,
+        expected_transition_policy="pre_policy_r2",
+    )
+    assert_success(
+        "--events-jsonl",
+        fixture_root / "valid-policy-events-r2.jsonl",
+        expected_mode="r2",
+        expected_record_count=4,
+        expected_transition_policy="transition_policy_v1",
+    )
+    assert_success(
+        "--event",
+        fixture_root / "legacy-event-r1.json",
+        expected_mode="legacy_r1",
+        expected_record_count=1,
+    )
+    assert_success(
+        "--state",
+        fixture_root / "legacy-state-r1.json",
+        expected_mode="legacy_r1",
+        expected_record_count=1,
+    )
+
+    for flag, filename, code, line in [
+        ("--event", "invalid-event-missing-seq.json", "MISSING_REQUIRED_FIELD", None),
+        ("--event", "invalid-event-stage.json", "INVALID_STAGE", None),
+        ("--event", "invalid-event-status.json", "INVALID_STATUS", None),
+        ("--event", "invalid-event-reason-code.json", "INVALID_REASON_CODE", None),
+        ("--event", "invalid-event-absolute-evidence.json", "INVALID_EVIDENCE_REF", None),
+        ("--event", "invalid-event-parent-evidence.json", "INVALID_EVIDENCE_REF", None),
+        ("--event", "invalid-event-file-uri-evidence.json", "INVALID_EVIDENCE_REF", None),
+        ("--event", "invalid-event-https-uri-evidence.json", "INVALID_EVIDENCE_REF", None),
+        ("--event", "invalid-event-unexpected-property.json", "UNEXPECTED_PROPERTY", None),
+        ("--event", "invalid-event-incomplete-transition-metadata.json", "TRANSITION_METADATA_INCOMPLETE", None),
+        ("--event", "invalid-event-unknown-transition-kind.json", "INVALID_TRANSITION_KIND", None),
+        ("--state", "invalid-state-negative-revision.json", "INVALID_STATE_REVISION", None),
+        ("--state", "invalid-state-malformed-digest.json", "INVALID_EVENT_LOG_DIGEST", None),
+        ("--events-jsonl", "invalid-events-zero-seq.jsonl", "INVALID_SEQ", 1),
+        ("--events-jsonl", "invalid-events-duplicate-seq.jsonl", "DUPLICATE_SEQ", 2),
+        ("--events-jsonl", "invalid-events-nonmonotonic-seq.jsonl", "NON_MONOTONIC_SEQ", 2),
+        ("--events-jsonl", "invalid-events-truncated.jsonl", "MALFORMED_JSON", 2),
+        ("--events-jsonl", "invalid-events-seq-gap.jsonl", "JOURNAL_SEQ_GAP", 2),
+        ("--events-jsonl", "invalid-events-revision-chain.jsonl", "JOURNAL_REVISION_CHAIN_MISMATCH", 1),
+        ("--events-jsonl", "invalid-events-run-id-drift.jsonl", "JOURNAL_RUN_ID_DRIFT", 2),
+        ("--events-jsonl", "invalid-events-middle-corruption.jsonl", "MALFORMED_JSON", 2),
+    ]:
+        assert_failure(
+            flag,
+            fixture_root / filename,
+            expected_code=code,
+            expected_line=line,
+        )
+
+    with tempfile.TemporaryDirectory(prefix="zhulong-audit-state-r2-") as temp_dir:
+        temp_root = Path(temp_dir)
+        unsupported_event = json.loads((fixture_root / "valid-event-r2.json").read_text(encoding="utf-8"))
+        unsupported_event["schema_version"] = 9
+        unsupported_event_path = temp_root / "unsupported-event.json"
+        unsupported_event_path.write_text(
+            json.dumps(unsupported_event, ensure_ascii=False, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        assert_failure(
+            "--event",
+            unsupported_event_path,
+            expected_code="SCHEMA_VERSION_UNSUPPORTED",
+        )
+
+        root_array_path = temp_root / "root-array.json"
+        root_array_path.write_text("[]\n", encoding="utf-8")
+        assert_failure("--event", root_array_path, expected_code="ROOT_NOT_OBJECT")
+
+        paused_state = json.loads((fixture_root / "valid-state-r2.json").read_text(encoding="utf-8"))
+        paused_state["status"] = "paused"
+        paused_state_path = temp_root / "paused-without-blocker.json"
+        paused_state_path.write_text(
+            json.dumps(paused_state, ensure_ascii=False, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        assert_failure("--state", paused_state_path, expected_code="MISSING_BLOCKER")
+
+        legacy_journal = temp_root / "legacy-events.jsonl"
+        legacy_record = json.loads((fixture_root / "legacy-event-r1.json").read_text(encoding="utf-8"))
+        legacy_journal.write_text(
+            json.dumps(legacy_record, ensure_ascii=False, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        assert_success(
+            "--events-jsonl",
+            legacy_journal,
+            expected_mode="legacy_r1",
+            expected_record_count=1,
+        )
+        mixed_journal = temp_root / "mixed-events.jsonl"
+        r2_record = json.loads((fixture_root / "valid-event-r2.json").read_text(encoding="utf-8"))
+        mixed_journal.write_text(
+            json.dumps(legacy_record, ensure_ascii=False, sort_keys=True)
+            + "\n"
+            + json.dumps(r2_record, ensure_ascii=False, sort_keys=True)
+            + "\n",
+            encoding="utf-8",
+        )
+        assert_failure(
+            "--events-jsonl",
+            mixed_journal,
+            expected_code="MIXED_JOURNAL_MODE",
+            expected_line=2,
+        )
+
+        finalization_event = json.loads((fixture_root / "valid-event-r2.json").read_text(encoding="utf-8"))
+        finalization_event.update(
+            {
+                "stage": "finalization",
+                "event_type": "stage_transition",
+                "event_name": "finalization_succeeded",
+                "from_status": "running",
+                "to_status": "completed",
+                "expected_state_revision": 9,
+                "next_actions": [],
+                "details": {"summary": "Shape-only finalization fixture; no completion is asserted."},
+            }
+        )
+        no_side_effect_workspace = temp_root / "no-side-effect-workspace"
+        no_side_effect_workspace.mkdir()
+        finalization_event_path = no_side_effect_workspace / "shape-valid-finalization-event-r2.json"
+        finalization_event_path.write_text(
+            json.dumps(finalization_event, ensure_ascii=False, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        assert_success(
+            "--event",
+            finalization_event_path,
+            expected_mode="r2",
+            expected_record_count=1,
+        )
+        for generated in [
+            "audit-events.jsonl",
+            "audit-disposition.json",
+            "stage-status.json",
+            "confirmed",
+            "handoff-summary.md",
+            "SUMMARY.md",
+            "finalization-summary.md",
+        ]:
+            if (no_side_effect_workspace / generated).exists():
+                raise SystemExit(
+                    "FAILED: R2 read-only validator created a completion artifact: " + generated
+                )
+
+        r1_repo = temp_root / "legacy-r1-repo"
+        r1_workspace = r1_repo / "security-research-r1"
+        r1_workspace.mkdir(parents=True)
+        r1_state = json.loads((fixture_root / "legacy-state-r1.json").read_text(encoding="utf-8"))
+        r1_state.update(
+            {
+                "stage": "completed",
+                "status": "completed",
+                "workspace": r1_workspace.name,
+                "target_repo": ".",
+                "last_event": "finalization_succeeded",
+                "last_message": "Legacy finalization claim fixture.",
+            }
+        )
+        r1_event = json.loads((fixture_root / "legacy-event-r1.json").read_text(encoding="utf-8"))
+        r1_event.update(
+            {
+                "event": "finalization_succeeded",
+                "stage": "finalization",
+                "status": "ok",
+                "message": "Legacy finalization claim fixture.",
+                "details": {
+                    "result": "completed_with_confirmed_bundles",
+                    "docker_clean": True,
+                },
+            }
+        )
+        (r1_workspace / "stage-status.json").write_text(
+            json.dumps(r1_state, ensure_ascii=False, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        (r1_workspace / "audit-events.jsonl").write_text(
+            json.dumps(r1_event, ensure_ascii=False, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        run_expect_fail(
+            [
+                sys.executable,
+                str(plugin_root / "scripts/validate_workspace_state.py"),
+                "--workspace-dir",
+                str(r1_workspace),
+                "--repo-root",
+                str(r1_repo),
+                "--skip-latest-check",
+            ],
+            plugin_root,
+            "validated_confirmed_bundle_count=0",
+        )
+        assertion = subprocess.run(
+            [
+                sys.executable,
+                str(plugin_root / "scripts/assert_finalized_workspace.py"),
+                "--workspace-dir",
+                str(r1_workspace),
+                "--json",
+            ],
+            cwd=plugin_root,
+            capture_output=True,
+            text=True,
+        )
+        assertion_output = ((assertion.stdout or "") + (assertion.stderr or "")).strip()
+        if assertion.returncode == 0:
+            raise SystemExit("FAILED: fake legacy R1 completion workspace unexpectedly passed finalization")
+        try:
+            assertion_payload = json.loads(assertion_output)
+        except json.JSONDecodeError as exc:
+            raise SystemExit(
+                "FAILED: finalization assertion did not emit JSON for fake R1 workspace: "
+                + assertion_output
+            ) from exc
+        assertion_errors = assertion_payload.get("errors")
+        if not isinstance(assertion_errors, list):
+            raise SystemExit("FAILED: fake R1 finalization assertion did not return an error list")
+        combined_errors = "\n".join(str(error) for error in assertion_errors)
+        if "missing finalization_succeeded event" in combined_errors:
+            raise SystemExit("FAILED: finalization assertion did not recognize the legacy R1 success event")
+        if "validated_confirmed_bundle_count=0" not in combined_errors:
+            raise SystemExit("FAILED: fake R1 completion did not fail the confirmed bundle gate")
+        if "audit-disposition.json" not in combined_errors:
+            raise SystemExit("FAILED: fake R1 completion did not fail the disposition ledger gate")
+        if "docker-cleanliness-status.json is missing" not in combined_errors:
+            raise SystemExit("FAILED: fake R1 completion did not fail the Docker cleanliness evidence gate")
+
+    fixture_after = {
+        path.relative_to(fixture_root).as_posix(): path.read_bytes()
+        for path in sorted(fixture_root.iterdir())
+        if path.is_file()
+    }
+    if fixture_after != fixture_snapshot:
+        raise SystemExit("FAILED: R2 validator or selftest mutated protocol fixtures")
+    print("AUDIT STATE PROTOCOL R2 SELFTEST PASSED: strict/R1/read-only/sequence/finalization gates")
+
+
+def exercise_audit_state_protocol_closure(plugin_root: Path) -> None:
+    """Keep the P9.5 runner independently runnable and impossible to omit here."""
+    runner = plugin_root / "scripts/selftest_audit_state_protocol.py"
+    output = run_capture([sys.executable, str(runner), "--json"], plugin_root)
+    try:
+        summary = json.loads(output)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"FAILED: P9.5 state protocol runner did not emit JSON: {output}") from exc
+    if summary.get("ok") is not True:
+        raise SystemExit(f"FAILED: P9.5 state protocol runner failed: {summary}")
+    if summary.get("runner_version") != "p9.5-r2" or summary.get("manifest_schema_version") != 2 or not summary.get("manifest_digest"):
+        raise SystemExit("FAILED: P9.5 state protocol runner summary lacks deterministic identity")
+    if set(summary.get("fixture_ids", [])) != {
+        "blocked-verification", "completed-no-confirmed", "damaged-journal-middle", "damaged-journal-tail",
+        "legacy-r1", "modern-r2-running", "partial-commit-rebuild", "recording-entered-completed",
+        "recording-optional-skipped", "state-only-fake-completed", "validated-confirmed-bundle", "variant-candidate-returned",
+    }:
+        raise SystemExit("FAILED: P9.5 fixture inventory drifted")
+    if set(summary.get("concurrency", {})) != {
+        "current_revision_24", "explicit_cas_12", "independent_workspaces_12x12", "invalid_transition_vs_valid_writer",
+        "held_lock_timeout_and_reuse", "lock_owner_exit_and_reuse", "writer_vs_rebuild_apply", "two_rebuild_applies", "separate_r1_r2_writes",
+    }:
+        raise SystemExit("FAILED: P9.5 concurrency matrix drifted")
+    if [item.get("case_id") for item in summary.get("fault_cases", [])] != [
+        "before_journal_open", "partial_journal_bytes", "after_journal_fsync", "state_temp_partial", "before_replace",
+        "after_replace_before_dirsync", "append_failure", "state_replace_failure", "recovery_replace_failure", "lock_owner_exit",
+    ] or not all(item.get("asserted") is True for item in summary.get("fault_cases", [])):
+        raise SystemExit("FAILED: P9.5 hard-exit matrix drifted")
+    metrics = summary.get("metrics", {})
+    if not isinstance(metrics, dict) or any(value != 0 for value in metrics.values()):
+        raise SystemExit("FAILED: P9.5 state protocol runner reported an immutability violation")
+
+
+def exercise_handoff_checkpoint_contract(plugin_root: Path) -> None:
+    """Exercise the production handoff/checkpoint CLIs with sanitized temp workspaces."""
+    fixture_root = plugin_root / "assets/fixtures/handoff-checkpoint"
+    manifest = json.loads((fixture_root / "manifest.json").read_text(encoding="utf-8"))
+    required_positive = {
+        "r2-running-candidate-blocker", "paused-blocked-recovery-material",
+        "completed-no-confirmed", "completed-with-validated-bundle",
+        "same-revision-checkpoint-idempotence", "legal-historical-checkpoint",
+    }
+    required_negative = {
+        "malformed-journal-or-state", "stale-handoff-revision", "forged-confirmed-count",
+        "tested-ref-or-artifact-digest-drift", "checkpoint-filename-mismatch",
+        "same-revision-conflicting-bytes", "absolute-uri-traversal-backslash-path",
+        "symlink-input-output-parent", "concurrent-event-append", "atomic-temp-fsync-replace-fault",
+        "advisory-notes-cannot-confirm", "docker-evidence-without-validated-bundle",
+        "unvalidated-recording-manifest", "missing-or-invalid-validator",
+        "completion-claim-without-validated-bundle", "validated-bundle-removed-after-completion",
+        "protocol-aware-completion-source-attribution",
+    }
+    if not required_positive.issubset(set(manifest.get("positive_cases", []))) or not required_negative.issubset(set(manifest.get("negative_cases", []))):
+        raise SystemExit("FAILED: handoff/checkpoint fixture manifest is incomplete")
+
+    render_cli = plugin_root / "scripts/render_handoff_state.py"
+    validate_cli = plugin_root / "scripts/validate_handoff_state.py"
+    create_cli = plugin_root / "scripts/create_workspace_checkpoint.py"
+    checkpoint_cli = plugin_root / "scripts/validate_workspace_checkpoint.py"
+    event_writer = plugin_root / "scripts/write_audit_event.py"
+    require_files(plugin_root, [
+        "assets/schemas/handoff-state.schema.json",
+        "assets/schemas/workspace-checkpoint.schema.json",
+        "scripts/render_handoff_state.py",
+        "scripts/validate_handoff_state.py",
+        "scripts/create_workspace_checkpoint.py",
+        "scripts/validate_workspace_checkpoint.py",
+    ], "handoff/checkpoint contract")
+
+    def new_workspace(root: Path, *, stage: str = "intake", status: str = "running") -> Path:
+        workspace = root / "workspace"
+        workspace.mkdir()
+        command = [
+            sys.executable, str(event_writer), "--workspace-dir", str(workspace),
+            "--plugin-version", "selftest", "--event", "workspace_created",
+            "--stage", stage, "--status", status, "--transition-kind", "start",
+            "--event-status", "ok", "--message", "sanitized fixture", "--accept-current-revision",
+        ]
+        run(command, plugin_root)
+        return workspace
+
+    def append_event(
+        workspace: Path,
+        event_name: str,
+        *,
+        stage: str,
+        status: str,
+        transition_kind: str,
+        blocker: str | None = None,
+        resume_step: str | None = None,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        command = [
+            sys.executable, str(event_writer), "--workspace-dir", str(workspace),
+            "--plugin-version", "selftest", "--event", event_name,
+            "--stage", stage, "--status", status, "--transition-kind", transition_kind,
+            "--event-status", "ok", "--message", "sanitized fixture", "--accept-current-revision",
+        ]
+        if blocker is not None:
+            command.extend(["--blocker", blocker])
+        if resume_step is not None:
+            command.extend(["--resume-step", resume_step])
+        if details is not None:
+            command.extend(["--details-json", json.dumps(details, ensure_ascii=False, sort_keys=True)])
+        run(command, plugin_root)
+
+    def render(workspace: Path, *, expected: int = 0, env: dict[str, str] | None = None) -> dict[str, Any] | None:
+        command = [sys.executable, str(render_cli), "--workspace-dir", str(workspace), "--repo-root", str(workspace.parent), "--json"]
+        output = run_capture_with_env(command, plugin_root, env or {}, expected_returncode=expected)
+        if expected:
+            return None
+        try:
+            return json.loads(output)
+        except json.JSONDecodeError as exc:
+            raise SystemExit(f"FAILED: handoff renderer did not emit JSON: {output}") from exc
+
+    def validate(workspace: Path, *, expected: int = 0, checkpoint: str | None = None) -> dict[str, Any] | None:
+        if checkpoint is None:
+            command = [sys.executable, str(validate_cli), "--workspace-dir", str(workspace), "--repo-root", str(workspace.parent), "--json"]
+        else:
+            command = [sys.executable, str(checkpoint_cli), "--workspace-dir", str(workspace), "--repo-root", str(workspace.parent), "--checkpoint", checkpoint, "--json"]
+        output = run_capture_with_env(command, plugin_root, {}, expected_returncode=expected)
+        if expected:
+            return None
+        try:
+            return json.loads(output)
+        except json.JSONDecodeError as exc:
+            raise SystemExit(f"FAILED: handoff/checkpoint validator did not emit JSON: {output}") from exc
+
+    def completion_fixture(workspace: Path, result: Any) -> None:
+        for event_name, stage in (
+            ("completion_recon", "recon"),
+            ("completion_candidates", "candidate_generation"),
+            ("completion_triage", "triage"),
+            ("completion_verification", "verification"),
+            ("completion_finalization", "finalization"),
+        ):
+            append_event(workspace, event_name, stage=stage, status="running", transition_kind="advance")
+        append_event(
+            workspace,
+            "finalization_succeeded",
+            stage="finalization",
+            status="completed",
+            transition_kind="complete",
+            details={"result": result},
+        )
+
+    def completion_issue_codes(state: dict[str, Any]) -> set[str]:
+        return {
+            str(item.get("code"))
+            for item in state.get("integrity", {}).get("issues", [])
+            if isinstance(item, dict) and str(item.get("code") or "").startswith("COMPLETION_")
+        }
+
+    def completion_issues_by_code(state: dict[str, Any]) -> dict[str, dict[str, Any]]:
+        return {
+            str(item.get("code")): item
+            for item in state.get("integrity", {}).get("issues", [])
+            if isinstance(item, dict) and str(item.get("code") or "").startswith("COMPLETION_")
+        }
+
+    def assert_authority_unchanged(workspace: Path, before: dict[str, bytes | None], label: str) -> None:
+        for relative, original in before.items():
+            path = workspace / relative
+            current = path.read_bytes() if path.exists() else None
+            if current != original:
+                raise SystemExit(f"FAILED: {label} validator changed authoritative {relative}")
+
+    from workspace_state import _completion_result_from_authority, _completion_source_from_protocol
+
+    if _completion_result_from_authority(
+        {"result": "completed_with_confirmed_bundles"}, [], protocol_mode="legacy_r1"
+    ) != "completed_with_confirmed_bundles":
+        raise SystemExit("FAILED: R1 top-level completion result compatibility regressed")
+    if _completion_source_from_protocol("legacy_r1") != (
+        "stage-status.json", "legacy stage-status.json completion result"
+    ) or _completion_source_from_protocol("r2") != (
+        "audit-events.jsonl", "finalization_succeeded event completion result"
+    ):
+        raise SystemExit("FAILED: protocol-aware completion source mapping drifted")
+    if _completion_result_from_authority(
+        {},
+        [
+            {"event": "result_observed", "details": {"result": "completed_with_confirmed_bundles"}},
+            {"event": "finalization_succeeded", "details": {"result": "completed_no_confirmed_findings"}},
+        ],
+        protocol_mode="r2",
+    ) != "completed_no_confirmed_findings":
+        raise SystemExit("FAILED: R2 completion result did not use the canonical finalization event")
+    if _completion_result_from_authority(
+        {},
+        [
+            {"event": "finalization_succeeded", "details": {"result": "completed_with_confirmed_bundles"}},
+            {"event": "finalization_failed", "details": {}},
+        ],
+        protocol_mode="r2",
+    ):
+        raise SystemExit("FAILED: a later finalization failure did not supersede the prior completion claim")
+
+    with tempfile.TemporaryDirectory(prefix="zhulong-handoff-r1-source-selftest-") as r1_temp:
+        r1_root = Path(r1_temp)
+        r1_workspace = r1_root / "workspace"
+        r1_workspace.mkdir()
+        write_json_fixture(r1_workspace / "stage-status.json", {
+            "schema_version": 1,
+            "plugin": "zhulong",
+            "plugin_version": "selftest",
+            "stage": "completed",
+            "status": "completed",
+            "last_event_at": "2026-07-22T00:00:00Z",
+            "blocker": None,
+            "resume_step": None,
+            "workspace": "workspace",
+            "target_repo": ".",
+            "last_event": "finalization_succeeded",
+            "last_message": "sanitized fixture",
+            "result": "completed_with_confirmed_bundles",
+        })
+        (r1_workspace / "audit-events.jsonl").write_text(
+            json.dumps({
+                "ts": "2026-07-22T00:00:00Z",
+                "event": "finalization_succeeded",
+                "stage": "completed",
+                "status": "completed",
+                "message": "sanitized fixture",
+                "details": {},
+            }, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n",
+            encoding="utf-8",
+        )
+        r1_state = render(r1_workspace).get("state", {})
+        r1_claim_issue = completion_issues_by_code(r1_state).get("COMPLETION_CLAIM_UNSUPPORTED", {})
+        if (
+            r1_claim_issue.get("path") != "stage-status.json"
+            or "legacy stage-status.json completion result" not in str(r1_claim_issue.get("message") or "")
+            or "finalization_succeeded event" in str(r1_claim_issue.get("message") or "")
+        ):
+            raise SystemExit("FAILED: R1 completion diagnostic no longer identifies legacy state authority")
+        r1_workspace_output = run_capture_with_env([
+            sys.executable, str(plugin_root / "scripts/validate_workspace_state.py"),
+            "--workspace-dir", str(r1_workspace), "--repo-root", str(r1_root), "--skip-latest-check",
+        ], plugin_root, {}, expected_returncode=1)
+        if (
+            "legacy stage-status.json completion result" not in r1_workspace_output
+            or "finalization_succeeded event completion result" in r1_workspace_output
+        ):
+            raise SystemExit("FAILED: R1 workspace completion diagnostic was attributed to R2 event metadata")
+
+    with tempfile.TemporaryDirectory(prefix="zhulong-handoff-selftest-") as temp:
+        root = Path(temp)
+        workspace = new_workspace(root)
+        candidate_path = workspace / "candidates/CAND-0001/candidate.json"
+        candidate_path.parent.mkdir(parents=True)
+        write_json_fixture(candidate_path, valid_candidate_contract())
+        verdict_path = workspace / "verifier/CAND-0001/verifier-verdict.json"
+        verdict_path.parent.mkdir(parents=True)
+        write_json_fixture(verdict_path, valid_verifier_verdict())
+        (workspace / "agent-notes.md").write_text("Confirmed bundles: 99\n", encoding="utf-8")
+        first = render(workspace)
+        state = first.get("state") if isinstance(first, dict) else None
+        if not isinstance(state, dict) or state.get("counts", {}).get("candidates") != 1 or state.get("counts", {}).get("verdicts") != 1 or state.get("counts", {}).get("validated_confirmed_bundles") != 0 or state.get("integrity", {}).get("overall") != "blocked":
+            raise SystemExit("FAILED: running candidate handoff did not remain conservatively blocked")
+        if state.get("advisory_notes", {}).get("status") != "advisory":
+            raise SystemExit("FAILED: agent-notes.md was not recorded as advisory")
+        if validate(workspace).get("ok") is not True:
+            raise SystemExit("FAILED: current handoff did not validate")
+        original_verdict = verdict_path.read_bytes()
+        drifted_verdict = json.loads(original_verdict.decode("utf-8"))
+        drifted_verdict["target_ref"]["tested_ref"] = "different-structured-ref"
+        verdict_path.write_text(json.dumps(drifted_verdict, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+        validate(workspace, expected=1)
+        verdict_path.write_bytes(original_verdict)
+        original_candidate = candidate_path.read_bytes()
+        drifted_candidate = json.loads(original_candidate.decode("utf-8"))
+        drifted_candidate["title"] = "changed after handoff"
+        candidate_path.write_text(json.dumps(drifted_candidate, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+        validate(workspace, expected=1)
+        candidate_path.write_bytes(original_candidate)
+        render(workspace)
+
+        disposition_root = root / "candidate-disposition"
+        disposition_root.mkdir()
+        disposition_workspace = new_workspace(disposition_root)
+        disposition_candidate = disposition_workspace / "candidates/CAND-0001/candidate.json"
+        disposition_candidate.parent.mkdir(parents=True)
+        write_json_fixture(disposition_candidate, valid_candidate_contract())
+        run([sys.executable, str(plugin_root / "scripts/audit_disposition.py"), "--workspace-dir", str(disposition_workspace), "--write"], plugin_root)
+        disposition_state = render(disposition_workspace).get("state", {})
+        if disposition_state.get("counts", {}).get("dispositions") != 1 or disposition_state.get("disposition", {}).get("status") != "valid":
+            raise SystemExit("FAILED: disposition ledger IDs/count were not derived from the existing validator")
+
+        blocked_root = root / "paused-blocked"
+        blocked_root.mkdir()
+        blocked_workspace = new_workspace(blocked_root)
+        append_event(
+            blocked_workspace,
+            "selftest_blocked",
+            stage="intake",
+            status="blocked",
+            transition_kind="block",
+            blocker="Docker gate requires operator review",
+            resume_step="check-docker-gate",
+        )
+        blocked_state = render(blocked_workspace).get("state", {})
+        if blocked_state.get("status") != "blocked" or not blocked_state.get("blocker", {}).get("active") or blocked_state.get("resume", {}).get("entrypoint") != "resume_stage":
+            raise SystemExit("FAILED: blocked workspace did not expose a safe recovery handoff")
+
+        completed_root = root / "completed-no-confirmed"
+        completed_root.mkdir()
+        completed_workspace = new_workspace(completed_root)
+        for event_name, stage in (
+            ("selftest_recon", "recon"),
+            ("selftest_candidates", "candidate_generation"),
+            ("selftest_triage", "triage"),
+            ("selftest_verification", "verification"),
+            ("selftest_finalization", "finalization"),
+        ):
+            append_event(completed_workspace, event_name, stage=stage, status="running", transition_kind="advance")
+        append_event(
+            completed_workspace,
+            "finalization_succeeded",
+            stage="finalization",
+            status="completed",
+            transition_kind="complete",
+            details={"result": "completed_no_confirmed_findings"},
+        )
+        completed_state = render(completed_workspace).get("state", {})
+        if completed_state.get("finalization", {}).get("status") != "completed" or completed_state.get("counts", {}).get("validated_confirmed_bundles") != 0:
+            raise SystemExit("FAILED: completed-no-confirmed handoff did not preserve conservative bundle facts")
+        if not {"COMPLETION_DISPOSITION_UNVERIFIABLE", "COMPLETION_DOCKER_GATE_UNSATISFIED"}.issubset(completion_issue_codes(completed_state)):
+            raise SystemExit("FAILED: R2 completed_no_confirmed_findings metadata was not recognized conservatively")
+        completed_issues = completion_issues_by_code(completed_state)
+        if (
+            completed_issues["COMPLETION_DISPOSITION_UNVERIFIABLE"].get("path") != "audit-disposition.json"
+            or completed_issues["COMPLETION_DOCKER_GATE_UNSATISFIED"].get("path") != "docker/docker-cleanliness-status.json"
+        ):
+            raise SystemExit("FAILED: disposition or Docker completion issue source path drifted")
+
+        completion_claim_root = root / "completion-claim-without-validated-bundle"
+        completion_claim_root.mkdir()
+        completion_claim_workspace = new_workspace(completion_claim_root)
+        completion_fixture(completion_claim_workspace, "completed_with_confirmed_bundles")
+        completion_claim_state = render(completion_claim_workspace).get("state", {})
+        completion_codes = completion_issue_codes(completion_claim_state)
+        if completion_claim_state.get("integrity", {}).get("overall") != "blocked" or "COMPLETION_CLAIM_UNSUPPORTED" not in completion_codes:
+            raise SystemExit("FAILED: R2 completion claim with zero validated bundles did not fail closed")
+        completion_claim_issue = completion_issues_by_code(completion_claim_state).get("COMPLETION_CLAIM_UNSUPPORTED", {})
+        if (
+            completion_claim_issue.get("path") != "audit-events.jsonl"
+            or "finalization_succeeded event completion result" not in str(completion_claim_issue.get("message") or "")
+        ):
+            raise SystemExit("FAILED: R2 completion claim diagnostic did not identify its finalization event authority")
+        authority_before = {
+            relative: (completion_claim_workspace / relative).read_bytes() if (completion_claim_workspace / relative).exists() else None
+            for relative in ("audit-events.jsonl", "stage-status.json", "audit-disposition.json")
+        }
+        handoff_failure = json.loads(run_capture_with_env([
+            sys.executable, str(validate_cli), "--workspace-dir", str(completion_claim_workspace),
+            "--repo-root", str(completion_claim_root), "--json",
+        ], plugin_root, {}, expected_returncode=1))
+        if handoff_failure.get("classification") == "current" or "COMPLETION_CLAIM_UNSUPPORTED" not in handoff_failure.get("issue_codes", []):
+            raise SystemExit("FAILED: handoff validator accepted an unsupported completion claim as current")
+        completion_workspace_output = run_capture_with_env([
+            sys.executable, str(plugin_root / "scripts/validate_workspace_state.py"),
+            "--workspace-dir", str(completion_claim_workspace), "--repo-root", str(completion_claim_root), "--skip-latest-check",
+        ], plugin_root, {}, expected_returncode=1)
+        if (
+            "finalization_succeeded event completion result" not in completion_workspace_output
+            or "validated_confirmed_bundle_count=0" not in completion_workspace_output
+            or "stage-status.json declares" in completion_workspace_output
+        ):
+            raise SystemExit("FAILED: R2 workspace completion diagnostic has inaccurate source attribution")
+        assert_authority_unchanged(completion_claim_workspace, authority_before, "completion-claim")
+
+        injected_result_root = root / "non-finalization-result-metadata"
+        injected_result_root.mkdir()
+        injected_result_workspace = new_workspace(injected_result_root)
+        append_event(
+            injected_result_workspace,
+            "completion_result_observation",
+            stage="intake",
+            status="running",
+            transition_kind="observe",
+            details={"result": "completed_with_confirmed_bundles"},
+        )
+        if completion_issue_codes(render(injected_result_workspace).get("state", {})):
+            raise SystemExit("FAILED: non-finalization result metadata created a completion claim")
+
+        for label, result in (("unknown", "unexpected_completion_value"), ("non-string", True)):
+            result_root = root / f"completion-result-{label}"
+            result_root.mkdir()
+            result_workspace = new_workspace(result_root)
+            completion_fixture(result_workspace, result)
+            if completion_issue_codes(render(result_workspace).get("state", {})):
+                raise SystemExit("FAILED: unknown or non-string R2 result was mistaken for a valid completion result")
+
+        bundle_root = root / "completed-with-validated-bundle"
+        bundle_root.mkdir()
+        bundle_workspace = new_workspace(bundle_root)
+        (bundle_workspace / "asr-config.json").write_text(
+            json.dumps({
+                "workspace_root": bundle_workspace.name,
+                "workspace_created_at": "2026-07-21T00:00:00Z",
+                "confirmed_output_dir": f"{bundle_workspace.name}/confirmed",
+            }, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        bundle_slug = build_wrapper_source_finding(plugin_root, bundle_root, bundle_workspace)
+        bundle_contract = build_wrapper_contract(bundle_workspace, bundle_slug)
+        run([
+            sys.executable, str(plugin_root / "scripts/build_confirmed_bundle.py"),
+            "--workspace-dir", str(bundle_workspace), "--repo-root", str(bundle_root),
+            "--contract", str(bundle_contract), "--language", "zh-CN",
+        ], plugin_root)
+        write_finalization_variant_artifacts(bundle_workspace)
+        (bundle_workspace / "docker").mkdir(parents=True, exist_ok=True)
+        (bundle_workspace / "docker/docker-cleanliness-status.json").write_text(
+            json.dumps({"clean": True, "strict": True}, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        (bundle_workspace / "docker/docker-resource-baseline.json").write_text(
+            json.dumps({"baseline": "selftest"}, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        for event_name, stage in (
+            ("bundle_recon", "recon"),
+            ("bundle_candidates", "candidate_generation"),
+            ("bundle_triage", "triage"),
+            ("bundle_verification", "verification"),
+            ("bundle_finalization", "finalization"),
+        ):
+            append_event(bundle_workspace, event_name, stage=stage, status="running", transition_kind="advance")
+        append_event(
+            bundle_workspace,
+            "finalization_succeeded",
+            stage="finalization",
+            status="completed",
+            transition_kind="complete",
+            details={"result": "completed_with_confirmed_bundles", "docker_clean": True},
+        )
+        bundle_state = render(bundle_workspace).get("state", {})
+        if bundle_state.get("counts", {}).get("validated_confirmed_bundles") != 1 or bundle_state.get("variant_analysis", {}).get("status") != "completed":
+            raise SystemExit("FAILED: completed-with-validated-bundle handoff did not retain bundle and seeded-variant gates")
+        variant_candidates = bundle_workspace / "evidence/variant-analysis/variant-candidates.jsonl"
+        variant_candidates_bytes = variant_candidates.read_bytes()
+        variant_candidates.unlink()
+        variant_blocked_state = render(bundle_workspace).get("state", {})
+        if variant_blocked_state.get("integrity", {}).get("overall") != "blocked" or "COMPLETION_VARIANT_GATE_UNSATISFIED" not in completion_issue_codes(variant_blocked_state):
+            raise SystemExit("FAILED: confirmed completion without formal variant analysis did not fail closed")
+        variant_issue = completion_issues_by_code(variant_blocked_state).get("COMPLETION_VARIANT_GATE_UNSATISFIED", {})
+        if (
+            variant_issue.get("path") != "audit-events.jsonl"
+            or "finalization_succeeded event completion result" not in str(variant_issue.get("message") or "")
+        ):
+            raise SystemExit("FAILED: R2 variant completion diagnostic did not identify its finalization event authority")
+        variant_candidates.write_bytes(variant_candidates_bytes)
+        render(bundle_workspace)
+        bundle_dir = bundle_workspace / "confirmed" / bundle_slug
+        if not bundle_dir.is_dir():
+            raise SystemExit("FAILED: completion regression fixture has no validated bundle to remove")
+        shutil.rmtree(bundle_dir)
+        removed_bundle_state = render(bundle_workspace).get("state", {})
+        if removed_bundle_state.get("integrity", {}).get("overall") != "blocked" or "COMPLETION_CLAIM_UNSUPPORTED" not in completion_issue_codes(removed_bundle_state):
+            raise SystemExit("FAILED: removing a finalized confirmed bundle did not block completion integrity")
+        removed_authority_before = {
+            relative: (bundle_workspace / relative).read_bytes() if (bundle_workspace / relative).exists() else None
+            for relative in ("audit-events.jsonl", "stage-status.json", "audit-disposition.json")
+        }
+        removed_handoff_failure = json.loads(run_capture_with_env([
+            sys.executable, str(validate_cli), "--workspace-dir", str(bundle_workspace),
+            "--repo-root", str(bundle_root), "--json",
+        ], plugin_root, {}, expected_returncode=1))
+        if removed_handoff_failure.get("classification") == "current" or "COMPLETION_CLAIM_UNSUPPORTED" not in removed_handoff_failure.get("issue_codes", []):
+            raise SystemExit("FAILED: handoff validator accepted a post-finalization bundle removal as current")
+        run_expect_fail([
+            sys.executable, str(plugin_root / "scripts/validate_workspace_state.py"),
+            "--workspace-dir", str(bundle_workspace), "--repo-root", str(bundle_root), "--skip-latest-check",
+        ], plugin_root, "validated_confirmed_bundle_count=0")
+        assert_authority_unchanged(bundle_workspace, removed_authority_before, "removed-bundle")
+
+        recording_root = root / "unvalidated-recording"
+        recording_root.mkdir()
+        recording_workspace = new_workspace(recording_root)
+        (recording_workspace / "recording-evidence.json").write_text(
+            json.dumps({"recording_status": "passed"}, ensure_ascii=False, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        recording_state = render(recording_workspace).get("state", {})
+        if recording_state.get("recording", {}).get("status") != "manifest_passed_not_revalidated" or recording_state.get("counts", {}).get("recording_manifests") != 1:
+            raise SystemExit("FAILED: unvalidated recording manifest was promoted to an authoritative pass")
+
+        invalid_validator_root = root / "invalid-validator"
+        invalid_validator_root.mkdir()
+        invalid_validator_workspace = new_workspace(invalid_validator_root)
+        (invalid_validator_workspace / "recon-result.json").write_text("{}\n", encoding="utf-8")
+        (invalid_validator_workspace / "bin/validate-recon-result.py").mkdir(parents=True)
+        invalid_validator_state = render(invalid_validator_workspace).get("state", {})
+        invalid_codes = {item.get("code") for item in invalid_validator_state.get("integrity", {}).get("issues", []) if isinstance(item, dict)}
+        if "STRUCTURED_RESULT_INVALID" not in invalid_codes:
+            raise SystemExit("FAILED: invalid validator JSON/executable did not fail closed")
+
+        checkpoint_output = json.loads(run_capture([
+            sys.executable, str(create_cli), "--workspace-dir", str(workspace), "--repo-root", str(root), "--json",
+        ], plugin_root))
+        if checkpoint_output.get("idempotent") is not False:
+            raise SystemExit("FAILED: first checkpoint creation was not a publish")
+        checkpoint_path = str(checkpoint_output["path"])
+        second_checkpoint = json.loads(run_capture([
+            sys.executable, str(create_cli), "--workspace-dir", str(workspace), "--repo-root", str(root), "--json",
+        ], plugin_root))
+        if second_checkpoint.get("idempotent") is not True or second_checkpoint.get("sha256") != checkpoint_output.get("sha256"):
+            raise SystemExit("FAILED: same-revision checkpoint was not byte-idempotent")
+        if validate(workspace, checkpoint=checkpoint_path).get("classification") != "current":
+            raise SystemExit("FAILED: current checkpoint did not validate")
+
+        # Docker evidence and notes remain non-confirming material.
+        (workspace / "evidence/docker").mkdir(parents=True)
+        (workspace / "evidence/docker/verification-evidence.json").write_text("{}\n", encoding="utf-8")
+        docker_state = render(workspace).get("state", {})
+        if docker_state.get("counts", {}).get("validated_confirmed_bundles") != 0 or docker_state.get("counts", {}).get("docker_evidence_only") < 1:
+            raise SystemExit("FAILED: Docker evidence-only state was not represented conservatively")
+
+        # Forged derived counts and unsafe checkpoint values fail read-only validation.
+        handoff_path = workspace / "handoff-state.json"
+        handoff_bytes = handoff_path.read_bytes()
+        forged = json.loads(handoff_bytes.decode("utf-8"))
+        forged["counts"]["validated_confirmed_bundles"] = 99
+        handoff_path.write_text(json.dumps(forged, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+        validate(workspace, expected=1)
+        handoff_path.write_bytes(handoff_bytes)
+        render(workspace)
+
+        original_checkpoint = (workspace / checkpoint_path).read_bytes()
+        forged_checkpoint = json.loads(original_checkpoint.decode("utf-8"))
+        for unsafe_value in ("/tmp/escape", "../escape", "https://example.invalid", "a\\b", "~/.ssh/id_rsa"):
+            forged_checkpoint["resume"]["parameters"] = [{"name": "artifact", "value": unsafe_value}]
+            (workspace / checkpoint_path).write_text(json.dumps(forged_checkpoint, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+            validate(workspace, expected=1, checkpoint=checkpoint_path)
+        (workspace / checkpoint_path).write_bytes(original_checkpoint)
+
+        # Same-revision conflicting bytes never overwrite the original checkpoint.
+        (workspace / checkpoint_path).write_bytes(original_checkpoint + b"tampered\n")
+        run_expect_fail([
+            sys.executable, str(create_cli), "--workspace-dir", str(workspace), "--repo-root", str(root), "--json",
+        ], plugin_root, "CHECKPOINT_CONFLICTING_BYTES")
+        (workspace / checkpoint_path).write_bytes(original_checkpoint)
+
+        # Event append makes the old handoff stale; after regeneration the old
+        # checkpoint is a legal historical snapshot when non-volatile inputs agree.
+        run([
+            sys.executable, str(event_writer), "--workspace-dir", str(workspace), "--plugin-version", "selftest",
+            "--event", "handoff_observe", "--stage", "current", "--status", "current",
+            "--transition-kind", "observe", "--event-status", "ok", "--message", "next", "--accept-current-revision",
+        ], plugin_root)
+        validate(workspace, expected=1)
+        render(workspace)
+        historical = validate(workspace, checkpoint=checkpoint_path)
+        if historical.get("classification") != "valid_historical":
+            raise SystemExit(f"FAILED: legal historical checkpoint was not distinguished: {historical}")
+        historical_bytes = (workspace / checkpoint_path).read_bytes()
+        historical_doc = json.loads(historical_bytes.decode("utf-8"))
+        historical_doc["event_digest"] = "sha256:" + "0" * 64
+        (workspace / checkpoint_path).write_text(json.dumps(historical_doc, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+        validate(workspace, expected=1, checkpoint=checkpoint_path)
+        (workspace / checkpoint_path).write_bytes(historical_bytes)
+        leading_zero_checkpoint = workspace / "checkpoints/01.json"
+        leading_zero_checkpoint.write_bytes(historical_bytes)
+        validate(workspace, expected=1, checkpoint="checkpoints/01.json")
+        leading_zero_checkpoint.unlink()
+
+        # Symlink input and atomic fault injection must fail without replacing
+        # the previous handoff. The selftest does not touch Docker or network.
+        candidate_link = workspace / "candidate.json"
+        candidate_link.symlink_to(workspace / "stage-status.json")
+        render(workspace, expected=1)
+        candidate_link.unlink()
+        before_fault = handoff_path.read_bytes()
+        render(workspace, expected=1, env={"ZHULONG_TEST_FAIL_HANDOFF_WRITE": "1"})
+        if handoff_path.read_bytes() != before_fault:
+            raise SystemExit("FAILED: handoff temp-write fault changed the published bytes")
+        render(workspace, expected=1, env={"ZHULONG_TEST_FAIL_HANDOFF_REPLACE": "1"})
+        if handoff_path.read_bytes() != before_fault:
+            raise SystemExit("FAILED: handoff replace fault changed the published bytes")
+
+        symlink_output = root / "symlink-output"
+        symlink_output.mkdir()
+        symlink_workspace = new_workspace(symlink_output)
+        render(symlink_workspace)
+        outside_handoff = root / "outside-handoff.json"
+        outside_handoff.write_text("outside\n", encoding="utf-8")
+        (symlink_workspace / "handoff-state.json").unlink()
+        (symlink_workspace / "handoff-state.json").symlink_to(outside_handoff)
+        render(symlink_workspace, expected=1)
+        (symlink_workspace / "handoff-state.json").unlink()
+        (symlink_workspace / "handoff-state.json").write_bytes(before_fault)
+
+        checkpoint_fault_root = root / "checkpoint-fault"
+        checkpoint_fault_root.mkdir()
+        checkpoint_fault_workspace = new_workspace(checkpoint_fault_root)
+        render(checkpoint_fault_workspace)
+        checkpoint_fault_command = [
+            sys.executable, str(create_cli), "--workspace-dir", str(checkpoint_fault_workspace),
+            "--repo-root", str(checkpoint_fault_root), "--json",
+        ]
+        run_capture_with_env(checkpoint_fault_command, plugin_root, {"ZHULONG_TEST_FAIL_CHECKPOINT_REPLACE": "1"}, expected_returncode=1)
+        if (checkpoint_fault_workspace / "checkpoints").exists():
+            published = list((checkpoint_fault_workspace / "checkpoints").glob("*.json"))
+            if published:
+                raise SystemExit("FAILED: checkpoint replace fault left a published checkpoint")
+
+        checkpoint_parent_root = root / "checkpoint-parent-symlink"
+        checkpoint_parent_root.mkdir()
+        checkpoint_parent_workspace = new_workspace(checkpoint_parent_root)
+        render(checkpoint_parent_workspace)
+        outside_checkpoints = root / "outside-checkpoints"
+        outside_checkpoints.mkdir()
+        (checkpoint_parent_workspace / "checkpoints").symlink_to(outside_checkpoints, target_is_directory=True)
+        run_capture_with_env([
+            sys.executable, str(create_cli), "--workspace-dir", str(checkpoint_parent_workspace),
+            "--repo-root", str(checkpoint_parent_root), "--json",
+        ], plugin_root, {}, expected_returncode=1)
+        if list(outside_checkpoints.iterdir()):
+            raise SystemExit("FAILED: checkpoint parent symlink received a published file")
+
+        concurrent_root = root / "concurrent-append"
+        concurrent_root.mkdir()
+        concurrent_workspace = new_workspace(concurrent_root)
+        render(concurrent_workspace)
+        concurrent_journal = concurrent_workspace / "audit-events.jsonl"
+        concurrent_handoff = concurrent_workspace / "handoff-state.json"
+        journal_before = concurrent_journal.read_bytes()
+        handoff_before = concurrent_handoff.read_bytes()
+        pause_marker = root / "handoff-paused.marker"
+        concurrent_proc = subprocess.Popen(
+            [sys.executable, str(render_cli), "--workspace-dir", str(concurrent_workspace), "--repo-root", str(concurrent_root), "--json"],
+            cwd=plugin_root,
+            env={**os.environ, "ZHULONG_TEST_HANDOFF_PAUSE": "1", "ZHULONG_TEST_HANDOFF_PAUSE_MARKER": str(pause_marker)},
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        for _ in range(100):
+            if pause_marker.exists():
+                break
+            time.sleep(0.01)
+        else:
+            concurrent_proc.kill()
+            concurrent_proc.communicate()
+            raise SystemExit("FAILED: handoff concurrency selftest did not reach its pause seam")
+        with concurrent_journal.open("ab") as stream:
+            stream.write(journal_before.splitlines()[0] + b"\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        concurrent_stdout, concurrent_stderr = concurrent_proc.communicate(timeout=5)
+        concurrent_output = (concurrent_stdout or "") + (concurrent_stderr or "")
+        if concurrent_proc.returncode == 0 or "CONCURRENT_STATE_CHANGED" not in concurrent_output:
+            raise SystemExit(f"FAILED: concurrent journal append was not rejected: {concurrent_output}")
+        concurrent_journal.write_bytes(journal_before)
+        if concurrent_handoff.read_bytes() != handoff_before:
+            raise SystemExit("FAILED: concurrent journal append changed the previous handoff bytes")
+
+        malformed_root = root / "malformed"
+        malformed_root.mkdir()
+        malformed_workspace = new_workspace(malformed_root)
+        with (malformed_workspace / "audit-events.jsonl").open("ab") as stream:
+            stream.write(b"{malformed\n")
+        render(malformed_workspace, expected=1)
+
+    print("HANDOFF/CHECKPOINT SELFTEST PASSED: derived-only, conservative, atomic, historical, symlink-safe")
+
+
+def exercise_next_actions_contract(plugin_root: Path) -> None:
+    """Run production next-action CLIs on a sanitized, authority-valid workspace."""
+    fixture = plugin_root / "assets/fixtures/next-actions/manifest.json"
+    manifest = json.loads(fixture.read_text(encoding="utf-8"))
+    required_positive = {"handoff-stale-only", "candidate-verdict-missing", "docker-oracle-unproven", "no-action", "stable-multiple-actions"}
+    required_negative = {"zero-bundle-variant-forgery", "markdown-note-injection", "unsafe-entrypoint", "unsafe-path", "symlink-input-output-parent", "schema-only-validator", "r1-masquerading-as-r2"}
+    if not required_positive.issubset(set(manifest.get("positive_cases", []))) or not required_negative.issubset(set(manifest.get("negative_cases", []))):
+        raise SystemExit("FAILED: next-actions fixture manifest is incomplete")
+    require_files(plugin_root, [
+        "assets/schemas/next-actions.schema.json", "assets/fixtures/next-actions/manifest.json",
+        "docs/runner-contracts/next-actions-contract-r1.md", "scripts/next_actions.py",
+        "scripts/render_next_actions.py", "scripts/validate_next_actions.py",
+    ], "next-actions contract")
+    with tempfile.TemporaryDirectory(prefix="zhulong-next-actions-") as tempdir:
+        root = Path(tempdir)
+        source = plugin_root / "assets/fixtures/recon-result/service"
+        repo, workspace = root / "repo", root / "workspace"
+        shutil.copytree(source / "repo", repo)
+        shutil.copytree(source / "workspace", workspace)
+        writer = plugin_root / "scripts/write_audit_event.py"
+        run([sys.executable, str(writer), "--workspace-dir", str(workspace), "--plugin-version", "selftest", "--event", "next_actions_fixture", "--stage", "intake", "--status", "running", "--transition-kind", "start", "--event-status", "ok", "--message", "sanitized fixture", "--accept-current-revision"], plugin_root)
+        handoff = plugin_root / "scripts/render_handoff_state.py"
+        render = plugin_root / "scripts/render_next_actions.py"
+        validate = plugin_root / "scripts/validate_next_actions.py"
+        run([sys.executable, str(handoff), "--workspace-dir", str(workspace), "--repo-root", str(repo), "--json"], plugin_root)
+        authority_before = {(workspace / name): (workspace / name).read_bytes() for name in ("audit-events.jsonl", "stage-status.json", "handoff-state.json")}
+        first = run_capture([sys.executable, str(render), "--workspace-dir", str(workspace), "--repo-root", str(repo), "--json"], plugin_root)
+        published = (workspace / "next-actions.json").read_bytes()
+        second = run_capture([sys.executable, str(render), "--workspace-dir", str(workspace), "--repo-root", str(repo), "--json"], plugin_root)
+        if published != (workspace / "next-actions.json").read_bytes() or json.loads(first).get("state") != json.loads(second).get("state"):
+            raise SystemExit("FAILED: next-actions generation is not deterministic")
+        if any(path.read_bytes() != raw for path, raw in authority_before.items()):
+            raise SystemExit("FAILED: next-actions generator changed authority inputs")
+        validator_before = (workspace / "next-actions.json").read_bytes()
+        run([sys.executable, str(validate), "--workspace-dir", str(workspace), "--repo-root", str(repo), "--json"], plugin_root)
+        if (workspace / "next-actions.json").read_bytes() != validator_before:
+            raise SystemExit("FAILED: next-actions validator wrote its input")
+        run([sys.executable, str(writer), "--workspace-dir", str(workspace), "--plugin-version", "selftest", "--event", "next_actions_stale", "--stage", "intake", "--status", "running", "--transition-kind", "observe", "--event-status", "ok", "--message", "sanitized stale fixture", "--accept-current-revision"], plugin_root)
+        stale = json.loads(run_capture([sys.executable, str(render), "--workspace-dir", str(workspace), "--repo-root", str(repo), "--json"], plugin_root))["state"]
+        if stale.get("classification") != "action_required" or [item.get("blocking_code") for item in stale.get("actions", [])] != ["HANDOFF_STALE"]:
+            raise SystemExit("FAILED: stale handoff did not produce only HANDOFF_STALE")
+    print("NEXT-ACTIONS SELFTEST PASSED: derived-only, deterministic, stale-safe, read-only validation")
+
+
+def exercise_audit_state_writer(plugin_root: Path) -> None:
+    """Exercise P9.2 commits with real subprocesses and internal-only faults."""
+    writer = plugin_root / "scripts/write_audit_event.py"
+    fixture_root = plugin_root / "assets/fixtures/audit-state-protocol-r2"
+
+    def invoke(
+        workspace: Path,
+        name: str,
+        *,
+        status: str = "running",
+        stage: str = "intake",
+        transition_kind: str = "observe",
+        revision: int | None = None,
+        current: bool = True,
+        extra: list[str] | None = None,
+        include_enhanced_material: bool = True,
+    ) -> tuple[int, dict[str, object], str]:
+        command = [
+            sys.executable, str(writer), "--workspace-dir", str(workspace),
+            "--event", name, "--stage", stage, "--status", status,
+            "--transition-kind", transition_kind,
+            "--message", f"Selftest event {name}.", "--json",
+        ]
+        if revision is not None:
+            command.extend(["--expected-state-revision", str(revision)])
+        elif current:
+            command.append("--accept-current-revision")
+        if status in {"blocked", "paused"}:
+            command.extend(["--blocker", "selftest blocker", "--resume-step", "resume selftest"])
+        if transition_kind in {"resume", "skip", "return", "reopen"} and include_enhanced_material:
+            reason_code = {
+                "resume": "recovery_requested",
+                "skip": "not_applicable",
+                "return": "validation_failed",
+                "reopen": "validation_failed",
+            }[transition_kind]
+            command.extend([
+                "--reason-code", reason_code,
+                "--subject", "run:selftest",
+                "--evidence-ref", "evidence/selftest/transition.json",
+                "--next-action-json",
+                json.dumps(
+                    {
+                        "action_id": "continue-selftest-transition",
+                        "action_type": "review",
+                        "subject_ids": ["run:selftest"],
+                        "summary": "Continue the bounded selftest transition.",
+                        "evidence_refs": ["evidence/selftest/transition.json"],
+                    },
+                    sort_keys=True,
+                ),
+                "--details-json",
+                json.dumps(
+                    {
+                        "summary": f"Selftest event {name}.",
+                        "reason_detail": "The selftest supplies the required transition evidence.",
+                    },
+                    sort_keys=True,
+                ),
+            ])
+        if extra:
+            command.extend(extra)
+        proc = subprocess.run(command, cwd=plugin_root, capture_output=True, text=True)
+        output = ((proc.stdout or "") + (proc.stderr or "")).strip()
+        try:
+            payload = json.loads((proc.stdout or "").strip())
+        except json.JSONDecodeError:
+            payload = {}
+        return proc.returncode, payload, output
+
+    with tempfile.TemporaryDirectory(prefix="zhulong-audit-writer-") as temp_dir:
+        root = Path(temp_dir)
+        workspace = root / "r2"
+        workspace.mkdir()
+        code, first, output = invoke(workspace, "first_event", transition_kind="start")
+        if code != 0 or first.get("mode") != "r2" or first.get("seq") != 1 or first.get("state_revision") != 1:
+            raise SystemExit("FAILED: first R2 writer commit did not create seq=1/revision=1: " + output)
+        code, blocked, output = invoke(workspace, "paused_event", status="paused", transition_kind="pause")
+        if code != 0 or blocked.get("state_revision") != 2:
+            raise SystemExit("FAILED: blocked R2 writer commit failed: " + output)
+        paused_state = json.loads((workspace / "stage-status.json").read_text(encoding="utf-8"))
+        if not paused_state.get("blocker") or not paused_state.get("resume_step"):
+            raise SystemExit("FAILED: blocked R2 event did not materialize blocker/resume_step")
+        code, running, output = invoke(workspace, "running_event", transition_kind="resume")
+        running_state = json.loads((workspace / "stage-status.json").read_text(encoding="utf-8"))
+        if code != 0 or running_state.get("blocker") is not None or running_state.get("resume_step") is not None:
+            raise SystemExit("FAILED: running R2 event did not clear blocker/resume_step: " + output)
+        digest = "sha256:" + hashlib.sha256((workspace / "audit-events.jsonl").read_bytes()).hexdigest()
+        if running_state.get("event_log_digest") != digest:
+            raise SystemExit("FAILED: R2 state digest does not match exact committed journal bytes")
+        stale = root / "stale"
+        shutil.copytree(workspace, stale)
+        stale_journal_before = (stale / "audit-events.jsonl").read_bytes()
+        (stale / "stage-status.json").unlink()
+        code, payload, output = invoke(stale, "stale_view", transition_kind="observe")
+        if code == 0 or payload.get("code") != "STATE_VIEW_MISSING" or (stale / "audit-events.jsonl").read_bytes() != stale_journal_before:
+            raise SystemExit("FAILED: missing committed R2 state view did not fail closed: " + output)
+
+        concurrent = root / "concurrent"
+        concurrent.mkdir()
+        if invoke(concurrent, "concurrent_start", transition_kind="start")[0] != 0:
+            raise SystemExit("FAILED: could not seed concurrent R2 workspace")
+        processes = [
+            subprocess.Popen([
+                sys.executable, str(writer), "--workspace-dir", str(concurrent),
+                "--event", f"concurrent_{index}", "--stage", "intake", "--status", "running",
+                "--transition-kind", "observe",
+                "--message", f"Concurrent writer {index}.", "--accept-current-revision", "--json",
+            ], cwd=plugin_root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            for index in range(7)
+        ]
+        for process in processes:
+            stdout, stderr = process.communicate(timeout=15)
+            if process.returncode != 0:
+                raise SystemExit("FAILED: concurrent current-revision writer failed: " + (stdout + stderr))
+        concurrent_events = [json.loads(line) for line in (concurrent / "audit-events.jsonl").read_text(encoding="utf-8").splitlines()]
+        concurrent_state = json.loads((concurrent / "stage-status.json").read_text(encoding="utf-8"))
+        if [event.get("seq") for event in concurrent_events] != list(range(1, 9)):
+            raise SystemExit("FAILED: concurrent R2 writers did not produce contiguous unique seq values")
+        if concurrent_state.get("state_revision") != 8:
+            raise SystemExit("FAILED: concurrent R2 writers did not produce final revision 8")
+
+        cas = root / "cas"
+        cas.mkdir()
+        if invoke(cas, "seed", transition_kind="start")[0] != 0:
+            raise SystemExit("FAILED: could not seed CAS workspace")
+        cas_commands = [
+            [sys.executable, str(writer), "--workspace-dir", str(cas), "--event", f"cas_{index}",
+             "--stage", "intake", "--status", "running", "--message", "CAS selftest.",
+             "--transition-kind", "observe", "--expected-state-revision", "1", "--json"]
+            for index in range(2)
+        ]
+        cas_processes = [subprocess.Popen(command, cwd=plugin_root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for command in cas_commands]
+        cas_results = [process.communicate(timeout=15) + (process.returncode,) for process in cas_processes]
+        successes = sum(1 for stdout, stderr, code in cas_results if code == 0)
+        conflicts = sum(1 for stdout, stderr, code in cas_results if code != 0 and "STATE_REVISION_CONFLICT" in stdout + stderr)
+        if successes != 1 or conflicts != 1:
+            raise SystemExit("FAILED: equal-revision CAS writers did not yield one success and one conflict")
+        if (
+            len((cas / "audit-events.jsonl").read_text(encoding="utf-8").splitlines()) != 2
+            or json.loads((cas / "stage-status.json").read_text(encoding="utf-8")).get("state_revision") != 2
+        ):
+            raise SystemExit("FAILED: rejected equal-revision CAS writer changed journal or state")
+
+        held = root / "held-lock"
+        held.mkdir()
+        if invoke(held, "seed", transition_kind="start")[0] != 0:
+            raise SystemExit("FAILED: could not seed lock timeout workspace")
+        lock_holder = subprocess.Popen([
+            sys.executable, "-c",
+            "import fcntl,pathlib,time; p=pathlib.Path(__import__('sys').argv[1]) / '.audit-state.lock'; "
+            "f=p.open('a+'); fcntl.flock(f, fcntl.LOCK_EX); time.sleep(1.0)", str(held),
+        ])
+        time.sleep(0.15)
+        journal_before = (held / "audit-events.jsonl").read_bytes()
+        code, payload, output = invoke(
+            held,
+            "timeout",
+            transition_kind="observe",
+            extra=["--lock-timeout-seconds", "0.05"],
+        )
+        lock_holder.wait(timeout=5)
+        if code == 0 or payload.get("code") != "LOCK_TIMEOUT" or (held / "audit-events.jsonl").read_bytes() != journal_before:
+            raise SystemExit("FAILED: held lock did not cause bounded zero-write LOCK_TIMEOUT: " + output)
+        if not (held / ".audit-state.lock").is_file() or invoke(held, "after_lock", transition_kind="observe")[0] != 0:
+            raise SystemExit("FAILED: persistent lock file was not reusable after release")
+
+        legacy = root / "legacy"
+        legacy.mkdir()
+        legacy_event = json.loads((fixture_root / "legacy-event-r1.json").read_text(encoding="utf-8"))
+        (legacy / "audit-events.jsonl").write_text(
+            json.dumps(legacy_event, ensure_ascii=False, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        shutil.copy2(fixture_root / "legacy-state-r1.json", legacy / "stage-status.json")
+        code, payload, output = invoke(
+            legacy,
+            "legacy_append",
+            extra=["--protocol-mode", "legacy-r1"],
+        )
+        if code != 0 or payload.get("mode") != "legacy_r1" or payload.get("cas_mode") != "unavailable":
+            raise SystemExit("FAILED: existing R1 workspace was not preserved as legacy R1: " + output)
+        if '"schema_version":2' in (legacy / "audit-events.jsonl").read_text(encoding="utf-8"):
+            raise SystemExit("FAILED: legacy R1 journal was mixed with an R2 event")
+
+        legacy_sensitive = root / "legacy-sensitive"
+        shutil.copytree(legacy, legacy_sensitive)
+        legacy_journal_before = (legacy_sensitive / "audit-events.jsonl").read_bytes()
+        legacy_state_before = (legacy_sensitive / "stage-status.json").read_bytes()
+        code, payload, output = invoke(
+            legacy_sensitive,
+            "legacy_sensitive",
+            extra=["--protocol-mode", "legacy-r1", "--message", "Review /etc/passwd only."],
+        )
+        if code == 0 or payload.get("code") != "EVENT_SENSITIVE_TEXT_FORBIDDEN":
+            raise SystemExit("FAILED: sensitive R1 message was not rejected: " + output)
+        if (legacy_sensitive / "audit-events.jsonl").read_bytes() != legacy_journal_before or (legacy_sensitive / "stage-status.json").read_bytes() != legacy_state_before:
+            raise SystemExit("FAILED: rejected sensitive R1 message changed journal/state bytes")
+
+        unsafe = root / "unsafe"
+        unsafe.mkdir()
+        (unsafe / "target.jsonl").write_text("\n", encoding="utf-8")
+        (unsafe / "audit-events.jsonl").symlink_to(unsafe / "target.jsonl")
+        code, payload, output = invoke(unsafe, "unsafe_path", transition_kind="start")
+        if code == 0 or payload.get("code") != "JOURNAL_PATH_UNSAFE":
+            raise SystemExit("FAILED: symlink journal path was not rejected: " + output)
+        unsafe_lock = root / "unsafe-lock"
+        unsafe_lock.mkdir()
+        (unsafe_lock / "lock-target").write_text("x", encoding="utf-8")
+        (unsafe_lock / ".audit-state.lock").symlink_to(unsafe_lock / "lock-target")
+        code, payload, output = invoke(unsafe_lock, "unsafe_lock", transition_kind="start")
+        if code == 0 or payload.get("code") != "LOCK_PATH_UNSAFE":
+            raise SystemExit("FAILED: symlink lock path was not rejected: " + output)
+
+        invalid = root / "invalid"
+        invalid.mkdir()
+        code, payload, output = invoke(
+            invalid,
+            "bad_evidence",
+            transition_kind="start",
+            extra=["--evidence-ref", "https://example.invalid/evidence"],
+        )
+        if code == 0 or payload.get("code") != "EVENT_VALIDATION_FAILED" or (invalid / "audit-events.jsonl").exists():
+            raise SystemExit("FAILED: invalid evidence ref did not fail before journal/state writes: " + output)
+        code, payload, output = invoke(
+            invalid,
+            "bad_details",
+            transition_kind="start",
+            extra=["--details-json", '{"nested":{"value":true}}'],
+        )
+        if code == 0 or payload.get("code") != "EVENT_VALIDATION_FAILED" or (invalid / "audit-events.jsonl").exists():
+            raise SystemExit("FAILED: nested details did not fail before journal/state writes: " + output)
+
+        sys.path.insert(0, str(plugin_root / "scripts"))
+        try:
+            import audit_state_io as state_io
+        finally:
+            sys.path.pop(0)
+        fault = root / "fault"
+        fault.mkdir()
+        request = {
+            "accept_current_revision": True, "expected_state_revision": None, "run_id": "",
+            "timestamp": "2026-07-18T00:00:00Z", "stage": "intake", "to_status": "running",
+            "event_type": "checkpoint", "event_name": "fault_event", "reason_code": "normal_progress",
+            "subjects": [], "evidence_refs": [], "next_actions": [],
+            "details": {"summary": "Fault injection selftest."}, "blocker": "", "resume_step": "",
+            "transition_kind": "start", "expected_from_stage": "", "expected_from_status": "",
+            "plugin_version": "selftest",
+            "legacy_event": {}, "legacy_state": {},
+        }
+        with mock.patch.object(state_io, "_atomic_replace_state", side_effect=state_io.AuditStateError("STATE_VIEW_REPLACE_FAILED", "injected")):
+            try:
+                state_io.commit_event(fault, mode_policy="r2", lock_timeout_seconds=1, request=request)
+            except state_io.AuditStateError as exc:
+                if exc.code != "STATE_VIEW_REPLACE_FAILED" or not exc.fields.get("journal_committed"):
+                    raise SystemExit("FAILED: state replacement fault did not retain committed-journal semantics")
+            else:
+                raise SystemExit("FAILED: injected state replacement fault unexpectedly succeeded")
+        if len((fault / "audit-events.jsonl").read_text(encoding="utf-8").splitlines()) != 1 or (fault / "stage-status.json").exists():
+            raise SystemExit("FAILED: state replacement fault did not retain exactly one journal event and no partial state")
+        try:
+            state_io.commit_event(fault, mode_policy="r2", lock_timeout_seconds=1, request=request)
+        except state_io.AuditStateError as exc:
+            if exc.code != "STATE_VIEW_MISSING":
+                raise SystemExit("FAILED: post-commit stale state did not fail closed")
+        else:
+            raise SystemExit("FAILED: post-commit stale state allowed a duplicate event")
+
+        temp_write_fault = root / "temp-write-fault"
+        temp_write_fault.mkdir()
+        with mock.patch.object(state_io, "_write_state_temp", side_effect=state_io.AuditStateError("STATE_VIEW_WRITE_FAILED", "injected")):
+            try:
+                state_io.commit_event(temp_write_fault, mode_policy="r2", lock_timeout_seconds=1, request=request)
+            except state_io.AuditStateError as exc:
+                if exc.code != "STATE_VIEW_WRITE_FAILED" or not exc.fields.get("journal_committed"):
+                    raise SystemExit("FAILED: state temporary-write fault did not retain committed-journal semantics")
+            else:
+                raise SystemExit("FAILED: injected state temporary-write fault unexpectedly succeeded")
+        if len((temp_write_fault / "audit-events.jsonl").read_text(encoding="utf-8").splitlines()) != 1 or (temp_write_fault / "stage-status.json").exists():
+            raise SystemExit("FAILED: state temporary-write fault left an invalid state view")
+
+        append_fault = root / "append-fault"
+        append_fault.mkdir()
+        with mock.patch.object(state_io, "_safe_append_fsync", side_effect=state_io.AuditStateError("JOURNAL_APPEND_FAILED", "injected")):
+            try:
+                state_io.commit_event(append_fault, mode_policy="r2", lock_timeout_seconds=1, request=request)
+            except state_io.AuditStateError as exc:
+                if exc.code != "JOURNAL_APPEND_FAILED":
+                    raise SystemExit("FAILED: injected append error changed failure semantics")
+            else:
+                raise SystemExit("FAILED: injected journal append failure unexpectedly succeeded")
+        if (append_fault / "audit-events.jsonl").exists() or (append_fault / "stage-status.json").exists():
+            raise SystemExit("FAILED: injected journal append failure changed state or journal bytes")
+
+    print("AUDIT STATE WRITER SELFTEST PASSED: lock/CAS/durability/R1/path-safety")
+
+
+def exercise_audit_state_recovery(plugin_root: Path) -> None:
+    recovery = plugin_root / "scripts/recover_audit_state.py"
+    writer = plugin_root / "scripts/write_audit_event.py"
+
+    def call(workspace: Path, *args: str) -> tuple[int, dict[str, Any]]:
+        proc = subprocess.run(
+            [sys.executable, str(recovery), "--workspace-dir", str(workspace), *args, "--json"],
+            cwd=plugin_root,
+            capture_output=True,
+            text=True,
+        )
+        raw = (proc.stdout or proc.stderr).strip()
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise SystemExit(f"FAILED: recovery CLI did not emit JSON: {raw}") from exc
+        return proc.returncode, payload
+
+    with tempfile.TemporaryDirectory(prefix="zhulong-state-recovery-") as tempdir:
+        root = Path(tempdir)
+        current = root / "current-r2"
+        current.mkdir()
+        run([
+            sys.executable,
+            str(writer),
+            "--workspace-dir", str(current),
+            "--protocol-mode", "r2",
+            "--accept-current-revision",
+            "--plugin-version", "0.4.0-recovery-fixture",
+            "--event", "intake_started",
+            "--stage", "intake",
+            "--status", "running",
+            "--transition-kind", "start",
+            "--message", "Recovery fixture started.",
+            "--json",
+        ], plugin_root)
+        journal_before = (current / "audit-events.jsonl").read_bytes()
+        state_before = (current / "stage-status.json").read_bytes()
+        code, checked = call(current, "--check")
+        if code != 0 or checked.get("rebuildability") != "complete_from_journal" or checked.get("drift"):
+            raise SystemExit("FAILED: valid new R2 recovery check was not an exact journal-only match")
+        journal_digest = str(checked["journal"]["digest"])
+        state_digest = str(checked["state"]["digest"])
+
+        (current / "stage-status.json").unlink()
+        code, missing = call(current, "--check")
+        if code == 0 or missing.get("rebuildability") != "complete_from_journal":
+            raise SystemExit("FAILED: missing state was not reported as rebuildable without a write")
+        if (current / "stage-status.json").exists() or (current / "audit-events.jsonl").read_bytes() != journal_before:
+            raise SystemExit("FAILED: recovery dry-run modified journal or state")
+        code, applied = call(
+            current,
+            "--apply",
+            "--expected-journal-digest", journal_digest,
+            "--expect-state-missing",
+        )
+        if code != 0 or not applied.get("applied") or (current / "stage-status.json").read_bytes() != state_before:
+            raise SystemExit("FAILED: missing state was not rebuilt byte-exactly")
+
+        tampered = json.loads(state_before)
+        tampered["stage"] = "recon"
+        tampered_bytes = (json.dumps(tampered, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode("utf-8")
+        (current / "stage-status.json").write_bytes(tampered_bytes)
+        code, stale = call(current, "--check")
+        if code == 0 or not any(item.get("code") == "STATE_STAGE_MISMATCH" for item in stale.get("drift", [])):
+            raise SystemExit("FAILED: field-level state drift was not diagnosed")
+        code, conflict = call(
+            current,
+            "--apply",
+            "--expected-journal-digest", journal_digest,
+            "--expected-state-digest", state_digest,
+        )
+        if code == 0 or conflict.get("code") != "STATE_DIGEST_CONFLICT":
+            raise SystemExit("FAILED: state digest CAS conflict was not enforced")
+        if (current / "stage-status.json").read_bytes() != tampered_bytes or (current / "audit-events.jsonl").read_bytes() != journal_before:
+            raise SystemExit("FAILED: failed CAS apply modified journal or state")
+        tampered_digest = "sha256:" + hashlib.sha256(tampered_bytes).hexdigest()
+        code, replaced = call(
+            current,
+            "--apply",
+            "--expected-journal-digest", journal_digest,
+            "--expected-state-digest", tampered_digest,
+        )
+        if code != 0 or not replaced.get("applied") or (current / "stage-status.json").read_bytes() != state_before:
+            raise SystemExit("FAILED: matching state digest did not authorize exact replacement")
+
+        historical = root / "anchored-historical-r2"
+        historical.mkdir()
+        old_journal = (plugin_root / "assets/fixtures/audit-state-protocol-r2/valid-events-r2.jsonl").read_bytes()
+        old_events = [json.loads(line) for line in old_journal.decode("utf-8").splitlines() if line.strip()]
+        latest = old_events[-1]
+        old_state = {
+            "schema_version": 2,
+            "plugin": "zhulong",
+            "plugin_version": "0.4.0-anchored",
+            "run_id": latest["run_id"],
+            "state_revision": len(old_events),
+            "last_event_seq": latest["seq"],
+            "event_log_digest": "sha256:" + hashlib.sha256(old_journal).hexdigest(),
+            "stage": latest["stage"],
+            "status": latest["to_status"],
+            "last_event_at": latest["ts"],
+            "last_event_type": latest["event_type"],
+            "last_event_name": latest["event_name"],
+            "blocker": None,
+            "resume_step": None,
+        }
+        (historical / "audit-events.jsonl").write_bytes(old_journal)
+        historical_state_bytes = (json.dumps(old_state, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode("utf-8")
+        (historical / "stage-status.json").write_bytes(historical_state_bytes)
+        code, anchored = call(historical, "--check")
+        if code != 0 or anchored.get("rebuildability") != "complete_with_anchored_legacy_metadata":
+            raise SystemExit("FAILED: exact historical state anchor was not accepted conservatively")
+        first_line = old_journal.splitlines(keepends=True)[0]
+        first = old_events[0]
+        stale_anchor = {
+            **old_state,
+            "run_id": first["run_id"],
+            "state_revision": 1,
+            "last_event_seq": 1,
+            "event_log_digest": "sha256:" + hashlib.sha256(first_line).hexdigest(),
+            "stage": first["stage"],
+            "status": first["to_status"],
+            "last_event_at": first["ts"],
+            "last_event_type": first["event_type"],
+            "last_event_name": first["event_name"],
+        }
+        (historical / "stage-status.json").write_text(
+            json.dumps(stale_anchor, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        code, stale_anchored = call(historical, "--check")
+        if code == 0 or stale_anchored.get("rebuildability") != "complete_with_anchored_legacy_metadata":
+            raise SystemExit("FAILED: stale state did not supply metadata only through its exact journal-prefix anchor")
+        (historical / "stage-status.json").unlink()
+        code, unavailable = call(historical, "--check")
+        if code == 0 or unavailable.get("rebuildability") != "blocked_missing_metadata":
+            raise SystemExit("FAILED: missing historical plugin-version provenance did not fail closed")
+
+        damaged = root / "damaged"
+        damaged.mkdir()
+        (damaged / "audit-events.jsonl").write_bytes(journal_before[:-1])
+        code, no_newline = call(damaged, "--check")
+        if code == 0 or no_newline["journal"]["classification"] != "journal_final_newline_missing":
+            raise SystemExit("FAILED: valid final event without newline was not distinguished")
+        (damaged / "audit-events.jsonl").write_bytes(journal_before + b'{"schema_version":2')
+        code, tail = call(damaged, "--check")
+        if code == 0 or tail["journal"]["classification"] != "journal_tail_incomplete":
+            raise SystemExit("FAILED: incomplete final tail was not distinguished")
+        (damaged / "audit-events.jsonl").write_bytes(journal_before + b"{bad}\n" + journal_before)
+        code, middle = call(damaged, "--check")
+        if code == 0 or middle["journal"]["classification"] != "journal_middle_corruption":
+            raise SystemExit("FAILED: middle corruption was not distinguished")
+
+        legacy = root / "legacy-r1"
+        legacy.mkdir()
+        legacy_event = json.loads((plugin_root / "assets/fixtures/audit-state-protocol-r2/legacy-event-r1.json").read_text(encoding="utf-8"))
+        legacy_state = (plugin_root / "assets/fixtures/audit-state-protocol-r2/legacy-state-r1.json").read_bytes()
+        (legacy / "audit-events.jsonl").write_text(json.dumps(legacy_event, sort_keys=True) + "\n", encoding="utf-8")
+        (legacy / "stage-status.json").write_bytes(legacy_state)
+        legacy_before = {path.name: path.read_bytes() for path in legacy.iterdir()}
+        code, preflight = call(legacy, "--migration-preflight")
+        if code != 0 or not preflight["r1_migration_preflight"].get("available"):
+            raise SystemExit("FAILED: valid R1 migration preflight was unavailable")
+        if legacy_before != {path.name: path.read_bytes() for path in legacy.iterdir()}:
+            raise SystemExit("FAILED: R1 migration preflight wrote source files")
+
+    print("AUDIT STATE RECOVERY SELFTEST PASSED: bytes/diagnostics/provenance/CAS/R1")
+
+
+def exercise_audit_transition_policy(plugin_root: Path) -> None:
+    """Exercise P9.3 policy intent at the real writer and validator boundary."""
+    writer = plugin_root / "scripts/write_audit_event.py"
+    validator = plugin_root / "scripts/validate_audit_protocol.py"
+    default = object()
+
+    def snapshot(workspace: Path) -> dict[str, bytes | None]:
+        return {
+            name: (workspace / name).read_bytes() if (workspace / name).exists() else None
+            for name in ("audit-events.jsonl", "stage-status.json", ".audit-state.lock")
+        }
+
+    def transition_action(name: str) -> dict[str, object]:
+        evidence_ref = "evidence/selftest/transition-context.json"
+        return {
+            "action_id": f"continue-{name}",
+            "action_type": "review",
+            "subject_ids": ["run:transition-selftest"],
+            "summary": "Continue the bounded transition-policy selftest.",
+            "evidence_refs": [evidence_ref],
+        }
+
+    def invoke(
+        workspace: Path,
+        name: str,
+        *,
+        stage: str,
+        status: str,
+        transition_kind: str,
+        reason_code: str | object = default,
+        reason_detail: str | None | object = default,
+        subjects: list[str] | object = default,
+        evidence_refs: list[str] | object = default,
+        next_actions: list[dict[str, object]] | object = default,
+        blocker: str = "",
+        resume_step: str = "",
+        include_block_context: bool = True,
+        expected_from_stage: str = "",
+        expected_from_status: str = "",
+    ) -> tuple[int, dict[str, object], str]:
+        command = [
+            sys.executable,
+            str(writer),
+            "--workspace-dir",
+            str(workspace),
+            "--event",
+            name,
+            "--stage",
+            stage,
+            "--status",
+            status,
+            "--transition-kind",
+            transition_kind,
+            "--message",
+            f"Transition-policy selftest event {name}.",
+            "--accept-current-revision",
+            "--json",
+        ]
+        if expected_from_stage:
+            command.extend(["--from-stage", expected_from_stage])
+        if expected_from_status:
+            command.extend(["--from-status", expected_from_status])
+        if status in {"paused", "blocked"} and include_block_context:
+            command.extend([
+                "--blocker",
+                blocker or "selftest transition blocker",
+                "--resume-step",
+                resume_step or "Review evidence/selftest/transition-context.json before resuming.",
+            ])
+
+        enhanced = transition_kind in {"resume", "skip", "return", "reopen"}
+        if enhanced:
+            if reason_code is default:
+                reason_code = {
+                    "resume": "recovery_requested",
+                    "skip": "not_applicable",
+                    "return": "validation_failed",
+                    "reopen": "validation_failed",
+                }[transition_kind]
+            if reason_detail is default:
+                reason_detail = "The selftest records the evidence-based reason for this non-default transition."
+            if subjects is default:
+                subjects = ["run:transition-selftest"]
+            if evidence_refs is default:
+                evidence_refs = ["evidence/selftest/transition-context.json"]
+            if next_actions is default:
+                next_actions = [transition_action(name)]
+        else:
+            if reason_code is default:
+                reason_code = None
+            if reason_detail is default:
+                reason_detail = None
+            if subjects is default:
+                subjects = []
+            if evidence_refs is default:
+                evidence_refs = []
+            if next_actions is default:
+                next_actions = []
+
+        if isinstance(reason_code, str) and reason_code:
+            command.extend(["--reason-code", reason_code])
+        if isinstance(subjects, list):
+            for subject in subjects:
+                command.extend(["--subject", subject])
+        if isinstance(evidence_refs, list):
+            for evidence_ref in evidence_refs:
+                command.extend(["--evidence-ref", evidence_ref])
+        if isinstance(next_actions, list):
+            for action in next_actions:
+                command.extend(["--next-action-json", json.dumps(action, sort_keys=True)])
+        details: dict[str, str] = {"summary": f"Transition-policy selftest event {name}."}
+        if isinstance(reason_detail, str):
+            details["reason_detail"] = reason_detail
+        command.extend(["--details-json", json.dumps(details, sort_keys=True)])
+        proc = subprocess.run(command, cwd=plugin_root, capture_output=True, text=True)
+        output = ((proc.stdout or "") + (proc.stderr or "")).strip()
+        try:
+            payload = json.loads((proc.stdout or "").strip())
+        except json.JSONDecodeError:
+            payload = {}
+        return proc.returncode, payload, output
+
+    def require_ok(result: tuple[int, dict[str, object], str], label: str) -> dict[str, object]:
+        code, payload, output = result
+        if code != 0 or payload.get("ok") is not True:
+            raise SystemExit(f"FAILED: transition policy positive case {label}: {output}")
+        return payload
+
+    def require_rejection(
+        workspace: Path,
+        label: str,
+        expected_code: str,
+        **kwargs: object,
+    ) -> None:
+        before = snapshot(workspace)
+        code, payload, output = invoke(workspace, label, **kwargs)  # type: ignore[arg-type]
+        if code == 0 or payload.get("code") != expected_code:
+            raise SystemExit(
+                f"FAILED: transition policy rejection {label} expected {expected_code}: {output}"
+            )
+        if snapshot(workspace) != before:
+            raise SystemExit(f"FAILED: rejected transition {label} changed journal, state, or lock bytes")
+
+    def seed_to_verification(workspace: Path) -> None:
+        require_ok(
+            invoke(
+                workspace,
+                "policy_started",
+                stage="intake",
+                status="running",
+                transition_kind="start",
+            ),
+            "start",
+        )
+        for name, stage in [
+            ("policy_recon_started", "recon"),
+            ("policy_candidates_started", "candidate_generation"),
+            ("policy_triage_started", "triage"),
+            ("policy_verification_started", "verification"),
+        ]:
+            require_ok(
+                invoke(
+                    workspace,
+                    name,
+                    stage=stage,
+                    status="running",
+                    transition_kind="advance",
+                ),
+                name,
+            )
+
+    def prepared_enhanced_workspace(
+        root: Path,
+        transition_kind: str,
+        label: str,
+    ) -> tuple[Path, str, str]:
+        workspace = root / f"enhanced-{transition_kind}-{label}"
+        workspace.mkdir()
+        if transition_kind == "resume":
+            require_ok(
+                invoke(
+                    workspace,
+                    "resume_started",
+                    stage="intake",
+                    status="running",
+                    transition_kind="start",
+                ),
+                "resume start",
+            )
+            require_ok(
+                invoke(
+                    workspace,
+                    "resume_blocked",
+                    stage="intake",
+                    status="blocked",
+                    transition_kind="block",
+                ),
+                "resume block",
+            )
+            return workspace, "intake", "running"
+        if transition_kind == "skip":
+            seed_to_verification(workspace)
+            return workspace, "severity_escalation", "completed"
+        if transition_kind == "return":
+            seed_to_verification(workspace)
+            return workspace, "triage", "running"
+        if transition_kind == "reopen":
+            require_ok(
+                invoke(
+                    workspace,
+                    "reopen_started",
+                    stage="intake",
+                    status="running",
+                    transition_kind="start",
+                ),
+                "reopen start",
+            )
+            require_ok(
+                invoke(
+                    workspace,
+                    "reopen_completed",
+                    stage="intake",
+                    status="completed",
+                    transition_kind="complete",
+                ),
+                "reopen complete",
+            )
+            return workspace, "intake", "running"
+        raise AssertionError(f"unknown enhanced kind: {transition_kind}")
+
+    with tempfile.TemporaryDirectory(prefix="zhulong-transition-policy-") as temp_dir:
+        root = Path(temp_dir)
+        positive = root / "positive"
+        positive.mkdir()
+        first = require_ok(
+            invoke(
+                positive,
+                "intake_started",
+                stage="intake",
+                status="running",
+                transition_kind="start",
+            ),
+            "first start",
+        )
+        if first.get("seq") != 1:
+            raise SystemExit("FAILED: transition policy first start did not allocate seq=1")
+        require_ok(
+            invoke(
+                positive,
+                "intake_observed",
+                stage="intake",
+                status="running",
+                transition_kind="observe",
+                expected_from_stage="intake",
+                expected_from_status="running",
+            ),
+            "same-stage observe",
+        )
+        require_ok(
+            invoke(
+                positive,
+                "intake_observed_at_locked_current",
+                stage="current",
+                status="current",
+                transition_kind="observe",
+            ),
+            "locked current observe",
+        )
+        require_ok(
+            invoke(
+                positive,
+                "intake_paused",
+                stage="intake",
+                status="paused",
+                transition_kind="pause",
+            ),
+            "pause",
+        )
+        require_ok(
+            invoke(
+                positive,
+                "intake_resumed_from_pause",
+                stage="intake",
+                status="running",
+                transition_kind="resume",
+            ),
+            "resume paused",
+        )
+        require_ok(
+            invoke(
+                positive,
+                "intake_blocked",
+                stage="intake",
+                status="blocked",
+                transition_kind="block",
+            ),
+            "block",
+        )
+        require_ok(
+            invoke(
+                positive,
+                "intake_resumed_from_block",
+                stage="intake",
+                status="running",
+                transition_kind="resume",
+            ),
+            "resume blocked",
+        )
+        require_ok(
+            invoke(
+                positive,
+                "intake_completed",
+                stage="intake",
+                status="completed",
+                transition_kind="complete",
+            ),
+            "complete",
+        )
+        require_ok(
+            invoke(
+                positive,
+                "intake_reopened",
+                stage="intake",
+                status="running",
+                transition_kind="reopen",
+            ),
+            "reopen",
+        )
+        for name, stage in [
+            ("recon_started", "recon"),
+            ("candidates_started", "candidate_generation"),
+            ("triage_started", "triage"),
+            ("verification_started", "verification"),
+        ]:
+            require_ok(
+                invoke(positive, name, stage=stage, status="running", transition_kind="advance"),
+                f"advance {stage}",
+            )
+        require_ok(
+            invoke(
+                positive,
+                "severity_skipped",
+                stage="severity_escalation",
+                status="completed",
+                transition_kind="skip",
+            ),
+            "optional skip",
+        )
+        require_ok(
+            invoke(
+                positive,
+                "variant_started",
+                stage="variant_discovery",
+                status="running",
+                transition_kind="advance",
+            ),
+            "advance variant discovery",
+        )
+        require_ok(
+            invoke(
+                positive,
+                "variant_returned_for_verification",
+                stage="verification",
+                status="running",
+                transition_kind="return",
+            ),
+            "variant return to verification",
+        )
+        require_ok(
+            invoke(
+                positive,
+                "verification_returned_to_triage",
+                stage="triage",
+                status="running",
+                transition_kind="return",
+            ),
+            "verification return to triage",
+        )
+        require_ok(
+            invoke(
+                positive,
+                "verification_restarted",
+                stage="verification",
+                status="running",
+                transition_kind="advance",
+            ),
+            "reverification advance",
+        )
+        require_ok(
+            invoke(
+                positive,
+                "packaging_started",
+                stage="packaging",
+                status="running",
+                transition_kind="advance",
+            ),
+            "advance packaging",
+        )
+        require_ok(
+            invoke(
+                positive,
+                "finalization_started",
+                stage="finalization",
+                status="running",
+                transition_kind="advance",
+            ),
+            "advance finalization",
+        )
+        require_ok(
+            invoke(
+                positive,
+                "finalization_completed",
+                stage="finalization",
+                status="completed",
+                transition_kind="complete",
+            ),
+            "complete finalization state",
+        )
+        positive_events = [
+            json.loads(line)
+            for line in (positive / "audit-events.jsonl").read_text(encoding="utf-8").splitlines()
+        ]
+        if any(event.get("stage") == "recording" for event in positive_events):
+            raise SystemExit("FAILED: omitted recording was represented without a recording claim")
+        require_ok(
+            invoke(
+                positive,
+                "recording_skipped_without_archive_claim",
+                stage="recording",
+                status="completed",
+                transition_kind="skip",
+            ),
+            "optional recording skip after completed finalization",
+        )
+        if (positive / "recordings").exists() or (positive / "recording-evidence.json").exists():
+            raise SystemExit("FAILED: recording skip created a recording artifact or submission claim")
+        positive_events = [
+            json.loads(line)
+            for line in (positive / "audit-events.jsonl").read_text(encoding="utf-8").splitlines()
+        ]
+        for event in positive_events:
+            if set(("from_stage", "transition_kind", "transition_policy_version", "blocker", "resume_step")) - set(event):
+                raise SystemExit("FAILED: new P9.3 event omitted complete transition metadata")
+        policy_output = run_capture(
+            [sys.executable, str(validator), "--events-jsonl", str(positive / "audit-events.jsonl"), "--json"],
+            plugin_root,
+        )
+        if json.loads(policy_output).get("transition_policy") != "transition_policy_v1":
+            raise SystemExit("FAILED: policy journal did not validate as transition_policy_v1")
+
+        for transition_kind in ("resume", "skip", "return", "reopen"):
+            for label, expected_code, kwargs in [
+                ("missing_reason_detail", "TRANSITION_REASON_DETAIL_REQUIRED", {"reason_detail": None}),
+                ("missing_subject", "TRANSITION_SUBJECT_REQUIRED", {"subjects": []}),
+                ("missing_evidence", "TRANSITION_EVIDENCE_REQUIRED", {"evidence_refs": []}),
+                ("missing_next_action", "TRANSITION_NEXT_ACTION_REQUIRED", {"next_actions": []}),
+            ]:
+                workspace, stage, status = prepared_enhanced_workspace(root, transition_kind, label)
+                require_rejection(
+                    workspace,
+                    f"{transition_kind}_{label}",
+                    expected_code,
+                    stage=stage,
+                    status=status,
+                    transition_kind=transition_kind,
+                    **kwargs,
+                )
+
+        paused = root / "paused"
+        paused.mkdir()
+        require_ok(invoke(paused, "paused_start", stage="intake", status="running", transition_kind="start"), "paused start")
+        require_ok(invoke(paused, "paused_pause", stage="intake", status="paused", transition_kind="pause"), "paused state")
+        require_rejection(
+            paused,
+            "paused_observe_running",
+            "OBSERVE_STATE_CHANGED",
+            stage="intake",
+            status="running",
+            transition_kind="observe",
+        )
+        blocked = root / "blocked"
+        blocked.mkdir()
+        require_ok(invoke(blocked, "blocked_start", stage="intake", status="running", transition_kind="start"), "blocked start")
+        require_ok(invoke(blocked, "blocked_block", stage="intake", status="blocked", transition_kind="block"), "blocked state")
+        require_rejection(
+            blocked,
+            "blocked_observe_running",
+            "OBSERVE_STATE_CHANGED",
+            stage="intake",
+            status="running",
+            transition_kind="observe",
+        )
+        require_rejection(
+            blocked,
+            "blocked_resume_with_unsafe_evidence",
+            "EVENT_VALIDATION_FAILED",
+            stage="intake",
+            status="running",
+            transition_kind="resume",
+            evidence_refs=["https://example.invalid/evidence"],
+        )
+
+        completed = root / "completed"
+        completed.mkdir()
+        require_ok(invoke(completed, "completed_start", stage="intake", status="running", transition_kind="start"), "completed start")
+        require_ok(invoke(completed, "completed_complete", stage="intake", status="completed", transition_kind="complete"), "completed state")
+        require_rejection(
+            completed,
+            "completed_observe_running",
+            "OBSERVE_STATE_CHANGED",
+            stage="intake",
+            status="running",
+            transition_kind="observe",
+        )
+        require_rejection(
+            completed,
+            "completed_resume",
+            "RESUME_TRANSITION_INVALID",
+            stage="intake",
+            status="running",
+            transition_kind="resume",
+        )
+        running = root / "running"
+        running.mkdir()
+        require_ok(invoke(running, "running_start", stage="intake", status="running", transition_kind="start"), "running start")
+        require_rejection(
+            running,
+            "pause_without_context",
+            "EVENT_VALIDATION_FAILED",
+            stage="intake",
+            status="paused",
+            transition_kind="pause",
+            include_block_context=False,
+        )
+        require_rejection(
+            running,
+            "block_without_context",
+            "EVENT_VALIDATION_FAILED",
+            stage="intake",
+            status="blocked",
+            transition_kind="block",
+            include_block_context=False,
+        )
+        require_rejection(
+            running,
+            "running_resume",
+            "RESUME_TRANSITION_INVALID",
+            stage="intake",
+            status="running",
+            transition_kind="resume",
+        )
+        require_rejection(
+            running,
+            "running_reopen",
+            "REOPEN_TRANSITION_INVALID",
+            stage="intake",
+            status="running",
+            transition_kind="reopen",
+        )
+        require_rejection(
+            running,
+            "observe_changes_stage",
+            "OBSERVE_STATE_CHANGED",
+            stage="recon",
+            status="running",
+            transition_kind="observe",
+        )
+        require_rejection(
+            running,
+            "source_stage_mismatch",
+            "SOURCE_STAGE_MISMATCH",
+            stage="intake",
+            status="running",
+            transition_kind="observe",
+            expected_from_stage="recon",
+        )
+        require_rejection(
+            running,
+            "source_status_mismatch",
+            "SOURCE_STATUS_MISMATCH",
+            stage="intake",
+            status="running",
+            transition_kind="observe",
+            expected_from_status="blocked",
+        )
+        require_rejection(
+            running,
+            "unknown_transition_kind",
+            "INVALID_TRANSITION_KIND",
+            stage="intake",
+            status="running",
+            transition_kind="teleport",
+        )
+
+        backward = root / "backward"
+        backward.mkdir()
+        seed_to_verification(backward)
+        require_rejection(
+            backward,
+            "advance_backward",
+            "ADVANCE_STAGE_EDGE_INVALID",
+            stage="triage",
+            status="running",
+            transition_kind="advance",
+        )
+        require_rejection(
+            backward,
+            "return_forward",
+            "RETURN_STAGE_EDGE_INVALID",
+            stage="packaging",
+            status="running",
+            transition_kind="return",
+        )
+        require_rejection(
+            backward,
+            "skip_mandatory_packaging",
+            "SKIP_TRANSITION_INVALID",
+            stage="packaging",
+            status="completed",
+            transition_kind="skip",
+        )
+
+        promotion = root / "promotion-boundary"
+        promotion.mkdir()
+        (promotion / "asr-config.json").write_text('{"schema_version":1}\n', encoding="utf-8")
+        (promotion / "candidate-findings.md").write_text(
+            "Scanner and LLM notes say confirmed_in_docker, but no authoritative verdict exists.\n",
+            encoding="utf-8",
+        )
+        (promotion / "evidence").mkdir()
+        (promotion / "evidence/docker-only.json").write_text(
+            '{"verification_status":"confirmed_in_docker","authority":"docker-only"}\n',
+            encoding="utf-8",
+        )
+        seed_to_verification(promotion)
+        require_ok(
+            invoke(
+                promotion,
+                "packaging_observed_after_scanner_note",
+                stage="packaging",
+                status="running",
+                transition_kind="advance",
+            ),
+            "syntactic verification to packaging transition",
+        )
+        require_ok(
+            invoke(
+                promotion,
+                "fake_finalization_started",
+                stage="finalization",
+                status="running",
+                transition_kind="advance",
+            ),
+            "fake finalization transition",
+        )
+        require_ok(
+            invoke(
+                promotion,
+                "fake_finalization_completed",
+                stage="finalization",
+                status="completed",
+                transition_kind="complete",
+            ),
+            "fake finalization complete",
+        )
+        require_ok(
+            invoke(
+                promotion,
+                "fake_recording_started",
+                stage="recording",
+                status="running",
+                transition_kind="advance",
+            ),
+            "fake recording transition",
+        )
+        for generated in (
+            "confirmed",
+            "audit-disposition.json",
+            "handoff-summary.md",
+            "SUMMARY.md",
+            "recordings",
+            "recording-evidence.json",
+        ):
+            if (promotion / generated).exists():
+                raise SystemExit(
+                    "FAILED: workflow transition created a promotion or completion artifact: " + generated
+                )
+        assertion = subprocess.run(
+            [
+                sys.executable,
+                str(plugin_root / "scripts/assert_finalized_workspace.py"),
+                "--workspace-dir",
+                str(promotion),
+                "--json",
+            ],
+            cwd=plugin_root,
+            capture_output=True,
+            text=True,
+        )
+        if assertion.returncode == 0:
+            raise SystemExit("FAILED: fake transition-only finalization passed substantive finalization assertion")
+
+        prepolicy = root / "prepolicy-prefix"
+        prepolicy.mkdir()
+        legacy_prefix = (
+            plugin_root / "assets/fixtures/audit-state-protocol-r2/valid-events-r2.jsonl"
+        ).read_bytes()
+        prefix_events = [
+            json.loads(line)
+            for line in legacy_prefix.decode("utf-8").splitlines()
+            if line.strip()
+        ]
+        latest = prefix_events[-1]
+        (prepolicy / "audit-events.jsonl").write_bytes(legacy_prefix)
+        (prepolicy / "stage-status.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 2,
+                    "plugin": "zhulong",
+                    "plugin_version": "fixture",
+                    "run_id": latest["run_id"],
+                    "state_revision": len(prefix_events),
+                    "last_event_seq": latest["seq"],
+                    "event_log_digest": "sha256:" + hashlib.sha256(legacy_prefix).hexdigest(),
+                    "stage": latest["stage"],
+                    "status": latest["to_status"],
+                    "last_event_at": latest["ts"],
+                    "last_event_type": latest["event_type"],
+                    "last_event_name": latest["event_name"],
+                    "blocker": None,
+                    "resume_step": None,
+                },
+                sort_keys=True,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        require_ok(
+            invoke(
+                prepolicy,
+                "prepolicy_recon_observed",
+                stage="recon",
+                status="running",
+                transition_kind="observe",
+            ),
+            "pre-policy R2 continuation",
+        )
+        prefix_output = run_capture(
+            [sys.executable, str(validator), "--events-jsonl", str(prepolicy / "audit-events.jsonl"), "--json"],
+            plugin_root,
+        )
+        if json.loads(prefix_output).get("transition_policy") != "pre_policy_r2_prefix_then_transition_policy_v1":
+            raise SystemExit("FAILED: pre-P9.3 R2 prefix was not visibly classified at the policy boundary")
+
+    print("AUDIT TRANSITION POLICY SELFTEST PASSED: FSM/compatibility/rejection/promotion boundaries")
+
+
+def exercise_triage_batch_and_stage_finalization(plugin_root: Path) -> None:
+    """Exercise the production P9 triage/finalizer paths without runtime execution."""
+    validator = plugin_root / "scripts/validate_triage_batch.py"
+    finalizer = plugin_root / "scripts/finalize_stage.py"
+    writer = plugin_root / "scripts/write_audit_event.py"
+    fixture_root = plugin_root / "assets/fixtures/triage-batch"
+    required = [
+        "assets/schemas/triage-batch.schema.json",
+        "docs/runner-contracts/triage-batch-contract-r1.md",
+        "assets/fixtures/triage-batch/README.md",
+        "assets/fixtures/triage-batch/manifest.json",
+        "scripts/validate_triage_batch.py",
+        "scripts/finalize_stage.py",
+    ]
+    require_files(plugin_root, required, "triage batch/finalizer")
+    manifest = json.loads((fixture_root / "manifest.json").read_text(encoding="utf-8"))
+    for fixture_id in (
+        "complete-five-advisories", "partial-unprocessed-candidate", "blocked-batch-recovery",
+        "duplicate-cycle", "candidate-id-path-swap", "wrong-result-digest", "duplicate-finalization",
+    ):
+        if fixture_id not in set(manifest.get("positive_cases", [])) | set(manifest.get("negative_cases", [])):
+            raise SystemExit(f"FAILED: triage fixture manifest omitted {fixture_id}")
+
+    def clone(value: object) -> object:
+        return json.loads(json.dumps(value))
+
+    def digest(path: Path) -> str:
+        return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+
+    def invoke_json(command: list[str], *, expected_returncode: int, label: str) -> dict:
+        proc = subprocess.run(command, cwd=plugin_root, capture_output=True, text=True)
+        output = ((proc.stdout or "") + (proc.stderr or "")).strip()
+        if proc.returncode != expected_returncode:
+            raise SystemExit(f"FAILED: {label} returned {proc.returncode}, expected {expected_returncode}: {output}")
+        try:
+            return json.loads((proc.stdout or "").strip())
+        except json.JSONDecodeError as exc:
+            raise SystemExit(f"FAILED: {label} did not emit JSON: {output}") from exc
+
+    def decision(candidate_id: str, recommendation: str, **extra: object) -> dict:
+        value: dict[str, object] = {
+            "candidate_id": candidate_id,
+            "recommendation": recommendation,
+            "reason_code": "TRIAGE_REVIEW_REQUIRED",
+            "evidence": ["Sanitized candidate-only evidence was reviewed."],
+            "next_action": "Keep this advisory record for the next manual review step.",
+        }
+        value.update(extra)
+        return value
+
+    def materialize(root: Path) -> tuple[Path, Path, dict, list[str]]:
+        repo = root / "repo"
+        workspace = root / "workspace"
+        recon_fixture = plugin_root / "assets/fixtures/recon-result/service"
+        shutil.copytree(recon_fixture / "repo", repo)
+        shutil.copytree(recon_fixture / "workspace", workspace)
+        shutil.copy2(workspace / "cases/complete-service.json", workspace / "recon-result.json")
+        contract_fixture = plugin_root / "assets/fixtures/contracts/confirmed_ssrf"
+        base_candidate = json.loads((contract_fixture / "candidate.json").read_text(encoding="utf-8"))
+        candidate_ids: list[str] = []
+        inventory: list[dict] = []
+        for index in range(1, 6):
+            candidate_id = f"CAND-TRIAGE-{index}"
+            candidate_ids.append(candidate_id)
+            candidate = clone(base_candidate)
+            assert isinstance(candidate, dict)
+            candidate["candidate_id"] = candidate_id
+            candidate["title"] = f"Sanitized triage candidate {index}"
+            candidate["finder"]["created_at"] = f"2026-06-{18 + index:02d}T00:00:00Z"
+            candidate["target_ref"] = {
+                "target_config": "zhulong-target.yaml",
+                "tested_ref": "fixture-service-ref-001",
+            }
+            path = workspace / "candidates" / candidate_id / "candidate.json"
+            path.parent.mkdir(parents=True)
+            path.write_text(json.dumps(candidate, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            inventory.append({"path": path.relative_to(workspace).as_posix(), "sha256": digest(path), "candidate_id": candidate_id})
+        batch = {
+            "schema_version": 1,
+            "batch_id": "TRIAGE-SANITIZED-1",
+            "status": "complete",
+            "target_binding": {
+                "target_contract_path": "zhulong-target.yaml",
+                "target_contract_sha256": digest(workspace / "zhulong-target.yaml"),
+                "tested_ref": "fixture-service-ref-001",
+            },
+            "recon_binding": {
+                "path": "recon-result.json",
+                "sha256": digest(workspace / "recon-result.json"),
+                "recon_id": "RECON-SERVICE-001",
+            },
+            "candidate_inventory": inventory,
+            "decisions": [
+                decision(candidate_ids[0], "recommend_verification", verification_reason="The entrypoint-to-sink claim merits independent review.", docker_applicability="applicable", required_evidence=["Attacker entrypoint and deterministic oracle evidence."], verification_order=1),
+                decision(candidate_ids[1], "unverified", missing_evidence=["A deterministic entrypoint observation is missing."], next_action="Collect the missing candidate-only evidence before requesting verification."),
+                decision(candidate_ids[2], "false_positive", counterevidence=["The documented boundary rejects this candidate-only path."], next_action="Retain the counterevidence for reviewer inspection."),
+                decision(candidate_ids[3], "duplicate", duplicate_of_candidate_id=candidate_ids[2], next_action="Review the canonical candidate before any independent verification."),
+                decision(candidate_ids[4], "blocked", blocker_code="FIXTURE_RUNTIME_DEPENDENCY", recovery_condition="The sanitized prerequisite is available.", resume_action="Resume candidate-only review after the prerequisite is recorded.", next_action="Resume only after the recorded recovery condition."),
+            ],
+            "unprocessed_candidates": [],
+            "batch_gaps": [],
+            "batch_blockers": [],
+            "next_actions": [{"action_id": "ACTION-TRIAGE-REVIEW", "summary": "Review this advisory batch without changing a disposition."}],
+        }
+        return repo, workspace, batch, candidate_ids
+
+    def validate_batch(repo: Path, workspace: Path, batch: dict, *, expected_ok: bool, expected_codes: set[str], label: str) -> dict:
+        path = workspace / "triage-batch.json"
+        path.write_text(json.dumps(batch, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        payload = invoke_json([
+            sys.executable, str(validator), "--repo-root", str(repo), "--workspace-dir", str(workspace),
+            "--triage-batch", "triage-batch.json", "--json",
+        ], expected_returncode=0 if expected_ok else 1, label=label)
+        if bool(payload.get("ok")) != expected_ok:
+            raise SystemExit(f"FAILED: {label} success mismatch: {payload}")
+        actual_codes = set(payload.get("issue_codes", []))
+        if not expected_codes.issubset(actual_codes):
+            raise SystemExit(f"FAILED: {label} codes {actual_codes} do not include {expected_codes}")
+        if (workspace / "audit-disposition.json").exists() or (workspace / "audit-events.jsonl").exists():
+            raise SystemExit(f"FAILED: read-only triage validator wrote downstream authority material for {label}")
+        return payload
+
+    with tempfile.TemporaryDirectory(prefix="zhulong-triage-batch-") as tempdir:
+        root = Path(tempdir)
+        repo, workspace, complete, candidate_ids = materialize(root)
+        validate_batch(repo, workspace, complete, expected_ok=True, expected_codes=set(), label="complete five advisories")
+
+        invalid_recon_digest = clone(complete)
+        assert isinstance(invalid_recon_digest, dict)
+        invalid_recon_digest["recon_binding"]["sha256"] = "sha256:" + "0" * 64
+        validate_batch(repo, workspace, invalid_recon_digest, expected_ok=False, expected_codes={"DIGEST_MISMATCH_RECON"}, label="recon digest drift")
+
+        invalid_recon_id = clone(complete)
+        assert isinstance(invalid_recon_id, dict)
+        invalid_recon_id["recon_binding"]["recon_id"] = "RECON-SERVICE-OTHER"
+        validate_batch(repo, workspace, invalid_recon_id, expected_ok=False, expected_codes={"RECON_ID_MISMATCH"}, label="recon id mismatch")
+
+        original_recon = (workspace / "recon-result.json").read_bytes()
+        invalid_recon = json.loads(original_recon.decode("utf-8"))
+        invalid_recon["status"] = "invalid"
+        (workspace / "recon-result.json").write_text(json.dumps(invalid_recon, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        invalid_recon_contract = clone(complete)
+        assert isinstance(invalid_recon_contract, dict)
+        invalid_recon_contract["recon_binding"]["sha256"] = digest(workspace / "recon-result.json")
+        validate_batch(repo, workspace, invalid_recon_contract, expected_ok=False, expected_codes={"RECON_BINDING_INVALID"}, label="recon production validator rejection")
+        (workspace / "recon-result.json").write_bytes(original_recon)
+
+        escaped_recon = clone(complete)
+        assert isinstance(escaped_recon, dict)
+        escaped_recon["recon_binding"]["path"] = "../recon-result.json"
+        validate_batch(repo, workspace, escaped_recon, expected_ok=False, expected_codes={"PATH_UNSAFE"}, label="recon path escape")
+
+        missing_recon = clone(complete)
+        assert isinstance(missing_recon, dict)
+        missing_recon["recon_binding"]["path"] = "missing-recon-result.json"
+        validate_batch(repo, workspace, missing_recon, expected_ok=False, expected_codes={"FILE_MISSING"}, label="recon missing")
+
+        original_target = (workspace / "zhulong-target.yaml").read_bytes()
+        moved_recon = workspace / "recon-result.real.json"
+        (workspace / "recon-result.json").rename(moved_recon)
+        (workspace / "recon-result.json").symlink_to(moved_recon.name)
+        try:
+            symlink_recon = clone(complete)
+            assert isinstance(symlink_recon, dict)
+            validate_batch(repo, workspace, symlink_recon, expected_ok=False, expected_codes={"SYMLINK_ESCAPE"}, label="recon symlink")
+        finally:
+            (workspace / "recon-result.json").unlink()
+            moved_recon.rename(workspace / "recon-result.json")
+
+        swapped_candidate = clone(complete)
+        assert isinstance(swapped_candidate, dict)
+        swapped_candidate["candidate_inventory"][0]["path"] = "recon-result.json"
+        swapped_candidate["candidate_inventory"][0]["sha256"] = digest(workspace / "recon-result.json")
+        validate_batch(repo, workspace, swapped_candidate, expected_ok=False, expected_codes={"CANDIDATE_INVALID"}, label="candidate recon binding swap")
+
+        swapped_target = clone(complete)
+        assert isinstance(swapped_target, dict)
+        swapped_target["target_binding"]["target_contract_path"] = "recon-result.json"
+        swapped_target["target_binding"]["target_contract_sha256"] = digest(workspace / "recon-result.json")
+        validate_batch(repo, workspace, swapped_target, expected_ok=False, expected_codes={"TARGET_CONTRACT_INVALID"}, label="target recon binding swap")
+        if (workspace / "zhulong-target.yaml").read_bytes() != original_target:
+            raise SystemExit("FAILED: triage mutation matrix changed the target contract")
+
+        partial = clone(complete)
+        assert isinstance(partial, dict)
+        partial["status"] = "partial"
+        partial["decisions"] = partial["decisions"][:-1]
+        partial["unprocessed_candidates"] = [{"candidate_id": candidate_ids[4], "reason_code": "EVIDENCE_PENDING", "evidence": ["Sanitized collection has not completed."], "next_action": "Collect the explicit missing evidence."}]
+        validate_batch(repo, workspace, partial, expected_ok=True, expected_codes=set(), label="partial batch")
+
+        blocked = clone(complete)
+        assert isinstance(blocked, dict)
+        blocked["status"] = "blocked"
+        blocked["batch_blockers"] = [{"code": "BATCH_FIXTURE_BLOCKER", "affected_candidate_ids": [candidate_ids[4]], "evidence": ["A sanitized batch-level prerequisite is absent."], "recovery_condition": "The prerequisite is restored.", "resume_action": "Resume triage after restoration."}]
+        validate_batch(repo, workspace, blocked, expected_ok=True, expected_codes=set(), label="blocked batch")
+
+        cases: list[tuple[str, dict, set[str]]] = []
+        invalid = clone(complete); assert isinstance(invalid, dict); invalid["decisions"][3]["duplicate_of_candidate_id"] = candidate_ids[3]; cases.append(("duplicate self", invalid, {"DUPLICATE_SELF_REFERENCE"}))
+        invalid = clone(complete); assert isinstance(invalid, dict); invalid["decisions"][2]["recommendation"] = "duplicate"; invalid["decisions"][2].pop("counterevidence"); invalid["decisions"][2]["duplicate_of_candidate_id"] = candidate_ids[3]; cases.append(("duplicate cycle", invalid, {"DUPLICATE_CYCLE"}))
+        invalid = clone(complete); assert isinstance(invalid, dict); invalid["decisions"][3]["duplicate_of_candidate_id"] = "CAND-TRIAGE-MISSING"; cases.append(("duplicate missing", invalid, {"DUPLICATE_TARGET_UNKNOWN"}))
+        invalid = clone(complete); assert isinstance(invalid, dict); invalid["candidate_inventory"][0]["sha256"] = "sha256:" + "0" * 64; cases.append(("candidate digest drift", invalid, {"DIGEST_MISMATCH_CANDIDATE"}))
+        invalid = clone(complete); assert isinstance(invalid, dict); invalid["candidate_inventory"][0]["candidate_id"] = candidate_ids[1]; cases.append(("candidate id path swap", invalid, {"DUPLICATE_CANDIDATE_ID", "CANDIDATE_ID_PATH_SWAP"}))
+        invalid = clone(complete); assert isinstance(invalid, dict); invalid["candidate_inventory"][0]["path"] = "../candidate.json"; cases.append(("candidate path escape", invalid, {"PATH_UNSAFE"}))
+        invalid = clone(complete); assert isinstance(invalid, dict); invalid["decisions"] = invalid["decisions"][:-1]; cases.append(("omitted decision", invalid, {"CANDIDATE_DECISION_OMITTED", "BATCH_COMPLETENESS_INVALID"}))
+        invalid = clone(complete); assert isinstance(invalid, dict); invalid["decisions"].append(clone(invalid["decisions"][0])); cases.append(("duplicate decision", invalid, {"DUPLICATE_DECISION"}))
+        invalid = clone(partial); assert isinstance(invalid, dict); invalid["decisions"].append(clone(complete["decisions"][4])); cases.append(("processed unprocessed overlap", invalid, {"PROCESSED_UNPROCESSED_OVERLAP"}))
+        invalid = clone(complete); assert isinstance(invalid, dict); invalid["disposition"] = "confirmed"; cases.append(("forbidden disposition", invalid, {"FORBIDDEN_AUTHORITY_FIELD", "SCHEMA_INVALID"}))
+        invalid = clone(complete); assert isinstance(invalid, dict); invalid["promotion"] = "confirmed"; cases.append(("forbidden promotion", invalid, {"FORBIDDEN_AUTHORITY_FIELD", "SCHEMA_INVALID"}))
+        for label, bad_batch, codes in cases:
+            validate_batch(repo, workspace, bad_batch, expected_ok=False, expected_codes=codes, label=label)
+
+        validate_batch(repo, workspace, complete, expected_ok=True, expected_codes=set(), label="restored complete triage")
+        for event_name, stage, transition in (
+            ("triage_handoff_intake", "intake", "start"),
+            ("triage_handoff_recon", "recon", "advance"),
+            ("triage_handoff_candidates", "candidate_generation", "advance"),
+            ("triage_handoff_started", "triage", "advance"),
+        ):
+            invoke_json([
+                sys.executable, str(writer), "--workspace-dir", str(workspace),
+                "--event", event_name, "--stage", stage, "--status", "running",
+                "--transition-kind", transition, "--message", "Seed a portable handoff triage fixture.",
+                "--accept-current-revision", "--json",
+            ], expected_returncode=0, label=f"handoff {event_name}")
+        handoff = invoke_json([
+            sys.executable, str(plugin_root / "scripts/render_handoff_state.py"),
+            "--workspace-dir", str(workspace), "--repo-root", str(repo), "--json",
+        ], expected_returncode=0, label="handoff triage validator parity")
+        handoff_state = handoff.get("state", {})
+        triage_state = handoff_state.get("triage", {}) if isinstance(handoff_state, dict) else {}
+        issue_codes = {
+            str(item.get("code"))
+            for item in handoff_state.get("integrity", {}).get("issues", [])
+            if isinstance(item, dict)
+        } if isinstance(handoff_state, dict) else set()
+        if triage_state.get("status") != "complete" or "STRUCTURED_RESULT_INVALID" in issue_codes:
+            raise SystemExit(
+                "FAILED: handoff triage status diverged from the production triage CLI "
+                f"status={triage_state.get('status')} issues={sorted(issue_codes)}"
+            )
+        help_output = run_capture([sys.executable, str(validator), "--help"], plugin_root)
+        if "--recon-result" in help_output:
+            raise SystemExit("FAILED: triage CLI unexpectedly exposes a second Recon input")
+
+    def seed_running_stage(workspace: Path, stage: str) -> int:
+        stages = ["intake", "recon", "candidate_generation", "triage"]
+        target_index = stages.index(stage)
+        for index, name in enumerate(stages[:target_index + 1]):
+            transition = "start" if index == 0 else "advance"
+            payload = invoke_json([
+                sys.executable, str(writer), "--workspace-dir", str(workspace), "--event", f"p9_seed_{name}",
+                "--stage", name, "--status", "running", "--transition-kind", transition,
+                "--message", "Seed a deterministic P9 stage-finalizer fixture.", "--accept-current-revision", "--json",
+            ], expected_returncode=0, label=f"seed {stage}")
+            if payload.get("state_revision") != index + 1:
+                raise SystemExit(f"FAILED: seed revision mismatch for {stage}: {payload}")
+        return target_index + 1
+
+    def finalize(repo: Path, workspace: Path, stage: str, result_name: str, revision: int, *, expected_returncode: int, label: str, expected_digest: str | None = None) -> dict:
+        result_path = workspace / result_name
+        return invoke_json([
+            sys.executable, str(finalizer), "--workspace-dir", str(workspace), "--repo-root", str(repo),
+            "--stage", stage, "--result", result_name, "--expected-result-sha256", expected_digest or digest(result_path),
+            "--expected-state-revision", str(revision), "--json",
+        ], expected_returncode=expected_returncode, label=label)
+
+    recon_fixture = plugin_root / "assets/fixtures/recon-result/service"
+    for result_name, expected_status in [("complete-service.json", "completed"), ("partial-service.json", "paused"), ("blocked-service.json", "blocked")]:
+        with tempfile.TemporaryDirectory(prefix="zhulong-finalize-recon-") as tempdir:
+            root = Path(tempdir)
+            repo = root / "repo"; workspace = root / "workspace"
+            shutil.copytree(recon_fixture / "repo", repo)
+            shutil.copytree(recon_fixture / "workspace", workspace)
+            shutil.copy2(workspace / "cases" / result_name, workspace / "recon-result.json")
+            revision = seed_running_stage(workspace, "recon")
+            payload = finalize(repo, workspace, "recon", "recon-result.json", revision, expected_returncode=0, label=f"recon {result_name}")
+            if payload.get("journal_committed") is not True or payload.get("state_view_updated") is not True:
+                raise SystemExit(f"FAILED: recon finalization did not report a committed state: {payload}")
+            state = json.loads((workspace / "stage-status.json").read_text(encoding="utf-8"))
+            if state.get("stage") != "recon" or state.get("status") != expected_status:
+                raise SystemExit(f"FAILED: recon finalization state mismatch: {state}")
+            if (workspace / "audit-disposition.json").exists():
+                raise SystemExit("FAILED: stage finalizer wrote audit-disposition.json")
+
+    for status_name, batch_status in [("complete", "complete"), ("partial", "partial"), ("blocked", "blocked")]:
+        with tempfile.TemporaryDirectory(prefix="zhulong-finalize-triage-") as tempdir:
+            root = Path(tempdir)
+            repo, workspace, complete, candidate_ids = materialize(root)
+            batch = {"complete": complete, "partial": clone(complete), "blocked": clone(complete)}[status_name]
+            assert isinstance(batch, dict)
+            if batch_status == "partial":
+                batch["status"] = "partial"; batch["decisions"] = batch["decisions"][:-1]
+                batch["unprocessed_candidates"] = [{"candidate_id": candidate_ids[4], "reason_code": "EVIDENCE_PENDING", "evidence": ["Pending."], "next_action": "Collect evidence."}]
+            if batch_status == "blocked":
+                batch["status"] = "blocked"; batch["batch_blockers"] = [{"code": "BATCH_FIXTURE_BLOCKER", "affected_candidate_ids": [candidate_ids[4]], "evidence": ["Blocked."], "recovery_condition": "Restored.", "resume_action": "Resume triage."}]
+            result_path = workspace / "triage-batch.json"; result_path.write_text(json.dumps(batch, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            revision = seed_running_stage(workspace, "triage")
+            journal_before = (workspace / "audit-events.jsonl").read_bytes()
+            state_before = (workspace / "stage-status.json").read_bytes()
+            wrong = finalize(repo, workspace, "triage", "triage-batch.json", revision, expected_returncode=1, label="wrong triage digest", expected_digest="sha256:" + "f" * 64)
+            if wrong.get("code") != "RESULT_DIGEST_CONFLICT" or (workspace / "audit-events.jsonl").read_bytes() != journal_before or (workspace / "stage-status.json").read_bytes() != state_before:
+                raise SystemExit("FAILED: failed digest CAS changed audit state")
+            wrong_type = finalize(repo, workspace, "recon", "triage-batch.json", revision, expected_returncode=1, label="wrong stage/result type")
+            if wrong_type.get("code") != "CONTRACT_INVALID" or (workspace / "audit-events.jsonl").read_bytes() != journal_before or (workspace / "stage-status.json").read_bytes() != state_before:
+                raise SystemExit("FAILED: wrong stage/result type changed audit state")
+            stale = finalize(repo, workspace, "triage", "triage-batch.json", revision + 1, expected_returncode=1, label="stale triage revision")
+            if stale.get("code") != "STATE_REVISION_CONFLICT" or (workspace / "audit-events.jsonl").read_bytes() != journal_before or (workspace / "stage-status.json").read_bytes() != state_before:
+                raise SystemExit("FAILED: stale revision changed audit state")
+            payload = finalize(repo, workspace, "triage", "triage-batch.json", revision, expected_returncode=0, label=f"triage {status_name}")
+            events_after = (workspace / "audit-events.jsonl").read_bytes()
+            duplicate = finalize(repo, workspace, "triage", "triage-batch.json", revision, expected_returncode=1, label="duplicate triage finalization")
+            if duplicate.get("code") not in {"STATE_REVISION_CONFLICT", "CURRENT_STAGE_MISMATCH"} or (workspace / "audit-events.jsonl").read_bytes() != events_after:
+                raise SystemExit(f"FAILED: duplicate finalization appended a second terminal event: {duplicate}")
+            event = json.loads(events_after.decode("utf-8").splitlines()[-1])
+            forbidden = {"confirmed", "severity", "cvss", "verdict", "disposition", "bundle_ready", "promotion"}
+            if forbidden & set(json.dumps(event).lower().replace("-", "_").split('"')):
+                raise SystemExit("FAILED: triage event contains forbidden downstream authority wording")
+            expected_state = {"complete": "completed", "partial": "paused", "blocked": "blocked"}[status_name]
+            if json.loads((workspace / "stage-status.json").read_text(encoding="utf-8")).get("status") != expected_state:
+                raise SystemExit("FAILED: triage finalizer mapping mismatch")
+
+    print("TRIAGE BATCH / STAGE FINALIZATION SELFTEST PASSED: advisory/binding/CAS/R2 matrix")
+
+
 def selftest_installed_skill(skill_root: Path) -> None:
     for rel in INSTALLED_SKILL_REQUIRED_FILES:
         path = skill_root / rel
@@ -5835,17 +10729,46 @@ def selftest_installed_skill(skill_root: Path) -> None:
         path = skill_root / rel
         if path.exists():
             raise SystemExit(f"FAILED: installed skill contains forbidden top-level material: {path}")
+    timeline_bundle_fixture = (
+        skill_root
+        / "assets/fixtures/audit-timeline/completed-confirmed/workspace"
+    )
+    if timeline_bundle_fixture.exists():
+        raise SystemExit(
+            "FAILED: installed skill contains a materialized audit-timeline confirmed bundle; "
+            "the production builder fixture must stay temporary"
+        )
 
     run([sys.executable, "-m", "py_compile",
          str(skill_root / "scripts/plan_security_toolchain.py"),
+         str(skill_root / "scripts/validate_tool_registry.py"),
          str(skill_root / "scripts/workspace_state.py"),
          str(skill_root / "scripts/render_handoff_summary.py"),
+         str(skill_root / "scripts/render_handoff_state.py"),
+         str(skill_root / "scripts/validate_handoff_state.py"),
+         str(skill_root / "scripts/create_workspace_checkpoint.py"),
+         str(skill_root / "scripts/validate_workspace_checkpoint.py"),
+         str(skill_root / "scripts/next_actions.py"),
+         str(skill_root / "scripts/render_next_actions.py"),
+         str(skill_root / "scripts/validate_next_actions.py"),
+         str(skill_root / "scripts/audit_timeline.py"),
+         str(skill_root / "scripts/render_audit_timeline.py"),
+         str(skill_root / "scripts/validate_audit_timeline.py"),
+         str(skill_root / "scripts/selftest_audit_timeline.py"),
          str(skill_root / "scripts/assert_finalized_workspace.py"),
          str(skill_root / "scripts/audit_disposition.py"),
          str(skill_root / "scripts/blocked_verification.py"),
+         str(skill_root / "scripts/audit_state_io.py"),
+         str(skill_root / "scripts/audit_text_safety.py"),
+         str(skill_root / "scripts/audit_transition_policy.py"),
          str(skill_root / "scripts/write_audit_event.py"),
+         str(skill_root / "scripts/validate_audit_protocol.py"),
+         str(skill_root / "scripts/recover_audit_state.py"),
          str(skill_root / "scripts/validate_workspace_state.py"),
          str(skill_root / "scripts/validate_target_contract.py"),
+         str(skill_root / "scripts/validate_recon_result.py"),
+         str(skill_root / "scripts/validate_triage_batch.py"),
+         str(skill_root / "scripts/finalize_stage.py"),
          str(skill_root / "scripts/validate_candidate.py"),
          str(skill_root / "scripts/validate_verifier_verdict.py"),
          str(skill_root / "scripts/validate_bundle_contract.py"),
@@ -5853,6 +10776,7 @@ def selftest_installed_skill(skill_root: Path) -> None:
          str(skill_root / "scripts/p8_dogfood_metrics.py"),
          str(skill_root / "scripts/verify_candidate.py"),
          str(skill_root / "scripts/check_sandbox_preflight.py"),
+         str(skill_root / "scripts/evidence_io.py"),
          str(skill_root / "scripts/manage_docker_resources.py"),
          str(skill_root / "scripts/render_confirmed_vuln_docx.py"),
          str(skill_root / "scripts/recording_identity.py"),
@@ -5864,6 +10788,11 @@ def selftest_installed_skill(skill_root: Path) -> None:
          str(skill_root / "scripts/validate_all_report_bundles.py"),
          str(skill_root / "scripts/finalize_audit_workspace.py")], skill_root)
     exercise_target_contract_validator(skill_root)
+    exercise_tool_registry_contract(skill_root)
+    exercise_context_planning_contract(skill_root)
+    exercise_root_skill_kernel_contract(skill_root)
+    exercise_recon_result_contract(skill_root)
+    exercise_triage_batch_and_stage_finalization(skill_root)
     exercise_finding_contract_validators(skill_root)
     exercise_bundle_contract_validator(skill_root)
     exercise_build_confirmed_bundle_wrapper(skill_root)
@@ -5871,9 +10800,18 @@ def selftest_installed_skill(skill_root: Path) -> None:
     exercise_replay_transcript_corpus(skill_root)
     exercise_p8_dogfood_metrics(skill_root)
     exercise_p8_real_historical_dogfood(skill_root)
+    exercise_p9_protocol_chain_real_workspace_dogfood(skill_root)
     exercise_independent_verifier(skill_root)
     exercise_disposition_integration(skill_root)
     exercise_contract_fixture_chain(skill_root)
+    exercise_audit_state_protocol_r2(skill_root)
+    exercise_audit_state_protocol_closure(skill_root)
+    exercise_handoff_checkpoint_contract(skill_root)
+    exercise_next_actions_contract(skill_root)
+    run([sys.executable, str(skill_root / "scripts/selftest_audit_timeline.py")], skill_root)
+    exercise_audit_state_writer(skill_root)
+    exercise_audit_state_recovery(skill_root)
+    exercise_audit_transition_policy(skill_root)
     exercise_recording_evidence_gate(skill_root)
 
     for script in [
@@ -5909,51 +10847,6 @@ def selftest_installed_skill(skill_root: Path) -> None:
         "Use this Claude Code skill when",
         "installed skill local-agent-neutral opening",
     )
-    require_text(
-        skill_root / "SKILL.md",
-        "Use this local-agent skill when",
-        "installed skill local-agent-neutral opening",
-    )
-    require_text(
-        skill_root / "SKILL.md",
-        "Confirm vulnerabilities only with Docker evidence",
-        "installed skill Docker-confirmed-only contract",
-    )
-    require_text(
-        skill_root / "SKILL.md",
-        "Run all PoCs, exploit payloads, and verification traffic only inside Docker or",
-        "installed skill Docker-first verification contract",
-    )
-    require_text(
-        skill_root / "SKILL.md",
-        "False positives, non-security defects, unverified leads",
-        "installed skill confirmed-only bundle discipline",
-    )
-    require_text(
-        skill_root / "SKILL.md",
-        "Do not mark a variant candidate as confirmed based on resemblance to a seed",
-        "installed skill variant candidates remain candidates contract",
-    )
-    require_text(
-        skill_root / "SKILL.md",
-        "Never use broad Docker prune commands as the",
-        "installed skill no broad Docker prune contract",
-    )
-    require_text(
-        skill_root / "SKILL.md",
-        "Teammate PID cleanup is review-only",
-        "installed skill no PID kill behavior contract",
-    )
-    require_text(
-        skill_root / "SKILL.md",
-        "Validate every final bundle before finishing",
-        "installed skill confirmed bundle validation contract",
-    )
-    require_text(
-        skill_root / "SKILL.md",
-        "find_variant_candidates.py",
-        "installed skill variant candidate finder reference",
-    )
     forbid_text(
         skill_root / "scripts/find_variant_candidates.py",
         "import subprocess",
@@ -5963,61 +10856,6 @@ def selftest_installed_skill(skill_root: Path) -> None:
         skill_root / "scripts/find_variant_candidates.py",
         "subprocess.run",
         "installed variant candidate finder must not run subprocesses",
-    )
-    require_text(
-        skill_root / "SKILL.md",
-        "completed_no_confirmed_findings",
-        "installed skill completion result contract",
-    )
-    require_text(
-        skill_root / "SKILL.md",
-        "Blocked Docker/runtime verification is not the same as",
-        "installed skill blocked verification semantics",
-    )
-    require_text(
-        skill_root / "SKILL.md",
-        "runtime/runtime-hygiene-status.json",
-        "installed skill OMC runtime hygiene status contract",
-    )
-    require_text(
-        skill_root / "SKILL.md",
-        "Teammate PID cleanup is review-only",
-        "installed skill review-only OMC PID cleanup contract",
-    )
-    require_text(
-        skill_root / "SKILL.md",
-        "check_sandbox_preflight.py",
-        "installed skill sandbox preflight helper reference",
-    )
-    require_text(
-        skill_root / "SKILL.md",
-        "rejected_unsafe_sandbox",
-        "installed skill sandbox preflight rejected label",
-    )
-    require_text(
-        skill_root / "SKILL.md",
-        "攻击者条件",
-        "installed skill confirmed quality-gate attacker label",
-    )
-    require_text(
-        skill_root / "SKILL.md",
-        "Security Impact",
-        "installed skill confirmed quality-gate impact label",
-    )
-    require_text(
-        skill_root / "SKILL.md",
-        "SECURITY.md",
-        "installed skill security-boundary triage check",
-    )
-    require_text(
-        skill_root / "SKILL.md",
-        "outside_security_boundary",
-        "installed skill false-positive boundary reason code",
-    )
-    require_text(
-        skill_root / "SKILL.md",
-        "<audit-workspace>/SUMMARY.md",
-        "installed skill stable summary contract",
     )
     require_text(
         skill_root / "assets/references/unverified-lead-template.md",
@@ -6067,6 +10905,7 @@ def selftest_installed_skill(skill_root: Path) -> None:
             skill_root,
         )
         installed_workspace = repo_dir / "security-research-installed-omc"
+        exercise_workspace_tool_registry_snapshot(skill_root, installed_workspace)
         exercise_sandbox_preflight(
             skill_root / "scripts/check_sandbox_preflight.py",
             installed_workspace,
@@ -6077,9 +10916,520 @@ def selftest_installed_skill(skill_root: Path) -> None:
             installed_workspace,
             skill_root,
         )
+        exercise_verification_wrapper_state_boundary(skill_root, Path(tempdir))
         exercise_sandbox_ledger_guard(installed_workspace, skill_root)
+        exercise_structured_blocker_cli(skill_root)
 
     print(f"SELFTEST PASSED: installed skill layout {skill_root}")
+
+
+def exercise_candidate_identity_dedup(plugin_root: Path) -> None:
+    validator = plugin_root / "scripts/validate_candidate.py"
+    upgrader = plugin_root / "scripts/upgrade_candidate_identity.py"
+    builder = plugin_root / "scripts/build_candidate_dedup_plan.py"
+    plan_validator = plugin_root / "scripts/validate_candidate_dedup_plan.py"
+    manifest = json.loads(
+        (plugin_root / "assets/fixtures/candidate-identity/manifest.json").read_text(encoding="utf-8")
+    )
+    manifest_cases = manifest.get("positive_cases", []) + manifest.get("negative_cases", [])
+    if not manifest_cases or any(not isinstance(case, dict) for case in manifest_cases):
+        raise SystemExit("FAILED: candidate identity manifest cases must be structured objects")
+    declared_case_ids = {str(case.get("id") or "") for case in manifest_cases}
+    if "" in declared_case_ids or len(declared_case_ids) != len(manifest_cases):
+        raise SystemExit("FAILED: candidate identity manifest case IDs must be non-empty and unique")
+    for case in manifest_cases:
+        if not isinstance(case.get("base"), str) or not isinstance(case.get("mutation"), str) or not isinstance(case.get("expected"), dict):
+            raise SystemExit(f"FAILED: candidate identity manifest case is incomplete: {case.get('id')}")
+    executed_case_ids: set[str] = set()
+
+    def covered(case_id: str) -> None:
+        if case_id not in declared_case_ids:
+            raise SystemExit(f"FAILED: candidate identity selftest executed undeclared case: {case_id}")
+        if case_id in executed_case_ids:
+            raise SystemExit(f"FAILED: candidate identity selftest executed a case twice: {case_id}")
+        executed_case_ids.add(case_id)
+
+    def sha(path: Path) -> str:
+        return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+
+    with tempfile.TemporaryDirectory(prefix="zhulong-candidate-identity-") as tempdir:
+        root = Path(tempdir); repo = root / "repo"; workspace = root / "workspace"
+        (repo / "src").mkdir(parents=True); (workspace / "evidence").mkdir(parents=True)
+        (workspace / "candidates/CAND-0001").mkdir(parents=True)
+        (workspace / "candidates/CAND-0002").mkdir(parents=True)
+        (workspace / "verifier/CAND-0001").mkdir(parents=True)
+        (repo / "src/importer.py").write_text("def import_url(value):\n    return fetch(value)\n", encoding="utf-8")
+        for name in ("agent-a.json", "agent-b.json", "manual-c.json"):
+            (workspace / "evidence" / name).write_text(json.dumps({"source": name}, sort_keys=True) + "\n", encoding="utf-8")
+
+        candidate_a = valid_candidate_contract()
+        path_a_r1 = write_json_fixture(workspace / "candidates/CAND-0001/candidate-r1.json", candidate_a)
+        legacy = json.loads(run_capture([sys.executable, str(validator), str(path_a_r1), "--json"], plugin_root))
+        if legacy.get("protocol_mode") != "legacy_r1":
+            raise SystemExit("FAILED: legal R1 candidate did not expose legacy_r1 protocol mode")
+        covered("legacy-r1-visible-mode")
+
+        def identity_input(artifact: str, **overrides: object) -> dict:
+            value = {
+                "schema_version": 1, "target_commit": "git-sha-or-local-state", "trust_boundary_id": "tenant-api",
+                "sink_family": "http_request", "root_cause_family": "missing_validation",
+                "primary_source_path": "src/importer.py",
+                "provenance": [{"source_kind": "agent", "source_id": artifact.removesuffix(".json"),
+                    "artifact_path": f"evidence/{artifact}", "artifact_sha256": sha(workspace / "evidence" / artifact),
+                    "observed_at": "2026-07-22T00:00:00Z", "producer": {"name": "fixture-agent", "version": "1"}}],
+            }
+            value.update(overrides); return value
+
+        input_a = write_json_fixture(workspace / "identity-a.json", identity_input("agent-a.json"))
+        path_a = workspace / "candidates/CAND-0001/candidate-r2.json"
+        run([sys.executable, str(upgrader), "--candidate", str(path_a_r1), "--repo-root", str(repo), "--identity-input", str(input_a), "--output", str(path_a), "--json"], plugin_root)
+        covered("explicit-r1-to-r2-upgrade")
+        first_a = path_a.read_bytes()
+        run([sys.executable, str(upgrader), "--candidate", str(path_a_r1), "--repo-root", str(repo), "--identity-input", str(input_a), "--output", str(path_a), "--json"], plugin_root)
+        if path_a.read_bytes() != first_a:
+            raise SystemExit("FAILED: same-byte Candidate R2 upgrade retry was not idempotent")
+        covered("same-output-idempotence")
+        checked_a = json.loads(run_capture([sys.executable, str(validator), str(path_a), "--repo-root", str(repo), "--json"], plugin_root))
+        if checked_a.get("protocol_mode") != "r2" or not str(checked_a.get("fingerprint", "")).startswith("sha256:"):
+            raise SystemExit("FAILED: upgraded Candidate R2 did not expose a recomputed fingerprint")
+        upgraded_a = json.loads(path_a.read_text(encoding="utf-8"))
+        if upgraded_a["relationships"]["legacy_id_mapping"][0]["legacy_candidate_id"] != "CAND-0001":
+            raise SystemExit("FAILED: explicit upgrade did not preserve the legacy candidate ID")
+        covered("legacy-id-preserved")
+
+        verdict_doc = valid_verifier_verdict()
+        verdict_doc["candidate_binding"] = {"protocol_mode": "r2", "candidate_sha256": sha(path_a), "fingerprint": checked_a["fingerprint"]}
+        verdict_path = write_json_fixture(workspace / "verifier/CAND-0001/verifier-verdict.json", verdict_doc)
+        run([sys.executable, str(plugin_root / "scripts/validate_verifier_verdict.py"), "--candidate", str(path_a), str(verdict_path)], plugin_root)
+        covered("verdict-r2-digest-fingerprint-binding")
+        run(
+            [
+                sys.executable,
+                str(plugin_root / "scripts/audit_disposition.py"),
+                "--workspace-dir",
+                str(workspace),
+                "--candidate",
+                str(path_a.relative_to(workspace)),
+                "--verdict",
+                str(verdict_path.relative_to(workspace)),
+                "--update-from-verdict",
+                "--json",
+            ],
+            plugin_root,
+        )
+        ledger = json.loads((workspace / "audit-disposition.json").read_text(encoding="utf-8"))
+        record = ledger["candidate_dispositions"][0]
+        if record.get("candidate_sha256") != sha(path_a) or record.get("candidate_fingerprint") != checked_a["fingerprint"]:
+            raise SystemExit("FAILED: disposition omitted Candidate R2 digest/fingerprint binding")
+        drifted_a = json_clone(upgraded_a); drifted_a["title"] = "Digest drift without identity-component drift"
+        write_json_fixture(path_a, drifted_a)
+        run_expect_fail(
+            [sys.executable, str(plugin_root / "scripts/audit_disposition.py"), "--workspace-dir", str(workspace), "--json"],
+            plugin_root,
+            "title does not match candidate.json",
+        )
+        covered("disposition-r2-drift-binding")
+        path_a.write_bytes(first_a)
+
+        candidate_b = json_clone(candidate_a); candidate_b["candidate_id"] = "CAND-0002"
+        candidate_b["title"] = "Same claim with a producer-specific title"
+        candidate_b["entrypoint"] = {"id": "IMPORT-URL", "kind": "HTTP", "route": "post //api/import/"}
+        candidate_b["evidence"]["static_locations"][0]["start_line"] = 7
+        candidate_b["evidence"]["static_locations"][0]["end_line"] = 9
+        path_b_r1 = write_json_fixture(workspace / "candidates/CAND-0002/candidate-r1.json", candidate_b)
+        legacy_b = json.loads(run_capture([sys.executable, str(validator), str(path_b_r1), "--json"], plugin_root))
+        input_b = write_json_fixture(workspace / "identity-b.json", identity_input("agent-b.json"))
+        path_b = workspace / "candidates/CAND-0002/candidate-r2.json"
+        run([sys.executable, str(upgrader), "--candidate", str(path_b_r1), "--repo-root", str(repo), "--identity-input", str(input_b), "--output", str(path_b), "--json"], plugin_root)
+        checked_b = json.loads(run_capture([sys.executable, str(validator), str(path_b), "--repo-root", str(repo), "--json"], plugin_root))
+        if checked_a["fingerprint"] != checked_b["fingerprint"]:
+            raise SystemExit("FAILED: equivalent entrypoint/title/line/provenance variants changed the fingerprint")
+        covered("semantic-entrypoint-normalization")
+        covered("nonidentity-fields-independent")
+
+        inventory_path = workspace / "candidate-inventory.json"
+        def item(path: Path, checked: dict) -> dict:
+            document = json.loads(path.read_text(encoding="utf-8"))
+            return {"path": path.relative_to(workspace).as_posix(), "sha256": sha(path), "candidate_id": document["candidate_id"],
+                "fingerprint": checked.get("fingerprint"), "target_tested_ref": document["target_ref"]["tested_ref"]}
+        inventory = {"schema_version": 1, "inventory_id": "INVENTORY-SELFTEST", "candidates": [item(path_a, checked_a), item(path_b, checked_b)]}
+        write_json_fixture(inventory_path, inventory)
+        plan_one = workspace / "dedup-plan-one.json"
+        run([sys.executable, str(builder), "--repo-root", str(repo), "--workspace-dir", str(workspace), "--inventory", str(inventory_path), "--output", str(plan_one), "--json"], plugin_root)
+        run([sys.executable, str(plan_validator), "--repo-root", str(repo), "--workspace-dir", str(workspace), "--plan", str(plan_one), "--json"], plugin_root)
+        plan = json.loads(plan_one.read_text(encoding="utf-8"))
+        if plan["classifications"][0]["classification"] != "exact_duplicate" or plan["exact_groups"][0]["canonical_candidate_id"] != "CAND-0001" or len(plan["exact_groups"][0]["merged_provenance"]) != 2:
+            raise SystemExit("FAILED: exact duplicate canonical winner or provenance union is incorrect")
+        covered("exact-duplicate-canonical-winner")
+        covered("complete-provenance-union-preview")
+        inventory["candidates"].reverse(); write_json_fixture(inventory_path, inventory)
+        plan_two = workspace / "dedup-plan-two.json"
+        run([sys.executable, str(builder), "--repo-root", str(repo), "--workspace-dir", str(workspace), "--inventory", str(inventory_path), "--output", str(plan_two), "--json"], plugin_root)
+        if plan_one.read_bytes() != plan_two.read_bytes():
+            raise SystemExit("FAILED: inventory order changed deterministic plan bytes")
+
+        mixed = {"schema_version": 1, "inventory_id": "INVENTORY-MIXED", "candidates": [item(path_b_r1, legacy_b), item(path_a, checked_a)]}
+        write_json_fixture(inventory_path, mixed); mixed_plan = workspace / "dedup-plan-mixed.json"
+        run([sys.executable, str(builder), "--repo-root", str(repo), "--workspace-dir", str(workspace), "--inventory", str(inventory_path), "--output", str(mixed_plan), "--json"], plugin_root)
+        if json.loads(mixed_plan.read_text(encoding="utf-8"))["classifications"][0]["classification"] != "review_required":
+            raise SystemExit("FAILED: mixed R1/R2 inventory was not classified conservatively")
+        covered("mixed-r1-r2-conservative")
+
+        # Repeat the same semantic inventory under environment and filesystem
+        # variation. The plan binds the inventory path, so reuse that path and
+        # vary only order, mtimes, locale, timezone, and hash seed.
+        inventory["candidates"].reverse()
+        write_json_fixture(inventory_path, inventory)
+        os.utime(path_a, (1, 1)); os.utime(path_b, (2, 2))
+        plan_env = workspace / "dedup-plan-env.json"
+        run_capture_with_env(
+            [sys.executable, str(builder), "--repo-root", str(repo), "--workspace-dir", str(workspace),
+             "--inventory", str(inventory_path), "--output", str(plan_env), "--json"],
+            plugin_root,
+            {"LC_ALL": "C", "TZ": "Pacific/Kiritimati", "PYTHONHASHSEED": "731"},
+        )
+        if plan_one.read_bytes() != plan_env.read_bytes():
+            raise SystemExit("FAILED: locale/timezone/hash-seed/mtime changed deterministic plan bytes")
+        covered("environment-and-order-determinism")
+
+        (repo / "src/other.py").write_text("def other(value):\n    return value\n", encoding="utf-8")
+
+        def upgrade_variant(
+            label: str,
+            candidate_id: str,
+            *,
+            candidate_changes: dict[str, object] | None = None,
+            identity_changes: dict[str, object] | None = None,
+        ) -> tuple[Path, dict, dict]:
+            candidate_doc = json_clone(candidate_a)
+            candidate_doc["candidate_id"] = candidate_id
+            for key, value in (candidate_changes or {}).items():
+                candidate_doc[key] = value
+            case_dir = workspace / "cases" / label
+            case_dir.mkdir(parents=True, exist_ok=True)
+            r1_path = write_json_fixture(case_dir / "candidate-r1.json", candidate_doc)
+            identity_doc = identity_input("manual-c.json")
+            identity_doc.update(identity_changes or {})
+            identity_path = write_json_fixture(case_dir / "identity-input.json", identity_doc)
+            r2_path = case_dir / "candidate-r2.json"
+            run([sys.executable, str(upgrader), "--candidate", str(r1_path), "--repo-root", str(repo),
+                 "--identity-input", str(identity_path), "--output", str(r2_path), "--json"], plugin_root)
+            checked = json.loads(run_capture(
+                [sys.executable, str(validator), str(r2_path), "--repo-root", str(repo), "--json"], plugin_root
+            ))
+            return r2_path, checked, json.loads(r2_path.read_text(encoding="utf-8"))
+
+        def plan_for(label: str, members: list[tuple[Path, dict]]) -> tuple[Path, dict]:
+            local_inventory = {
+                "schema_version": 1,
+                "inventory_id": "INVENTORY-" + label.upper().replace("_", "-"),
+                "candidates": [item(path, checked) for path, checked in members],
+            }
+            local_inventory_path = write_json_fixture(workspace / f"inventory-{label}.json", local_inventory)
+            output = workspace / f"dedup-plan-{label}.json"
+            run([sys.executable, str(builder), "--repo-root", str(repo), "--workspace-dir", str(workspace),
+                 "--inventory", str(local_inventory_path), "--output", str(output), "--json"], plugin_root)
+            return output, json.loads(output.read_text(encoding="utf-8"))
+
+        def expect_classification(label: str, member: tuple[Path, dict], expected: str, case_id: str) -> None:
+            _output, local_plan = plan_for(label, [(path_a, checked_a), member])
+            actual = local_plan["classifications"][0]["classification"]
+            if actual != expected:
+                raise SystemExit(f"FAILED: {case_id} expected {expected}, got {actual}")
+            covered(case_id)
+
+        commit_candidate = json_clone(candidate_a)
+        commit_candidate["target_ref"] = {**candidate_a["target_ref"], "tested_ref": "different-tested-ref"}
+        commit_path, commit_checked, _commit_doc = upgrade_variant(
+            "commit-diff", "CAND-COMMIT", candidate_changes={"target_ref": commit_candidate["target_ref"]},
+            identity_changes={"target_commit": "different-tested-ref"},
+        )
+        expect_classification("commit-diff", (commit_path, commit_checked), "distinct", "target-commit-diff")
+
+        entry_path, entry_checked, _entry_doc = upgrade_variant(
+            "entry-diff", "CAND-ENTRY",
+            candidate_changes={"entrypoint": {"id": "other-entry", "kind": "http", "route": "POST /api/other"}},
+        )
+        expect_classification("entry-diff", (entry_path, entry_checked), "review_required", "entrypoint-diff")
+
+        boundary_path, boundary_checked, _boundary_doc = upgrade_variant(
+            "boundary-diff", "CAND-BOUNDARY", identity_changes={"trust_boundary_id": "admin-api"},
+        )
+        expect_classification("boundary-diff", (boundary_path, boundary_checked), "review_required", "trust-boundary-diff")
+
+        sink_path, sink_checked, _sink_doc = upgrade_variant(
+            "sink-diff", "CAND-SINK", identity_changes={"sink_family": "file_write"},
+        )
+        expect_classification("sink-diff", (sink_path, sink_checked), "review_required", "sink-family-diff")
+
+        cause_path, cause_checked, _cause_doc = upgrade_variant(
+            "cause-diff", "CAND-CAUSE", identity_changes={"root_cause_family": "insufficient_validation"},
+        )
+        expect_classification("cause-diff", (cause_path, cause_checked), "review_required", "root-cause-diff")
+        covered("r2-partial-review-required")
+        covered("fuzzy-no-auto-merge")
+
+        source_path, source_checked, _source_doc = upgrade_variant(
+            "source-diff", "CAND-SOURCE", identity_changes={"primary_source_path": "src/other.py"},
+        )
+        expect_classification("source-diff", (source_path, source_checked), "review_required", "primary-source-path-diff")
+
+        distinct_path, distinct_checked, distinct_doc = upgrade_variant(
+            "structured-distinct", "CAND-DISTINCT",
+            candidate_changes={"entrypoint": {"id": "different-entry", "kind": "cli", "route": "import other"}},
+            identity_changes={"trust_boundary_id": "local-cli", "sink_family": "file_write",
+                              "root_cause_family": "authorization_missing", "primary_source_path": "src/other.py"},
+        )
+        expect_classification("structured-distinct", (distinct_path, distinct_checked), "distinct", "structured-distinct")
+        distinct_doc["title"] = candidate_a["title"]
+        distinct_doc["bug_class"] = candidate_a["bug_class"]
+        distinct_doc["claim"] = json_clone(candidate_a["claim"])
+        write_json_fixture(distinct_path, distinct_doc)
+        distinct_checked = json.loads(run_capture(
+            [sys.executable, str(validator), str(distinct_path), "--repo-root", str(repo), "--json"], plugin_root
+        ))
+        expect_classification("text-only", (distinct_path, distinct_checked), "distinct", "text-only-no-merge")
+
+        def checked_for(path: Path) -> dict:
+            return json.loads(run_capture(
+                [sys.executable, str(validator), str(path), "--repo-root", str(repo), "--json"], plugin_root
+            ))
+
+        def relationship_ref(path: Path, checked: dict, *, digest: str | None = None) -> dict:
+            document = json.loads(path.read_text(encoding="utf-8"))
+            return {"candidate_id": document["candidate_id"], "fingerprint": checked["fingerprint"],
+                    "path": path.relative_to(workspace).as_posix(), "sha256": digest or sha(path)}
+
+        def write_relationship_copy(label: str, candidate_id: str, source: dict | None = None) -> tuple[Path, dict]:
+            document = json_clone(source or upgraded_a)
+            document["candidate_id"] = candidate_id
+            document["relationships"] = {
+                "duplicate_of": None,
+                "legacy_id_mapping": [{"legacy_candidate_id": candidate_id, "current_candidate_id": candidate_id}],
+                "merged_from": [],
+            }
+            case_dir = workspace / "relationship-cases" / label
+            case_dir.mkdir(parents=True, exist_ok=True)
+            path = write_json_fixture(case_dir / "candidate.json", document)
+            return path, checked_for(path)
+
+        def builder_expect_fail(label: str, members: list[tuple[Path, dict]], expected: str, case_id: str) -> None:
+            local_inventory = {"schema_version": 1, "inventory_id": "INVENTORY-REL-" + label.upper(),
+                               "candidates": [item(path, checked) for path, checked in members]}
+            local_inventory_path = write_json_fixture(workspace / f"inventory-rel-{label}.json", local_inventory)
+            run_expect_fail(
+                [sys.executable, str(builder), "--repo-root", str(repo), "--workspace-dir", str(workspace),
+                 "--inventory", str(local_inventory_path), "--output", str(workspace / f"plan-rel-{label}.json"), "--json"],
+                plugin_root, expected,
+            )
+            covered(case_id)
+
+        unknown_path, _unknown_checked = write_relationship_copy("unknown", "CAND-REL-UNKNOWN")
+        unknown_doc = json.loads(unknown_path.read_text(encoding="utf-8"))
+        unknown_doc["relationships"]["duplicate_of"] = {
+            "candidate_id": "CAND-MISSING", "fingerprint": checked_a["fingerprint"],
+            "path": "candidates/CAND-MISSING/candidate.json", "sha256": "sha256:" + "1" * 64,
+        }
+        write_json_fixture(unknown_path, unknown_doc)
+        builder_expect_fail("unknown", [(unknown_path, checked_for(unknown_path)), (path_b, checked_b)],
+                            "outside the explicit inventory", "unknown-relationship-target")
+
+        cycle_members: list[tuple[Path, dict]] = []
+        for suffix in ("A", "B", "C"):
+            cycle_members.append(write_relationship_copy(f"cycle-{suffix.lower()}", f"CAND-CYCLE-{suffix}"))
+        for index, (cycle_path, cycle_checked) in enumerate(cycle_members):
+            next_path, next_checked = cycle_members[(index + 1) % len(cycle_members)]
+            cycle_doc = json.loads(cycle_path.read_text(encoding="utf-8"))
+            cycle_doc["relationships"]["duplicate_of"] = relationship_ref(next_path, next_checked)
+            write_json_fixture(cycle_path, cycle_doc)
+        cycle_members = [(path, checked_for(path)) for path, _checked in cycle_members]
+        builder_expect_fail("cycle", cycle_members, "relationship cycle", "duplicate-cycle")
+
+        bidi_a, bidi_a_checked = write_relationship_copy("bidi-a", "CAND-BIDI-A")
+        bidi_b, bidi_b_checked = write_relationship_copy("bidi-b", "CAND-BIDI-B")
+        bidi_a_doc = json.loads(bidi_a.read_text(encoding="utf-8")); bidi_b_doc = json.loads(bidi_b.read_text(encoding="utf-8"))
+        bidi_a_doc["relationships"]["duplicate_of"] = relationship_ref(bidi_b, bidi_b_checked)
+        bidi_b_doc["relationships"]["duplicate_of"] = relationship_ref(bidi_a, bidi_a_checked)
+        write_json_fixture(bidi_a, bidi_a_doc); write_json_fixture(bidi_b, bidi_b_doc)
+        builder_expect_fail("bidi", [(bidi_a, checked_for(bidi_a)), (bidi_b, checked_for(bidi_b))],
+                            "bidirectional", "bidirectional-duplicate")
+
+        chain_c, chain_c_checked = write_relationship_copy("chain-c", "CAND-CHAIN-C")
+        chain_b, _chain_b_checked = write_relationship_copy("chain-b", "CAND-CHAIN-B")
+        chain_b_doc = json.loads(chain_b.read_text(encoding="utf-8"))
+        chain_b_doc["relationships"]["duplicate_of"] = relationship_ref(chain_c, chain_c_checked)
+        write_json_fixture(chain_b, chain_b_doc); chain_b_checked = checked_for(chain_b)
+        chain_a, _chain_a_checked = write_relationship_copy("chain-a", "CAND-CHAIN-A")
+        chain_a_doc = json.loads(chain_a.read_text(encoding="utf-8"))
+        chain_a_doc["relationships"]["duplicate_of"] = relationship_ref(chain_b, chain_b_checked)
+        write_json_fixture(chain_a, chain_a_doc)
+        builder_expect_fail("chain", [(chain_a, checked_for(chain_a)), (chain_b, chain_b_checked), (chain_c, chain_c_checked)],
+                            "must not itself be subordinate", "duplicate-chain-canonical-subordinate")
+
+        loss_path, _loss_checked = write_relationship_copy("provenance-loss", "CAND-PROVENANCE-LOSS")
+        loss_doc = json.loads(loss_path.read_text(encoding="utf-8"))
+        loss_doc["relationships"]["merged_from"] = [relationship_ref(path_b, checked_b)]
+        write_json_fixture(loss_path, loss_doc)
+        builder_expect_fail("provenance", [(loss_path, checked_for(loss_path)), (path_b, checked_b)],
+                            "provenance union is incomplete", "provenance-loss")
+
+        binding_path, _binding_checked = write_relationship_copy("binding-drift", "CAND-BINDING-DRIFT")
+        binding_doc = json.loads(binding_path.read_text(encoding="utf-8"))
+        binding_doc["relationships"]["duplicate_of"] = relationship_ref(path_b, checked_b, digest="sha256:" + "2" * 64)
+        write_json_fixture(binding_path, binding_doc)
+        builder_expect_fail("binding", [(binding_path, checked_for(binding_path)), (path_b, checked_b)],
+                            "binding drift", "relationship-binding-drift")
+
+        forged = json_clone(upgraded_a); forged["identity"]["fingerprint"] = "sha256:" + "0" * 64
+        run_expect_fail([sys.executable, str(validator), str(write_json_fixture(workspace / "forged.json", forged)), "--json"], plugin_root, "fingerprint")
+        covered("forged-fingerprint")
+        unknown = json_clone(upgraded_a); unknown["schema_version"] = 99
+        run_expect_fail([sys.executable, str(validator), str(write_json_fixture(workspace / "unknown-version.json", unknown)), "--json"], plugin_root, "schema_version")
+        covered("unknown-version")
+        self_ref = json_clone(upgraded_a); self_ref["relationships"]["duplicate_of"] = {"candidate_id": "CAND-0001", "fingerprint": checked_a["fingerprint"], "path": path_a.relative_to(workspace).as_posix(), "sha256": sha(path_a)}
+        run_expect_fail([sys.executable, str(validator), str(write_json_fixture(workspace / "self-ref.json", self_ref)), "--json"], plugin_root, "self-reference")
+        covered("self-reference")
+
+        silent_r2 = json_clone(candidate_a)
+        silent_r2.update({"identity": upgraded_a["identity"], "provenance": upgraded_a["provenance"],
+                          "relationships": upgraded_a["relationships"]})
+        run_expect_fail([sys.executable, str(validator), str(write_json_fixture(workspace / "silent-r2.json", silent_r2)), "--json"],
+                        plugin_root, "unsupported field")
+        covered("legacy-silent-r2")
+
+        confirmed_like = json_clone(upgraded_a); confirmed_like["title"] = "confirmed vulnerability from candidate metadata"
+        run_expect_fail([sys.executable, str(validator), str(write_json_fixture(workspace / "confirmed-like.json", confirmed_like)), "--json"],
+                        plugin_root, "confirmed-like")
+        covered("confirmed-authority-injection")
+
+        def upgrade_must_reject(label: str, identity_doc: dict) -> None:
+            (workspace / "rejected-inputs").mkdir(parents=True, exist_ok=True)
+            input_path = write_json_fixture(workspace / "rejected-inputs" / f"{label}.json", identity_doc)
+            proc = subprocess.run(
+                [sys.executable, str(upgrader), "--candidate", str(path_a_r1), "--repo-root", str(repo),
+                 "--identity-input", str(input_path), "--output", str(workspace / "rejected-outputs" / f"{label}.json"), "--json"],
+                cwd=plugin_root, capture_output=True, text=True,
+            )
+            if proc.returncode == 0:
+                raise SystemExit(f"FAILED: unsafe/nonportable identity input unexpectedly succeeded: {label}")
+
+        for label, unsafe_path in (
+            ("absolute", "/private/fixture.py"),
+            ("uri", "file://fixture.py"),
+            ("traversal", "../src/importer.py"),
+            ("backslash", "src\\importer.py"),
+            ("tilde", "~/src/importer.py"),
+        ):
+            upgrade_must_reject(label, identity_input("agent-a.json", primary_source_path=unsafe_path))
+        outside_source = root / "outside.py"; outside_source.write_text("outside\n", encoding="utf-8")
+        symlink_source = repo / "src/link.py"; symlink_source.symlink_to(outside_source)
+        upgrade_must_reject("symlink", identity_input("agent-a.json", primary_source_path="src/link.py"))
+        covered("unsafe-path-matrix")
+
+        nonportable_inputs = [
+            identity_input("agent-a.json", primary_source_path="/Users/operator/private.py"),
+            identity_input("agent-a.json"),
+            identity_input("agent-a.json"),
+            identity_input("agent-a.json"),
+        ]
+        nonportable_inputs[1]["provenance"][0]["source_id"] = "system_prompt"
+        nonportable_inputs[2]["provenance"][0]["producer"]["version"] = "hidden reasoning"
+        nonportable_inputs[3]["provenance"][0]["producer"]["version"] = "token=fixture-value"
+        for index, identity_doc in enumerate(nonportable_inputs):
+            upgrade_must_reject(f"nonportable-{index}", identity_doc)
+        covered("nonportable-input-matrix")
+
+        run_expect_fail([sys.executable, str(upgrader), "--candidate", str(path_a_r1), "--repo-root", str(repo), "--identity-input", str(input_a), "--output", str(path_a_r1), "--json"], plugin_root, "in-place")
+        covered("in-place-output")
+        conflict = workspace / "conflict.json"; conflict.write_text("{}\n", encoding="utf-8")
+        run_expect_fail([sys.executable, str(upgrader), "--candidate", str(path_a_r1), "--repo-root", str(repo), "--identity-input", str(input_a), "--output", str(conflict), "--json"], plugin_root, "different bytes")
+        covered("existing-output-conflict")
+
+        drift_inventory = {"schema_version": 1, "inventory_id": "INVENTORY-DRIFT", "candidates": [item(path_a, checked_a), item(path_b, checked_b)]}
+        drift_inventory["candidates"][0]["sha256"] = "sha256:" + "3" * 64
+        drift_inventory_path = write_json_fixture(workspace / "inventory-drift.json", drift_inventory)
+        run_expect_fail(
+            [sys.executable, str(builder), "--repo-root", str(repo), "--workspace-dir", str(workspace),
+             "--inventory", str(drift_inventory_path), "--output", str(workspace / "plan-drift.json"), "--json"],
+            plugin_root, "candidate digest drift",
+        )
+        covered("candidate-input-drift")
+
+        # Deterministically fault the second production load used immediately
+        # before publication. This exercises the CLI main path without a flaky
+        # timing race and proves that no output is published after input drift.
+        scripts_dir = str(plugin_root / "scripts")
+        inserted_scripts_dir = scripts_dir not in sys.path
+        if inserted_scripts_dir:
+            sys.path.insert(0, scripts_dir)
+        try:
+            spec = importlib.util.spec_from_file_location(
+                "zhulong_build_candidate_dedup_plan_drift_selftest", builder
+            )
+            if spec is None or spec.loader is None:
+                raise SystemExit("FAILED: could not load production dedup builder for drift recheck")
+            builder_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(builder_module)
+            stable_inventory, stable_candidates = builder_module.load_inventory(repo, workspace, inventory_path)
+            drifted_inventory = dict(stable_inventory)
+            drifted_inventory["_sha256"] = "sha256:" + "4" * 64
+            drift_output = workspace / "plan-concurrent-drift.json"
+            argv = [str(builder), "--repo-root", str(repo), "--workspace-dir", str(workspace),
+                    "--inventory", str(inventory_path), "--output", str(drift_output), "--json"]
+            with mock.patch.object(
+                builder_module, "load_inventory",
+                side_effect=[(stable_inventory, stable_candidates), (drifted_inventory, stable_candidates)],
+            ), mock.patch.object(builder_module, "atomic_publish") as publish, mock.patch.object(sys, "argv", argv), \
+                    mock.patch.object(sys, "stdout", io.StringIO()):
+                try:
+                    builder_module.main()
+                except SystemExit as exc:
+                    if exc.code != 1:
+                        raise SystemExit("FAILED: concurrent input drift did not fail closed") from exc
+                else:
+                    raise SystemExit("FAILED: concurrent input drift unexpectedly succeeded")
+                publish.assert_not_called()
+            if drift_output.exists():
+                raise SystemExit("FAILED: concurrent input drift published an output")
+        finally:
+            if inserted_scripts_dir:
+                sys.path.pop(0)
+        covered("concurrent-input-drift-recheck")
+
+        tampered = json.loads(plan_one.read_text(encoding="utf-8")); tampered["classifications"][0]["classification"] = "distinct"
+        tampered_path = write_json_fixture(workspace / "tampered-plan.json", tampered)
+        run_expect_fail([sys.executable, str(plan_validator), "--repo-root", str(repo), "--workspace-dir", str(workspace), "--plan", str(tampered_path), "--json"], plugin_root, "stale, forged")
+        covered("plan-recompute-forgery")
+
+        (workspace / "confirmed").mkdir(parents=True, exist_ok=True)
+        authority_paths = [
+            write_json_fixture(workspace / "audit-events.jsonl", {"sentinel": "journal"}),
+            write_json_fixture(workspace / "stage-status.json", {"sentinel": "state"}),
+            write_json_fixture(workspace / "recording-evidence.json", {"sentinel": "recording"}),
+            write_json_fixture(workspace / "confirmed/sentinel.json", {"sentinel": "bundle"}),
+            write_json_fixture(workspace / "evidence/protected-sentinel.json", {"sentinel": "evidence"}),
+            path_a,
+            verdict_path,
+            workspace / "audit-disposition.json",
+        ]
+        authority_before = {path: path.read_bytes() for path in authority_paths}
+        run([sys.executable, str(validator), str(path_a), "--repo-root", str(repo), "--json"], plugin_root)
+        run([sys.executable, str(plan_validator), "--repo-root", str(repo), "--workspace-dir", str(workspace),
+             "--plan", str(plan_one), "--json"], plugin_root)
+        for path, before in authority_before.items():
+            if path.read_bytes() != before:
+                raise SystemExit(f"FAILED: candidate identity tooling modified authority artifact: {path}")
+        covered("authority-artifact-immutability")
+
+        missing_cases = sorted(declared_case_ids - executed_case_ids)
+        extra_cases = sorted(executed_case_ids - declared_case_ids)
+        if missing_cases or extra_cases:
+            raise SystemExit(
+                "FAILED: candidate identity manifest/selftest coverage drift; "
+                f"missing={missing_cases} extra={extra_cases}"
+            )
+
+    print("CANDIDATE IDENTITY/DEDUP SELFTEST PASSED: R1/R2, deterministic, advisory-only, drift-safe")
 
 
 def main() -> None:
@@ -6100,295 +11450,36 @@ def main() -> None:
     exercise_replay_transcript_corpus(plugin_root)
     exercise_p8_dogfood_metrics(plugin_root)
     exercise_p8_real_historical_dogfood(plugin_root)
+    exercise_p9_protocol_chain_real_workspace_dogfood(plugin_root)
     exercise_target_contract_validator(plugin_root)
+    exercise_tool_registry_contract(plugin_root)
+    exercise_context_planning_contract(plugin_root)
+    exercise_root_skill_kernel_contract(plugin_root)
+    exercise_recon_result_contract(plugin_root)
+    exercise_triage_batch_and_stage_finalization(plugin_root)
     exercise_finding_contract_validators(plugin_root)
+    exercise_candidate_identity_dedup(plugin_root)
     exercise_bundle_contract_validator(plugin_root)
     exercise_build_confirmed_bundle_wrapper(plugin_root)
     exercise_independent_verifier(plugin_root)
     exercise_disposition_integration(plugin_root)
     exercise_contract_fixture_chain(plugin_root)
+    exercise_audit_state_protocol_r2(plugin_root)
+    exercise_audit_state_protocol_closure(plugin_root)
+    exercise_handoff_checkpoint_contract(plugin_root)
+    exercise_next_actions_contract(plugin_root)
+    run([sys.executable, str(plugin_root / "scripts/selftest_audit_timeline.py")], plugin_root)
+    exercise_audit_state_writer(plugin_root)
+    exercise_audit_state_recovery(plugin_root)
+    exercise_audit_transition_policy(plugin_root)
     exercise_recording_evidence_gate(plugin_root)
+    exercise_structured_blocker_cli(plugin_root)
 
     plugin_json = json.loads((plugin_root / ".codex-plugin/plugin.json").read_text(encoding="utf-8"))
     if plugin_json.get("name") != "zhulong":
         raise SystemExit("FAILED: plugin.json name mismatch")
     validate_claude_plugin_manifest(plugin_root)
 
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "Documents` skill",
-        "Claude skill template docx editing contract",
-    )
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "practical scenario, attacker-controlled input, trigger/call chain, direct impact, and impact boundary",
-        "Claude skill template reviewer-proof contract",
-    )
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "severity-escalation pass",
-        "Claude skill template severity escalation contract",
-    )
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "Do not execute `web_search`",
-        "Claude skill template web lookup shell-safety contract",
-    )
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "specialized_playbooks",
-        "Claude skill template language playbook contract",
-    )
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "Do not produce thin DOCX reports",
-        "Claude skill template report-depth contract",
-    )
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "攻击者条件",
-        "Claude skill template confirmed quality-gate attacker label",
-    )
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "Security Impact",
-        "Claude skill template confirmed quality-gate impact label",
-    )
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "SECURITY.md",
-        "Claude skill template security-boundary triage check",
-    )
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "outside_security_boundary",
-        "Claude skill template false-positive boundary reason codes",
-    )
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "exactly one confirmed vulnerability",
-        "Claude skill template one-finding-per-bundle contract",
-    )
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "do not use `evidence/` as a final delivery directory",
-        "Claude skill template attachments-only final delivery contract",
-    )
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "do not leave runtime or source-control directories",
-        "Claude skill template final bundle cleanliness contract",
-    )
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "verification-evidence.json",
-        "Claude skill template verification evidence contract",
-    )
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "Static scanning, source-to-sink reasoning",
-        "Claude skill template candidate-only analysis contract",
-    )
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "False positives, non-security defects, unverified leads",
-        "Claude skill template triage workspace-only contract",
-    )
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "Final summaries must explicitly distinguish confirmed vulnerabilities",
-        "Claude skill template final summary triage contract",
-    )
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "initial-probes-summary.json",
-        "Claude skill template initial probes summary contract",
-    )
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "skipped_no_package_sources",
-        "Claude skill template initial probes no package sources status",
-    )
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "must not be reported as confirmed vulnerabilities",
-        "Claude skill template initial probes confirmed-output guardrail",
-    )
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "handoff-summary.md",
-        "Claude skill template handoff summary contract",
-    )
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "context-slimming index",
-        "Claude skill template handoff context-slimming contract",
-    )
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "Avoid default-reading",
-        "Claude skill template handoff raw-log avoidance contract",
-    )
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "run_verification_case.sh",
-        "Claude skill template verification runner reference",
-    )
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "mandatory timeout, explicit network setting",
-        "Claude skill template verification runner timeout/network contract",
-    )
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "blocked_docker_unavailable",
-        "Claude skill template verification runner stable labels",
-    )
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "rejected_unsafe_sandbox",
-        "Claude skill template sandbox preflight rejected label",
-    )
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "check_sandbox_preflight.py",
-        "Claude skill template sandbox preflight helper reference",
-    )
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "timed-out, blocked, resource-limited",
-        "Claude skill template verification runner confirmed-output guardrail",
-    )
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "Fill `<audit-workspace>/attack-surface.md` as a concise handoff artifact",
-        "Claude skill template attack-surface handoff contract",
-    )
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "not a vulnerability report, not raw scanner output",
-        "Claude skill template attack-surface non-report guardrail",
-    )
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "unverified until Docker confirmation succeeds",
-        "Claude skill template attack-surface Docker confirmation guardrail",
-    )
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "java-web-audit-playbook.md",
-        "Claude skill template Java Web playbook reference",
-    )
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "go-web-audit-playbook.md",
-        "Claude skill template Go Web playbook reference",
-    )
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "nodejs-library-audit-playbook.md",
-        "Claude skill template Node.js Library playbook reference",
-    )
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "For pure\nNode.js or Python library/framework repositories",
-        "Claude skill template library route-inventory guardrail",
-    )
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "nodejs-web-audit-playbook.md",
-        "Claude skill template Node.js Web playbook reference",
-    )
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "python-web-audit-playbook.md",
-        "Claude skill template Python Web playbook reference",
-    )
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "python-library-audit-playbook.md",
-        "Claude skill template Python Library playbook reference",
-    )
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "php-swoole-audit-playbook.md",
-        "Claude skill template PHP/Swoole playbook reference",
-    )
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "Blocked Docker/runtime verification is not the same as",
-        "Claude skill template blocked verification semantics",
-    )
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "runtime/runtime-hygiene-status.json",
-        "Claude skill template OMC runtime hygiene status contract",
-    )
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "Teammate PID cleanup is review-only",
-        "Claude skill template review-only OMC PID cleanup contract",
-    )
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "docker-registry-fallbacks.example.json",
-        "Claude skill template registry fallback reference",
-    )
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "local_knowledge_checklists",
-        "Claude skill template local checklist planner contract",
-    )
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "Checklist matches, source-to-sink hypotheses",
-        "Claude skill template local checklist confirmed-only guardrail",
-    )
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "Language playbooks are starting maps, not fences",
-        "Claude skill template playbook exploration freedom guardrail",
-    )
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "finalize-audit-workspace.py",
-        "Claude skill template completion gate command",
-    )
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "completed_no_confirmed_findings",
-        "Claude skill template no-confirmed-findings result",
-    )
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "A dogfood run is not complete until this gate passes",
-        "Claude skill template completion gate enforcement",
-    )
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "assert-finalized-workspace.py",
-        "Claude skill template finalization integrity checker",
-    )
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "Material blocker?",
-        "Claude skill template unverified lead materiality requirement",
-    )
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "<audit-workspace>/SUMMARY.md",
-        "Claude skill template stable workspace summary requirement",
-    )
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "manually edited `stage-status.json`",
-        "Claude skill template manual completion guardrail",
-    )
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "exact source commit SHA",
-        "Claude skill template archive fallback commit identity",
-    )
     require_text(
         plugin_root / "assets/references/false-positive-template.md",
         "must never be written under `confirmed/`",
@@ -6455,11 +11546,6 @@ def main() -> None:
         "unverified lead template security policy check field",
     )
     require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "final-summary-template.md",
-        "Claude skill template final summary reference",
-    )
-    require_text(
         plugin_root / "assets/references/final-summary-template.md",
         "false positives / non-security defects",
         "final summary false-positive section",
@@ -6473,16 +11559,6 @@ def main() -> None:
         plugin_root / "assets/references/final-summary-template.md",
         "<audit-workspace>/SUMMARY.md",
         "final summary stable workspace summary requirement",
-    )
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "Docker-confirmed but bundle incomplete",
-        "Claude skill template partial bundle final-summary guardrail",
-    )
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "partial confirmed bundle",
-        "Claude skill template partial confirmed bundle guardrail",
     )
     require_text(
         plugin_root / "assets/references/final-summary-template.md",
@@ -6533,11 +11609,6 @@ def main() -> None:
         plugin_root / "scripts/asr_start.sh",
         "--prompt-runtime-pid-review",
         "asr launcher optional runtime PID review prompt flag",
-    )
-    require_text(
-        plugin_root / "templates/claude-skill/SKILL.md",
-        "--prompt-runtime-pid-review",
-        "Claude skill optional runtime PID review prompt guidance",
     )
     require_text(
         plugin_root / "scripts/assert_finalized_workspace.py",
@@ -6777,7 +11848,7 @@ def main() -> None:
     )
     require_text(
         plugin_root / "scripts/run_verification_case.sh",
-        "STABLE_LABELS=\"blocked_docker_unavailable blocked_missing_image failed_timeout failed_resource_limit rejected_unsafe_sandbox rejected_not_reproducible confirmed_in_docker\"",
+        "STABLE_LABELS=\"blocked_state_precondition blocked_authority_event_commit blocked_docker_unavailable blocked_missing_image failed_timeout failed_resource_limit rejected_unsafe_sandbox rejected_not_reproducible confirmed_in_docker\"",
         "verification runner stable labels",
     )
     require_text(
@@ -6959,12 +12030,24 @@ def main() -> None:
 
     run([sys.executable, "-m", "py_compile",
          str(plugin_root / "scripts/plan_security_toolchain.py"),
+         str(plugin_root / "scripts/validate_tool_registry.py"),
          str(plugin_root / "scripts/workspace_state.py"),
          str(plugin_root / "scripts/render_handoff_summary.py"),
+         str(plugin_root / "scripts/next_actions.py"),
+         str(plugin_root / "scripts/render_next_actions.py"),
+         str(plugin_root / "scripts/validate_next_actions.py"),
+         str(plugin_root / "scripts/audit_timeline.py"),
+         str(plugin_root / "scripts/render_audit_timeline.py"),
+         str(plugin_root / "scripts/validate_audit_timeline.py"),
+         str(plugin_root / "scripts/selftest_audit_timeline.py"),
          str(plugin_root / "scripts/assert_finalized_workspace.py"),
          str(plugin_root / "scripts/audit_disposition.py"),
          str(plugin_root / "scripts/blocked_verification.py"),
+         str(plugin_root / "scripts/audit_state_io.py"),
+         str(plugin_root / "scripts/audit_text_safety.py"),
+         str(plugin_root / "scripts/audit_transition_policy.py"),
          str(plugin_root / "scripts/write_audit_event.py"),
+         str(plugin_root / "scripts/validate_audit_protocol.py"),
          str(plugin_root / "scripts/validate_workspace_state.py"),
          str(plugin_root / "scripts/validate_target_contract.py"),
          str(plugin_root / "scripts/validate_candidate.py"),
@@ -7023,6 +12106,25 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="asr-plugin-selftest-") as tempdir:
         repo_dir = Path(tempdir) / "repo"
         repo_dir.mkdir(parents=True, exist_ok=True)
+        for unsafe_name in ("", ".", "..", ".hidden", "/tmp/escape", "../escape", "case/name", r"case\\name", "name with space", "~", "http://example.invalid", "%2e%2e"):
+            unsafe_target = Path(tempdir) / ("unsafe-" + str(len(list(Path(tempdir).iterdir()))))
+            unsafe_target.mkdir()
+            before = sorted(item.name for item in unsafe_target.iterdir())
+            proc = subprocess.run(
+                [
+                    "bash",
+                    str(plugin_root / "scripts/bootstrap_verification_workspace.sh"),
+                    "--target-dir",
+                    str(unsafe_target),
+                    "--workspace-name",
+                    unsafe_name,
+                ],
+                cwd=plugin_root,
+                capture_output=True,
+                text=True,
+            )
+            if proc.returncode == 0 or sorted(item.name for item in unsafe_target.iterdir()) != before:
+                raise SystemExit(f"FAILED: unsafe bootstrap workspace name crossed a side-effect boundary: {unsafe_name!r}")
         workspace_name = "security-research-selftest"
         run([
             "bash",
@@ -7043,24 +12145,55 @@ def main() -> None:
             raise SystemExit("FAILED: bootstrapped workspace is missing run-verification-case.sh")
         if not (workspace / "bin/check-sandbox-preflight.py").exists():
             raise SystemExit("FAILED: bootstrapped workspace is missing check-sandbox-preflight.py")
+        if not (workspace / "bin/evidence_io.py").exists():
+            raise SystemExit("FAILED: bootstrapped workspace is missing evidence_io.py")
         if not (workspace / "bin/manage-docker-resources.py").exists():
             raise SystemExit("FAILED: bootstrapped workspace is missing manage-docker-resources.py")
         if not (workspace / "bin/render-handoff-summary.py").exists():
             raise SystemExit("FAILED: bootstrapped workspace is missing render-handoff-summary.py")
         if not (workspace / "bin/workspace_state.py").exists():
             raise SystemExit("FAILED: bootstrapped workspace is missing workspace_state.py")
+        if not (workspace / "bin/audit_text_safety.py").exists():
+            raise SystemExit("FAILED: bootstrapped workspace is missing audit_text_safety.py")
+        for next_actions_helper in [
+            "next_actions.py", "render-next-actions.py", "validate-next-actions.py",
+            "next-actions.schema.json",
+        ]:
+            if not (workspace / "bin" / next_actions_helper).exists():
+                raise SystemExit(f"FAILED: bootstrapped workspace is missing {next_actions_helper}")
+        for next_actions_adapter in ["render-next-actions.py", "validate-next-actions.py"]:
+            if not (workspace / "scripts" / next_actions_adapter).exists():
+                raise SystemExit(f"FAILED: bootstrapped workspace is missing scripts/{next_actions_adapter}")
+        for timeline_helper in [
+            "audit_timeline.py", "render-audit-timeline.py",
+            "validate-audit-timeline.py", "audit-timeline.schema.json",
+        ]:
+            if not (workspace / "bin" / timeline_helper).exists():
+                raise SystemExit(f"FAILED: bootstrapped workspace is missing {timeline_helper}")
+        for timeline_adapter in ["render-audit-timeline.py", "validate-audit-timeline.py"]:
+            if not (workspace / "scripts" / timeline_adapter).exists():
+                raise SystemExit(f"FAILED: bootstrapped workspace is missing scripts/{timeline_adapter}")
         if not (workspace / "bin/assert-finalized-workspace.py").exists():
             raise SystemExit("FAILED: bootstrapped workspace is missing assert-finalized-workspace.py")
         if not (workspace / "bin/blocked_verification.py").exists():
             raise SystemExit("FAILED: bootstrapped workspace is missing blocked_verification.py")
         for contract_helper in [
             "validate_target_contract.py",
+            "validate_recon_result.py",
+            "validate-recon-result.py",
+            "validate-triage-batch.py",
             "validate_candidate.py",
             "validate_verifier_verdict.py",
             "verify_candidate.py",
         ]:
             if not (workspace / "bin" / contract_helper).exists():
                 raise SystemExit(f"FAILED: bootstrapped workspace is missing {contract_helper}")
+        for contract_schema in ["audit-timeline.schema.json", "recon-result.schema.json", "triage-batch.schema.json"]:
+            if not (workspace / "assets" / "schemas" / contract_schema).exists():
+                raise SystemExit(f"FAILED: bootstrapped workspace is missing assets/schemas/{contract_schema}")
+        for contract_adapter in ["validate-recon-result.py", "validate-triage-batch.py"]:
+            if not (workspace / "scripts" / contract_adapter).exists():
+                raise SystemExit(f"FAILED: bootstrapped workspace is missing scripts/{contract_adapter}")
         for variant_helper in [
             "extract_variant_seed.py",
             "find_variant_candidates.py",
@@ -7762,26 +12895,28 @@ def main() -> None:
             "  esac\n"
             "done\n"
             "[[ -n \"$report_path\" ]] || exit 64\n"
-            "cat >\"$report_path\" <<'JSON'\n"
-            "[\n"
-            "  {\n"
-            "    \"RuleID\": \"generic-api-key\",\n"
-            "    \"Description\": \"Generic API Key\",\n"
-            "    \"File\": \"config/example.env\",\n"
-            "    \"StartLine\": 3,\n"
-            "    \"Commit\": \"abcdef1234567890\",\n"
-            "    \"Secret\": \"sk_live_SUPER_SECRET_VALUE_123456\",\n"
-            "    \"Match\": \"API_KEY=sk_live_SUPER_SECRET_VALUE_123456\"\n"
-            "  },\n"
-            "  {\n"
-            "    \"RuleID\": \"private-key\",\n"
-            "    \"Description\": \"Private Key\",\n"
-            "    \"File\": \"tests/fixtures/key.pem\",\n"
-            "    \"StartLine\": 1,\n"
-            "    \"Secret\": \"-----BEGIN PRIVATE KEY-----FAKESECRET-----END PRIVATE KEY-----\"\n"
-            "  }\n"
+            "python3 - <<'PY' \"$report_path\"\n"
+            "import json, sys\n"
+            "items = [\n"
+            "    {\n"
+            "        'RuleID': 'generic-api-key',\n"
+            "        'Description': 'Generic API Key',\n"
+            "        'File': 'config/example.env',\n"
+            "        'StartLine': 3,\n"
+            "        'Commit': 'abcdef1234567890',\n"
+            "        'Secret': 'sk_live_SUPER_SECRET_VALUE_123456',\n"
+            "        'Match': 'API_KEY=sk_live_SUPER_SECRET_VALUE_123456',\n"
+            "    },\n"
+            "    {\n"
+            "        'RuleID': 'private-key',\n"
+            "        'Description': 'Private Key',\n"
+            "        'File': 'tests/fixtures/key.pem',\n"
+            "        'StartLine': 1,\n"
+            "        'Secret': '-----BEGIN PRIVATE KEY-----FAKESECRET-----END PRIVATE KEY-----',\n"
+            "    },\n"
             "]\n"
-            "JSON\n"
+            "open(sys.argv[1], 'w', encoding='utf-8').write(json.dumps(items))\n"
+            "PY\n"
             "echo 'leaks found: 2'\n"
             "exit 1\n",
             encoding="utf-8",
@@ -8085,10 +13220,13 @@ def main() -> None:
             raise SystemExit("FAILED: bootstrapped workspace is missing audit-events.jsonl")
         if not (workspace / "bin/write-audit-event.py").exists():
             raise SystemExit("FAILED: bootstrapped workspace is missing write-audit-event.py")
+        if not (workspace / "bin/audit_transition_policy.py").exists():
+            raise SystemExit("FAILED: bootstrapped workspace is missing audit_transition_policy.py")
         if not (workspace / "bin/validate-workspace-state.py").exists():
             raise SystemExit("FAILED: bootstrapped workspace is missing validate-workspace-state.py")
         if not (workspace / "bin/plan-security-toolchain.py").exists():
             raise SystemExit("FAILED: bootstrapped workspace is missing plan-security-toolchain.py")
+        exercise_workspace_tool_registry_snapshot(plugin_root, workspace)
         if not (workspace / "bin/render-confirmed-vuln-docx.py").exists():
             raise SystemExit("FAILED: bootstrapped workspace is missing render-confirmed-vuln-docx.py")
         run([
@@ -8118,6 +13256,7 @@ def main() -> None:
             sandbox_workspace,
             plugin_root,
         )
+        exercise_verification_wrapper_state_boundary(plugin_root, Path(tempdir))
         exercise_sandbox_ledger_guard(sandbox_workspace, plugin_root)
         run([
             "bash",
@@ -11200,19 +16339,52 @@ def main() -> None:
             for line in (workspace / "audit-events.jsonl").read_text(encoding="utf-8").splitlines()
             if line.strip()
         ]
+        def normalized_event_name(event: dict[str, object]) -> str:
+            return str(event.get("event_name") or event.get("event") or "")
+
+        def normalized_event_details(event: dict[str, object]) -> dict[str, object]:
+            details = event.get("details")
+            if not isinstance(details, dict):
+                return {}
+            metadata = details.get("metadata")
+            if not isinstance(metadata, list):
+                return details
+            result: dict[str, object] = {"summary": details.get("summary")}
+            for item in metadata:
+                if isinstance(item, dict) and isinstance(item.get("key"), str):
+                    result[item["key"]] = item.get("value")
+            return result
+
         bundle_validated_before = sum(
             1 for event in events_before_bundle_validation
-            if event.get("event") == "bundle_validated"
+            if normalized_event_name(event) == "bundle_validated"
         )
-        run([
-            sys.executable,
-            str(plugin_root / "scripts/validate_report_bundle.py"),
-            "--bundle-dir",
-            str(en_bundle),
-            "--language",
-            "en-US",
-            "--write-audit-event",
-        ], plugin_root)
+        for event_name, stage in [
+            ("selftest_candidates_started", "candidate_generation"),
+            ("selftest_triage_started", "triage"),
+            ("selftest_verification_started", "verification"),
+        ]:
+            run([
+                sys.executable,
+                str(workspace / "bin/write-audit-event.py"),
+                "--workspace-dir", str(workspace),
+                "--event", event_name,
+                "--stage", stage,
+                "--status", "running",
+                "--transition-kind", "advance",
+                "--message", "Advance the bounded selftest workflow before bundle validation.",
+                "--accept-current-revision",
+            ], plugin_root)
+        for _ in range(2):
+            run([
+                sys.executable,
+                str(plugin_root / "scripts/validate_report_bundle.py"),
+                "--bundle-dir",
+                str(en_bundle),
+                "--language",
+                "en-US",
+                "--write-audit-event",
+            ], plugin_root)
         shutil.copy2(
             plugin_root / "assets/examples/confirmed-findings.example.json",
             workspace / "confirmed/findings.example.json",
@@ -11280,20 +16452,22 @@ def main() -> None:
         ]
         bundle_validated_events = [
             event for event in events_after_bundle_validation
-            if event.get("event") == "bundle_validated"
+            if normalized_event_name(event) == "bundle_validated"
         ]
-        if len(bundle_validated_events) != bundle_validated_before + 1:
-            raise SystemExit("FAILED: validate_report_bundle.py did not append exactly one bundle_validated event")
+        if len(bundle_validated_events) != bundle_validated_before + 2:
+            raise SystemExit("FAILED: validate_report_bundle.py did not append both bundle_validated events")
         bundle_event = bundle_validated_events[-1]
-        if bundle_event.get("stage") != "reporting" or bundle_event.get("status") != "ok":
-            raise SystemExit("FAILED: bundle_validated event must use reporting/ok without completing the audit")
-        details = bundle_event.get("details") or {}
+        if bundle_event.get("stage") != "packaging" or bundle_event.get("to_status", bundle_event.get("status")) != "running":
+            raise SystemExit("FAILED: bundle_validated event must use packaging/running without completing the audit")
+        if bundle_event.get("transition_kind") != "observe":
+            raise SystemExit("FAILED: repeated bundle validation must observe the existing packaging stage")
+        details = normalized_event_details(bundle_event)
         if details.get("bundle") != f"confirmed/{en_bundle.name}":
             raise SystemExit("FAILED: bundle_validated event must store a workspace-relative bundle path")
         if details.get("verification_status") != "confirmed_in_docker":
             raise SystemExit("FAILED: bundle_validated event must preserve confirmed_in_docker evidence status")
         stage_status = json.loads((workspace / "stage-status.json").read_text(encoding="utf-8"))
-        if stage_status.get("last_event") != "bundle_validated" or stage_status.get("status") != "running":
+        if stage_status.get("last_event_name", stage_status.get("last_event")) != "bundle_validated" or stage_status.get("status") != "running":
             raise SystemExit("FAILED: bundle validation must update state without marking the audit completed")
 
         bad_missing_verification = zh_bundle.parent / f"{zh_bundle.name}_missing_verification_evidence"
@@ -11560,7 +16734,173 @@ def main() -> None:
         if not (workspace / "bin/finalize-audit-workspace.py").exists():
             raise SystemExit("FAILED: bootstrapped workspace is missing finalize-audit-workspace.py")
 
-        SKIP_DOCKER_ENV = {"ZHULONG_TEST_SKIP_DOCKER_CLEAN_CHECK": "1"}
+        def install_fake_docker_clean_helper(fixture: Path, *, force: bool = False) -> None:
+            """Install the narrow deterministic cleanliness helper used by finalizer fixtures."""
+            helper_dir = fixture / "bin"
+            helper_dir.mkdir(parents=True, exist_ok=True)
+            helper = helper_dir / "manage-docker-resources.py"
+            if force or not helper.exists():
+                helper.write_text(
+                    "#!/usr/bin/env python3\n"
+                    "import json\n"
+                    "import sys\n"
+                    "from datetime import datetime, timezone\n"
+                    "from pathlib import Path\n"
+                    "args = sys.argv[1:]\n"
+                    "workspace = Path(args[args.index('--workspace-dir') + 1])\n"
+                    "strict = '--strict' in args\n"
+                    "status = workspace / 'docker/docker-cleanliness-status.json'\n"
+                    "status.parent.mkdir(parents=True, exist_ok=True)\n"
+                    "status.write_text(json.dumps({'schema_version': 1, 'checked_at': datetime.now(timezone.utc).isoformat(timespec='seconds').replace('+00:00', 'Z'), 'workspace': workspace.name, 'clean': True, 'strict': strict, 'counts': {}, 'note': 'selftest strict Docker cleanliness fixture'}, sort_keys=True) + '\\n', encoding='utf-8')\n",
+                    encoding="utf-8",
+                )
+                helper.chmod(0o755)
+            baseline = fixture / "docker/docker-resource-baseline.json"
+            if not baseline.exists():
+                baseline.parent.mkdir(parents=True, exist_ok=True)
+                baseline.write_text(
+                    json.dumps(
+                        {
+                            "schema_version": 1,
+                            "captured_at": "2026-05-06T00:00:00Z",
+                            "docker_available": True,
+                            "images": [],
+                            "volumes": [],
+                            "networks": [],
+                            "containers": [],
+                            "build_cache": [],
+                        },
+                        sort_keys=True,
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+
+        def install_zero_candidate_recon(fixture: Path) -> None:
+            """Provide a production-valid structured zero-candidate proof."""
+            recon_fixture = plugin_root / "assets/fixtures/recon-result/service"
+            shutil.copytree(recon_fixture / "repo", repo_dir, dirs_exist_ok=True)
+            shutil.copytree(recon_fixture / "workspace", fixture, dirs_exist_ok=True)
+            shutil.copy2(
+                fixture / "cases/complete-service.json",
+                fixture / "recon-result.json",
+            )
+
+        def install_source_bound_confirmed_chain(fixture: Path) -> str:
+            """Build one deterministic bundle whose verifier path is workspace-bound."""
+            slug = build_wrapper_source_finding(
+                plugin_root,
+                repo_dir,
+                fixture,
+                slug="p9-source-bound-demo-app_Path_Traversal_高危漏洞报告",
+            )
+            contract_path = build_wrapper_contract(fixture, slug)
+            contract = json.loads(contract_path.read_text(encoding="utf-8"))
+            binding = contract["source_binding"]
+            binding["materials"]["verifier_verdict"] = "verifier/CAND-0001/verifier-verdict.json"
+            write_json_fixture(contract_path, contract)
+            old_verdict = fixture / "verifier/verifier-verdict.json"
+            if old_verdict.exists():
+                old_verdict.unlink()
+            tested_ref = str(binding["tested_ref"])
+            target_ref = {
+                "target_config": str(binding["materials"]["target_config"]),
+                "tested_ref": tested_ref,
+            }
+            candidate = valid_candidate_contract(
+                {
+                    "target_ref": target_ref,
+                    "evidence": {
+                        "static_locations": [
+                            {
+                                "path": "src/importer.py",
+                                "start_line": 1,
+                                "end_line": 2,
+                                "reason": "The source-bound fixture reaches the reviewed sink.",
+                            }
+                        ],
+                        "dynamic_evidence": [],
+                    },
+                }
+            )
+            candidate_path = fixture / "candidates/CAND-0001/candidate.json"
+            candidate_path.parent.mkdir(parents=True, exist_ok=True)
+            write_json_fixture(candidate_path, candidate)
+            verdict = valid_verifier_verdict(
+                {
+                    "candidate_id": "CAND-0001",
+                    "target_ref": target_ref,
+                }
+            )
+            verdict_path = fixture / "verifier/CAND-0001/verifier-verdict.json"
+            verdict_path.parent.mkdir(parents=True, exist_ok=True)
+            write_json_fixture(verdict_path, verdict)
+            run(
+                [
+                    sys.executable,
+                    str(plugin_root / "scripts/build_confirmed_bundle.py"),
+                    "--workspace-dir",
+                    str(fixture),
+                    "--repo-root",
+                    str(repo_dir),
+                    "--contract",
+                    str(contract_path),
+                    "--language",
+                    "zh-CN",
+                ],
+                plugin_root,
+            )
+            run(
+                [
+                    sys.executable,
+                    str(plugin_root / "scripts/audit_disposition.py"),
+                    "--workspace-dir",
+                    str(fixture),
+                    "--candidate",
+                    str(candidate_path.relative_to(fixture)),
+                    "--verdict",
+                    str(verdict_path.relative_to(fixture)),
+                    "--update-from-verdict",
+                    "--write",
+                ],
+                plugin_root,
+            )
+            return slug
+
+        real_docker_clean_helper = workspace / "bin/manage-docker-resources.py"
+        real_docker_clean_helper_bytes = real_docker_clean_helper.read_bytes()
+        real_docker_clean_helper_mode = real_docker_clean_helper.stat().st_mode & 0o777
+        install_fake_docker_clean_helper(workspace, force=True)
+        install_zero_candidate_recon(workspace)
+
+        def seed_r2_finalization_path(fixture: Path, label: str) -> None:
+            """Give minimal finalization fixtures the normal R2 workflow prefix.
+
+            The finalizer is a terminal producer, not a bootstrapper.  A fresh
+            R2 workspace must therefore enter intake through start and reach
+            verification through the explicit forward graph before the
+            finalizer records its finalization advance.
+            """
+            writer = plugin_root / "scripts" / "write_audit_event.py"
+            for event_name, stage, transition_kind in (
+                (f"{label}_intake_started", "intake", "start"),
+                (f"{label}_recon_started", "recon", "advance"),
+                (f"{label}_candidates_started", "candidate_generation", "advance"),
+                (f"{label}_triage_started", "triage", "advance"),
+                (f"{label}_verification_started", "verification", "advance"),
+            ):
+                run([
+                    sys.executable,
+                    str(writer),
+                    "--workspace-dir", str(fixture),
+                    "--event", event_name,
+                    "--stage", stage,
+                    "--status", "running",
+                    "--transition-kind", transition_kind,
+                    "--message", "Seed a legal R2 workflow prefix for the bounded finalization fixture.",
+                    "--accept-current-revision",
+                ], plugin_root)
+            install_fake_docker_clean_helper(fixture)
 
         def disposition_item(
             *,
@@ -11771,16 +17111,52 @@ def main() -> None:
                 }, indent=2),
                 encoding="utf-8",
             )
+            canonical_status = {
+                "schema_version": 1,
+                "plugin": "zhulong",
+                "plugin_version": "0.4.0-selftest",
+                "last_event_at": "2026-05-06T00:00:01Z",
+                "blocker": None,
+                "resume_step": None,
+                "workspace": fixture_workspace.name,
+                "target_repo": ".",
+                **status,
+            }
             (fixture_workspace / "stage-status.json").write_text(
-                json.dumps(status, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                json.dumps(canonical_status, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
                 encoding="utf-8",
             )
-            (fixture_workspace / "audit-events.jsonl").write_text(
-                "".join(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n" for event in events),
-                encoding="utf-8",
-            )
+            canonical_docker_status = {
+                "schema_version": 1,
+                "checked_at": "2026-05-06T00:00:01Z",
+                "workspace": fixture_workspace.name,
+                "clean": bool(docker_status.get("clean")),
+                "strict": bool(docker_status.get("strict")),
+                "counts": docker_status.get("counts") if isinstance(docker_status.get("counts"), dict) else {},
+                "note": str(docker_status.get("note") or "selftest strict Docker cleanliness fixture"),
+            }
             (fixture_workspace / "docker/docker-cleanliness-status.json").write_text(
-                json.dumps(docker_status, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                json.dumps(canonical_docker_status, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            docker_digest = "sha256:" + hashlib.sha256((fixture_workspace / "docker/docker-cleanliness-status.json").read_bytes()).hexdigest()
+            normalized_events = []
+            for event in events:
+                event = dict(event)
+                if event.get("event") == "finalization_succeeded":
+                    details = dict(event.get("details") or {})
+                    details.update({
+                        "docker_clean": True,
+                        "docker_clean_strict": True,
+                        "docker_cleanliness_path": "docker/docker-cleanliness-status.json",
+                        "docker_cleanliness_sha256": docker_digest,
+                        "docker_cleanliness_checked_at": canonical_docker_status["checked_at"],
+                        "docker_cleanliness_workspace": fixture_workspace.name,
+                    })
+                    event["details"] = details
+                normalized_events.append(event)
+            (fixture_workspace / "audit-events.jsonl").write_text(
+                "".join(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n" for event in normalized_events),
                 encoding="utf-8",
             )
             if ledger is not None:
@@ -11841,6 +17217,9 @@ def main() -> None:
         )
 
         good_integrity_workspace = repo_dir / "security-research-integrity-good"
+        recon_fixture = plugin_root / "assets/fixtures/recon-result/service"
+        shutil.copytree(recon_fixture / "repo", repo_dir, dirs_exist_ok=True)
+        shutil.copytree(recon_fixture / "workspace", good_integrity_workspace, dirs_exist_ok=True)
         write_integrity_fixture(
             good_integrity_workspace,
             events=[
@@ -11874,6 +17253,10 @@ def main() -> None:
                 "workspace": good_integrity_workspace.name,
                 "items": [],
             },
+        )
+        shutil.copy2(
+            good_integrity_workspace / "cases/complete-service.json",
+            good_integrity_workspace / "recon-result.json",
         )
         run([
             sys.executable,
@@ -11922,8 +17305,8 @@ def main() -> None:
                 "stage": status_stage,
                 "status": status_value,
                 "last_event_at": "2026-05-06T00:00:00Z",
-                "blocker": "",
-                "resume_step": "",
+                "blocker": "selftest blocker" if status_value in {"blocked", "paused"} else None,
+                "resume_step": "resume selftest" if status_value in {"blocked", "paused"} else None,
                 "workspace": fixture.name,
                 "target_repo": str(repo_dir),
             }
@@ -11940,6 +17323,7 @@ def main() -> None:
                     "stage": status_stage,
                     "status": status_value,
                     "message": "Issue 19 handoff consistency fixture.",
+                    "details": {},
                 }, ensure_ascii=False, sort_keys=True) + "\n",
                 encoding="utf-8",
             )
@@ -11968,6 +17352,7 @@ def main() -> None:
                     json.dumps({"verification_status": "confirmed_in_docker"}, indent=2),
                     encoding="utf-8",
                 )
+            install_fake_docker_clean_helper(fixture)
             return fixture
 
         contradictory_handoff_workspace = write_issue19_workspace(
@@ -12153,7 +17538,7 @@ def main() -> None:
             "--result",
             "completed_with_confirmed_bundles",
         ], plugin_root, "variant seed confirmed_bundle_path must not point to candidate/manual/evidence-only material",
-           extra_env=SKIP_DOCKER_ENV)
+           extra_env={})
 
         blocked_finalization_workspace = repo_dir / "security-research-blocked-verification"
         blocked_finalization_workspace.mkdir(parents=True, exist_ok=True)
@@ -12184,6 +17569,7 @@ def main() -> None:
             json.dumps({"schema_version": 1, "clean": True, "strict": True}, indent=2),
             encoding="utf-8",
         )
+        seed_r2_finalization_path(blocked_finalization_workspace, "blocked_finalization")
         blocked_proc = subprocess.run([
             sys.executable,
             str(plugin_root / "scripts/finalize_audit_workspace.py"),
@@ -12191,7 +17577,7 @@ def main() -> None:
             str(blocked_finalization_workspace),
             "--result",
             "completed_no_confirmed_findings",
-        ], cwd=plugin_root, capture_output=True, text=True, env={**os.environ, **SKIP_DOCKER_ENV})
+        ], cwd=plugin_root, capture_output=True, text=True, env=os.environ.copy())
         blocked_output = (blocked_proc.stdout or "") + (blocked_proc.stderr or "")
         if blocked_proc.returncode == 0:
             raise SystemExit("FAILED: blocked verification finalized as completed_no_confirmed_findings")
@@ -12250,6 +17636,7 @@ def main() -> None:
             "- Still blocked or missing: Image pull required\n",
             encoding="utf-8",
         )
+        seed_r2_finalization_path(stale_blocker_workspace, "stale_blocker")
         stale_proc = subprocess.run([
             sys.executable,
             str(plugin_root / "scripts/finalize_audit_workspace.py"),
@@ -12257,7 +17644,7 @@ def main() -> None:
             str(stale_blocker_workspace),
             "--result",
             "completed_no_confirmed_findings",
-        ], cwd=plugin_root, capture_output=True, text=True, env={**os.environ, **SKIP_DOCKER_ENV})
+        ], cwd=plugin_root, capture_output=True, text=True, env=os.environ.copy())
         stale_output = (stale_proc.stdout or "") + (stale_proc.stderr or "")
         if stale_proc.returncode == 0:
             raise SystemExit("FAILED: stale attack-surface Docker blocker finalized as no-confirmed")
@@ -12285,6 +17672,7 @@ def main() -> None:
             "| U1 | Optional Kafka TLS | rejectUnauthorized:false | deployment materiality | blocked_no_docker | configure Kafka and rerun Docker verification | Yes |\n",
             encoding="utf-8",
         )
+        seed_r2_finalization_path(high_confidence_blocked_workspace, "high_confidence_blocked")
         high_conf_blocked_proc = subprocess.run([
             sys.executable,
             str(plugin_root / "scripts/finalize_audit_workspace.py"),
@@ -12292,7 +17680,7 @@ def main() -> None:
             str(high_confidence_blocked_workspace),
             "--result",
             "completed_no_confirmed_findings",
-        ], cwd=plugin_root, capture_output=True, text=True, env={**os.environ, **SKIP_DOCKER_ENV})
+        ], cwd=plugin_root, capture_output=True, text=True, env=os.environ.copy())
         high_conf_output = (high_conf_blocked_proc.stdout or "") + (high_conf_blocked_proc.stderr or "")
         if high_conf_blocked_proc.returncode == 0:
             raise SystemExit("FAILED: high-confidence blocked lead without materiality finalized as no-confirmed")
@@ -12310,8 +17698,8 @@ def main() -> None:
             }, indent=2),
             encoding="utf-8",
         )
+        install_zero_candidate_recon(high_confidence_safe_workspace)
         (high_confidence_safe_workspace / "candidate-findings.md").write_text("# Candidate Findings\n\n", encoding="utf-8")
-        (high_confidence_safe_workspace / "attack-surface.md").write_text("# Attack Surface Handoff\n\n", encoding="utf-8")
         (high_confidence_safe_workspace / "unverified-leads.md").write_text(
             "# Unverified Leads\n\n"
             "| Lead ID | Suspected Weakness | Evidence So Far | Missing Evidence | Docker Confirmation Status | Safe Resume Step | High-Confidence-Unverified? | Material blocker? | Default runtime scope? | Why completion is still safe? |\n"
@@ -12319,6 +17707,32 @@ def main() -> None:
             "| U1 | Optional Kafka TLS | rejectUnauthorized:false | deployment materiality | blocked_no_docker | configure Kafka and rerun Docker verification | Yes | No | optional integration | Kafka is disabled in default runtime and this is a non-material optional integration follow-up. |\n",
             encoding="utf-8",
         )
+        # The Markdown lead remains visible for handoff, but completion may
+        # proceed only after the disposition ledger explicitly records the
+        # non-material lead as false_positive.
+        write_json_fixture(
+            high_confidence_safe_workspace / "audit-disposition.json",
+            {
+                "schema_version": 1,
+                "generated_at": "2026-05-06T00:00:01Z",
+                "workspace": high_confidence_safe_workspace.name,
+                "candidate_dispositions": [],
+                "items": [
+                    {
+                        "id": "unverified-leads:u1",
+                        "title": "Optional Kafka TLS",
+                        "state": "false_positive",
+                        "source_type": "runtime",
+                        "docker_applicable": False,
+                        "docker_status": "not_applicable",
+                        "reason_code": "safe_config",
+                        "confirmed_bundle_path": "",
+                        "materiality_rationale": "Non-material optional integration; safe configuration disposition recorded explicitly.",
+                    }
+                ],
+            },
+        )
+        seed_r2_finalization_path(high_confidence_safe_workspace, "high_confidence_safe")
         run_with_env([
             sys.executable,
             str(plugin_root / "scripts/finalize_audit_workspace.py"),
@@ -12326,7 +17740,7 @@ def main() -> None:
             str(high_confidence_safe_workspace),
             "--result",
             "completed_no_confirmed_findings",
-        ], plugin_root, SKIP_DOCKER_ENV)
+        ], plugin_root, {})
         require_text(
             high_confidence_safe_workspace / "SUMMARY.md",
             "completed_no_confirmed_findings",
@@ -12345,10 +17759,12 @@ def main() -> None:
             }, indent=2),
             encoding="utf-8",
         )
+        install_zero_candidate_recon(legacy_clean_workspace)
         (legacy_clean_workspace / "docker/docker-cleanliness-status.json").write_text(
             json.dumps({"schema_version": 1, "clean": True, "strict": True}, indent=2),
             encoding="utf-8",
         )
+        seed_r2_finalization_path(legacy_clean_workspace, "legacy_clean")
         if (legacy_clean_workspace / "audit-disposition.json").exists():
             raise SystemExit("FAILED: legacy clean fixture unexpectedly started with audit-disposition.json")
         run_with_env([
@@ -12358,7 +17774,7 @@ def main() -> None:
             str(legacy_clean_workspace),
             "--result",
             "completed_no_confirmed_findings",
-        ], plugin_root, SKIP_DOCKER_ENV)
+        ], plugin_root, {})
         if not (legacy_clean_workspace / "audit-disposition.json").exists():
             raise SystemExit("FAILED: legacy clean no-confirmed finalization did not write audit-disposition.json")
         run([
@@ -12388,6 +17804,8 @@ def main() -> None:
             ("attack-surface.md", "# Attack Surface Handoff\n\n"),
         ):
             (stale_docker_status_workspace / filename).write_text(heading, encoding="utf-8")
+        install_zero_candidate_recon(stale_docker_status_workspace)
+        seed_r2_finalization_path(stale_docker_status_workspace, "stale_docker_status")
         (stale_docker_status_workspace / "docker/docker-resource-baseline.json").write_text(
             json.dumps({
                 "schema_version": 1,
@@ -12403,7 +17821,15 @@ def main() -> None:
         )
         stale_status_path = stale_docker_status_workspace / "docker/docker-cleanliness-status.json"
         stale_status_path.write_text(
-            json.dumps({"schema_version": 1, "clean": True, "strict": True, "checked_at": "2026-05-06T00:00:01Z"}, indent=2),
+            json.dumps({
+                "schema_version": 1,
+                "checked_at": "2026-05-06T00:00:01Z",
+                "workspace": stale_docker_status_workspace.name,
+                "clean": True,
+                "strict": True,
+                "counts": {},
+                "note": "stale selftest fixture",
+            }, indent=2),
             encoding="utf-8",
         )
         fake_manage = stale_docker_status_workspace / "bin/manage-docker-resources.py"
@@ -12422,7 +17848,7 @@ def main() -> None:
             str(stale_docker_status_workspace),
             "--result",
             "completed_no_confirmed_findings",
-        ], plugin_root, "did not refresh docker-cleanliness-status.json")
+        ], plugin_root, "Docker cleanliness check failed")
 
         # Test 1: Finalization with valid bundles succeeds
         # Remove partial/bad bundles first so only valid ones remain
@@ -12449,6 +17875,15 @@ def main() -> None:
         ):
             if bad.exists():
                 shutil.rmtree(bad)
+        # The preceding bundle-validator mutations intentionally leave several
+        # invalid and unrelated valid bundles in confirmed/.  Remove all
+        # visible bundle directories before building the one authority-bound
+        # bundle used by the finalization chain; build_confirmed_bundle.py
+        # validates the complete confirmed/ directory before promotion.
+        for confirmed_entry in (workspace / "confirmed").iterdir():
+            if confirmed_entry.is_dir() and not confirmed_entry.name.startswith("."):
+                shutil.rmtree(confirmed_entry)
+        source_bound_slug = install_source_bound_confirmed_chain(workspace)
         run_expect_fail([
             sys.executable,
             str(plugin_root / "scripts/finalize_audit_workspace.py"),
@@ -12456,7 +17891,7 @@ def main() -> None:
             "--language", "auto",
             "--result", "completed_with_confirmed_bundles",
         ], plugin_root, "Seeded variant discovery gate",
-           extra_env=SKIP_DOCKER_ENV)
+           extra_env={})
         write_finalization_variant_artifacts(workspace)
         run_with_env([
             sys.executable,
@@ -12464,12 +17899,13 @@ def main() -> None:
             "--workspace-dir", str(workspace),
             "--language", "auto",
             "--result", "completed_with_confirmed_bundles",
-        ], plugin_root, SKIP_DOCKER_ENV)
+        ], plugin_root, {})
         finalized_status = json.loads((workspace / "stage-status.json").read_text(encoding="utf-8"))
         if finalized_status.get("status") != "completed":
             raise SystemExit("FAILED: finalization did not set stage-status.json status to completed")
-        if finalized_status.get("stage") != "completed":
-            raise SystemExit("FAILED: finalization did not set stage-status.json stage to completed")
+        expected_final_stage = "finalization" if finalized_status.get("schema_version") == 2 else "completed"
+        if finalized_status.get("stage") != expected_final_stage:
+            raise SystemExit("FAILED: finalization did not set the protocol-canonical completed stage")
         if finalized_status.get("blocker") is not None:
             raise SystemExit("FAILED: finalization did not clear blocker in stage-status.json")
         if finalized_status.get("resume_step") is not None:
@@ -12501,32 +17937,71 @@ def main() -> None:
             "bundle finalization writes stable workspace SUMMARY.md",
         )
         # Test 2: Finalization with no confirmed bundles succeeds under completed_no_confirmed_findings
-        # Reset stage-status back to running for next test
-        write_event_cmd = [
-            sys.executable,
-            str(workspace / "bin/write-audit-event.py"),
-            "--workspace-dir", str(workspace),
-            "--event", "selftest_reset",
-            "--stage", "verification",
-            "--status", "running",
-            "--message", "Reset for finalization selftest.",
-        ]
-        subprocess.run(write_event_cmd, capture_output=True, text=True)
+        def reset_finalization_test_to_verification() -> None:
+            current = json.loads((workspace / "stage-status.json").read_text(encoding="utf-8"))
+            writer = workspace / "bin/write-audit-event.py"
+            common = [
+                sys.executable, str(writer), "--workspace-dir", str(workspace),
+                "--accept-current-revision", "--subject", "run:finalization-selftest",
+                "--evidence-ref", "handoff-summary.md",
+                "--next-action-json", json.dumps({
+                    "action_id": "resume-finalization-selftest",
+                    "action_type": "review",
+                    "subject_ids": ["run:finalization-selftest"],
+                    "summary": "Review the finalization test transition before continuing.",
+                    "evidence_refs": ["handoff-summary.md"],
+                }, sort_keys=True),
+                "--details-json", json.dumps({
+                    "summary": "Reset finalization selftest workflow.",
+                    "reason_detail": "The selftest starts a new bounded finalization branch after validating prior output.",
+                }, sort_keys=True),
+            ]
+            if current.get("stage") == "finalization" and current.get("status") == "completed":
+                run(common + [
+                    "--event", "selftest_finalization_reopened",
+                    "--stage", "finalization",
+                    "--status", "running",
+                    "--transition-kind", "reopen",
+                    "--reason-code", "validation_failed",
+                    "--message", "Reopen the completed finalization test branch.",
+                ], plugin_root)
+                current = json.loads((workspace / "stage-status.json").read_text(encoding="utf-8"))
+            if current.get("stage") == "finalization" and current.get("status") == "running":
+                run(common + [
+                    "--event", "selftest_returned_to_verification",
+                    "--stage", "verification",
+                    "--status", "running",
+                    "--transition-kind", "return",
+                    "--reason-code", "validation_failed",
+                    "--message", "Return finalization selftest work to verification.",
+                ], plugin_root)
+                return
+            if current.get("stage") != "verification" or current.get("status") != "running":
+                raise SystemExit("FAILED: finalization selftest could not reset to verification/running")
+
+        reset_finalization_test_to_verification()
         # Remove all bundle dirs to simulate no-finding workspace
         for entry in (workspace / "confirmed").iterdir():
             if entry.is_dir() and not entry.name.startswith("."):
                 shutil.rmtree(entry)
+        for authority_dir in (workspace / "candidates", workspace / "verifier"):
+            if authority_dir.exists():
+                shutil.rmtree(authority_dir)
+        disposition_path = workspace / "audit-disposition.json"
+        if disposition_path.exists():
+            disposition_path.unlink()
         run_with_env([
             sys.executable,
             str(plugin_root / "scripts/finalize_audit_workspace.py"),
             "--workspace-dir", str(workspace),
             "--result", "completed_no_confirmed_findings",
-        ], plugin_root, SKIP_DOCKER_ENV)
+        ], plugin_root, {})
         no_finding_status = json.loads((workspace / "stage-status.json").read_text(encoding="utf-8"))
         if no_finding_status.get("status") != "completed":
             raise SystemExit("FAILED: no-finding finalization did not set status to completed")
-        if no_finding_status.get("stage") != "completed":
-            raise SystemExit("FAILED: no-finding finalization did not set stage to completed")
+        expected_no_finding_stage = "finalization" if no_finding_status.get("schema_version") == 2 else "completed"
+        if no_finding_status.get("stage") != expected_no_finding_stage:
+            raise SystemExit("FAILED: no-finding finalization did not set the protocol-canonical completed stage")
         no_finding_handoff = (workspace / "handoff-summary.md").read_text(encoding="utf-8")
         if "No confirmed vulnerabilities" not in no_finding_handoff:
             raise SystemExit("FAILED: no-finding handoff does not show 'No confirmed vulnerabilities'")
@@ -12550,7 +18025,7 @@ def main() -> None:
         ], plugin_root)
 
         # Test 3: Finalization fails when partial confirmed bundles exist
-        subprocess.run(write_event_cmd, capture_output=True, text=True)
+        reset_finalization_test_to_verification()
         partial_for_gate = workspace / "confirmed/C99-partial-gate-test"
         partial_for_gate.mkdir(parents=True, exist_ok=True)
         (partial_for_gate / "verification-evidence.json").write_text(
@@ -12563,21 +18038,23 @@ def main() -> None:
             "--workspace-dir", str(workspace),
             "--result", "completed_with_confirmed_bundles",
         ], plugin_root, "partial confirmed bundle",
-           extra_env=SKIP_DOCKER_ENV)
+           extra_env={})
 
         # Test 4: Finalization fails when result=completed_with_confirmed_bundles but zero bundles validate
         shutil.rmtree(partial_for_gate)
-        subprocess.run(write_event_cmd, capture_output=True, text=True)
+        reset_finalization_test_to_verification()
         run_expect_fail([
             sys.executable,
             str(plugin_root / "scripts/finalize_audit_workspace.py"),
             "--workspace-dir", str(workspace),
             "--result", "completed_with_confirmed_bundles",
         ], plugin_root, "requires at least one validated confirmed bundle",
-           extra_env=SKIP_DOCKER_ENV)
+           extra_env={})
 
         # Test 5: Finalization fails when Docker strict cleanliness fails
         # Re-render a valid bundle for this test
+        real_docker_clean_helper.write_bytes(real_docker_clean_helper_bytes)
+        real_docker_clean_helper.chmod(real_docker_clean_helper_mode)
         run([
             sys.executable,
             str(workspace / "bin/render-confirmed-vuln-docx.py"),
@@ -12586,7 +18063,13 @@ def main() -> None:
             "--output-dir", str(workspace / "confirmed"),
             "--language", "zh-CN",
         ], plugin_root)
-        subprocess.run(write_event_cmd, capture_output=True, text=True)
+        for rendered_bundle in sorted(
+            path for path in (workspace / "confirmed").iterdir()
+            if path.is_dir() and not path.name.startswith(".")
+        ):
+            write_live_replay_logs(rendered_bundle)
+        write_finalization_variant_artifacts(workspace)
+        reset_finalization_test_to_verification()
         # Use a fake baseline that will make verify-clean fail
         fake_docker_baseline = workspace / "docker" / "docker-resource-baseline.json"
         fake_docker_baseline.write_text(
@@ -12604,6 +18087,14 @@ def main() -> None:
             str(workspace),
             "--capture-baseline",
         ], plugin_root, "Refusing to overwrite existing Docker resource baseline")
+        real_docker_clean_helper.write_text(
+            "#!/usr/bin/env python3\n"
+            "import sys\n"
+            "print('deterministic selftest Docker helper failure', file=sys.stderr)\n"
+            "raise SystemExit(1)\n",
+            encoding="utf-8",
+        )
+        real_docker_clean_helper.chmod(0o755)
         # The real Docker environment likely has resources, so verify-clean --strict should fail
         # But if Docker is clean, this test would pass incorrectly. Use a fixture instead.
         fake_current = workspace / "docker" / "current-finalize-fixture.json"
@@ -12628,11 +18119,11 @@ def main() -> None:
             str(plugin_root / "scripts/finalize_audit_workspace.py"),
             "--workspace-dir", str(workspace),
             "--result", "completed_with_confirmed_bundles",
-        ], plugin_root, "Docker cleanliness check failed")
+        ], plugin_root, "completion authority chain")
         backup_baseline.rename(real_baseline)
 
         # Test 5a: completed_no_confirmed_findings fails when partial confirmed bundles exist
-        subprocess.run(write_event_cmd, capture_output=True, text=True)
+        reset_finalization_test_to_verification()
         # Remove the valid bundle rendered for Test 5
         for entry in (workspace / "confirmed").iterdir():
             if entry.is_dir() and not entry.name.startswith("."):
@@ -12649,11 +18140,11 @@ def main() -> None:
             "--workspace-dir", str(workspace),
             "--result", "completed_no_confirmed_findings",
         ], plugin_root, "partial confirmed bundle",
-           extra_env=SKIP_DOCKER_ENV)
+           extra_env={})
         shutil.rmtree(partial_no_finding)
 
         # Test 5b: completed_no_confirmed_findings fails when Docker cleanliness fails
-        subprocess.run(write_event_cmd, capture_output=True, text=True)
+        reset_finalization_test_to_verification()
         real_baseline2 = workspace / "docker" / "docker-resource-baseline.json"
         backup_baseline2 = workspace / "docker" / "docker-resource-baseline.json.bak2"
         real_baseline2.rename(backup_baseline2)
@@ -12666,14 +18157,19 @@ def main() -> None:
         backup_baseline2.rename(real_baseline2)
 
         # Test 5c: missing audit-event writer must be visible, not silent.
-        subprocess.run(write_event_cmd, capture_output=True, text=True)
+        reset_finalization_test_to_verification()
         isolated_finalizer_dir = Path(tempdir) / "isolated-finalizer"
         isolated_finalizer_dir.mkdir(parents=True, exist_ok=True)
         isolated_finalizer = isolated_finalizer_dir / "finalize_audit_workspace.py"
         shutil.copy2(plugin_root / "scripts/finalize_audit_workspace.py", isolated_finalizer)
+        shutil.copy2(plugin_root / "scripts/audit_state_io.py", isolated_finalizer_dir / "audit_state_io.py")
+        shutil.copy2(plugin_root / "scripts/audit_text_safety.py", isolated_finalizer_dir / "audit_text_safety.py")
+        shutil.copy2(plugin_root / "scripts/audit_transition_policy.py", isolated_finalizer_dir / "audit_transition_policy.py")
+        shutil.copy2(plugin_root / "scripts/validate_audit_protocol.py", isolated_finalizer_dir / "validate_audit_protocol.py")
         shutil.copy2(plugin_root / "scripts/workspace_state.py", isolated_finalizer_dir / "workspace_state.py")
         shutil.copy2(plugin_root / "scripts/blocked_verification.py", isolated_finalizer_dir / "blocked_verification.py")
         shutil.copy2(plugin_root / "scripts/validate_candidate.py", isolated_finalizer_dir / "validate_candidate.py")
+        shutil.copy2(plugin_root / "scripts/candidate_identity.py", isolated_finalizer_dir / "candidate_identity.py")
         shutil.copy2(plugin_root / "scripts/validate_verifier_verdict.py", isolated_finalizer_dir / "validate_verifier_verdict.py")
         shutil.copy2(plugin_root / "scripts/audit_disposition.py", isolated_finalizer_dir / "audit_disposition.py")
         workspace_writer = workspace / "bin/write-audit-event.py"
@@ -12686,16 +18182,13 @@ def main() -> None:
                 "--workspace-dir", str(workspace),
                 "--result", "completed_no_confirmed_findings",
             ], cwd=plugin_root, capture_output=True, text=True,
-                env={**os.environ, **SKIP_DOCKER_ENV})
+                env=os.environ.copy())
         finally:
             hidden_workspace_writer.rename(workspace_writer)
-        if proc.returncode != 0:
-            raise SystemExit(
-                "FAILED: finalization should warn but continue when audit-event writer is missing: "
-                + ((proc.stdout or "") + (proc.stderr or ""))
-            )
-        if "WARNING: audit event writer not found" not in proc.stderr:
-            raise SystemExit("FAILED: missing audit-event writer did not produce a visible warning")
+        if proc.returncode == 0:
+            raise SystemExit("FAILED: finalization silently continued when its state-changing writer was missing")
+        if "FINALIZATION FAILED: audit event writer not found" not in proc.stderr:
+            raise SystemExit("FAILED: missing finalization writer did not produce a stable fatal error")
 
         claude_home = Path(tempdir) / "claude-home"
         claude_home.mkdir(parents=True, exist_ok=True)
@@ -12727,6 +18220,7 @@ def main() -> None:
         ).read_text(encoding="utf-8"):
             raise SystemExit("FAILED: sync_to_claude_skill.sh did not honor --prompt-template-output")
         installed_skill = claude_home / "skills" / "zhulong"
+        require_installed_package_hygiene(installed_skill, "Claude installed skill")
         if not (installed_skill / "SKILL.md").exists():
             raise SystemExit("FAILED: Claude skill sync did not create SKILL.md")
         if (installed_skill / "AGENTS.md").exists():
@@ -12741,6 +18235,8 @@ def main() -> None:
             raise SystemExit("FAILED: Claude skill sync did not copy run_verification_case.sh")
         if not (installed_skill / "scripts/check_sandbox_preflight.py").exists():
             raise SystemExit("FAILED: Claude skill sync did not copy check_sandbox_preflight.py")
+        if not (installed_skill / "scripts/evidence_io.py").exists():
+            raise SystemExit("FAILED: Claude skill sync did not copy evidence_io.py")
         if not (installed_skill / "scripts/render_handoff_summary.py").exists():
             raise SystemExit("FAILED: Claude skill sync did not copy render_handoff_summary.py")
         if not (installed_skill / "scripts/workspace_state.py").exists():
@@ -12753,6 +18249,10 @@ def main() -> None:
             raise SystemExit("FAILED: Claude skill sync did not copy zhulong_audit.sh")
         if not (installed_skill / "scripts/write_audit_event.py").exists():
             raise SystemExit("FAILED: Claude skill sync did not copy write_audit_event.py")
+        if not (installed_skill / "scripts/audit_text_safety.py").exists():
+            raise SystemExit("FAILED: Claude skill sync did not copy audit_text_safety.py")
+        if not (installed_skill / "scripts/audit_transition_policy.py").exists():
+            raise SystemExit("FAILED: Claude skill sync did not copy audit_transition_policy.py")
         if not (installed_skill / "scripts/validate_workspace_state.py").exists():
             raise SystemExit("FAILED: Claude skill sync did not copy validate_workspace_state.py")
         if not (installed_skill / "scripts/find_variant_candidates.py").exists():
@@ -12771,186 +18271,6 @@ def main() -> None:
             raise SystemExit("FAILED: Claude skill sync did not copy PHP/Swoole playbook")
         if not (installed_skill / "assets/references/docker-registry-fallbacks.example.json").exists():
             raise SystemExit("FAILED: Claude skill sync did not copy registry fallback example")
-        require_text(
-            installed_skill / "SKILL.md",
-            "Documents` skill",
-            "installed Claude skill docx editing contract",
-        )
-        require_text(
-            installed_skill / "SKILL.md",
-            "if the report claims denial of service, the materials should show the direct DoS oracle",
-            "installed Claude skill stronger-evidence contract",
-        )
-        require_text(
-            installed_skill / "SKILL.md",
-            "攻击者条件",
-            "installed Claude skill confirmed quality-gate attacker label",
-        )
-        require_text(
-            installed_skill / "SKILL.md",
-            "Security Impact",
-            "installed Claude skill confirmed quality-gate impact label",
-        )
-        require_text(
-            installed_skill / "SKILL.md",
-            "outside_security_boundary",
-            "installed Claude skill false-positive boundary reason code",
-        )
-        require_text(
-            installed_skill / "SKILL.md",
-            "severity-escalation pass",
-            "installed Claude skill severity escalation contract",
-        )
-        require_text(
-            installed_skill / "SKILL.md",
-            "reviewer-evidence-and-impact.md",
-            "installed Claude skill reviewer evidence addendum guidance",
-        )
-        require_text(
-            installed_skill / "SKILL.md",
-            "consumer application pattern",
-            "installed Claude skill library consumer boundary guidance",
-        )
-        require_text(
-            installed_skill / "SKILL.md",
-            "rejected_unsafe_sandbox",
-            "installed Claude skill sandbox preflight rejected label",
-        )
-        require_text(
-            installed_skill / "SKILL.md",
-            "Do not execute `web_search`",
-            "installed Claude skill web lookup shell-safety contract",
-        )
-        require_text(
-            installed_skill / "SKILL.md",
-            "Do not produce thin DOCX reports",
-            "installed Claude skill report-depth contract",
-        )
-        require_text(
-            installed_skill / "SKILL.md",
-            "exactly one confirmed vulnerability",
-            "installed Claude skill one-finding-per-bundle contract",
-        )
-        require_text(
-            installed_skill / "SKILL.md",
-            "do not leave runtime or source-control directories",
-            "installed Claude skill final bundle cleanliness contract",
-        )
-        require_text(
-            installed_skill / "SKILL.md",
-            "verification-evidence.json",
-            "installed Claude skill verification evidence contract",
-        )
-        require_text(
-            installed_skill / "SKILL.md",
-            "Static scanning, source-to-sink reasoning",
-            "installed Claude skill candidate-only analysis contract",
-        )
-        require_text(
-            installed_skill / "SKILL.md",
-            "False positives, non-security defects, unverified leads",
-            "installed Claude skill triage workspace-only contract",
-        )
-        require_text(
-            installed_skill / "SKILL.md",
-            "Final summaries must explicitly distinguish confirmed vulnerabilities",
-            "installed Claude skill final summary triage contract",
-        )
-        require_text(
-            installed_skill / "SKILL.md",
-            "Material blocker?",
-            "installed Claude skill unverified lead materiality requirement",
-        )
-        require_text(
-            installed_skill / "SKILL.md",
-            "<audit-workspace>/SUMMARY.md",
-            "installed Claude skill stable workspace summary requirement",
-        )
-        require_text(
-            installed_skill / "SKILL.md",
-            "initial-probes-summary.json",
-            "installed Claude skill initial probes summary contract",
-        )
-        require_text(
-            installed_skill / "SKILL.md",
-            "skipped_tool_missing",
-            "installed Claude skill initial probes missing-tool status",
-        )
-        require_text(
-            installed_skill / "SKILL.md",
-            "handoff-summary.md",
-            "installed Claude skill handoff summary contract",
-        )
-        require_text(
-            installed_skill / "SKILL.md",
-            "local_knowledge_checklists",
-            "installed Claude skill local checklist planner contract",
-        )
-        require_text(
-            installed_skill / "SKILL.md",
-            "nodejs-web-audit-playbook.md",
-            "installed Claude skill Node.js Web playbook reference",
-        )
-        require_text(
-            installed_skill / "SKILL.md",
-            "python-web-audit-playbook.md",
-            "installed Claude skill Python Web playbook reference",
-        )
-        require_text(
-            installed_skill / "SKILL.md",
-            "python-library-audit-playbook.md",
-            "installed Claude skill Python Library playbook reference",
-        )
-        require_text(
-            installed_skill / "SKILL.md",
-            "php-swoole-audit-playbook.md",
-            "installed Claude skill PHP/Swoole playbook reference",
-        )
-        require_text(
-            installed_skill / "SKILL.md",
-            "run_verification_case.sh",
-            "installed Claude skill verification runner reference",
-        )
-        require_text(
-            installed_skill / "SKILL.md",
-            "failed_timeout",
-            "installed Claude skill verification runner timeout label",
-        )
-        require_text(
-            installed_skill / "SKILL.md",
-            "Fill `<audit-workspace>/attack-surface.md` as a concise handoff artifact",
-            "installed Claude skill attack-surface handoff contract",
-        )
-        require_text(
-            installed_skill / "SKILL.md",
-            "finalize-audit-workspace.py",
-            "installed Claude skill completion gate command",
-        )
-        require_text(
-            installed_skill / "SKILL.md",
-            "completed_no_confirmed_findings",
-            "installed Claude skill no-confirmed-findings result",
-        )
-        require_text(
-            installed_skill / "SKILL.md",
-            "A dogfood run is not complete until this gate passes",
-            "installed Claude skill completion gate enforcement",
-        )
-        require_text(
-            installed_skill / "SKILL.md",
-            "assert-finalized-workspace.py",
-            "installed Claude skill finalization integrity checker",
-        )
-        require_text(
-            installed_skill / "SKILL.md",
-            "Blocked Docker/runtime verification is not the same as",
-            "installed Claude skill blocked verification semantics",
-        )
-        require_text(
-            installed_skill / "SKILL.md",
-            "`attack-surface.md` as a DOCX source or as a shortcut into",
-            "installed Claude skill attack-surface routing guardrail",
-        )
         run([
             sys.executable,
             str(installed_skill / "scripts/selftest_plugin.py"),
@@ -12978,6 +18298,7 @@ def main() -> None:
         if "Installed skill directory:" not in codex_sync_output or str(codex_skills_dir / "zhulong") not in codex_sync_output:
             raise SystemExit("FAILED: sync_to_codex_skill.sh did not report installed path")
         codex_installed_skill = codex_skills_dir / "zhulong"
+        require_installed_package_hygiene(codex_installed_skill, "Codex installed skill")
         if (codex_installed_skill / "AGENTS.md").exists():
             raise SystemExit("FAILED: Codex skill sync copied repo-root AGENTS.md into installed skill")
         for rel in INSTALLED_SKILL_REQUIRED_FILES:

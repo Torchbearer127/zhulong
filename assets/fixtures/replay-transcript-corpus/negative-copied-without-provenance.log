@@ -1,0 +1,6 @@
+Copied replay transcript without portable provenance
+COMMAND: bash ./run-example-recording.sh quick docker
+stdout: replay helper copied a successful proof transcript into the bundle
+stdout: deterministic success marker verified with grep -Fq
+exit status: 0
+DIRECT_IMPACT_CONFIRMED

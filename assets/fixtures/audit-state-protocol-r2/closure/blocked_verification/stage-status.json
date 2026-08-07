@@ -1,0 +1,16 @@
+{
+  "blocker": "fixture gate",
+  "event_log_digest": "sha256:4d60e3a2fdfdd1808bffb8765d5f448b4e4919ac0bc85c81424dd79a2af2869b",
+  "last_event_at": "2026-07-20T00:00:01Z",
+  "last_event_name": "verification_blocked",
+  "last_event_seq": 6,
+  "last_event_type": "stage_transition",
+  "plugin": "zhulong",
+  "plugin_version": "p9.5-closure-fixture",
+  "resume_step": "inspect fixture gate",
+  "run_id": "run-382babcdac7445a98357f9171c551940",
+  "schema_version": 2,
+  "stage": "verification",
+  "state_revision": 6,
+  "status": "blocked"
+}

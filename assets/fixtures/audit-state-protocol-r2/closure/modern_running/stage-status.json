@@ -1,0 +1,16 @@
+{
+  "blocker": null,
+  "event_log_digest": "sha256:3069c8953057c77ecf915a7374ecc469a0005bb12234b22f66c131ec98f4bd05",
+  "last_event_at": "2026-07-20T00:00:01Z",
+  "last_event_name": "recon_started",
+  "last_event_seq": 2,
+  "last_event_type": "stage_transition",
+  "plugin": "zhulong",
+  "plugin_version": "p9.5-closure-fixture",
+  "resume_step": null,
+  "run_id": "run-cc5c77c7d458402eaf1c356b1c731852",
+  "schema_version": 2,
+  "stage": "recon",
+  "state_revision": 2,
+  "status": "running"
+}

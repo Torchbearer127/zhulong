@@ -1,0 +1,16 @@
+{
+  "schema_version": 2,
+  "plugin": "zhulong",
+  "plugin_version": "0.4.0-fixture",
+  "run_id": "run-fixture-r2",
+  "state_revision": -1,
+  "last_event_seq": 1,
+  "event_log_digest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "stage": "intake",
+  "status": "running",
+  "last_event_at": "2026-07-18T00:00:00Z",
+  "last_event_type": "stage_transition",
+  "last_event_name": "intake_started",
+  "blocker": null,
+  "resume_step": null
+}
