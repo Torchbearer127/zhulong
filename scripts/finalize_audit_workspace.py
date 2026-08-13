@@ -8,21 +8,37 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
-from audit_state_io import AuditStateError, normalize_workspace_state, read_workspace_snapshot
+from audit_state_io import (
+    AuditStateError,
+    WorkspaceSnapshot,
+    commit_event,
+    normalize_workspace_state,
+    project_legacy_snapshot,
+    project_r2_snapshot,
+    read_workspace_snapshot,
+)
 from audit_disposition import (
+    DispositionUpdateError,
     LEDGER_FILENAME,
+    load_disposition_ledger,
     synthesize_disposition_ledger,
     validate_workspace_confirmation_chain,
     validate_disposition_ledger,
     write_disposition_ledger,
 )
 from blocked_verification import detect_blocked_verification
+from evidence_io import SafeEvidenceError, atomic_write_bytes, safe_read_bytes
+from render_handoff_summary import publish_handoff_summary, render as render_handoff_summary
 from workspace_state import (
+    derive_handoff_state,
     inspect_workspace_state,
+    publish_handoff_state_document,
+    read_handoff_state,
     read_strict_docker_cleanliness,
     validate_current_strict_docker_cleanliness,
+    validate_handoff_state_current,
     validate_handoff_status_consistency,
 )
 
@@ -76,6 +92,120 @@ class _FinalizationEventWriter:
         )
         self.current_stage = str(state.get("stage") or "") or None
         self.current_status = str(state.get("status") or "") or None
+
+    def commit_terminal(
+        self,
+        *,
+        result: str,
+        validated_count: int,
+        docker_clean: bool,
+        docker_evidence: dict[str, Any],
+        prepare_artifacts: Callable[[WorkspaceSnapshot], None],
+    ) -> None:
+        timestamp = utc_now()
+        message = f"Audit finalized as {result}."
+        metadata = {
+            "docker_clean": docker_clean,
+            "docker_clean_strict": True,
+            "docker_cleanliness_checked_at": docker_evidence.get("checked_at"),
+            "docker_cleanliness_path": docker_evidence.get("path"),
+            "docker_cleanliness_sha256": docker_evidence.get("sha256"),
+            "docker_cleanliness_workspace": self.workspace.name,
+            "legacy_event_status": "ok",
+            "result": result,
+            "validated_bundles": validated_count,
+        }
+        details = {
+            "summary": message,
+            "metadata": [
+                {"key": key, "value": value}
+                for key, value in sorted(metadata.items())
+            ],
+        }
+        try:
+            snapshot = read_workspace_snapshot(self.workspace)
+        except AuditStateError as exc:
+            print(f"FINALIZATION FAILED: cannot read terminal snapshot [{exc.code}]: {exc.message}", file=sys.stderr)
+            raise SystemExit(1) from exc
+        plugin_version = str((snapshot.state or {}).get("plugin_version") or "unknown")
+        legacy_details = {item["key"]: item["value"] for item in details["metadata"]}
+        request = {
+            "accept_current_revision": self.state_revision is None,
+            "expected_state_revision": self.state_revision,
+            "run_id": "",
+            "timestamp": timestamp,
+            "stage": "finalization",
+            "to_status": "completed",
+            "use_current_stage": False,
+            "use_current_status": False,
+            "event_type": None,
+            "transition_kind": "complete",
+            "expected_from_stage": "",
+            "expected_from_status": "",
+            "event_name": "finalization_succeeded",
+            "reason_code": "normal_progress",
+            "reason_code_explicit": False,
+            "reason_detail": "",
+            "subjects": [],
+            "evidence_refs": [],
+            "next_actions": [],
+            "details": details,
+            "blocker": "",
+            "resume_step": "",
+            "plugin_version": plugin_version,
+            "legacy_event": {
+                "ts": timestamp,
+                "event": "finalization_succeeded",
+                "stage": "completed",
+                "status": "ok",
+                "message": message,
+                "details": legacy_details,
+            },
+            "legacy_state": {
+                "schema_version": 1,
+                "plugin": "zhulong",
+                "plugin_version": plugin_version,
+                "stage": "completed",
+                "status": "completed",
+                "last_event_at": timestamp,
+                "blocker": None,
+                "resume_step": None,
+                "workspace": self.workspace.name,
+                "target_repo": self.workspace.parent.name,
+                "last_event": "finalization_succeeded",
+                "last_message": message,
+            },
+        }
+
+        def precommit(locked_snapshot: WorkspaceSnapshot, event: dict[str, Any]) -> None:
+            prepare_artifacts(project_r2_snapshot(locked_snapshot, event))
+
+        try:
+            if snapshot.mode == "r2":
+                write_result = commit_event(
+                    self.workspace,
+                    mode_policy="r2",
+                    lock_timeout_seconds=10.0,
+                    request=request,
+                    precommit_validation=precommit,
+                )
+            else:
+                prepare_artifacts(project_legacy_snapshot(snapshot, request))
+                write_result = commit_event(
+                    self.workspace,
+                    mode_policy="legacy-r1",
+                    lock_timeout_seconds=10.0,
+                    request=request,
+                )
+        except AuditStateError as exc:
+            partial = bool(exc.fields.get("journal_committed")) and not bool(exc.fields.get("state_view_updated"))
+            label = "FINALIZATION PARTIAL" if partial else "FINALIZATION FAILED"
+            guidance = "; run <workspace>/bin/recover-audit-state.py --workspace-dir <audit-workspace> --check --json" if partial else ""
+            print(f"{label} [{exc.code}]: {exc.message}{guidance}", file=sys.stderr)
+            raise SystemExit(1) from exc
+        self.state_revision = write_result.state_revision
+        self.current_stage = "finalization" if write_result.mode == "r2" else "completed"
+        self.current_status = "completed"
 
     def write(
         self,
@@ -387,6 +517,50 @@ def runtime_hygiene_summary_line(workspace: Path, *, language: str) -> str:
     return f"- OMC runtime hygiene：`{mode}`；clean：`{str(clean).lower()}`。\n"
 
 
+def workspace_summary_content(
+    workspace: Path,
+    *,
+    result: str,
+    validated_count: int,
+    docker_clean: bool,
+    docker_strict: bool,
+    language: str,
+) -> str:
+    placeholder_marker = "<!-- zhulong_completion_summary_placeholder: 1 -->"
+    config = load_json(workspace / "asr-config.json")
+    configured_language = str(config.get("summary_language") or config.get("output_language") or "").strip()
+    effective_language = configured_language if language == "auto" and configured_language else language
+    runtime_line = runtime_hygiene_summary_line(workspace, language=effective_language)
+    if effective_language == "en-US":
+        return (
+            f"{placeholder_marker}\n"
+            "# Audit Summary\n\n"
+            "This summary was prepared from validated finalization inputs. Completion authority remains "
+            "the canonical finalization event. Expand this placeholder with the final human-facing audit summary.\n\n"
+            f"- Result: `{result}`\n"
+            f"- Validated confirmed bundles: `{validated_count}`\n"
+            f"- Docker clean: `{str(docker_clean).lower()}`\n"
+            f"- Docker strict clean: `{str(docker_strict).lower()}`\n"
+            f"{runtime_line}"
+            "- Confirmed-output guardrail: scanner-only, dependency-only, static-only, unverified, blocked, "
+            "or timed-out findings are not confirmed vulnerabilities.\n"
+        )
+    else:
+        return (
+            f"{placeholder_marker}\n"
+            "# 审计总结\n\n"
+            "本总结根据已通过校验的收尾输入生成；审计完成权限仍只来自 canonical finalization event。"
+            "请在该占位内容上补充面向人的最终审计总结，不要只保留在聊天或终端日志中。\n\n"
+            f"- 完成结果：`{result}`\n"
+            f"- 已验证 confirmed bundles：`{validated_count}`\n"
+            f"- Docker clean：`{str(docker_clean).lower()}`\n"
+            f"- Docker strict clean：`{str(docker_strict).lower()}`\n"
+            f"{runtime_line}"
+            "- confirmed-only 约束：scanner-only、dependency-only、static-only、unverified、blocked、"
+            "timed-out 结果都不是确认漏洞。\n"
+        )
+
+
 def ensure_workspace_summary(
     workspace: Path,
     *,
@@ -398,42 +572,77 @@ def ensure_workspace_summary(
 ) -> Path:
     summary_path = workspace / "SUMMARY.md"
     placeholder_marker = "<!-- zhulong_completion_summary_placeholder: 1 -->"
-    if summary_path.exists() and placeholder_marker not in summary_path.read_text(encoding="utf-8", errors="ignore"):
-        return summary_path
-    config = load_json(workspace / "asr-config.json")
-    configured_language = str(config.get("summary_language") or config.get("output_language") or "").strip()
-    effective_language = configured_language if language == "auto" and configured_language else language
-    runtime_line = runtime_hygiene_summary_line(workspace, language=effective_language)
-    if effective_language == "en-US":
-        content = (
-            f"{placeholder_marker}\n"
-            "# Audit Summary\n\n"
-            "This workspace passed the Zhulong completion gate. This file is a stable workspace-level "
-            "summary placeholder; expand it with the final human-facing audit summary after finalization.\n\n"
-            f"- Result: `{result}`\n"
-            f"- Validated confirmed bundles: `{validated_count}`\n"
-            f"- Docker clean: `{str(docker_clean).lower()}`\n"
-            f"- Docker strict clean: `{str(docker_strict).lower()}`\n"
-            f"{runtime_line}"
-            "- Confirmed-output guardrail: scanner-only, dependency-only, static-only, unverified, blocked, "
-            "or timed-out findings are not confirmed vulnerabilities.\n"
-        )
-    else:
-        content = (
-            f"{placeholder_marker}\n"
-            "# 审计总结\n\n"
-            "该工作区已通过 Zhulong 完成门控。本文件是稳定的 workspace-level 总结占位；"
-            "最终化后请在这里补充面向人的审计总结，不要只保留在聊天或终端日志中。\n\n"
-            f"- 完成结果：`{result}`\n"
-            f"- 已验证 confirmed bundles：`{validated_count}`\n"
-            f"- Docker clean：`{str(docker_clean).lower()}`\n"
-            f"- Docker strict clean：`{str(docker_strict).lower()}`\n"
-            f"{runtime_line}"
-            "- confirmed-only 约束：scanner-only、dependency-only、static-only、unverified、blocked、"
-            "timed-out 结果都不是确认漏洞。\n"
-        )
-    summary_path.write_text(content, encoding="utf-8")
+    if os.path.lexists(summary_path):
+        existing = safe_read_bytes(workspace, summary_path).decode("utf-8", errors="ignore")
+        if placeholder_marker not in existing:
+            return summary_path
+    content = workspace_summary_content(
+        workspace,
+        result=result,
+        validated_count=validated_count,
+        docker_clean=docker_clean,
+        docker_strict=docker_strict,
+        language=language,
+    )
+    atomic_write_bytes(workspace, summary_path, content.encode("utf-8"))
     return summary_path
+
+
+def validate_completed_rerun(
+    workspace: Path,
+    repo_root: Path,
+    *,
+    result: str,
+) -> dict[str, Any]:
+    """Validate an already completed workspace without writing or probing Docker."""
+    from assert_finalized_workspace import validate_finalization
+
+    summary_raw = safe_read_bytes(workspace, workspace / "SUMMARY.md")
+    handoff_raw = safe_read_bytes(workspace, workspace / "handoff-summary.md")
+    current_handoff = validate_handoff_state_current(workspace, repo_root)
+    if not current_handoff.get("ok"):
+        codes = ",".join(str(code) for code in current_handoff.get("issue_codes", [])) or "unknown"
+        raise AuditStateError("COMPLETED_WORKSPACE_DRIFT", f"handoff-state.json is not current [{codes}]")
+    handoff_state = read_handoff_state(workspace)
+    snapshot = read_workspace_snapshot(workspace)
+    expected_handoff = render_handoff_summary(
+        workspace,
+        repo_root,
+        workspace / "handoff-summary.md",
+        snapshot_override=snapshot,
+        handoff_state_override=handoff_state,
+    ).encode("utf-8")
+    if handoff_raw != expected_handoff:
+        raise AuditStateError("COMPLETED_WORKSPACE_DRIFT", "handoff-summary.md differs from the current derived view")
+
+    ok, errors, finalization = validate_finalization(workspace)
+    if not ok:
+        raise AuditStateError(
+            "COMPLETED_WORKSPACE_DRIFT",
+            str(errors[0]) if errors else "finalization assertion failed",
+        )
+    recorded_result = str(finalization.get("result") or "")
+    if recorded_result != result:
+        raise AuditStateError(
+            "COMPLETED_RESULT_MISMATCH",
+            f"requested result={result} differs from completed result={recorded_result or 'unknown'}",
+        )
+
+    marker = b"<!-- zhulong_completion_summary_placeholder: 1 -->"
+    if marker in summary_raw:
+        summary_text = summary_raw.decode("utf-8", errors="strict")
+        summary_language = "en-US" if "# Audit Summary" in summary_text else "zh-CN"
+        expected_summary = workspace_summary_content(
+            workspace,
+            result=recorded_result,
+            validated_count=int(finalization.get("workspace_state", {}).get("validated_confirmed_bundle_count") or 0),
+            docker_clean=bool(finalization.get("docker_clean")),
+            docker_strict=bool(finalization.get("docker_strict")),
+            language=summary_language,
+        ).encode("utf-8")
+        if summary_raw != expected_summary:
+            raise AuditStateError("COMPLETED_WORKSPACE_DRIFT", "generated SUMMARY.md differs from validated finalization inputs")
+    return finalization
 
 
 def parse_args() -> argparse.Namespace:
@@ -474,6 +683,31 @@ def main() -> int:
     errors: list[str] = []
     blocked_summary: dict[str, Any] = {}
     _EVENT_WRITER = _FinalizationEventWriter(workspace)
+
+    if _EVENT_WRITER.current_status == "completed":
+        try:
+            completed = validate_completed_rerun(workspace, repo_root, result=result)
+        except SafeEvidenceError as exc:
+            print(f"FINALIZATION FAILED: completed workspace artifact is unsafe [{exc.code}]", file=sys.stderr)
+            return 1
+        except (AuditStateError, UnicodeError) as exc:
+            code = exc.code if isinstance(exc, AuditStateError) else "COMPLETED_WORKSPACE_DRIFT"
+            message = exc.message if isinstance(exc, AuditStateError) else "completed workspace artifact is not valid UTF-8"
+            print(
+                f"FINALIZATION FAILED [{code}]: {message}; explicitly recover or reopen the workspace before rerunning",
+                file=sys.stderr,
+            )
+            return 1
+        print(f"result={result}")
+        print(
+            "validated_bundles="
+            + str(int(completed.get("workspace_state", {}).get("validated_confirmed_bundle_count") or 0))
+        )
+        print(f"docker_clean={str(bool(completed.get('docker_clean'))).lower()}")
+        print("summary=SUMMARY.md")
+        print("stage=completed")
+        print(f"FINALIZATION PASSED: {workspace}")
+        return 0
 
     initial_transition_kind = (
         "observe"
@@ -599,18 +833,32 @@ def main() -> int:
     # --- Step 3: Audit disposition ledger ---
     if not blocked_summary:
         blocked_summary = detect_blocked_verification(workspace)
-    disposition_ledger = synthesize_disposition_ledger(
-        workspace,
-        blocked_summary=blocked_summary,
-    )
-    write_disposition_ledger(workspace, disposition_ledger)
-    disposition_validation = validate_disposition_ledger(
-        workspace,
-        result=result,
-        ledger=disposition_ledger,
-        bundle_summary=bundle_summary,
-        language=language,
-    )
+    protocol_mode = "legacy_r1" if _EVENT_WRITER.state_revision is None else "r2"
+    disposition_ledger = synthesize_disposition_ledger(workspace, blocked_summary=blocked_summary)
+    try:
+        write_disposition_ledger(
+            workspace,
+            disposition_ledger,
+            result=result,
+            bundle_summary=bundle_summary,
+            language=language,
+            protocol_mode=protocol_mode,
+        )
+        disposition_ledger = load_disposition_ledger(workspace)
+        disposition_validation = validate_disposition_ledger(
+            workspace,
+            result=result,
+            ledger=disposition_ledger,
+            bundle_summary=bundle_summary,
+            language=language,
+        )
+    except DispositionUpdateError as exc:
+        errors.append(str(exc))
+        disposition_validation = {"ok": False, "errors": [str(exc)], "summary": {"item_count": 0}}
+    except SafeEvidenceError as exc:
+        message = f"{LEDGER_FILENAME} safe write failed [{exc.code}]"
+        errors.append(message)
+        disposition_validation = {"ok": False, "errors": [message], "summary": {"item_count": 0}}
     disposition_summary = disposition_validation.get("summary", {})
     if not disposition_validation.get("ok"):
         for error in disposition_validation.get("errors", []):
@@ -619,7 +867,7 @@ def main() -> int:
     authority_chain = validate_workspace_confirmation_chain(
         workspace,
         result=result,
-        protocol_mode="legacy_r1" if _EVENT_WRITER.state_revision is None else "r2",
+        protocol_mode=protocol_mode,
         ledger=disposition_ledger,
         bundle_summary=bundle_summary,
         disposition_validation=disposition_validation,
@@ -666,6 +914,23 @@ def main() -> int:
                 "Docker strict cleanliness check failed. "
                 "Run manage-docker-resources.py --cleanup-created --apply and --verify-clean --strict."
             )
+
+    docker_strict = bool(docker_status.get("strict", True))
+    summary_path = workspace / "SUMMARY.md"
+    if not errors:
+        try:
+            summary_path = ensure_workspace_summary(
+                workspace,
+                result=result,
+                validated_count=validated_count,
+                docker_clean=bool(docker_clean),
+                docker_strict=docker_strict,
+                language=language,
+            )
+        except SafeEvidenceError as exc:
+            errors.append(f"SUMMARY.md safe write failed [{exc.code}]")
+        except (OSError, UnicodeError) as exc:
+            errors.append(f"SUMMARY.md publication failed: {type(exc).__name__}")
 
     # --- Step 5: Decide pass/fail ---
     if errors:
@@ -730,88 +995,96 @@ def main() -> int:
         refresh_handoff(workspace, repo_root)
         return 1
 
-    # --- Step 6: Update stage-status.json to completed ---
-    write_event(
-        workspace,
-        "finalization_succeeded",
-        "finalization",
-        "completed",
-        "ok",
-        f"Audit finalized as {result}.",
-        transition_kind="complete",
-        result=result,
-        validated_bundles=validated_count,
-        docker_clean=docker_clean,
-        docker_clean_strict=True,
-        docker_cleanliness_path=docker_evidence.get("path"),
-        docker_cleanliness_sha256=docker_evidence.get("sha256"),
-        docker_cleanliness_checked_at=docker_evidence.get("checked_at"),
-        docker_cleanliness_workspace=workspace.name,
-    )
+    # --- Step 6: Publish projected derived artifacts, then commit terminal state ---
+    def prepare_terminal_artifacts(projected: WorkspaceSnapshot) -> None:
+        try:
+            document = derive_handoff_state(
+                workspace,
+                repo_root,
+                snapshot_override=projected,
+            )
+            if document.get("integrity", {}).get("overall") != "valid":
+                issues = document.get("integrity", {}).get("issues") or []
+                first = str(issues[0].get("message") or issues[0].get("code")) if issues and isinstance(issues[0], dict) else "unknown"
+                raise AuditStateError("FINALIZATION_HANDOFF_INVALID", f"projected handoff integrity failed: {first}")
+            publish_handoff_state_document(workspace, document)
+            if read_handoff_state(workspace) != document:
+                raise AuditStateError("FINALIZATION_HANDOFF_DRIFT", "published handoff-state.json differs from its projected document")
+            rendered = render_handoff_summary(
+                workspace,
+                repo_root,
+                workspace / "handoff-summary.md",
+                snapshot_override=projected,
+                handoff_state_override=document,
+            )
+            publish_handoff_summary(workspace / "handoff-summary.md", rendered)
+            disk_handoff = safe_read_bytes(workspace, workspace / "handoff-summary.md")
+            if disk_handoff != rendered.encode("utf-8"):
+                raise AuditStateError("FINALIZATION_HANDOFF_DRIFT", "published handoff-summary.md differs from its projected document")
+            consistency = validate_handoff_status_consistency(
+                workspace,
+                state=inspected_state,
+                language=language,
+                snapshot_override=projected,
+                handoff_text=disk_handoff.decode("utf-8", errors="strict"),
+            )
+            if not consistency.get("ok"):
+                consistency_errors = consistency.get("errors") or []
+                raise AuditStateError(
+                    "FINALIZATION_HANDOFF_INCONSISTENT",
+                    str(consistency_errors[0]) if consistency_errors else "projected handoff consistency failed",
+                )
+        except SafeEvidenceError as exc:
+            raise AuditStateError(
+                "FINALIZATION_DERIVED_ARTIFACT_FAILED",
+                f"derived artifact safe I/O failed [{exc.code}]",
+            ) from exc
+        except UnicodeError as exc:
+            raise AuditStateError(
+                "FINALIZATION_DERIVED_ARTIFACT_FAILED",
+                "derived handoff artifact is not valid UTF-8",
+            ) from exc
 
-    docker_strict = bool(docker_status.get("strict", True))
-    summary_path = ensure_workspace_summary(
-        workspace,
+    if _EVENT_WRITER is None:
+        print("FINALIZATION FAILED: audit event writer is not initialized", file=sys.stderr)
+        return 1
+    _EVENT_WRITER.commit_terminal(
         result=result,
         validated_count=validated_count,
-        docker_clean=bool(docker_clean),
-        docker_strict=docker_strict,
-        language=language,
+        docker_clean=docker_clean,
+        docker_evidence=docker_evidence,
+        prepare_artifacts=prepare_terminal_artifacts,
     )
 
-    # --- Step 7: Refresh and validate handoff-summary.md ---
-    refreshed = refresh_handoff(workspace, repo_root)
-    refreshed_state = inspect_workspace_state(
+    # --- Step 7: Read-only post-terminal assertions ---
+    post_errors: list[str] = []
+    current_handoff = validate_handoff_state_current(workspace, repo_root)
+    if not current_handoff.get("ok"):
+        post_errors.append(
+            "handoff-state.json is not current ["
+            + (",".join(str(code) for code in current_handoff.get("issue_codes", [])) or "unknown")
+            + "]"
+        )
+    from assert_finalized_workspace import validate_finalization
+    finalized_ok, finalized_errors, finalized_summary = validate_finalization(workspace)
+    if not finalized_ok:
+        post_errors.extend(str(error) for error in finalized_errors)
+    elif finalized_summary.get("result") != result:
+        post_errors.append("finalization assertion result differs from the requested result")
+    final_consistency = validate_handoff_status_consistency(
         workspace,
-        confirmed_dir=confirmed_dir,
+        state=inspect_workspace_state(workspace, confirmed_dir=confirmed_dir, language=language),
         language=language,
     )
-    consistency = validate_handoff_status_consistency(
-        workspace,
-        state=refreshed_state,
-        language=language,
-    )
-    if not refreshed or not consistency.get("ok"):
-        consistency_errors = consistency.get("errors") or []
-        error_text = (
-            "handoff-summary.md refresh failed"
-            if not refreshed
-            else "; ".join(str(error) for error in consistency_errors)
+    if not final_consistency.get("ok"):
+        post_errors.extend(str(error) for error in final_consistency.get("errors", []))
+    if post_errors:
+        print(
+            "FINALIZATION PARTIAL: terminal event committed but a read-only assertion failed: "
+            + post_errors[0]
+            + "; explicitly recover or reopen the workspace",
+            file=sys.stderr,
         )
-        write_event(
-            workspace,
-            "finalization_reopened",
-            "finalization",
-            "running",
-            "reopened",
-            "Finalization reopened because the handoff consistency check failed.",
-            transition_kind="reopen",
-            reason_code="validation_failed",
-            reason_detail="The finalization event was written, but the derived handoff consistency check did not pass.",
-            subjects=["run:finalization"],
-            evidence_refs=["handoff-summary.md"],
-            next_actions=[
-                {
-                    "action_id": "repair-handoff-consistency",
-                    "action_type": "review",
-                    "subject_ids": ["run:finalization"],
-                    "summary": "Repair the handoff/status inconsistency and rerun the finalization gate.",
-                    "evidence_refs": ["handoff-summary.md"],
-                }
-            ],
-        )
-        write_event(
-            workspace,
-            "finalization_failed",
-            "finalization",
-            "running",
-            "failed",
-            f"Completion gate failed after handoff consistency check: {error_text}",
-            transition_kind="observe",
-            error_count=1,
-            expected_result=result,
-        )
-        print(f"FINALIZATION FAILED: {error_text}", file=sys.stderr)
         return 1
 
     # --- Output ---

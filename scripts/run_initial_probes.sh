@@ -20,7 +20,7 @@ WORKSPACE_DIR=""
 OUTPUT_DIR=""
 PROBES_RUN=0
 PROBES_SKIPPED=0
-PROBE_STATUS_LABELS="ran_ok skipped_tool_missing skipped_no_package_sources failed_nonfatal failed_fatal"
+PROBE_STATUS_LABELS="ran_ok skipped_tool_missing skipped_no_package_sources skipped_requires_isolation failed_nonfatal failed_fatal"
 
 validate_declared_initial_probe_use() {
   local script_dir contract_root registry schema validator
@@ -364,6 +364,7 @@ data = {
         "ran_ok",
         "skipped_tool_missing",
         "skipped_no_package_sources",
+        "skipped_requires_isolation",
         "failed_nonfatal",
         "failed_fatal",
     ],
@@ -702,6 +703,16 @@ note_skip() {
   append_probe_record "$name" "$status" "(not executed)" "" "" "$reason" "$next_action"
 }
 
+note_isolation_skip() {
+  local name="$1"
+  local reason="$2"
+  note_skip \
+    "$name" \
+    "$reason" \
+    "skipped_requires_isolation" \
+    "Wait for a separately audited fixed Docker probe wrapper; do not run an equivalent target build command on the host."
+}
+
 has_cmd() {
   command -v "$1" >/dev/null 2>&1
 }
@@ -720,7 +731,7 @@ fi
 
 if has_cmd npm; then
   if [[ -f "$REPO_ROOT/package-lock.json" || -f "$REPO_ROOT/npm-shrinkwrap.json" ]]; then
-    run_probe npm-audit bash -lc "cd \"$REPO_ROOT\" && npm audit"
+    run_probe npm-audit bash -lc "cd \"$REPO_ROOT\" && npm audit --ignore-scripts"
   elif [[ -f "$REPO_ROOT/package.json" ]]; then
     note_skip npm-audit "node repo without package-lock.json or npm-shrinkwrap.json" "skipped_no_package_sources" "Use npm audit only after a lockfile exists; continue source review and Docker verification."
   else
@@ -730,21 +741,20 @@ else
   note_skip npm-audit "missing npm"
 fi
 
+JAVA_BUILD_SOURCE_FOUND="0"
 if [[ -f "$REPO_ROOT/pom.xml" ]]; then
-  if has_cmd mvn; then
-    run_probe maven-dependency-tree bash -lc "cd \"$REPO_ROOT\" && mvn -q -DskipTests dependency:tree"
-  else
-    note_skip maven-dependency-tree "java repo with pom.xml but missing mvn"
-  fi
-elif [[ -f "$REPO_ROOT/build.gradle" || -f "$REPO_ROOT/build.gradle.kts" ]]; then
-  if [[ -x "$REPO_ROOT/gradlew" ]]; then
-    run_probe gradle-dependencies bash -lc "cd \"$REPO_ROOT\" && ./gradlew dependencies --no-daemon"
-  elif has_cmd gradle; then
-    run_probe gradle-dependencies bash -lc "cd \"$REPO_ROOT\" && gradle dependencies --no-daemon"
-  else
-    note_skip gradle-dependencies "java repo with Gradle files but missing gradle or executable ./gradlew"
-  fi
-else
+  JAVA_BUILD_SOURCE_FOUND="1"
+  note_isolation_skip \
+    maven-dependency-tree \
+    "Maven project evaluation may load target-controlled POM extensions, plugins, and lifecycle logic; no fixed Docker probe wrapper is available."
+fi
+if [[ -f "$REPO_ROOT/build.gradle" || -f "$REPO_ROOT/build.gradle.kts" || -f "$REPO_ROOT/settings.gradle" || -f "$REPO_ROOT/settings.gradle.kts" ]]; then
+  JAVA_BUILD_SOURCE_FOUND="1"
+  note_isolation_skip \
+    gradle-dependencies \
+    "Gradle project evaluation may execute target-controlled wrappers, settings, build scripts, and plugins; no fixed Docker probe wrapper is available."
+fi
+if [[ "$JAVA_BUILD_SOURCE_FOUND" == "0" ]]; then
   note_skip java-dependency-tree "not a maven or gradle repo" "skipped_no_package_sources" "No Maven or Gradle source was detected; continue with probes relevant to the detected stack."
 fi
 
@@ -766,28 +776,26 @@ fi
 
 if [[ -f "$REPO_ROOT/go.mod" ]]; then
   if has_cmd go; then
-    run_probe go-list-modules bash -lc "cd \"$REPO_ROOT\" && go list -m all"
+    run_probe go-list-modules bash -lc "cd \"$REPO_ROOT\" && GOFLAGS=-mod=readonly go list -m all"
   else
     note_skip go-list-modules "go repo but missing go"
   fi
 
   if has_cmd govulncheck; then
-    run_probe govulncheck bash -lc "cd \"$REPO_ROOT\" && govulncheck ./..."
+    run_probe govulncheck bash -lc "cd \"$REPO_ROOT\" && GOFLAGS=-mod=readonly govulncheck ./..."
   else
     note_skip govulncheck "missing govulncheck"
   fi
 
   if has_cmd gosec; then
-    run_probe gosec bash -lc "cd \"$REPO_ROOT\" && gosec ./..."
+    run_probe gosec bash -lc "cd \"$REPO_ROOT\" && GOFLAGS=-mod=readonly gosec ./..."
   else
     note_skip gosec "missing gosec"
   fi
 
-  if has_cmd golangci-lint; then
-    run_probe golangci-lint bash -lc "cd \"$REPO_ROOT\" && golangci-lint run"
-  else
-    note_skip golangci-lint "missing golangci-lint"
-  fi
+  note_isolation_skip \
+    golangci-lint \
+    "golangci-lint project configuration may load target-selected custom plugins; no fixed Docker probe wrapper is available."
 else
   note_skip go-list-modules "not a go module" "skipped_no_package_sources" "No go.mod source was detected; continue with probes relevant to the detected stack."
   note_skip govulncheck "not a go module" "skipped_no_package_sources" "No go.mod source was detected; continue with probes relevant to the detected stack."

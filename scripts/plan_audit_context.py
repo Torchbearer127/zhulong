@@ -4,14 +4,26 @@ from __future__ import annotations
 import argparse, json, os, tempfile
 from pathlib import Path
 from typing import Any
+from audit_transition_policy import STAGES
 from context_catalog import BUG_CLASSES, NON_CLAIMS, PHASES, canonical_digest, load_validated_catalog
 from plan_security_toolchain import detect_attack_surface, detect_stack
 
-def parse_args() -> argparse.Namespace:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Plan recommended Zhulong reference context without loading references.")
     parser.add_argument("--target-dir", required=True); parser.add_argument("--phase", required=True, choices=PHASES)
     parser.add_argument("--bug-class", action="append", default=[]); parser.add_argument("--catalog")
     parser.add_argument("--output"); parser.add_argument("--overwrite", action="store_true"); parser.add_argument("--json", action="store_true")
+    return parser
+
+def planner_phase_choices(parser: argparse.ArgumentParser | None = None) -> tuple[str, ...]:
+    selected = parser or build_parser()
+    action = next((item for item in selected._actions if item.dest == "phase"), None)
+    return tuple(action.choices or ()) if action is not None else ()
+
+def parse_args() -> argparse.Namespace:
+    parser = build_parser()
+    if planner_phase_choices(parser) != STAGES:
+        parser.error("CONTEXT_PLANNER_PHASE_CHOICES_DRIFT: --phase choices must match audit_transition_policy.STAGES")
     return parser.parse_args()
 
 def locations(catalog_override: str | None) -> tuple[Path, Path, Path]:

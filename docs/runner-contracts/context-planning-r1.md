@@ -10,6 +10,14 @@ The plan is recommendation-only. It does not prove that an Agent read, understoo
 
 The planner reuses `detect_stack()` and `detect_attack_surface()` from `plan_security_toolchain.py`. `--bug-class` is an explicit closed input. A catalogue module is mandatory only when it is a phase baseline. That label means recommended reading priority in this plan, not a security gate. Conditional modules are optional when an exact declared selector matches; values inside one selector dimension are alternatives. Phase-relevant conditional modules without a match are deferred. Modules for other phases are omitted.
 
+`audit_transition_policy.STAGES` is the authoritative phase vocabulary for the
+Python planner and validators. The production CLI accepts all ten lifecycle
+stages directly: `intake`, `recon`, `candidate_generation`, `triage`,
+`verification`, `severity_escalation`, `variant_discovery`, `packaging`,
+`finalization`, and `recording`. In particular, `triage` selects the candidate
+and triage phase reference, while `recording` selects the opt-in recording
+reference; neither stage is represented by an adjacent phase alias.
+
 Sorting uses module ID and path only. The serialized plan contains no target, workspace, or Skill-root absolute path. It binds the catalog ID, version, and a canonical SHA-256 digest.
 
 ## Path and maintenance boundary
@@ -17,3 +25,11 @@ Sorting uses module ID and path only. The serialized plan contains no target, wo
 The catalog validator accepts only regular, non-symlink files below `assets/references/` in the selected Skill root. It rejects absolute paths, URIs, backslashes, traversal, directories, missing files, duplicate IDs and paths, unknown selectors, and authority drift. It also rejects basenames with the independent `dogfood` marker, `-template.md` / `-template.json` suffixes, or a `.example.json` suffix; these name categories reserve dogfood artifacts, machine-input templates, and examples outside the catalog's stable reading scope. The stable `CONTEXT_REFERENCE_SCOPE_FORBIDDEN` issue code identifies that closed scope gate. New stable references may be registered when they do not use one of those reserved naming categories; absence from the current catalog is not itself a forbidden category. Diagnostics are stable issue codes and do not disclose machine-local paths.
 
 Maintain the catalog, its strict schema, production validators, fixture matrix, and this contract together. New catalog modules must be stable user-facing references, not scripts, schemas, fixtures, prompts, machine inputs, bundles, or local artifacts. The catalog's non-authority statement is one fixed declaration, validated exactly by both schema and production validator; it is not a keyword blacklist. The `stacks` selector is a supported reserved capability even though the current shipped catalog has no stack-only module; do not add a broad stack selector to an unsuitable playbook merely to exercise it. The shared PHP attack-surface detector remains outside this catalog contract. Output publication currently rejects a symlink output path and a symlink direct parent; it does not claim ancestor-symlink rejection on every platform. The validator is read-only; the planner only writes an explicit output path atomically and refuses an existing output unless `--overwrite` is explicit.
+
+The catalog validator also performs phase meta-conformance. The FSM tuple,
+audit-event and stage-status schemas, both context schemas, catalog phase
+reference mappings, planner argparse choices, and source/template or installed
+Skill command contract must match exactly. Drift returns a stable context issue
+code before a plan can be accepted. Source layouts require byte-identical
+source and template Skills; installed layouts validate the root `SKILL.md`
+without requiring source-only directories.

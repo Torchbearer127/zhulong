@@ -739,6 +739,72 @@ def serialize_r2_state(state: dict[str, Any]) -> bytes:
     return (json.dumps(state, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode("utf-8")
 
 
+def _r2_state_after_event(event: dict[str, Any], committed_raw: bytes) -> dict[str, Any]:
+    return {
+        "schema_version": 2,
+        "plugin": "zhulong",
+        "plugin_version": event["plugin_version"],
+        "run_id": event["run_id"],
+        "state_revision": event["seq"],
+        "last_event_seq": event["seq"],
+        "event_log_digest": _digest(committed_raw),
+        "stage": event["stage"],
+        "status": event["to_status"],
+        "last_event_at": event["ts"],
+        "last_event_type": event["event_type"],
+        "last_event_name": event["event_name"],
+        "blocker": event.get("blocker") if event["to_status"] in {"blocked", "paused"} else None,
+        "resume_step": event.get("resume_step") if event["to_status"] in {"blocked", "paused"} else None,
+    }
+
+
+def project_r2_snapshot(snapshot: WorkspaceSnapshot, event: dict[str, Any]) -> WorkspaceSnapshot:
+    """Return the exact journal/state snapshot produced if ``event`` commits."""
+    if snapshot.mode != "r2":
+        raise AuditStateError("PROTOCOL_MODE_MISMATCH", "R2 projection requires an R2 workspace")
+    event_bytes = serialize_r2_event(event)
+    journal_raw = snapshot.journal.raw_bytes + event_bytes
+    journal = JournalInfo(
+        snapshot.journal.mode,
+        [*snapshot.journal.events, event],
+        journal_raw,
+        snapshot.journal.inspection,
+    )
+    state = _r2_state_after_event(event, journal_raw)
+    return WorkspaceSnapshot("r2", journal, state, serialize_r2_state(state))
+
+
+def project_legacy_snapshot(snapshot: WorkspaceSnapshot, request: dict[str, Any]) -> WorkspaceSnapshot:
+    """Return the historical R1 journal/state bytes for one pending request."""
+    if snapshot.mode != "legacy_r1":
+        raise AuditStateError("PROTOCOL_MODE_MISMATCH", "legacy projection requires an R1 workspace")
+    current_state = dict(snapshot.state or {})
+    event = dict(request["legacy_event"])
+    legacy_state = dict(request["legacy_state"])
+    if bool(request.get("use_current_stage")):
+        if not current_state.get("stage"):
+            raise AuditStateError("CURRENT_TARGET_UNAVAILABLE", "current stage is unavailable in this legacy workspace")
+        event["stage"] = current_state["stage"]
+        legacy_state["stage"] = current_state["stage"]
+    if bool(request.get("use_current_status")):
+        if not current_state.get("status"):
+            raise AuditStateError("CURRENT_TARGET_UNAVAILABLE", "current status is unavailable in this legacy workspace")
+        legacy_state["status"] = current_state["status"]
+        legacy_state["blocker"] = current_state.get("blocker")
+        legacy_state["resume_step"] = current_state.get("resume_step")
+    payload = (json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
+    state = current_state
+    state.update(legacy_state)
+    state_raw = (json.dumps(state, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode("utf-8")
+    journal = JournalInfo(
+        snapshot.journal.mode,
+        [*snapshot.journal.events, event],
+        snapshot.journal.raw_bytes + payload,
+        snapshot.journal.inspection,
+    )
+    return WorkspaceSnapshot("legacy_r1", journal, state, state_raw)
+
+
 def _commit_r2(
     workspace: Path,
     snapshot: WorkspaceSnapshot,
@@ -915,22 +981,7 @@ def _commit_r2(
     committed_raw = _read_regular_bytes(workspace / EVENTS_FILE, "JOURNAL_PATH_UNSAFE")
     if committed_raw is None:
         raise AuditStateError("JOURNAL_APPEND_FAILED", "audit journal disappeared after append")
-    state = {
-        "schema_version": 2,
-        "plugin": "zhulong",
-        "plugin_version": request["plugin_version"],
-        "run_id": run_id,
-        "state_revision": state_revision,
-        "last_event_seq": seq,
-        "event_log_digest": _digest(committed_raw),
-        "stage": stage,
-        "status": to_status,
-        "last_event_at": event["ts"],
-        "last_event_type": event["event_type"],
-        "last_event_name": event["event_name"],
-        "blocker": blocker if to_status in {"blocked", "paused"} else None,
-        "resume_step": resume_step if to_status in {"blocked", "paused"} else None,
-    }
+    state = _r2_state_after_event(event, committed_raw)
     try:
         _atomic_replace_state(workspace, serialize_r2_state(state))
     except AuditStateError as exc:
@@ -957,21 +1008,10 @@ def _commit_legacy_r1(workspace: Path, snapshot: WorkspaceSnapshot, request: dic
     ignored_fields = tuple(_r1_r2_intent_fields(request))
     if request.get("expected_state_revision") is not None:
         raise AuditStateError("R2_CAS_UNAVAILABLE", "legacy R1 workspaces do not support revision compare-and-swap")
-    current_state = dict(snapshot.state or {})
-    if bool(request.get("use_current_stage")) and not current_state.get("stage"):
-        raise AuditStateError("CURRENT_TARGET_UNAVAILABLE", "current stage is unavailable in this legacy workspace")
-    if bool(request.get("use_current_status")) and not current_state.get("status"):
-        raise AuditStateError("CURRENT_TARGET_UNAVAILABLE", "current status is unavailable in this legacy workspace")
-    event = dict(request["legacy_event"])
-    legacy_state = dict(request["legacy_state"])
-    if bool(request.get("use_current_stage")):
-        event["stage"] = current_state["stage"]
-        legacy_state["stage"] = current_state["stage"]
-    if bool(request.get("use_current_status")):
-        legacy_state["status"] = current_state["status"]
-        legacy_state["blocker"] = current_state.get("blocker")
-        legacy_state["resume_step"] = current_state.get("resume_step")
-    sensitive_text = first_sensitive_document_text({"event": event, "state": legacy_state})
+    projected = project_legacy_snapshot(snapshot, request)
+    event = projected.journal.events[-1]
+    state = projected.state or {}
+    sensitive_text = first_sensitive_document_text({"event": event, "state": state})
     if sensitive_text is not None:
         field, category = sensitive_text
         raise AuditStateError(
@@ -982,14 +1022,12 @@ def _commit_legacy_r1(workspace: Path, snapshot: WorkspaceSnapshot, request: dic
             journal_committed=False,
             state_view_updated=False,
         )
-    payload = (json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
+    payload = projected.journal.raw_bytes[len(snapshot.journal.raw_bytes):]
     _safe_append_fsync(workspace / EVENTS_FILE, payload)
-    state = current_state
-    state.update(legacy_state)
     try:
         _atomic_replace_state(
             workspace,
-            (json.dumps(state, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode("utf-8"),
+            projected.state_raw or b"",
         )
     except AuditStateError as exc:
         exc.fields.update(

@@ -506,12 +506,12 @@ def discover_workspace_dir(root: Path, cli_workspace_dir: str | None) -> Path:
 
 
 def command_hints(root: Path, workspace_dir: Path, plan: dict[str, list[str]]) -> list[str]:
-    initial_probe_tools = {
-        "semgrep", "gitleaks", "npm-audit", "maven-dependency-tree", "gradle-dependencies",
-        "dependency-check", "go-list-modules", "govulncheck", "gosec", "golangci-lint",
+    host_wrapper_probe_tools = {
+        "semgrep", "gitleaks", "npm-audit", "dependency-check", "go-list-modules",
+        "govulncheck", "gosec",
         "osv-scanner", "trivy", "syft", "grype",
     }
-    if any(tool in initial_probe_tools for values in plan.values() for tool in values):
+    if any(tool in host_wrapper_probe_tools for values in plan.values() for tool in values):
         return [f"bash {workspace_dir}/bin/run-initial-probes.sh --repo-root {root} --workspace-dir {workspace_dir}"]
     return []
 
@@ -769,11 +769,17 @@ def contract_locations(registry_override: str | None) -> tuple[Path, Path, Path]
 
 def tool_metadata(tier: str, tool: dict[str, Any], *, available: bool) -> dict[str, Any]:
     planner_status = str(tool["planner_status"])
-    return {
+    metadata = {
         "name": tool["name"],
         "tier": tier,
         "availability": "available" if available else "unavailable",
-        "recommendation": "recommended" if planner_status == "wrapper_required" else planner_status,
+        "recommendation": (
+            "recommended"
+            if planner_status == "wrapper_required"
+            else "skipped_requires_isolation"
+            if planner_status == "requires_isolation"
+            else planner_status
+        ),
         "execution_requirement": planner_status,
         "role": tool["role"],
         "allowed_stages": tool["allowed_stages"],
@@ -787,6 +793,10 @@ def tool_metadata(tier: str, tool: dict[str, Any], *, available: bool) -> dict[s
         "confirmation_authority": tool["confirmation_authority"],
         "controlled_wrapper": tool["controlled_wrapper"],
     }
+    if planner_status == "requires_isolation":
+        metadata["isolation_reason"] = "Target-controlled project logic may execute; no separately audited fixed Docker probe wrapper is available."
+        metadata["next_action"] = "Keep this probe skipped and continue with safe source review; do not run an equivalent build command on the host."
+    return metadata
 
 
 def build_result(root: Path, workspace_dir: Path, registry: dict[str, Any]) -> dict[str, Any]:
@@ -824,7 +834,8 @@ def build_result(root: Path, workspace_dir: Path, registry: dict[str, Any]) -> d
             "Tools marked wrapper_required may be invoked only through their fixed Zhulong wrapper; planning-only and prohibited entries have no raw command hint.",
             "Treat first-pass scanner non-zero exits as findings or environmental notes unless they clearly indicate a broken command.",
             "Read <audit-workspace>/evidence/initial-probes/initial-probes-summary.json before interpreting raw scanner logs.",
-            "Initial probe statuses are ran_ok, skipped_tool_missing, skipped_no_package_sources, failed_nonfatal, and failed_fatal.",
+            "Initial probe statuses are ran_ok, skipped_tool_missing, skipped_no_package_sources, skipped_requires_isolation, failed_nonfatal, and failed_fatal.",
+            "Maven, Gradle, and target-configurable custom-plugin probes use skipped_requires_isolation until a separately audited fixed Docker wrapper exists; this status is not a pass and never authorizes a manual host command.",
             "Skip npm audit when the repository has no package-lock.json or npm-shrinkwrap.json.",
             "Prefer run-initial-probes.sh for osv-scanner so 'No package sources found' is recorded as skipped, not as a blocker.",
             "If osv-scanner is run manually and exits 128 with 'No package sources found', record it as no supported package source / skipped and continue.",

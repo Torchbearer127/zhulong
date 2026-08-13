@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse, json
 from pathlib import Path
 from typing import Any
+from audit_transition_policy import STAGES
 from context_catalog import BUG_CLASSES, NON_CLAIMS, STACKS, SURFACES, Issue, add, canonical_digest, load_json, load_validated_catalog, schema_errors
 from plan_audit_context import build_plan
 
@@ -15,6 +16,8 @@ def main() -> int:
     if error: add(issues, "CONTEXT_PLAN_JSON_INVALID", "$", "Plan JSON cannot be read.")
     if schema_error or not isinstance(schema, dict): add(issues, "CONTEXT_PLAN_SCHEMA_UNAVAILABLE", "$", "Plan schema cannot be read.")
     if isinstance(plan, dict) and isinstance(schema, dict):
+        if schema.get("properties", {}).get("phase", {}).get("enum") != list(STAGES):
+            add(issues, "CONTEXT_PHASE_SCHEMA_DRIFT", "$.properties.phase.enum", "Plan phase enum must exactly match audit_transition_policy.STAGES.")
         for path, message in schema_errors(plan, schema, schema): add(issues, "CONTEXT_PLAN_SCHEMA_INVALID", path, message)
     elif not error: add(issues, "CONTEXT_PLAN_SCHEMA_INVALID", "$", "Plan must be an object.")
     if catalog and isinstance(plan, dict):

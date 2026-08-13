@@ -5,7 +5,7 @@
   "required": ["schema_version", "authority", "phase", "catalog", "input_facts", "mandatory", "optional", "deferred", "non_claims"],
   "properties": {
     "schema_version": {"const": 1}, "authority": {"const": "recommended_context_only"},
-    "phase": {"enum": ["intake", "recon", "candidate_generation", "verification", "severity_escalation", "packaging", "finalization", "variant_discovery"]},
+    "phase": {"enum": ["intake", "recon", "candidate_generation", "triage", "verification", "severity_escalation", "variant_discovery", "packaging", "finalization", "recording"]},
     "catalog": {"type": "object", "additionalProperties": false, "required": ["id", "version", "digest"], "properties": {"id": {"type": "string"}, "version": {"type": "string"}, "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}}},
     "input_facts": {"type": "object", "additionalProperties": false, "required": ["detected_stack", "attack_surface_hints", "bug_classes"], "properties": {"detected_stack": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string"}}, "attack_surface_hints": {"type": "array", "uniqueItems": true, "items": {"type": "string"}}, "bug_classes": {"type": "array", "uniqueItems": true, "items": {"type": "string"}}}},
     "mandatory": {"type": "array", "items": {"$ref": "#/$defs/item"}}, "optional": {"type": "array", "items": {"$ref": "#/$defs/item"}}, "deferred": {"type": "array", "items": {"$ref": "#/$defs/item"}},

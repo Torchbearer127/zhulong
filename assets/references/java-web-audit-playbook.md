@@ -82,8 +82,12 @@ Audit in this order for Java Web services:
 
 Use tools as evidence collection, not as final proof:
 
-- Maven: `mvn -q -DskipTests dependency:tree`
-- Gradle: `gradle dependencies` or `./gradlew dependencies`
+- Maven dependency-tree metadata: use only a separately audited fixed Docker
+  wrapper. The current initial-probe wrapper records
+  `skipped_requires_isolation` and must not evaluate the target POM on the host.
+- Gradle dependency metadata: use only a separately audited fixed Docker
+  wrapper. Do not run a repository wrapper, settings/build script, or system
+  Gradle equivalent on the host when the probe is skipped.
 - OWASP Dependency-Check when available
 - Semgrep Java rules
 - SpotBugs + FindSecBugs when available

@@ -20,7 +20,7 @@
         "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{2,63}$"},
         "path": {"type": "string", "pattern": "^assets/references/[A-Za-z0-9][A-Za-z0-9._-]*$"},
         "title": {"type": "string", "minLength": 3, "maxLength": 160},
-        "phases": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["intake", "recon", "candidate_generation", "verification", "severity_escalation", "packaging", "finalization", "variant_discovery"]}},
+        "phases": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["intake", "recon", "candidate_generation", "triage", "verification", "severity_escalation", "variant_discovery", "packaging", "finalization", "recording"]}},
         "selection_policy": {"enum": ["baseline", "conditional"]},
         "stacks": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["generic", "node", "python", "rust", "go", "java", "php", "docker"]}},
         "attack_surface_hints": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["api", "auth", "cmd", "controller", "controllers", "docker-compose", "go-web", "graphql", "http-api", "java-web", "node-library", "node-web", "php", "php-swoole", "php-web", "python-library", "python-web", "route", "router", "routes", "ssrf-sinks"]}},

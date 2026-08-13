@@ -4,7 +4,6 @@ from __future__ import annotations
 import argparse
 import json
 from collections import Counter
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -13,10 +12,12 @@ from audit_disposition import (
     render_unresolved_disposition_lines,
     validate_disposition_ledger,
 )
-from audit_state_io import AuditStateError, read_normalized_workspace_events
+from audit_state_io import AuditStateError, WorkspaceSnapshot, normalize_event, read_normalized_workspace_events
 from blocked_verification import detect_blocked_verification
+from evidence_io import atomic_write_bytes
 from workspace_state import (
     HANDOFF_STATE_FILENAME,
+    derive_handoff_state,
     generate_handoff_state,
     inspect_workspace_state,
 )
@@ -35,10 +36,6 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
-
-
 def read_json(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
@@ -55,6 +52,19 @@ def read_jsonl_tail(path: Path, limit: int = 5) -> list[dict[str, Any]]:
 
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
     _state, events, _mode = read_normalized_workspace_events(path.parent)
+    return events
+
+
+def normalized_snapshot_events(snapshot: WorkspaceSnapshot) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    for event in snapshot.journal.events:
+        normalized = normalize_event(event)
+        events.append({
+            **event,
+            "event": normalized["event_name"],
+            "status": normalized["to_status"],
+            "details": normalized["details"],
+        })
     return events
 
 
@@ -201,8 +211,14 @@ def completion_claimed(status: dict[str, Any]) -> bool:
     )
 
 
-def finalization_integrity_lines(workspace: Path, status: dict[str, Any], workspace_state: dict[str, Any]) -> list[str]:
-    events = read_jsonl(workspace / "audit-events.jsonl")
+def finalization_integrity_lines(
+    workspace: Path,
+    status: dict[str, Any],
+    workspace_state: dict[str, Any],
+    *,
+    events: list[dict[str, Any]] | None = None,
+) -> list[str]:
+    events = events if events is not None else read_jsonl(workspace / "audit-events.jsonl")
     latest = latest_finalization(events)
     success = latest_success(events)
     docker_status = read_json(workspace / "docker/docker-cleanliness-status.json")
@@ -457,14 +473,29 @@ def derived_handoff_lines(workspace: Path, handoff: dict[str, Any]) -> list[str]
     return lines
 
 
-def render(workspace: Path, repo_root: Path, output: Path) -> str:
-    status, _events, _mode = read_normalized_workspace_events(workspace)
-    # The human summary is gated on the same current derived state used by the
-    # machine validator. Generation is bounded to handoff-state.json only.
-    handoff_state = generate_handoff_state(workspace, repo_root, write=True)
+def render(
+    workspace: Path,
+    repo_root: Path,
+    output: Path,
+    *,
+    snapshot_override: WorkspaceSnapshot | None = None,
+    handoff_state_override: dict[str, Any] | None = None,
+) -> str:
+    if snapshot_override is None:
+        status, events, _mode = read_normalized_workspace_events(workspace)
+        # The human summary is gated on the same current derived state used by
+        # the machine validator. Generation is bounded to handoff-state.json.
+        handoff_state = generate_handoff_state(workspace, repo_root, write=True)
+    else:
+        status = dict(snapshot_override.state or {})
+        events = normalized_snapshot_events(snapshot_override)
+        handoff_state = handoff_state_override or derive_handoff_state(
+            workspace,
+            repo_root,
+            snapshot_override=snapshot_override,
+        )
     workspace_state = inspect_workspace_state(workspace)
-    events_path = workspace / "audit-events.jsonl"
-    events = read_jsonl_tail(events_path)
+    recent_events = events[-MAX_ROWS:]
     attack_surface = workspace / "attack-surface.md"
     initial_probes = workspace / "evidence/initial-probes/initial-probes-summary.json"
     candidate = workspace / "candidate-findings.md"
@@ -484,6 +515,10 @@ def render(workspace: Path, repo_root: Path, output: Path) -> str:
     last_message = str(status.get("last_message") or "")
     if not last_message and events:
         last_message = str(event_details(events[-1]).get("summary") or "")
+    generated_at = str(status.get("last_event_at") or "")
+    if not generated_at and events:
+        generated_at = str(events[-1].get("ts") or "")
+    generated_at = generated_at or "unknown"
 
     lines: list[str] = [
         "<!-- schema_version: 1 -->",
@@ -495,7 +530,7 @@ def render(workspace: Path, repo_root: Path, output: Path) -> str:
         "",
         f"- Target repository: `{target_label}`",
         f"- Workspace: `{rel_repo(workspace, repo_root)}`",
-        f"- Generated at: `{utc_now()}`",
+        f"- Generated at: `{generated_at}`",
         f"- Renderer output: `{rel_workspace(output, workspace)}`",
         "",
         "## Current Stage / Status",
@@ -505,7 +540,7 @@ def render(workspace: Path, repo_root: Path, output: Path) -> str:
         f"- Last message: {last_message or '_none_'}",
         f"- Blocker: {blocker or '_none_'}",
         f"- Resume step: {resume_step or '_none_'}",
-        *finalization_integrity_lines(workspace, status, workspace_state),
+        *finalization_integrity_lines(workspace, status, workspace_state, events=events),
         "",
         "## Derived Handoff State",
         "",
@@ -578,8 +613,8 @@ def render(workspace: Path, repo_root: Path, output: Path) -> str:
         "## Recent Audit Events",
         "",
     ])
-    if events:
-        for event in events:
+    if recent_events:
+        for event in recent_events:
             event_name = str(event.get("event", "unknown"))
             event_status = str(event.get("status", "unknown"))
             message = str(event.get("message", ""))
@@ -614,6 +649,11 @@ def render(workspace: Path, repo_root: Path, output: Path) -> str:
     return "\n".join(lines)
 
 
+def publish_handoff_summary(output: Path, rendered: str) -> None:
+    output.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_bytes(output.parent, output, rendered.encode("utf-8"))
+
+
 def main() -> None:
     args = parse_args()
     workspace = Path(args.workspace_dir).expanduser().resolve()
@@ -630,10 +670,7 @@ def main() -> None:
             f"HANDOFF FAILED [{exc.code}]: {exc.message}; run <workspace>/bin/recover-audit-state.py "
             "--workspace-dir <audit-workspace> --check --json"
         ) from exc
-    output.parent.mkdir(parents=True, exist_ok=True)
-    temporary = output.with_name(output.name + ".tmp")
-    temporary.write_text(rendered, encoding="utf-8")
-    temporary.replace(output)
+    publish_handoff_summary(output, rendered)
     print(f"handoff_summary={rel_workspace(output, workspace)}")
 
 

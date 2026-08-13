@@ -111,13 +111,23 @@ Generate a deterministic advisory context plan with:
 
 ```bash
 python3 <skill-root>/scripts/plan_audit_context.py \
-  --skill-root <skill-root> \
-  --repo-root <repo-root> \
-  --phase <phase> \
+  --target-dir <target-repo> \
+  --phase recon \
   --output <audit-workspace>/context-plan.json
 ```
 
-Validate it with `scripts/validate_context_plan.py`. `mandatory` means planned
+Canonical `--phase` values (in lifecycle order): `intake`, `recon`, `candidate_generation`, `triage`, `verification`, `severity_escalation`, `variant_discovery`, `packaging`, `finalization`, `recording`.
+
+Validate the plan with:
+
+```bash
+python3 <skill-root>/scripts/validate_context_plan.py \
+  --skill-root <skill-root> \
+  --catalog <skill-root>/assets/context-catalog.json \
+  --plan <audit-workspace>/context-plan.json
+```
+
+`mandatory` means planned
 reading priority only; it does not prove an Agent read, understood, used, or
 completed a reference. The catalog is advisory and cannot grant execution or
 confirmation authority.

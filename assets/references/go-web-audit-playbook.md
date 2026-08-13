@@ -79,10 +79,10 @@ Audit in this order for Go Web services:
 
 Use tools as evidence collection, not as final proof:
 
-- `govulncheck ./...` for known Go vulnerabilities when available
-- `gosec ./...` for common security anti-patterns
-- `golangci-lint run` when configured or installed
-- `go list -m all` for dependency inventory
+- `govulncheck`, `gosec`, and Go module inventory only through the fixed initial
+  probe wrapper, which forces read-only module handling
+- `golangci-lint` remains `skipped_requires_isolation` because target-selected
+  plugins can execute; do not substitute a manual host command
 - Semgrep Go rules for quick source pattern checks
 
 If tools are unavailable, lack module context, or return noisy non-zero exits,

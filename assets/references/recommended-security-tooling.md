@@ -38,9 +38,12 @@ Add these when the target or workflow makes them useful.
 - `gosec`
   - Go security pattern scanning for command execution, weak TLS, file permissions, and similar issues
 - `golangci-lint`
-  - Go quality linting that can expose bug patterns around error handling and unsafe code paths
+  - Go quality linting that may load target-selected plugins; keep it
+    `skipped_requires_isolation` until a separately audited fixed Docker wrapper exists
 - `Maven` / `Gradle`
-  - Java dependency graph extraction with `mvn dependency:tree` or `gradle dependencies`
+  - Java dependency graph extraction can execute target-controlled project
+    logic; do not run it on the host, and record `skipped_requires_isolation`
+    until a separately audited fixed Docker wrapper exists
 - `OWASP Dependency-Check`
   - Java dependency vulnerability analysis for Maven and Gradle projects
 - `SpotBugs` + `FindSecBugs`

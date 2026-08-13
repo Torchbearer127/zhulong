@@ -15,6 +15,7 @@ from typing import Any
 from candidate_identity import file_sha256
 
 from blocked_verification import detect_blocked_verification
+from evidence_io import SafeEvidenceError, atomic_write_json, safe_read_json
 from validate_candidate import (
     ValidationError as CandidateValidationError,
     load_candidate,
@@ -90,12 +91,62 @@ def read_json(path: Path) -> dict[str, Any]:
 
 
 def load_disposition_ledger(workspace: Path) -> dict[str, Any]:
-    return read_json(workspace / LEDGER_FILENAME)
-
-
-def write_disposition_ledger(workspace: Path, ledger: dict[str, Any]) -> Path:
     path = workspace / LEDGER_FILENAME
-    path.write_text(json.dumps(ledger, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    if not os.path.lexists(path):
+        return {}
+    try:
+        data = safe_read_json(workspace, path)
+    except SafeEvidenceError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def write_disposition_ledger(
+    workspace: Path,
+    ledger: dict[str, Any],
+    *,
+    result: str = "",
+    bundle_summary: dict[str, Any] | None = None,
+    language: str = "auto",
+    protocol_mode: str = "r2",
+) -> Path:
+    path = workspace / LEDGER_FILENAME
+
+    def validate_published(raw: bytes) -> None:
+        try:
+            published = json.loads(raw.decode("utf-8"))
+        except (UnicodeError, json.JSONDecodeError) as exc:
+            raise DispositionUpdateError(f"{LEDGER_FILENAME}: durable JSON readback failed") from exc
+        validation = validate_disposition_ledger(
+            workspace,
+            result=result,
+            ledger=published,
+            bundle_summary=bundle_summary,
+            language=language,
+        )
+        if not validation.get("ok"):
+            errors = [str(item) for item in validation.get("errors", [])]
+            raise DispositionUpdateError(
+                f"{LEDGER_FILENAME}: durable validation failed: " + (errors[0] if errors else "unknown error")
+            )
+        if result:
+            chain = validate_workspace_confirmation_chain(
+                workspace,
+                result=result,
+                protocol_mode=protocol_mode,
+                ledger=published,
+                bundle_summary=bundle_summary,
+                disposition_validation=validation,
+                language=language,
+            )
+            if not chain.get("ok"):
+                errors = [str(item) for item in chain.get("errors", [])]
+                raise DispositionUpdateError(
+                    f"{LEDGER_FILENAME}: durable confirmation chain failed: "
+                    + (errors[0] if errors else "unknown error")
+                )
+
+    atomic_write_json(workspace, path, ledger, post_write_validator=validate_published)
     return path
 
 
@@ -855,9 +906,16 @@ def validate_disposition_ledger(
     workspace = workspace.resolve()
     ledger_path = workspace / LEDGER_FILENAME
     if ledger is None:
-        if not ledger_path.exists():
+        if not os.path.lexists(ledger_path):
             return {"ok": False, "errors": [f"{LEDGER_FILENAME} is missing."], "summary": {"item_count": 0}}
-        ledger = load_disposition_ledger(workspace)
+        try:
+            ledger = safe_read_json(workspace, ledger_path)
+        except SafeEvidenceError as exc:
+            return {
+                "ok": False,
+                "errors": [f"{LEDGER_FILENAME} safe read failed [{exc.code}]."],
+                "summary": {"item_count": 0},
+            }
 
     errors: list[str] = []
     warnings: list[str] = []
@@ -1487,29 +1545,30 @@ def main() -> int:
             print(f"AUDIT DISPOSITION FAILED: {message}")
         return 1
 
-    if args.update_from_verdict:
-        if not args.candidate or not args.verdict:
-            message = "--candidate and --verdict are required with --update-from-verdict"
-            if args.json:
-                print(json.dumps({"ok": False, "errors": [message]}, ensure_ascii=False, indent=2))
-            else:
-                print(f"AUDIT DISPOSITION FAILED: {message}")
-            return 1
-        try:
+    try:
+        if args.update_from_verdict:
+            if not args.candidate or not args.verdict:
+                raise DispositionUpdateError("--candidate and --verdict are required with --update-from-verdict")
             candidate_path = resolve_under_workspace(workspace, args.candidate, "candidate path")
             verdict_path = resolve_under_workspace(workspace, args.verdict, "verdict path")
             ledger = update_ledger_from_verdict(workspace, candidate_path, verdict_path)
-            write_disposition_ledger(workspace, ledger)
-        except DispositionUpdateError as exc:
-            if args.json:
-                print(json.dumps({"ok": False, "errors": [str(exc)]}, ensure_ascii=False, indent=2))
-            else:
-                print(f"AUDIT DISPOSITION FAILED: {exc}")
-            return 1
-    else:
-        ledger = synthesize_disposition_ledger(workspace) if args.write else None
-        if ledger is not None:
-            write_disposition_ledger(workspace, ledger)
+        else:
+            ledger = synthesize_disposition_ledger(workspace) if args.write else None
+        if ledger is not None and (args.write or args.update_from_verdict):
+            write_disposition_ledger(
+                workspace,
+                ledger,
+                result=args.result,
+                language=args.language,
+            )
+            ledger = load_disposition_ledger(workspace)
+    except (DispositionUpdateError, SafeEvidenceError) as exc:
+        message = str(exc) if isinstance(exc, DispositionUpdateError) else f"{LEDGER_FILENAME} safe write failed [{exc.code}]"
+        if args.json:
+            print(json.dumps({"ok": False, "errors": [message]}, ensure_ascii=False, indent=2))
+        else:
+            print(f"AUDIT DISPOSITION FAILED: {message}")
+        return 1
 
     validation = validate_disposition_ledger(workspace, result=args.result, ledger=ledger, language=args.language)
     if args.json:

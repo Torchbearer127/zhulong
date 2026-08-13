@@ -109,6 +109,9 @@ in the canonical `recon` stage. Raw Docker and uncontrolled DAST/live-target
 tools have no direct planner command hint. Only the fixed Docker verification
 wrapper can emit Docker oracle material, and that material still must pass the
 existing verifier-verdict, disposition, and confirmed-bundle gates.
+The registry schema's lifecycle-stage enum must match
+`audit_transition_policy.STAGES` exactly; isolated deletion, rename, reorder,
+addition, or malformed shape fails closed in the production registry validator.
 
 In an R2 workspace, the verification wrapper validates the canonical
 journal/state pair and requires `verification/running` or an explicit retry
@@ -122,7 +125,16 @@ upgraded to R2.
 
 ## Advisory Context Planning
 
-`assets/context-catalog.json` declares stable local references that may be recommended for a phase. Run `plan_audit_context.py` with an explicit target directory and phase to create a deterministic `context-plan.json`; optional bug classes are closed explicit inputs. The planner reuses the toolchain planner's stack and attack-surface detection only. It does not parse notes, candidates, handoff text, or references.
+`assets/context-catalog.json` declares stable local references that may be recommended for a phase. Run `plan_audit_context.py --target-dir <target-repo> --phase recon --output <audit-workspace>/context-plan.json` to create a deterministic plan; optional bug classes are closed explicit inputs. The planner reuses the toolchain planner's stack and attack-surface detection only. It does not parse notes, candidates, handoff text, or references.
+
+`audit_transition_policy.STAGES` is the single Python source for the ten formal
+context phases: `intake`, `recon`, `candidate_generation`, `triage`,
+`verification`, `severity_escalation`, `variant_discovery`, `packaging`,
+`finalization`, and `recording`.
+Triage and recording can be planned directly and select their own stable phase
+references. Production meta-conformance compares that tuple with the event and
+state schemas, both context schemas, catalog mappings, planner choices, and the
+Skill command/phase declaration; any drift fails closed.
 
 `mandatory` means a phase-baseline reading recommendation, not a security gate. `optional` records exact matching selector facts, and `deferred` records a phase-relevant module without a selector match. The plan is advisory only: it does not prove an Agent read, understood, or used a module; execute tools or references; create evidence; confirm findings; or replace existing validators, gates, or root Skill constraints. See [`context-planning-r1.md`](runner-contracts/context-planning-r1.md).
 
@@ -234,6 +246,12 @@ the existing authority files prove one unique candidate-to-bundle relationship;
 ambiguous multi-confirmed workspaces are rejected rather than paired by names or
 ordering. Escaped URLs may appear as visible review text, while clickable
 resources remain limited to canonical workspace-relative links.
+
+Release selftests construct both supported AWS access-key-ID prefix cases only at
+runtime and scan the source commit candidate plus installed package bytes for
+complete provider-shaped test literals. This fixture-hygiene gate must not weaken
+the production classifier, remove either positive case, or rewrite historical
+evidence.
 
 ## Runtime Residue And Cleanup
 
@@ -854,12 +872,57 @@ capture treatment; writable binds overlapping workspace control paths are
 rejected.
 
 Sandbox preflight is a proof obligation before any evidence or Docker side
-effect. Compose services must declare literal `privileged: false`; anchors,
-aliases, interpolation and non-static namespace values are rejected. Unknown
-or value-less extra Docker arguments are rejected; only documented resource
-limits and `--read-only` are allowed. Bootstrap workspace names are one safe
-ASCII directory component and the destination must be a direct child of a
-real target directory.
+effect. A relative Compose path is resolved from the canonical audit workspace,
+not caller CWD, then copied into a one-use host-owned snapshot set. The ordered
+snapshot manifest binds logical source, SHA-256, size, and file identity.
+Preflight and every Compose config, pull, and run consume those same bytes with
+the workspace as explicit project directory; source mutation cannot change the
+run, while snapshot identity drift fails before the service command.
+
+The Compose policy is a closed subset. Top-level input contains only `version`
+and `services`; every service declares literal `privileged: false`. Anchors,
+aliases, merges, interpolation, unknown fields, build/host-file/include,
+namespace, capability/device/security-option, and named/anonymous/external
+volume forms are rejected. Host binds are limited to the target repository at
+`/workspace/target` read-only, workspace `poc/` at `/workspace/poc` read-only,
+and the current case's non-authoritative `container-output` at
+`/workspace/output` writable. No other host path is permitted, even read-only.
+Unknown or value-less extra Docker arguments are rejected; only documented
+resource limits and `--read-only` are allowed. A passed preflight proves only
+this execution boundary; it does not prove a PoC, oracle, verdict, bundle, or
+finalization result.
+
+Bind-source identity is checked before filesystem resolution. Relative sources
+are interpreted lexically from the canonical audit workspace, parent
+components and path aliases are rejected, and every existing component of an
+allowed target-repository, `poc/`, evidence/case, or container-output path is
+verified with `lstat` as a real directory. A not-yet-created output suffix may
+be created only by the wrapper's host-owned directory helper and is checked
+again before Docker access. Bootstrap performs the same fail-closed checks
+before any workspace write, so a pre-existing symlink, regular file, FIFO,
+socket, device, or other non-directory entry cannot be followed.
+
+The wrapper repeats the bind-directory check before each Compose `config`,
+`pull`, and `run`, and compares the low-sensitivity directory identity captured
+by the previous check. The versioned identity keeps stable device, inode, type,
+mode, uid, and gid for every existing path component separate from the leaf
+directory's mtime and link-count observations. Stable identity changes always
+fail closed. Target and `poc/` observations also remain strict; ordinary mtime
+or link-count changes caused by files and subdirectories written inside the
+writable `container-output` do not mean that its directory object was replaced.
+This is revalidation, not an atomic host-path pin: the supported platform
+boundary trusts the workspace owner not to replace a directory concurrently
+during the short host-side check-to-Docker interval. The implementation does
+not claim to close that OS-level TOCTOU window.
+
+Initial probes remain advisory and candidate-only. Maven and Gradle project
+evaluation and target-configurable golangci-lint plugin loading are not run on
+the host without a separately audited fixed Docker wrapper. They are recorded
+as `skipped_requires_isolation`, which is not a pass and does not authorize a
+manual equivalent command. npm is invoked with lifecycle scripts disabled and
+Go package loading is forced read-only for module files. Bootstrap workspace
+names remain one safe ASCII directory component and the destination must be a
+direct child of a real target directory.
 
 `blocked_verification.py` first consumes structured verification results,
 verdicts, dispositions and normalized events. An unresolved identity-specific
@@ -883,3 +946,22 @@ empty/prohibited. Finalization requires a safe current
 The `finalization_succeeded` event must bind its relative path, SHA-256,
 workspace and `checked_at`; missing, stale, symlinked, mismatched or manually
 paired status evidence fails the assertion.
+
+`audit-disposition.json` is published through the host-owned safe I/O path.
+The writer rejects unsafe ancestors and non-owned, linked, or non-regular
+targets; writes a same-directory temporary file; fsyncs the file; performs an
+identity compare-and-swap; atomically replaces the target; and fsyncs the
+directory. It then safely reopens the published object and validates its disk
+bytes, schema, candidate/verdict bindings, and applicable one-to-one
+confirmation chain. A write, fsync, replace, CAS, or post-write validation
+failure restores the prior ledger bytes or reports a distinct rollback error.
+
+On a successful finalization path, summary and handoff artifacts are built and
+validated against the exact projected terminal journal/state snapshot before
+`finalization_succeeded` is appended. The terminal event is the last authority
+commit; later checks are read-only. If the journal append succeeds but the
+state view update fails, the journal remains authoritative and the diagnostic
+requires an explicit state rebuild. Rerunning the finalizer on a consistent
+completed workspace is byte-preserving and does not rerun Docker checks or add
+another terminal event; authority or derived-artifact drift fails closed and
+requires an explicit recover or reopen action.

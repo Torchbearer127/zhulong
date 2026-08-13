@@ -58,15 +58,26 @@ Use this checklist before publishing a tagged open-source release of Zhulong
   hint. First-pass probes are wrapper-required candidate material; only the
   controlled Docker verification wrapper emits oracle material, which still
   requires verifier verdict, disposition, and bundle validation.
+- [ ] Maven/Gradle project evaluation and target-configurable golangci-lint
+  plugin loading are `skipped_requires_isolation` with no host command hint,
+  wrapper, or authority. The status is not success and does not authorize a
+  manual host equivalent; npm disables lifecycle scripts and Go module loading
+  is read-only.
 - [ ] New and refreshed workspaces carry the same registry, schema, validator,
   planner, and controlled-wrapper markers as the installed source snapshot.
 - [ ] Docker sandbox preflight rejects privileged containers, host networking,
   host PID, docker socket mounts, host root mounts, and unsafe Docker run flags.
-- [ ] Compose preflight requires literal `privileged: false`, rejects YAML
-  anchors/aliases/interpolation and non-static namespace values, and rejects
-  writable binds overlapping workspace/evidence control paths. Unknown or
-  value-less extra Docker arguments fail before any evidence or Docker side
-  effect; documented resource limits remain allowed.
+- [ ] Compose inputs resolve from the canonical workspace, reject unsafe path
+  components/types, and are copied into an ordered one-use snapshot manifest.
+  Preflight plus every config/pull/run uses the same pinned bytes and explicit
+  project directory; source mutation is inert and snapshot drift fails before
+  compose run/PoC.
+- [ ] Compose preflight enforces the documented closed subset: literal
+  `privileged: false`; no anchors/aliases/merges/interpolation, unknown fields,
+  build/host-file/include, namespaces, capabilities/devices/security options,
+  or named/anonymous/external volumes. Host binds are exactly target and `poc/`
+  read-only plus current-case `container-output` writable at fixed container
+  targets; every other host path is rejected even read-only.
 - [ ] Verification control files are host-owned. Evidence is read-only inside
   Docker, writable container output is isolated under `/workspace/output`, and
   stdout/stderr oracle bytes come from host-held descriptors. Symlink,
@@ -143,6 +154,10 @@ Use this checklist before publishing a tagged open-source release of Zhulong
   credential/private-key shapes and local Unix/macOS, Windows, UNC, and `file:`
   paths without echoing values; rejection before append leaves journal/state
   bytes unchanged and retains SHA/ref/path/ordinary-word near-miss controls.
+- [ ] Source commit-candidate and installed-package bytes contain no complete AWS
+  access-key-ID-shaped test literal. Both supported prefix cases are constructed
+  only at selftest runtime, remain positive fail-closed cases, and the static
+  hygiene guard does not mistake its regex definition for a credential value.
 - [ ] Timeline confirmed bundle links are emitted only for a uniquely proven
   single flow; ambiguous, orphan, duplicate, or count-mismatched validated
   bundles fail closed without slug/title/order heuristics.
@@ -353,6 +368,13 @@ Use this checklist before publishing a tagged open-source release of Zhulong
 - [ ] `assets/context-catalog.json`, its strict schema, the strict context-plan schema, and both offline validators pass in source, Claude, and Codex layouts.
 - [ ] Catalog paths are regular non-symlink files below `assets/references/`; duplicate IDs/paths, unsafe paths, unknown selectors, and authority drift fail closed.
 - [ ] Context planning remains deterministic across repeated locale/timezone runs and does not grant reading, execution, confirmation, promotion, or gate authority.
+- [ ] `audit_transition_policy.STAGES` is the single Python phase vocabulary;
+  event/state schemas, context schemas, the Tool Registry schema, catalog phase
+  mappings, planner choices, and Skill command/phase declarations match all ten
+  stages and fail closed on isolated drift.
+- [ ] The Skill planner command uses the real `--target-dir`, `--phase`, and
+  `--output` CLI; every formal stage plans and validates, with `triage` and
+  `recording` directly selecting their own phase references.
 - [ ] `assets/root-skill-rule-inventory.json` and its strict schema pass the read-only inventory validator.
 - [ ] All 14 kernel invariants remain in both byte-identical source Skills; moved hard rules retain a real production carrier.
 - [ ] Every phase reference is a safe catalog baseline module and no phase reference triggers dogfood/template/example scope rejection.
@@ -400,6 +422,7 @@ python3 -m json.tool assets/schemas/workspace-checkpoint.schema.json >/dev/null
 python3 -m json.tool assets/root-skill-rule-inventory.json >/dev/null
 python3 -m json.tool assets/schemas/root-skill-rule-inventory.schema.json >/dev/null
 python3 scripts/validate_root_skill_rule_inventory.py --skill-root . --inventory assets/root-skill-rule-inventory.json --json
+python3 scripts/selftest_rhs1_secret_fixture_hygiene.py
 cmp -s skills/zhulong/SKILL.md templates/claude-skill/SKILL.md
 python3 -m json.tool .claude-plugin/plugin.json >/dev/null
 python3 -m json.tool .codex-plugin/plugin.json >/dev/null

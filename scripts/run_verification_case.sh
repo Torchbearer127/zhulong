@@ -51,6 +51,9 @@ Safety contract:
   Docker or Docker Compose from the host only as the container boundary. If
   Docker is unavailable, verification is blocked and no host fallback is
   provided.
+  Compose inputs are copied into one-use host-owned snapshots before evidence
+  or Docker access. Preflight, config, pull, and run use only those pinned
+  bytes and the audit workspace as the explicit project directory.
   R2 workspaces must already be in verification/running or
   verification/blocked. The wrapper never advances triage or another workflow
   stage. It commits a same-stage start event before the PoC container command.
@@ -76,7 +79,9 @@ docker-run options:
   --no-default-mounts        Do not mount workspace poc/ and evidence dirs.
 
 docker-compose options:
-  --compose-file FILE        Compose file. Repeat as needed.
+  --compose-file FILE        Workspace-local Compose file. Relative paths are
+                             resolved from the audit workspace, never caller CWD.
+                             Repeat as needed; input order is preserved.
   --compose-service SERVICE  Service used for verification.
 
 Timeout rule:
@@ -216,15 +221,25 @@ if [[ ! "$CASE_ID" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ || "$CASE_ID" == "." || "$CAS
   fail_usage "--case-id must start with a letter or number and contain only letters, numbers, dot, underscore, and dash."
 fi
 
+WORKSPACE_DIR="${WORKSPACE_DIR/#\~/$HOME}"
+WORKSPACE_DIR="$(cd "$WORKSPACE_DIR" && pwd -P)"
+if [[ ! -f "$WORKSPACE_DIR/asr-config.json" || -L "$WORKSPACE_DIR/asr-config.json" ]]; then
+  echo "ERROR: not a Zhulong audit workspace: $WORKSPACE_DIR" >&2
+  exit 2
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 case "$MODE" in
   docker-run)
     [[ -n "$IMAGE" ]] || fail_usage "--image is required for docker-run mode."
     ;;
   docker-compose)
     [[ -n "$COMPOSE_SERVICE" ]] || fail_usage "--compose-service is required for docker-compose mode."
+    [[ "$COMPOSE_SERVICE" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || fail_usage "--compose-service must be a static safe service name."
     [[ "${#COMPOSE_FILES[@]}" -gt 0 ]] || fail_usage "--compose-file is required for docker-compose mode."
     for compose_file in "${COMPOSE_FILES[@]}"; do
-      [[ -n "$compose_file" && -f "$compose_file" && ! -L "$compose_file" ]] || fail_usage "--compose-file must reference an existing regular file."
+      [[ -n "$compose_file" ]] || fail_usage "--compose-file must not be empty."
     done
     ;;
   *)
@@ -233,15 +248,6 @@ case "$MODE" in
 esac
 
 SAFE_CASE_ID="$CASE_ID"
-
-WORKSPACE_DIR="${WORKSPACE_DIR/#\~/$HOME}"
-WORKSPACE_DIR="$(cd "$WORKSPACE_DIR" && pwd -P)"
-if [[ ! -f "$WORKSPACE_DIR/asr-config.json" ]]; then
-  echo "ERROR: not a Zhulong audit workspace: $WORKSPACE_DIR" >&2
-  exit 2
-fi
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 validate_declared_verification_use() {
   local contract_root registry schema validator
   if [[ -f "$SCRIPT_DIR/tool-registry.json" ]]; then
@@ -364,6 +370,175 @@ find_sandbox_preflight() {
   fi
 }
 
+COMPOSE_PIN_ACTIVE="false"
+COMPOSE_PIN_MANIFEST=""
+COMPOSE_PIN_MANIFEST_SHA256=""
+COMPOSE_BIND_IDENTITIES_JSON=""
+
+cleanup_pinned_compose() {
+  local original_status="${1:-1}" cleanup_status=0 preflight
+  trap - EXIT
+  if [[ "$COMPOSE_PIN_ACTIVE" == "true" ]]; then
+    preflight="$(find_sandbox_preflight)"
+    set +e
+    python3 "$preflight" \
+      --compose-operation cleanup \
+      --workspace-dir "$WORKSPACE_DIR" \
+      --compose-manifest "$COMPOSE_PIN_MANIFEST" \
+      --compose-manifest-sha256 "$COMPOSE_PIN_MANIFEST_SHA256" \
+      --json >/dev/null
+    cleanup_status=$?
+    set -e
+    if [[ "$cleanup_status" -ne 0 ]]; then
+      echo "ERROR: pinned Compose input cleanup was refused because its identity changed." >&2
+      if [[ "$original_status" -eq 0 ]]; then
+        original_status=1
+      fi
+    fi
+  fi
+  exit "$original_status"
+}
+
+pin_compose_inputs() {
+  [[ "$MODE" == "docker-compose" ]] || return 0
+  local preflight pin_payload pin_exit manifest_path manifest_digest
+  local -a pin_args raw_compose_files pinned_compose_files
+  preflight="$(find_sandbox_preflight)"
+  if [[ -z "$preflight" ]]; then
+    echo "ERROR: Sandbox preflight helper is missing; Compose input cannot be pinned." >&2
+    exit 1
+  fi
+  raw_compose_files=("${COMPOSE_FILES[@]}")
+  pin_args=(
+    --compose-operation pin
+    --workspace-dir "$WORKSPACE_DIR"
+    --case-id "$CASE_ID"
+    --json
+  )
+  for compose_file in "${raw_compose_files[@]}"; do
+    pin_args+=(--compose-file "$compose_file")
+  done
+  set +e
+  pin_payload="$(python3 "$preflight" "${pin_args[@]}")"
+  pin_exit=$?
+  set -e
+  if [[ "$pin_exit" -ne 0 ]]; then
+    printf '%s\n' "$pin_payload" >&2
+    echo "verification_status=rejected_unsafe_sandbox"
+    echo "docker_invoked=false"
+    echo "poc_command_invoked=false"
+    echo "oracle_matched=false"
+    exit 1
+  fi
+  manifest_path="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["manifest"])' <<<"$pin_payload")"
+  manifest_digest="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["manifest_sha256"])' <<<"$pin_payload")"
+  while IFS= read -r compose_file; do
+    pinned_compose_files+=("$compose_file")
+  done < <(python3 -c 'import json,sys; [print(value) for value in json.load(sys.stdin)["compose_files"]]' <<<"$pin_payload")
+  if [[ -z "$manifest_path" || -z "$manifest_digest" || "${#pinned_compose_files[@]}" -ne "${#raw_compose_files[@]}" ]]; then
+    python3 "$preflight" --compose-operation cleanup --workspace-dir "$WORKSPACE_DIR" \
+      --compose-manifest "$manifest_path" --compose-manifest-sha256 "$manifest_digest" --json >/dev/null 2>&1 || true
+    echo "ERROR: Compose pin helper returned an incomplete ordered input set." >&2
+    exit 1
+  fi
+  COMPOSE_FILES=("${pinned_compose_files[@]}")
+  COMPOSE_PIN_MANIFEST="$manifest_path"
+  COMPOSE_PIN_MANIFEST_SHA256="$manifest_digest"
+  COMPOSE_PIN_ACTIVE="true"
+  trap 'cleanup_pinned_compose "$?"' EXIT
+}
+
+verify_pinned_compose_or_abort() {
+  [[ "$MODE" == "docker-compose" ]] || return 0
+  local preflight verify_payload verify_exit
+  local -a verify_args
+  preflight="$(find_sandbox_preflight)"
+  verify_args=(
+    --compose-operation verify
+    --workspace-dir "$WORKSPACE_DIR"
+    --case-id "$CASE_ID"
+    --compose-manifest "$COMPOSE_PIN_MANIFEST"
+    --compose-manifest-sha256 "$COMPOSE_PIN_MANIFEST_SHA256"
+    --json
+  )
+  if [[ -n "$COMPOSE_BIND_IDENTITIES_JSON" ]]; then
+    verify_args+=(--expected-bind-identities "$COMPOSE_BIND_IDENTITIES_JSON")
+  fi
+  for compose_file in "${COMPOSE_FILES[@]}"; do
+    verify_args+=(--compose-file "$compose_file")
+  done
+  set +e
+  verify_payload="$(python3 "$preflight" "${verify_args[@]}")"
+  verify_exit=$?
+  set -e
+  if [[ "$verify_exit" -ne 0 ]]; then
+    printf '%s\n' "$verify_payload" >&2
+    local verification_code
+    verification_code="$(python3 - "$verify_payload" <<'PY'
+import json
+import sys
+
+try:
+    print(json.loads(sys.argv[1]).get("issue_code") or "COMPOSE_INPUT_IDENTITY_DRIFT")
+except Exception:
+    print("COMPOSE_INPUT_IDENTITY_DRIFT")
+PY
+)"
+    echo "verification_status=rejected_unsafe_sandbox"
+    echo "verification_code=$verification_code"
+    echo "authority_event_committed=false"
+    echo "docker_invoked=$DOCKER_CLI_INVOKED"
+    echo "poc_command_invoked=$POC_COMMAND_INVOKED"
+    echo "oracle_matched=false"
+    exit 1
+  fi
+  COMPOSE_BIND_IDENTITIES_JSON="$(python3 - "$verify_payload" <<'PY'
+import json
+import sys
+
+value = json.loads(sys.argv[1]).get("bind_identities", {})
+if not isinstance(value, dict):
+    raise SystemExit(1)
+print(json.dumps(value, sort_keys=True, separators=(",", ":")))
+PY
+)"
+}
+
+verify_default_mounts_or_abort() {
+  [[ "$MODE" == "docker-run" && "$DEFAULT_MOUNTS" == "1" ]] || return 0
+  local preflight payload preflight_exit verification_code
+  preflight="$(find_sandbox_preflight)"
+  set +e
+  payload="$(python3 "$preflight" \
+    --workspace-dir "$WORKSPACE_DIR" \
+    --case-id "$CASE_ID" \
+    --mode docker-run \
+    --verify-default-mounts \
+    --json)"
+  preflight_exit=$?
+  set -e
+  if [[ "$preflight_exit" -ne 0 ]]; then
+    printf '%s\n' "$payload" >&2
+    verification_code="$(python3 - "$payload" <<'PY'
+import json
+import sys
+
+try:
+    print(json.loads(sys.argv[1]).get("issue_codes", ["COMPOSE_BIND_SOURCE_FORBIDDEN"])[0])
+except Exception:
+    print("COMPOSE_BIND_SOURCE_FORBIDDEN")
+PY
+)"
+    echo "verification_status=rejected_unsafe_sandbox"
+    echo "verification_code=$verification_code"
+    echo "authority_event_committed=false"
+    echo "docker_invoked=$DOCKER_CLI_INVOKED"
+    echo "poc_command_invoked=$POC_COMMAND_INVOKED"
+    echo "oracle_matched=false"
+    exit 1
+  fi
+}
+
 SANDBOX_PREFLIGHT_PAYLOAD=""
 early_sandbox_preflight() {
   local preflight preflight_exit
@@ -390,6 +565,11 @@ early_sandbox_preflight() {
     for compose_file in "${COMPOSE_FILES[@]}"; do
       preflight_args+=(--compose-file "$compose_file")
     done
+    preflight_args+=(
+      --compose-manifest "$COMPOSE_PIN_MANIFEST"
+      --compose-manifest-sha256 "$COMPOSE_PIN_MANIFEST_SHA256"
+      --compose-project-directory "$WORKSPACE_DIR"
+    )
   fi
   set +e
   SANDBOX_PREFLIGHT_PAYLOAD="$(python3 "$preflight" "${preflight_args[@]}")"
@@ -406,18 +586,40 @@ early_sandbox_preflight() {
 }
 
 ensure_host_evidence_directories() {
-  python3 - "$SCRIPT_DIR" "$WORKSPACE_DIR" "$EVIDENCE_DIR" "$CONTAINER_OUTPUT_DIR" <<'PY'
+  local output ensure_exit ensure_code
+  set +e
+  output="$(python3 - "$SCRIPT_DIR" "$WORKSPACE_DIR" "$EVIDENCE_DIR" "$CONTAINER_OUTPUT_DIR" "$MODE" "$DEFAULT_MOUNTS" <<'PY'
 import sys
 from pathlib import Path
 
-script_dir, workspace, evidence_dir, output_dir = sys.argv[1:]
+script_dir, workspace, evidence_dir, output_dir, mode, default_mounts = sys.argv[1:]
 sys.path.insert(0, script_dir)
-from evidence_io import ensure_host_directory
+from evidence_io import SafeEvidenceError, ensure_host_directory
 
 root = Path(workspace)
-ensure_host_directory(root, Path(evidence_dir))
-ensure_host_directory(root, Path(output_dir))
+try:
+    if mode == "docker-run" and default_mounts == "1":
+        ensure_host_directory(root, root / "poc")
+    ensure_host_directory(root, Path(evidence_dir))
+    ensure_host_directory(root, Path(output_dir))
+except SafeEvidenceError as exc:
+    print(exc.code)
+    raise SystemExit(1)
 PY
+  )"
+  ensure_exit=$?
+  set -e
+  if [[ "$ensure_exit" -ne 0 ]]; then
+    ensure_code="$(printf '%s\n' "$output" | sed -n '1p')"
+    [[ -n "$ensure_code" ]] || ensure_code="EVIDENCE_DIRECTORY_UNSAFE"
+    echo "verification_status=rejected_unsafe_sandbox"
+    echo "verification_code=$ensure_code"
+    echo "authority_event_committed=false"
+    echo "docker_invoked=$DOCKER_CLI_INVOKED"
+    echo "poc_command_invoked=$POC_COMMAND_INVOKED"
+    echo "oracle_matched=false"
+    exit 1
+  fi
 }
 
 write_sandbox_preflight_evidence() {
@@ -1063,6 +1265,7 @@ classify_and_exit() {
   exit 1
 }
 
+pin_compose_inputs
 early_sandbox_preflight
 ensure_host_evidence_directories
 EVIDENCE_DIR="$(cd "$EVIDENCE_DIR" && pwd -P)"
@@ -1091,6 +1294,12 @@ def scrub(value: str) -> str:
 atomic_write_json(Path(evidence_dir), path, [scrub(arg) for arg in sys.argv[5:]])
 PY
 }
+
+if [[ "$MODE" == "docker-compose" ]]; then
+  verify_pinned_compose_or_abort
+else
+  verify_default_mounts_or_abort
+fi
 
 DOCKER_CLI_INVOKED="true"
 if ! docker info >/dev/null 2>&1; then
@@ -1164,23 +1373,40 @@ PY
     fi
     ;;
   docker-compose)
-    COMPOSE_ARGS=()
+    COMPOSE_ARGS=(--project-directory "$WORKSPACE_DIR")
     for compose_file in "${COMPOSE_FILES[@]}"; do
       COMPOSE_ARGS+=(-f "$compose_file")
     done
+    verify_pinned_compose_or_abort
+    set +e
+    compose_config_output="$(docker compose "${COMPOSE_ARGS[@]}" config --images 2>/dev/null)"
+    compose_config_exit=$?
+    set -e
+    verify_pinned_compose_or_abort
+    if [[ "$compose_config_exit" -ne 0 ]]; then
+      echo "verification_status=rejected_unsafe_sandbox"
+      echo "verification_code=COMPOSE_CONFIG_UNVERIFIABLE"
+      echo "authority_event_committed=false"
+      echo "docker_invoked=true"
+      echo "poc_command_invoked=false"
+      echo "oracle_matched=false"
+      exit 1
+    fi
     missing_images=()
     while IFS= read -r compose_image; do
       [[ -n "$compose_image" ]] || continue
       if ! docker image inspect "$compose_image" >/dev/null 2>&1; then
         missing_images+=("$compose_image")
       fi
-    done < <(docker compose "${COMPOSE_ARGS[@]}" config --images 2>/dev/null || true)
+    done <<<"$compose_config_output"
     if [[ "${#missing_images[@]}" -gt 0 ]]; then
       if [[ "$PULL_IF_MISSING" == "1" ]]; then
+        verify_pinned_compose_or_abort
         set +e
         pull_output="$(docker compose "${COMPOSE_ARGS[@]}" pull "$COMPOSE_SERVICE" 2>&1)"
         pull_exit=$?
         set -e
+        verify_pinned_compose_or_abort
         write_host_text "$EVIDENCE_DIR/image-pull.log" "$pull_output"
         if [[ "$pull_exit" -ne 0 ]]; then
           write_host_text "$STDERR_PATH" "Compose image pull failed for service $COMPOSE_SERVICE\n$pull_output"
@@ -1193,6 +1419,7 @@ PY
         classify_and_exit "blocked_missing_image" "One or more compose images are missing locally; rerun with --pull-if-missing only if network pull is acceptable."
       fi
     fi
+    verify_pinned_compose_or_abort
     RUN_COMMAND=(docker compose "${COMPOSE_ARGS[@]}" run --rm -T "$COMPOSE_SERVICE")
     if [[ "${#CASE_COMMAND[@]}" -gt 0 ]]; then
       RUN_COMMAND+=("${CASE_COMMAND[@]}")
@@ -1200,6 +1427,7 @@ PY
     ;;
 esac
 
+verify_pinned_compose_or_abort
 write_command_json "${RUN_COMMAND[@]}"
 
 # This is not an automatic retry: it is recorded only after an operator
@@ -1210,6 +1438,7 @@ if ! resume_verification_if_blocked; then
     "${AUTHORITY_EVENT_ERROR_CODE:-VERIFICATION_RESUME_EVENT_COMMIT_FAILED}" \
     "The explicit verification retry could not be committed; no PoC container command was started."
 fi
+verify_pinned_compose_or_abort
 if ! commit_verification_start_event; then
   emit_authority_preexecution_blocker \
     "${AUTHORITY_EVENT_ERROR_CODE:-VERIFICATION_START_EVENT_COMMIT_FAILED}" \
@@ -1245,6 +1474,7 @@ PY
 )"
 CAPTURE_HELPER_EXIT=$?
 set -e
+verify_pinned_compose_or_abort
 if [[ "$CAPTURE_HELPER_EXIT" -ne 0 ]]; then
   CONTROL_EVIDENCE_UNSAFE="true"
   POC_COMMAND_INVOKED="false"

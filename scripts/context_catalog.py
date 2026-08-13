@@ -5,12 +5,16 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import stat
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-PHASES = ("intake", "recon", "candidate_generation", "verification", "severity_escalation", "packaging", "finalization", "variant_discovery")
+from audit_transition_policy import STAGES
+
+
+PHASES = STAGES
 STACKS = ("generic", "node", "python", "rust", "go", "java", "php", "docker")
 SURFACES = ("api", "auth", "cmd", "controller", "controllers", "docker-compose", "go-web", "graphql", "http-api", "java-web", "node-library", "node-web", "php", "php-swoole", "php-web", "python-library", "python-web", "route", "router", "routes", "ssrf-sinks")
 BUG_CLASSES = ("ssrf", "path-traversal", "prototype-pollution")
@@ -23,6 +27,37 @@ NON_CLAIMS = [
 NON_AUTHORITY_STATEMENT = (
     "This catalog recommends local reading context only. It does not grant read, execution, "
     "confirmation, promotion, or completion authority."
+)
+PHASE_REFERENCE_MODULES: dict[str, tuple[str, tuple[str, ...]]] = {
+    "phase-intake-recon": (
+        "assets/references/audit-phase-intake-recon.md",
+        ("intake", "recon"),
+    ),
+    "phase-candidate-triage": (
+        "assets/references/audit-phase-candidate-triage.md",
+        ("candidate_generation", "triage"),
+    ),
+    "phase-verification": (
+        "assets/references/audit-phase-verification.md",
+        ("verification", "severity_escalation"),
+    ),
+    "phase-variant-discovery": (
+        "assets/references/audit-phase-variant-discovery.md",
+        ("variant_discovery",),
+    ),
+    "phase-packaging-finalization": (
+        "assets/references/audit-phase-packaging-finalization.md",
+        ("packaging", "finalization"),
+    ),
+    "phase-recording": (
+        "assets/references/audit-phase-recording.md",
+        ("recording",),
+    ),
+}
+SKILL_PHASE_DECLARATION = (
+    "Canonical `--phase` values (in lifecycle order): "
+    + ", ".join(f"`{phase}`" for phase in STAGES)
+    + "."
 )
 
 
@@ -120,6 +155,216 @@ def schema_errors(value: Any, rule: dict[str, Any], schema: dict[str, Any], path
     return errors
 
 
+def _nested(value: Any, keys: tuple[str, ...]) -> Any:
+    current = value
+    for key in keys:
+        if not isinstance(current, dict) or key not in current:
+            return None
+        current = current[key]
+    return current
+
+
+def _check_stage_enum(
+    issues: list[Issue],
+    value: Any,
+    keys: tuple[str, ...],
+    path: str,
+) -> None:
+    if _nested(value, keys) != list(STAGES):
+        add(
+            issues,
+            "CONTEXT_PHASE_SCHEMA_DRIFT",
+            path,
+            "Stage enum must exactly match audit_transition_policy.STAGES in lifecycle order.",
+        )
+
+
+def _skill_contract_paths(skill_root: Path) -> list[tuple[str, Path]]:
+    source = skill_root / "skills/zhulong/SKILL.md"
+    template = skill_root / "templates/claude-skill/SKILL.md"
+    installed = skill_root / "SKILL.md"
+    if source.exists() or template.exists():
+        return [
+            ("skills/zhulong/SKILL.md", source),
+            ("templates/claude-skill/SKILL.md", template),
+        ]
+    return [("SKILL.md", installed)]
+
+
+def _command_tokens(skill_text: str, script_name: str) -> list[str] | None:
+    blocks = re.findall(r"```bash\s*\n(.*?)\n```", skill_text, flags=re.DOTALL)
+    matches = [block for block in blocks if f"/{script_name}" in block]
+    if len(matches) != 1:
+        return None
+    command = re.sub(r"\\\s*\n\s*", " ", matches[0]).strip()
+    try:
+        return shlex.split(command)
+    except ValueError:
+        return None
+
+
+def _validate_skill_context_contract(
+    issues: list[Issue],
+    label: str,
+    raw: bytes,
+) -> None:
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        add(issues, "CONTEXT_SKILL_COMMAND_DRIFT", label, "Skill must be valid UTF-8 text.")
+        return
+    if SKILL_PHASE_DECLARATION not in text:
+        add(
+            issues,
+            "CONTEXT_SKILL_PHASE_DRIFT",
+            label,
+            "Skill phase declaration must exactly match the authoritative lifecycle stages.",
+        )
+
+    planner = _command_tokens(text, "plan_audit_context.py")
+    expected_planner = [
+        "python3",
+        "<skill-root>/scripts/plan_audit_context.py",
+        "--target-dir",
+        "<target-repo>",
+        "--phase",
+        "recon",
+        "--output",
+        "<audit-workspace>/context-plan.json",
+    ]
+    if planner != expected_planner:
+        add(
+            issues,
+            "CONTEXT_SKILL_COMMAND_DRIFT",
+            label,
+            "Skill planner example must use the exact production CLI shape.",
+        )
+
+    validator = _command_tokens(text, "validate_context_plan.py")
+    expected_validator = [
+        "python3",
+        "<skill-root>/scripts/validate_context_plan.py",
+        "--skill-root",
+        "<skill-root>",
+        "--catalog",
+        "<skill-root>/assets/context-catalog.json",
+        "--plan",
+        "<audit-workspace>/context-plan.json",
+    ]
+    if validator != expected_validator:
+        add(
+            issues,
+            "CONTEXT_SKILL_COMMAND_DRIFT",
+            label,
+            "Skill plan-validator example must use the exact production CLI shape.",
+        )
+
+
+def validate_phase_conformance(
+    catalog: Any,
+    catalog_schema: Any,
+    skill_root: Path,
+) -> list[Issue]:
+    """Bind every shipped context carrier to the authoritative FSM vocabulary."""
+    issues: list[Issue] = []
+    if not STAGES or len(set(STAGES)) != len(STAGES) or any(not isinstance(stage, str) or not stage for stage in STAGES):
+        add(
+            issues,
+            "CONTEXT_PHASE_SOURCE_INVALID",
+            "audit_transition_policy.STAGES",
+            "The authoritative stage tuple must contain unique non-empty strings.",
+        )
+        return issues
+
+    _check_stage_enum(
+        issues,
+        catalog_schema,
+        ("$defs", "module", "properties", "phases", "items", "enum"),
+        "assets/schemas/context-catalog.schema.json#/$defs/module/properties/phases/items/enum",
+    )
+    schema_specs = (
+        (
+            "assets/schemas/context-plan.schema.json",
+            ("properties", "phase", "enum"),
+        ),
+        (
+            "assets/schemas/audit-event.schema.json",
+            ("$defs", "stage", "enum"),
+        ),
+        (
+            "assets/schemas/stage-status.schema.json",
+            ("$defs", "stage", "enum"),
+        ),
+    )
+    for relative, keys in schema_specs:
+        schema, error = load_json(skill_root / relative)
+        if error:
+            add(
+                issues,
+                "CONTEXT_PHASE_SCHEMA_UNAVAILABLE",
+                relative,
+                "Required stage-bearing schema cannot be read.",
+            )
+            continue
+        _check_stage_enum(issues, schema, keys, relative)
+
+    if isinstance(catalog, dict):
+        modules = {
+            module.get("id"): module
+            for module in catalog.get("modules", [])
+            if isinstance(module, dict) and isinstance(module.get("id"), str)
+        }
+        for module_id, (expected_path, expected_phases) in PHASE_REFERENCE_MODULES.items():
+            module = modules.get(module_id)
+            if (
+                not isinstance(module, dict)
+                or module.get("path") != expected_path
+                or module.get("phases") != list(expected_phases)
+                or module.get("selection_policy") != "baseline"
+                or module.get("authority") != "recommended_context_only"
+            ):
+                add(
+                    issues,
+                    "CONTEXT_PHASE_REFERENCE_DRIFT",
+                    f"$.modules[{module_id}]",
+                    "Phase reference mapping must match the authoritative lifecycle stage contract.",
+                )
+        continuation = modules.get("continuation-state")
+        if not isinstance(continuation, dict) or continuation.get("phases") != list(STAGES):
+            add(
+                issues,
+                "CONTEXT_PHASE_REFERENCE_DRIFT",
+                "$.modules[continuation-state].phases",
+                "Continuation-state baseline must explicitly cover every authoritative stage.",
+            )
+
+    skill_bytes: list[tuple[str, bytes]] = []
+    for label, path in _skill_contract_paths(skill_root):
+        try:
+            info = os.lstat(path)
+            if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+                raise OSError("not a regular file")
+            raw = path.read_bytes()
+        except OSError:
+            add(
+                issues,
+                "CONTEXT_SKILL_UNAVAILABLE",
+                label,
+                "Required Skill contract cannot be read as a regular file.",
+            )
+            continue
+        skill_bytes.append((label, raw))
+        _validate_skill_context_contract(issues, label, raw)
+    if len(skill_bytes) == 2 and skill_bytes[0][1] != skill_bytes[1][1]:
+        add(
+            issues,
+            "CONTEXT_SKILL_PARITY_DRIFT",
+            "skills/zhulong/SKILL.md",
+            "Source and template Skill bytes must remain identical.",
+        )
+    return issues
+
+
 def validate_catalog(catalog: Any, schema: dict[str, Any], skill_root: Path) -> list[Issue]:
     issues: list[Issue] = []
     for path, message in schema_errors(catalog, schema, schema):
@@ -173,4 +418,5 @@ def load_validated_catalog(skill_root: Path, catalog_path: Path, schema_path: Pa
     if schema_error or not isinstance(schema, dict): add(issues, "CONTEXT_CATALOG_SCHEMA_UNAVAILABLE", "$", "Catalog schema cannot be read.")
     if issues: return None, issues
     issues.extend(validate_catalog(catalog, schema, skill_root))
+    issues.extend(validate_phase_conformance(catalog, schema, skill_root))
     return (catalog if isinstance(catalog, dict) and not issues else None), issues

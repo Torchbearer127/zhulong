@@ -9,7 +9,7 @@ import stat
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 
 MAX_CONTROL_BYTES = 2 * 1024 * 1024
@@ -78,7 +78,7 @@ def _validate_parent(root: Path, path: Path) -> None:
         _require_owned_directory(current, "EVIDENCE_ANCESTOR_UNSAFE")
 
 
-def _existing_identity(path: Path) -> tuple[int, int, int, int] | None:
+def _existing_identity(path: Path) -> tuple[int, int, int, int, int] | None:
     try:
         info = os.lstat(path)
     except FileNotFoundError:
@@ -87,10 +87,10 @@ def _existing_identity(path: Path) -> tuple[int, int, int, int] | None:
         raise _error("EVIDENCE_TARGET_UNSAFE", "host evidence target cannot be inspected") from exc
     if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != os.geteuid():
         raise _error("EVIDENCE_TARGET_UNSAFE", "host evidence target must be a single-link owned regular file")
-    return info.st_dev, info.st_ino, info.st_nlink, info.st_uid
+    return info.st_dev, info.st_ino, info.st_nlink, info.st_uid, info.st_mode
 
 
-def _require_unchanged_target(path: Path, expected: tuple[int, int, int, int] | None) -> None:
+def _require_unchanged_target(path: Path, expected: tuple[int, int, int, int, int] | None) -> None:
     current = _existing_identity(path)
     if current != expected:
         raise _error("EVIDENCE_TARGET_DRIFT", "host evidence target changed during publication")
@@ -105,103 +105,33 @@ def _write_all(fd: int, raw: bytes) -> None:
         offset += written
 
 
-def atomic_write_bytes(root: Path, path: Path, raw: bytes, *, max_bytes: int = MAX_CONTROL_BYTES) -> None:
-    if len(raw) > max_bytes:
-        raise _error("EVIDENCE_SIZE_LIMIT", "host control evidence exceeds its size limit")
-    _validate_parent(root, path)
-    expected = _existing_identity(path)
-    fd = -1
-    temporary = ""
+def _fsync_directory(path: Path) -> None:
+    directory_fd = os.open(path, os.O_RDONLY)
     try:
-        fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.tmp-", dir=path.parent)
-        os.fchmod(fd, 0o600)
-        _write_all(fd, raw)
-        os.fsync(fd)
-        os.close(fd)
-        fd = -1
-        _validate_parent(root, path)
-        _require_unchanged_target(path, expected)
-        os.replace(temporary, path)
-        temporary = ""
-        directory_fd = os.open(path.parent, os.O_RDONLY)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
-    except SafeEvidenceError:
-        raise
-    except OSError as exc:
-        raise _error("EVIDENCE_ATOMIC_WRITE_FAILED", "host control evidence was not published") from exc
+        os.fsync(directory_fd)
     finally:
-        if fd >= 0:
-            os.close(fd)
-        if temporary:
-            try:
-                os.unlink(temporary)
-            except FileNotFoundError:
-                pass
+        os.close(directory_fd)
 
 
-def atomic_write_json(root: Path, path: Path, value: Any) -> None:
-    raw = (json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
-    atomic_write_bytes(root, path, raw)
-
-
-def append_host_text(root: Path, path: Path, text: str, *, max_bytes: int = MAX_CONTROL_BYTES) -> None:
-    """Append to a host-owned regular file through the same identity-checked replace."""
-    _validate_parent(root, path)
-    existing = b""
-    identity = _existing_identity(path)
-    if identity is not None:
-        existing = safe_read_bytes(root, path, max_bytes=max_bytes)
-    raw = existing + text.encode("utf-8", errors="replace")
-    atomic_write_bytes(root, path, raw, max_bytes=max_bytes)
-
-
-def safe_read_json(root: Path, path: Path) -> Any:
+def _read_bytes_with_identity(
+    root: Path,
+    path: Path,
+    *,
+    max_bytes: int,
+    expected: tuple[int, int, int, int, int] | None = None,
+) -> bytes:
     _validate_parent(root, path)
     before = _existing_identity(path)
     if before is None:
         raise _error("EVIDENCE_TARGET_MISSING", "host control evidence is missing")
+    if expected is not None and before != expected:
+        raise _error("EVIDENCE_TARGET_DRIFT", "host control evidence changed before safe open")
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
     try:
         fd = os.open(path, flags)
         try:
             opened = os.fstat(fd)
-            identity = (opened.st_dev, opened.st_ino, opened.st_nlink, opened.st_uid)
-            if identity != before or not stat.S_ISREG(opened.st_mode):
-                raise _error("EVIDENCE_TARGET_DRIFT", "host control evidence changed during safe open")
-            raw = b""
-            while len(raw) <= MAX_CONTROL_BYTES:
-                chunk = os.read(fd, min(65536, MAX_CONTROL_BYTES + 1 - len(raw)))
-                if not chunk:
-                    break
-                raw += chunk
-        finally:
-            os.close(fd)
-    except SafeEvidenceError:
-        raise
-    except OSError as exc:
-        raise _error("EVIDENCE_READ_FAILED", "host control evidence could not be read safely") from exc
-    if len(raw) > MAX_CONTROL_BYTES:
-        raise _error("EVIDENCE_SIZE_LIMIT", "host control evidence exceeds its size limit")
-    try:
-        return json.loads(raw.decode("utf-8"))
-    except (UnicodeError, json.JSONDecodeError) as exc:
-        raise _error("EVIDENCE_JSON_INVALID", "host control evidence is not valid UTF-8 JSON") from exc
-
-
-def safe_read_bytes(root: Path, path: Path, *, max_bytes: int = MAX_CONTROL_BYTES) -> bytes:
-    _validate_parent(root, path)
-    before = _existing_identity(path)
-    if before is None:
-        raise _error("EVIDENCE_TARGET_MISSING", "host control evidence is missing")
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-    try:
-        fd = os.open(path, flags)
-        try:
-            opened = os.fstat(fd)
-            identity = (opened.st_dev, opened.st_ino, opened.st_nlink, opened.st_uid)
+            identity = (opened.st_dev, opened.st_ino, opened.st_nlink, opened.st_uid, opened.st_mode)
             if identity != before or not stat.S_ISREG(opened.st_mode):
                 raise _error("EVIDENCE_TARGET_DRIFT", "host control evidence changed during safe open")
             raw = b""
@@ -219,6 +149,153 @@ def safe_read_bytes(root: Path, path: Path, *, max_bytes: int = MAX_CONTROL_BYTE
     if len(raw) > max_bytes:
         raise _error("EVIDENCE_SIZE_LIMIT", "host control evidence exceeds its size limit")
     return raw
+
+
+def _rollback_publication(
+    root: Path,
+    path: Path,
+    previous_raw: bytes | None,
+    previous_mode: int | None,
+    published: tuple[int, int, int, int, int],
+) -> None:
+    _validate_parent(root, path)
+    _require_unchanged_target(path, published)
+    if previous_raw is None:
+        os.unlink(path)
+        _fsync_directory(path.parent)
+        return
+
+    fd = -1
+    temporary = ""
+    file_fsync_error: OSError | None = None
+    directory_fsync_error: OSError | None = None
+    try:
+        fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.rollback-", dir=path.parent)
+        os.fchmod(fd, previous_mode if previous_mode is not None else 0o600)
+        _write_all(fd, previous_raw)
+        try:
+            os.fsync(fd)
+        except OSError as exc:
+            file_fsync_error = exc
+        os.close(fd)
+        fd = -1
+        _validate_parent(root, path)
+        _require_unchanged_target(path, published)
+        os.replace(temporary, path)
+        temporary = ""
+        try:
+            _fsync_directory(path.parent)
+        except OSError as exc:
+            directory_fsync_error = exc
+        if file_fsync_error is not None or directory_fsync_error is not None:
+            raise _error("EVIDENCE_ROLLBACK_DURABILITY_FAILED", "old host evidence bytes were restored but rollback fsync failed")
+    finally:
+        if fd >= 0:
+            os.close(fd)
+        if temporary:
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass
+
+
+def atomic_write_bytes(
+    root: Path,
+    path: Path,
+    raw: bytes,
+    *,
+    max_bytes: int = MAX_CONTROL_BYTES,
+    post_write_validator: Callable[[bytes], None] | None = None,
+) -> None:
+    if len(raw) > max_bytes:
+        raise _error("EVIDENCE_SIZE_LIMIT", "host control evidence exceeds its size limit")
+    _validate_parent(root, path)
+    expected = _existing_identity(path)
+    previous_raw = (
+        _read_bytes_with_identity(root, path, max_bytes=max_bytes, expected=expected)
+        if expected is not None
+        else None
+    )
+    previous_mode = stat.S_IMODE(os.lstat(path).st_mode) if expected is not None else None
+    fd = -1
+    temporary = ""
+    published: tuple[int, int, int, int, int] | None = None
+    try:
+        fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.tmp-", dir=path.parent)
+        os.fchmod(fd, 0o600)
+        _write_all(fd, raw)
+        os.fsync(fd)
+        os.close(fd)
+        fd = -1
+        _validate_parent(root, path)
+        _require_unchanged_target(path, expected)
+        os.replace(temporary, path)
+        temporary = ""
+        published = _existing_identity(path)
+        if published is None:
+            raise _error("EVIDENCE_TARGET_DRIFT", "published host evidence disappeared")
+        _fsync_directory(path.parent)
+        disk_raw = _read_bytes_with_identity(root, path, max_bytes=max_bytes, expected=published)
+        if disk_raw != raw:
+            raise _error("EVIDENCE_POST_WRITE_DRIFT", "published host evidence bytes do not match the requested bytes")
+        if post_write_validator is not None:
+            post_write_validator(disk_raw)
+        _require_unchanged_target(path, published)
+    except Exception as exc:
+        if published is not None:
+            try:
+                _rollback_publication(root, path, previous_raw, previous_mode, published)
+            except Exception as rollback_exc:
+                if isinstance(rollback_exc, SafeEvidenceError):
+                    raise rollback_exc from exc
+                raise _error("EVIDENCE_ROLLBACK_FAILED", "old host evidence bytes could not be restored") from exc
+        if isinstance(exc, SafeEvidenceError):
+            raise
+        if isinstance(exc, OSError):
+            raise _error("EVIDENCE_ATOMIC_WRITE_FAILED", "host control evidence was not published") from exc
+        raise
+    finally:
+        if fd >= 0:
+            os.close(fd)
+        if temporary:
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass
+
+
+def atomic_write_json(
+    root: Path,
+    path: Path,
+    value: Any,
+    *,
+    post_write_validator: Callable[[bytes], None] | None = None,
+) -> None:
+    raw = (json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    atomic_write_bytes(root, path, raw, post_write_validator=post_write_validator)
+
+
+def append_host_text(root: Path, path: Path, text: str, *, max_bytes: int = MAX_CONTROL_BYTES) -> None:
+    """Append to a host-owned regular file through the same identity-checked replace."""
+    _validate_parent(root, path)
+    existing = b""
+    identity = _existing_identity(path)
+    if identity is not None:
+        existing = safe_read_bytes(root, path, max_bytes=max_bytes)
+    raw = existing + text.encode("utf-8", errors="replace")
+    atomic_write_bytes(root, path, raw, max_bytes=max_bytes)
+
+
+def safe_read_json(root: Path, path: Path) -> Any:
+    try:
+        raw = _read_bytes_with_identity(root, path, max_bytes=MAX_CONTROL_BYTES)
+        return json.loads(raw.decode("utf-8"))
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise _error("EVIDENCE_JSON_INVALID", "host control evidence is not valid UTF-8 JSON") from exc
+
+
+def safe_read_bytes(root: Path, path: Path, *, max_bytes: int = MAX_CONTROL_BYTES) -> bytes:
+    return _read_bytes_with_identity(root, path, max_bytes=max_bytes)
 
 
 def _publish_capture_file(root: Path, path: Path) -> int:

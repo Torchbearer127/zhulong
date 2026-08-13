@@ -258,11 +258,68 @@ PY
 )"
 WORKSPACE_DIR="$TARGET_DIR/$WORKSPACE_NAME"
 
+validate_workspace_layout() {
+  python3 - "$WORKSPACE_DIR" <<'PY'
+import os
+import stat
+import sys
+from pathlib import Path
+
+workspace = Path(sys.argv[1])
+try:
+    workspace_info = os.lstat(workspace)
+except FileNotFoundError:
+    return_code = 0
+else:
+    if stat.S_ISLNK(workspace_info.st_mode) or not stat.S_ISDIR(workspace_info.st_mode):
+        raise SystemExit("workspace destination must be a real directory")
+    return_code = 0
+
+for relative in (
+    "bin",
+    "scripts",
+    "docker",
+    "docker/attacker-container",
+    "poc",
+    "evidence",
+    "confirmed",
+    "runtime",
+):
+    current = workspace
+    for part in Path(relative).parts:
+        current = current / part
+        try:
+            info = os.lstat(current)
+        except FileNotFoundError:
+            break
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+            raise SystemExit("workspace layout contains an unsafe existing directory entry")
+PY
+}
+
+validate_existing_file_target() {
+  python3 - "$1" <<'PY'
+import os
+import stat
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+try:
+    info = os.lstat(path)
+except FileNotFoundError:
+    raise SystemExit(0)
+if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+    raise SystemExit("workspace output target must be an owned regular file or absent")
+PY
+}
+
 copy_file() {
   local src="$1"
   local dst="$2"
 
   mkdir -p "$(dirname "$dst")"
+  validate_existing_file_target "$dst"
   if [[ -e "$dst" && "$FORCE" != "1" ]]; then
     echo "preserve $dst"
     return
@@ -276,6 +333,7 @@ write_text_file() {
   local content="$2"
 
   mkdir -p "$(dirname "$dst")"
+  validate_existing_file_target "$dst"
   if [[ -e "$dst" && "$FORCE" != "1" ]]; then
     echo "preserve $dst"
     return
@@ -290,6 +348,7 @@ write_state_event() {
   python3 "$writer" "$@" --accept-current-revision >/dev/null
 }
 
+validate_workspace_layout
 mkdir -p \
   "$WORKSPACE_DIR/bin" \
   "$WORKSPACE_DIR/scripts" \
@@ -297,6 +356,7 @@ mkdir -p \
   "$WORKSPACE_DIR/poc" \
   "$WORKSPACE_DIR/evidence" \
   "$WORKSPACE_DIR/confirmed"
+validate_workspace_layout
 
 write_text_file "$WORKSPACE_DIR/fingerprint.md" "# Fingerprint\n\n- Stack:\n- Frameworks:\n- Entrypoints:\n- Sources:\n- Sinks:\n- Verification constraints:\n"
 write_text_file "$WORKSPACE_DIR/attack-surface.md" "# Attack Surface Handoff\n\nThis is a concise handoff artifact for audit continuity. It is not a vulnerability report, not raw scanner output, and not a replacement for candidate-findings.md, false-positives.md, unverified-leads.md, or confirmed bundles.\n\n## Repository / Stack Summary\n\n- Repository:\n- Detected stack:\n- Frameworks:\n- Runtime / deployment notes:\n\n## External Entry Points\n\n| ID | Route / Command / API | Method | Handler / Controller | Auth Required | Input Sources | Downstream Sink / Service | Current Verification Status | Notes |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n\n## Trusted and Untrusted Input Sources / Trust Boundaries\n\n- Trusted sources:\n- Untrusted sources:\n- Boundary assumptions to verify:\n\n## Auth / Session / Permission Boundaries\n\n- Authentication mechanism:\n- Session / token handling:\n- Authorization checks:\n- Sensitive routes or roles:\n\n## High-Risk Sinks\n\n| ID | Sink Type | File / Function | Controlled Input | Current Evidence | Status |\n| --- | --- | --- | --- | --- | --- |\n\n## Source-to-Sink Hypotheses\n\n| ID | Source | Sink | Hypothesis | Missing Evidence | Docker Verification Status | Routing |\n| --- | --- | --- | --- | --- | --- | --- |\n\n## Docker Verification Status\n\n- Docker gate:\n- Running service target:\n- Verified commands / evidence paths:\n- Still blocked or missing:\n\n## Confirmed / False-Positive / Unverified Routing Reminder\n\n- Confirmed vulnerabilities require Docker reproduction and belong only under confirmed/<one-folder-per-vulnerability>/.\n- False positives and non-security defects stay in false-positives.md.\n- Plausible but unconfirmed leads stay in candidate-findings.md or unverified-leads.md.\n- Do not generate DOCX reports from attack-surface hypotheses.\n\n## Next Safe Audit Steps\n\n1. \n"

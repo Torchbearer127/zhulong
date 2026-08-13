@@ -17,6 +17,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from audit_transition_policy import STAGES
+
 
 @dataclass(frozen=True)
 class Issue:
@@ -33,6 +35,20 @@ def add_issue(issues: list[Issue], code: str, path: str, message: str, action: s
     issue = Issue(code, path, message, action)
     if issue not in issues:
         issues.append(issue)
+
+
+def validate_stage_schema(schema: dict[str, Any], issues: list[Issue]) -> None:
+    definitions = schema.get("$defs")
+    stage_rule = definitions.get("stage") if isinstance(definitions, dict) else None
+    stage_enum = stage_rule.get("enum") if isinstance(stage_rule, dict) else None
+    if not isinstance(stage_enum, list) or stage_enum != list(STAGES):
+        add_issue(
+            issues,
+            "TOOL_REGISTRY_STAGE_SCHEMA_DRIFT",
+            "$.$defs.stage.enum",
+            "Tool Registry stages must exactly match audit_transition_policy.STAGES.",
+            "Restore the canonical lifecycle stages and ordering.",
+        )
 
 
 def default_schema_path(registry: Path) -> Path:
@@ -187,6 +203,7 @@ def flatten_tools(registry: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
 
 def validate_registry(registry: Any, schema: dict[str, Any], skill_root: Path) -> list[Issue]:
     issues: list[Issue] = []
+    validate_stage_schema(schema, issues)
     for path, message in schema_errors(registry, schema, schema):
         add_issue(issues, "SCHEMA_INVALID", path, message, "Correct the registry to the strict Tool Registry schema.")
     if not isinstance(registry, dict):
@@ -221,6 +238,8 @@ def validate_registry(registry: Any, schema: dict[str, Any], skill_root: Path) -
             authority = tool.get("confirmation_authority")
             wrapper = tool.get("controlled_wrapper")
             network_scope = tool.get("network_scope")
+            planner_status = tool.get("planner_status")
+            isolation_required = "isolation_required" in boundaries or planner_status == "requires_isolation"
             has_external_boundary = "external_network" in boundaries
             has_external_effect = "external_network_access" in effects
             has_external_scope = network_scope in {"restricted_external", "public_external"}
@@ -241,6 +260,22 @@ def validate_registry(registry: Any, schema: dict[str, Any], skill_root: Path) -
             if contains_prohibited and (network_scope not in {None, "none"} or has_external_boundary or has_external_effect):
                 add_issue(issues, "PROHIBITED_NETWORK_FORBIDDEN", f"{tool_path}.network_scope", "A prohibited tool cannot declare network scope, boundary, or effects.", "Remove all active network capability declarations.")
             if not contains_prohibited:
+                if "isolation_required" in boundaries and planner_status != "requires_isolation":
+                    add_issue(issues, "ISOLATION_PLANNER_STATUS_REQUIRED", f"{tool_path}.planner_status", "The isolation_required boundary must use planner_status=requires_isolation.", "Mark the tool inactive until a separately audited fixed Docker wrapper exists.")
+                if planner_status == "requires_isolation" and "isolation_required" not in boundaries:
+                    add_issue(issues, "ISOLATION_BOUNDARY_MISSING", f"{tool_path}.execution_boundaries", "requires_isolation tools must declare the isolation_required boundary.", "Declare the isolation requirement explicitly.")
+                if isolation_required and "target_code_execute" not in effects:
+                    add_issue(issues, "ISOLATION_EFFECT_MISSING", f"{tool_path}.effects", "Isolation-required tools must disclose target_code_execute.", "Declare the target-code execution effect or remove the isolation-required status.")
+                if isolation_required and "docker_exec" in boundaries:
+                    add_issue(issues, "ISOLATION_DOCKER_BOUNDARY_CONFLICT", f"{tool_path}.execution_boundaries", "An unavailable isolation path cannot claim an active docker_exec boundary.", "Use isolation_required until a fixed Docker wrapper has been separately audited.")
+                if isolation_required and wrapper is not None:
+                    add_issue(issues, "ISOLATION_WRAPPER_FORBIDDEN", f"{tool_path}.controlled_wrapper", "An isolation-required tool without an audited Docker implementation cannot claim a controlled execution wrapper.", "Set controlled_wrapper to null; a host skip recorder is not an execution wrapper.")
+                if isolation_required and tool.get("timeout_policy") != "not_executed":
+                    add_issue(issues, "ISOLATION_TIMEOUT_INVALID", f"{tool_path}.timeout_policy", "Isolation-required tools are not executable and must use timeout_policy=not_executed.", "Use not_executed until the isolated runner exists.")
+                if isolation_required and tool.get("failure_policy") != "skipped_requires_isolation":
+                    add_issue(issues, "ISOLATION_FAILURE_POLICY_INVALID", f"{tool_path}.failure_policy", "Isolation-required tools must expose the stable skipped_requires_isolation policy.", "Use the stable isolation skip policy.")
+                if isolation_required and authority != "none":
+                    add_issue(issues, "ISOLATION_AUTHORITY_FORBIDDEN", f"{tool_path}.confirmation_authority", "A skipped isolation-required tool produces no candidate or confirmation authority.", "Set confirmation_authority to none.")
                 if has_external_effect and (not has_external_boundary or not has_external_scope):
                     add_issue(issues, "NETWORK_BOUNDARY_MISSING", tool_path, "External-network effects require external_network boundary and non-none network scope.", "Declare the conservative network boundary and scope.")
                 if has_external_boundary != has_external_scope:
@@ -253,13 +288,13 @@ def validate_registry(registry: Any, schema: dict[str, Any], skill_root: Path) -
                         add_issue(issues, "DAST_NETWORK_BOUNDARY_MISSING", tool_path, "Active DAST requires an explicit external-network or local-target access contract.", "Declare a controlled network boundary/scope/effect or keep the DAST tool prohibited.")
                 if effects & docker_effects and "docker_exec" not in boundaries:
                     add_issue(issues, "DOCKER_BOUNDARY_MISSING", tool_path, "Docker effects require the docker_exec boundary.", "Declare docker_exec or remove the Docker effect.")
-                if "target_code_execute" in effects and "docker_exec" not in boundaries:
+                if "target_code_execute" in effects and "docker_exec" not in boundaries and not isolation_required:
                     add_issue(issues, "CODE_EXEC_BOUNDARY_MISSING", tool_path, "Target code execution must remain inside the Docker execution boundary.", "Declare docker_exec or remove the target-code execution effect.")
                 if "target_repo_write" in effects and "target_repo_write" not in boundaries:
                     add_issue(issues, "TARGET_WRITE_BOUNDARY_MISSING", tool_path, "Target-repository writes require target_repo_write boundary.", "Declare target_repo_write or remove the effect.")
                 if "workspace_evidence_write" in effects and not tool.get("evidence_outputs"):
                     add_issue(issues, "WORKSPACE_EVIDENCE_MISSING", tool_path, "Workspace writes require an explicit evidence output contract.", "Declare workspace-relative evidence output families.")
-                needs_wrapper = bool(boundaries & high_risk_boundaries) or tool.get("kind") == "dast" or authority == "docker_oracle_material_only"
+                needs_wrapper = (bool(boundaries & high_risk_boundaries) or tool.get("kind") == "dast" or authority == "docker_oracle_material_only") and not isolation_required
                 if needs_wrapper and not isinstance(wrapper, dict):
                     add_issue(issues, "WRAPPER_REQUIRED", tool_path, "This active tool capability requires a controlled wrapper.", "Bind a real controlled wrapper or mark the tool prohibited/planning-only.")
             if isinstance(wrapper, dict):

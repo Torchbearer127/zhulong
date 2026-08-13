@@ -21,7 +21,7 @@
     },
     "boundary": {
       "type": "string",
-      "enum": ["host_read_only", "workspace_write", "target_repo_write", "host_cache_write", "docker_exec", "external_network", "prohibited"]
+      "enum": ["host_read_only", "workspace_write", "target_repo_write", "host_cache_write", "docker_exec", "external_network", "isolation_required", "prohibited"]
     },
     "effect": {
       "type": "string",
@@ -67,11 +67,11 @@
         "network_scope": {"type": "string", "enum": ["none", "local_target_only", "restricted_external", "public_external"]},
         "concurrency_policy": {"type": "string", "enum": ["serial", "parallel_safe", "bounded_parallel"]},
         "timeout_policy": {"type": "string", "enum": ["wrapper_enforced", "caller_required", "not_enforced", "not_executed"]},
-        "failure_policy": {"type": "string", "enum": ["fail_closed", "candidate_only", "blocked", "optional_unavailable"]},
+        "failure_policy": {"type": "string", "enum": ["fail_closed", "candidate_only", "blocked", "optional_unavailable", "skipped_requires_isolation"]},
         "evidence_outputs": {"type": "array", "items": {"$ref": "#/$defs/evidenceOutput"}},
         "confirmation_authority": {"type": "string", "enum": ["none", "candidate_only", "docker_oracle_material_only"]},
         "controlled_wrapper": {"type": ["object", "null"], "allOf": [{"if": {"type": "object"}, "then": {"$ref": "#/$defs/wrapper"}}]},
-        "planner_status": {"type": "string", "enum": ["recommended", "planning_only", "wrapper_required", "prohibited"]}
+        "planner_status": {"type": "string", "enum": ["recommended", "planning_only", "wrapper_required", "requires_isolation", "prohibited"]}
       }
     },
     "tier": {

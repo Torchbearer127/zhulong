@@ -18,6 +18,7 @@ from audit_text_safety import first_sensitive_document_text, tested_ref_value_ki
 
 from audit_state_io import (
     AuditStateError,
+    WorkspaceSnapshot,
     normalize_event,
     read_normalized_workspace_events,
     read_workspace_snapshot,
@@ -435,11 +436,28 @@ def validate_handoff_status_consistency(
     *,
     status: dict[str, Any] | None = None,
     handoff_path: Path | None = None,
+    handoff_text: str | None = None,
     state: dict[str, Any] | None = None,
     language: str = "auto",
+    snapshot_override: WorkspaceSnapshot | None = None,
 ) -> dict[str, Any]:
     inspected = state or inspect_workspace_state(workspace, language=language)
-    canonical_status, normalized_events, protocol_mode = read_normalized_workspace_events(workspace)
+    if snapshot_override is None:
+        canonical_status, normalized_events, protocol_mode = read_normalized_workspace_events(workspace)
+    else:
+        if snapshot_override.state is None:
+            raise _contract_error("AUTHORITATIVE_STATE_MISSING", "projected state view is missing")
+        canonical_status = dict(snapshot_override.state)
+        normalized_events = []
+        for event in snapshot_override.journal.events:
+            normalized = normalize_event(event)
+            normalized_events.append({
+                **event,
+                "event": normalized["event_name"],
+                "status": normalized["to_status"],
+                "details": normalized["details"],
+            })
+        protocol_mode = snapshot_override.mode
     status_doc = status if status is not None else canonical_status
     handoff = handoff_path or workspace / "handoff-summary.md"
     errors: list[str] = []
@@ -497,9 +515,10 @@ def validate_handoff_status_consistency(
         except Exception:
             errors.append("shared completion authority chain could not be evaluated")
 
-    if handoff.exists():
-        text = handoff.read_text(encoding="utf-8", errors="ignore")
-        errors.extend(_unsafe_claim_lines(text, validated_count=validated_count))
+    if handoff_text is not None:
+        errors.extend(_unsafe_claim_lines(handoff_text, validated_count=validated_count))
+    elif handoff.exists():
+        errors.extend(_unsafe_claim_lines(handoff.read_text(encoding="utf-8", errors="ignore"), validated_count=validated_count))
     else:
         warnings.append("handoff-summary.md is missing")
 
@@ -775,7 +794,12 @@ def _safe_directory_entry(path: Path, *, allow_missing: bool = False) -> bool:
     return stat.S_ISDIR(info.st_mode) and not stat.S_ISLNK(info.st_mode)
 
 
-def _discover_named_files(workspace: Path, name: str) -> list[tuple[str, Path]]:
+def _discover_named_files(
+    workspace: Path,
+    name: str,
+    *,
+    exclude_confirmed: bool = False,
+) -> list[tuple[str, Path]]:
     found: list[tuple[str, Path]] = []
     if not workspace.is_dir() or workspace.is_symlink():
         raise _contract_error("WORKSPACE_PATH_UNSAFE", "audit workspace must be a real directory")
@@ -789,6 +813,8 @@ def _discover_named_files(workspace: Path, name: str) -> list[tuple[str, Path]]:
             except OSError as exc:
                 raise _contract_error("PATH_UNSAFE", "workspace directory cannot be inspected") from exc
             if stat.S_ISLNK(info.st_mode):
+                continue
+            if exclude_confirmed and root_path == workspace and directory == "confirmed":
                 continue
             if directory in {".git", "__pycache__", CHECKPOINT_DIRNAME} or directory.startswith("."):
                 continue
@@ -839,9 +865,12 @@ def _status_ref(path: Path | None, workspace: Path, *, status: str, summary: str
 
 
 def _find_one_named(workspace: Path, name: str, issues: list[dict[str, Any]]) -> tuple[str, Path] | None:
-    matches = _discover_named_files(workspace, name)
+    # Confirmed bundles are derived reviewer deliverables. Their copied source
+    # materials cannot become a second workspace authority.
+    matches = _discover_named_files(workspace, name, exclude_confirmed=True)
     if len(matches) > 1:
-        issues.append(_issue("DUPLICATE_AUTHORITATIVE_FILE", f"multiple {name} files were found", None))
+        paths = ", ".join(relative for relative, _path in matches[:2])
+        issues.append(_issue("DUPLICATE_AUTHORITATIVE_FILE", f"multiple {name} files were found: {paths}", None))
     return matches[0] if matches else None
 
 
@@ -1001,7 +1030,7 @@ def _collect_candidates_and_verdicts(
 ) -> tuple[list[str], list[str]]:
     candidate_paths: dict[str, Path] = {}
     candidate_ids: set[str] = set()
-    for relative, path in _discover_named_files(workspace, "candidate.json"):
+    for relative, path in _discover_named_files(workspace, "candidate.json", exclude_confirmed=True):
         if "confirmed/" in f"{relative}/" or "/examples/" in f"/{relative}/":
             continue
         try:
@@ -1027,7 +1056,7 @@ def _collect_candidates_and_verdicts(
             issues.append(_issue("CANDIDATE_VALIDATOR_REJECTED", "candidate validator rejected structured candidate", relative))
 
     verdict_ids: set[str] = set()
-    for relative, path in _discover_named_files(workspace, "verifier-verdict.json"):
+    for relative, path in _discover_named_files(workspace, "verifier-verdict.json", exclude_confirmed=True):
         if "confirmed/" in f"{relative}/" or "/examples/" in f"/{relative}/":
             continue
         try:
@@ -1245,6 +1274,7 @@ def derive_handoff_state(
     repo_root: Path | None = None,
     *,
     include_advisory_notes: bool = True,
+    snapshot_override: WorkspaceSnapshot | None = None,
 ) -> dict[str, Any]:
     """Derive one strict, path-redacted handoff document from authoritative files.
 
@@ -1254,7 +1284,7 @@ def derive_handoff_state(
     """
     workspace = workspace.absolute()
     repo_root = (repo_root or workspace.parent).absolute()
-    snapshot = read_workspace_snapshot(workspace)
+    snapshot = snapshot_override or read_workspace_snapshot(workspace)
     if snapshot.state is None or not snapshot.journal.events:
         raise _contract_error("AUTHORITATIVE_STATE_MISSING", "a committed journal and state view are required")
     state = dict(snapshot.state)
@@ -1273,6 +1303,11 @@ def derive_handoff_state(
     state_path = workspace / "stage-status.json"
     _artifact(journal_path, workspace, kind="journal", status="authoritative", artifacts=artifacts)
     _artifact(state_path, workspace, kind="state", status="authoritative", artifacts=artifacts)
+    if snapshot_override is not None:
+        artifacts["audit-events.jsonl"]["sha256"] = _sha256_bytes(snapshot.journal.raw_bytes)
+        if snapshot.state_raw is None:
+            raise _contract_error("AUTHORITATIVE_STATE_MISSING", "projected state bytes are required")
+        artifacts["stage-status.json"]["sha256"] = _sha256_bytes(snapshot.state_raw)
     refs: list[tuple[str, str]] = []
     target_info, refs = _target_and_structured_refs(workspace, repo_root, artifacts, issues)
     recon_info, triage_info = _collect_recon_triage(workspace, repo_root, artifacts, issues, refs)
@@ -1497,6 +1532,27 @@ def _snapshot_signature(workspace: Path, state: dict[str, Any]) -> tuple[Any, ..
     )
 
 
+def publish_handoff_state_document(workspace: Path, document: dict[str, Any]) -> None:
+    issues = validate_handoff_document(document)
+    if issues:
+        raise _contract_error("HANDOFF_SCHEMA_INVALID", "handoff-state.json failed strict validation", issues=issues)
+    sensitive_text = first_sensitive_document_text(document)
+    if sensitive_text is not None:
+        field, category = sensitive_text
+        raise _contract_error(
+            "HANDOFF_SENSITIVE_TEXT_FORBIDDEN",
+            f"{field} contains sensitive material of category {category}",
+            field=field,
+            category=category,
+        )
+    _atomic_write_contract(
+        workspace / HANDOFF_STATE_FILENAME,
+        _canonical_json_bytes(document),
+        workspace,
+        fault_prefix="HANDOFF",
+    )
+
+
 def generate_handoff_state(workspace: Path, repo_root: Path | None = None, *, write: bool = True) -> dict[str, Any]:
     """Generate and optionally publish handoff-state.json under one state lock."""
     workspace = workspace.absolute()
@@ -1548,7 +1604,7 @@ def generate_handoff_state(workspace: Path, repo_root: Path | None = None, *, wr
         ):
             raise _contract_error("CONCURRENT_STATE_CHANGED", "authoritative artifact digests changed during handoff derivation")
         if write:
-            _atomic_write_contract(workspace / HANDOFF_STATE_FILENAME, _canonical_json_bytes(document), workspace, fault_prefix="HANDOFF")
+            publish_handoff_state_document(workspace, document)
         return document
 
 

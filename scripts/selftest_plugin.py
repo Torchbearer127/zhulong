@@ -8,6 +8,7 @@ import io
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -16,6 +17,8 @@ import zipfile
 from pathlib import Path
 from unittest import mock
 from xml.etree import ElementTree as ET
+
+from audit_transition_policy import STAGES
 
 
 REPLAY_TRANSCRIPT_CORPUS_FILES = [
@@ -200,6 +203,11 @@ REQUIRED_FILES = [
     "scripts/validate_audit_protocol.py",
     "scripts/recover_audit_state.py",
     "scripts/selftest_audit_state_protocol.py",
+    "scripts/selftest_rh2_safe_persistence.py",
+    "scripts/selftest_rh2_finalization.py",
+    "scripts/selftest_rh3_context_protocol.py",
+    "scripts/selftest_rh3_1_tool_registry_stage_binding.py",
+    "scripts/selftest_rhs1_secret_fixture_hygiene.py",
     "scripts/validate_workspace_state.py",
     "scripts/validate_target_contract.py",
     "scripts/validate_recon_result.py",
@@ -369,6 +377,11 @@ INSTALLED_SKILL_REQUIRED_FILES = [
     "scripts/validate_audit_protocol.py",
     "scripts/recover_audit_state.py",
     "scripts/selftest_audit_state_protocol.py",
+    "scripts/selftest_rh2_safe_persistence.py",
+    "scripts/selftest_rh2_finalization.py",
+    "scripts/selftest_rh3_context_protocol.py",
+    "scripts/selftest_rh3_1_tool_registry_stage_binding.py",
+    "scripts/selftest_rhs1_secret_fixture_hygiene.py",
     "scripts/render_confirmed_vuln_docx.py",
     "scripts/recording_identity.py",
     "scripts/auto_record_bundle.py",
@@ -894,6 +907,17 @@ def exercise_tool_registry_contract(skill_root: Path) -> None:
     if canonical_payload.get("authority") != "tool_metadata_only" or canonical_payload.get("tool_count", 0) < 30:
         raise SystemExit("FAILED: canonical Tool Registry returned unexpected metadata authority or tool count")
 
+    for isolation_name in ("maven-dependency-tree", "gradle-dependencies", "golangci-lint"):
+        isolation_tool = tool(canonical, isolation_name)
+        if isolation_tool.get("planner_status") != "requires_isolation":
+            raise SystemExit(f"FAILED: {isolation_name} must remain requires_isolation")
+        if isolation_tool.get("failure_policy") != "skipped_requires_isolation":
+            raise SystemExit(f"FAILED: {isolation_name} must use skipped_requires_isolation")
+        if "target_code_execute" not in isolation_tool.get("effects", []) or "isolation_required" not in isolation_tool.get("execution_boundaries", []):
+            raise SystemExit(f"FAILED: {isolation_name} lost its target-code execution boundary")
+        if isolation_tool.get("controlled_wrapper") is not None or isolation_tool.get("confirmation_authority") != "none":
+            raise SystemExit(f"FAILED: {isolation_name} must not expose an unaudited wrapper or authority")
+
     for declared in (
         ("--tool", "source-inspection", "--stage", "recon", "--boundary", "host_read_only", "--effect", "source_read"),
         ("--tool", "semgrep", "--stage", "recon", "--boundary", "workspace_write", "--effect", "workspace_evidence_write"),
@@ -979,6 +1003,29 @@ def exercise_tool_registry_contract(skill_root: Path) -> None:
         sandbox_marker_tool["controlled_wrapper"]["contract_marker"] = "zhulong-tool-contract: docker-verification-v1; timeout=mandatory"
         reject("sandbox-marker", sandbox_marker, "SANDBOX_CONTRACT_MISSING")
 
+        isolation_status = clone()
+        tool(isolation_status, "gradle-dependencies")["planner_status"] = "approved"
+        reject("isolation-status", isolation_status, "ISOLATION_PLANNER_STATUS_REQUIRED")
+
+        isolation_boundary = clone()
+        tool(isolation_boundary, "maven-dependency-tree")["execution_boundaries"].remove("isolation_required")
+        reject("isolation-boundary", isolation_boundary, "ISOLATION_BOUNDARY_MISSING")
+
+        isolation_effect = clone()
+        tool(isolation_effect, "golangci-lint")["effects"].remove("target_code_execute")
+        reject("isolation-effect", isolation_effect, "ISOLATION_EFFECT_MISSING")
+
+        isolation_wrapper = clone()
+        tool(isolation_wrapper, "gradle-dependencies")["controlled_wrapper"] = {
+            "path": "scripts/run_initial_probes.sh",
+            "contract_marker": "zhulong-tool-contract: initial-probes-v1",
+        }
+        reject("isolation-wrapper", isolation_wrapper, "ISOLATION_WRAPPER_FORBIDDEN")
+
+        isolation_failure = clone()
+        tool(isolation_failure, "maven-dependency-tree")["failure_policy"] = "nonfatal_record_and_continue"
+        reject("isolation-failure", isolation_failure, "ISOLATION_FAILURE_POLICY_INVALID")
+
         for name, unsafe_path, expected_code in (
             ("wrapper-absolute", "/tmp/wrapper.sh", "WRAPPER_PATH_UNSAFE"),
             ("wrapper-uri", "file:///tmp/wrapper.sh", "WRAPPER_PATH_UNSAFE"),
@@ -1018,6 +1065,9 @@ def exercise_tool_registry_contract(skill_root: Path) -> None:
         target.mkdir()
         workspace.mkdir()
         (target / "package.json").write_text('{"name":"tool-contract-fixture"}\n', encoding="utf-8")
+        (target / "build.gradle").write_text("// target-controlled planner fixture\n", encoding="utf-8")
+        (target / "gradlew").write_text("#!/usr/bin/env bash\nexit 99\n", encoding="utf-8")
+        (target / "gradlew").chmod(0o755)
         (workspace / "asr-config.json").write_text(
             json.dumps(
                 {
@@ -1045,8 +1095,22 @@ def exercise_tool_registry_contract(skill_root: Path) -> None:
             raise SystemExit("FAILED: scanner planner metadata is not candidate-only")
         if catalog.get("docker-verification-wrapper", {}).get("confirmation_authority") != "docker_oracle_material_only":
             raise SystemExit("FAILED: controlled Docker wrapper metadata lost oracle-material authority")
+        for isolation_name in ("maven-dependency-tree", "gradle-dependencies", "golangci-lint"):
+            isolation_metadata = catalog.get(isolation_name, {})
+            if isolation_metadata.get("recommendation") != "skipped_requires_isolation" or isolation_metadata.get("execution_requirement") != "requires_isolation":
+                raise SystemExit(f"FAILED: planner did not surface the isolation skip for {isolation_name}: {isolation_metadata}")
+            if isolation_metadata.get("confirmation_authority") != "none" or isolation_metadata.get("controlled_wrapper") is not None:
+                raise SystemExit(f"FAILED: planner exposed authority or a wrapper for {isolation_name}")
+        selected_isolation = {
+            entry.get("name"): entry
+            for values in plan.get("recommended_tools", {}).values()
+            for entry in values
+            if entry.get("execution_requirement") == "requires_isolation"
+        }
+        if selected_isolation.get("gradle-dependencies", {}).get("recommendation") != "skipped_requires_isolation":
+            raise SystemExit(f"FAILED: detected Gradle input did not produce a machine-readable isolation skip: {selected_isolation}")
         hints = plan.get("command_hints", [])
-        forbidden_hints = ("docker ", "nuclei", "ffuf", "sqlmap", "zap", "http://", "https://")
+        forbidden_hints = ("docker ", "nuclei", "ffuf", "sqlmap", "zap", "gradle", "mvn ", "golangci", "http://", "https://")
         if any(any(token in hint.lower() for token in forbidden_hints) or "run-initial-probes.sh" not in hint for hint in hints):
             raise SystemExit(f"FAILED: planner exposed a raw tool hint: {hints}")
 
@@ -1177,7 +1241,9 @@ def exercise_context_planning_contract(skill_root: Path) -> None:
         if proc.returncode == 0 or "CONTEXT_REFERENCE_SCOPE_FORBIDDEN" not in json.loads(proc.stdout).get("issue_codes", []):
             raise SystemExit("FAILED: forbidden scope was not checked before reference lstat")
         for basename in ("attacker-container-pattern.md", "omc-runtime-stability.md", "output-language-and-path-contract.md"):
-            bad = json.loads(json.dumps(canonical)); bad["modules"][0]["path"] = f"assets/references/{basename}"
+            bad = json.loads(json.dumps(canonical))
+            ordinary_module = next(item for item in bad["modules"] if item["id"] == "security-tooling")
+            ordinary_module["path"] = f"assets/references/{basename}"
             path = root / f"ordinary-{basename}.catalog.json"; path.write_text(json.dumps(bad), encoding="utf-8")
             proc = subprocess.run([sys.executable, str(catalog_validator), "--skill-root", str(skill_root), "--catalog", str(path), "--json"], cwd=skill_root, capture_output=True, text=True)
             if proc.returncode != 0 or "CONTEXT_REFERENCE_SCOPE_FORBIDDEN" in json.loads(proc.stdout).get("issue_codes", []):
@@ -1273,7 +1339,7 @@ def exercise_root_skill_kernel_contract(skill_root: Path) -> None:
         if "dogfood" in basename or basename.endswith(("-template.md", "-template.json", ".example.json")):
             raise SystemExit(f"FAILED: phase reference triggers forbidden catalog scope: {basename}")
     catalog_modules = {item["path"]: item for item in catalog["modules"]}
-    phases = {"intake", "recon", "candidate_generation", "verification", "severity_escalation", "packaging", "finalization", "variant_discovery"}
+    phases = set(STAGES)
     for phase in phases:
         if not any(module["selection_policy"] == "baseline" and phase in module["phases"] and module["path"] in phase_paths for module in catalog["modules"]):
             raise SystemExit(f"FAILED: phase lacks a deterministic phase-reference baseline: {phase}")
@@ -3343,8 +3409,23 @@ def prepare_source_bound_fixture(repo_root: Path, workspace: Path, contract: dic
         "  language_hint: [python]\n"
         "runtime:\n"
         "  type: docker\n"
+        "  healthcheck:\n"
+        "    command: python -c print-ready\n"
+        "    timeout_seconds: 30\n"
+        "build:\n"
+        "  command: docker build -t zhulong-source-bound-selftest .\n"
+        "start:\n"
+        "  command: docker run --name zhulong-source-bound-selftest -d zhulong-source-bound-selftest\n"
+        "  readiness:\n"
+        "    command: python -c print-ready\n"
+        "    timeout_seconds: 60\n"
         "verify:\n"
-        "  mode: local\n"
+        "  mode: fresh-container\n"
+        "  allowed_network: local-only\n"
+        "  success_oracles:\n"
+        "    - type: stdout\n"
+        "  cleanup:\n"
+        "    command: docker rm -f zhulong-source-bound-selftest\n"
         "scope:\n"
         "  entrypoints:\n"
         "    - id: import-url\n"
@@ -6495,21 +6576,87 @@ def run_sandbox_preflight(
 ) -> dict:
     status_path = workspace / "runtime/sandbox-preflight-status.json"
     status_before = status_path.read_bytes() if status_path.exists() else None
-    output = run_capture_with_env(
-        [
+    compose_files: list[str] = []
+    passthrough: list[str] = []
+    index = 0
+    while index < len(args):
+        if args[index] == "--compose-file" and index + 1 < len(args):
+            compose_files.append(str(Path(args[index + 1]).resolve(strict=True)))
+            index += 2
+            continue
+        passthrough.append(args[index])
+        index += 1
+    pin_payload: dict | None = None
+    effective_args = list(args)
+    if compose_files:
+        pin_cmd = [
             sys.executable,
             str(script_path),
+            "--compose-operation",
+            "pin",
             "--workspace-dir",
             str(workspace),
             "--case-id",
             "sandbox-selftest",
             "--json",
-            *args,
-        ],
-        plugin_root,
-        {},
-        expected_returncode=expected_returncode,
-    )
+        ]
+        for compose_file in compose_files:
+            pin_cmd.extend(["--compose-file", compose_file])
+        pin_proc = subprocess.run(pin_cmd, cwd=plugin_root, capture_output=True, text=True)
+        if pin_proc.returncode != 0:
+            raise SystemExit(f"FAILED: sandbox selftest could not pin a regular Compose fixture: {pin_proc.stdout}\n{pin_proc.stderr}")
+        pin_payload = json.loads(pin_proc.stdout)
+        effective_args = [
+            "--mode",
+            "docker-compose",
+            "--compose-manifest",
+            pin_payload["manifest"],
+            "--compose-manifest-sha256",
+            pin_payload["manifest_sha256"],
+            "--compose-project-directory",
+            str(workspace),
+            *passthrough,
+        ]
+        for compose_file in pin_payload["compose_files"]:
+            effective_args.extend(["--compose-file", compose_file])
+    try:
+        output = run_capture_with_env(
+            [
+                sys.executable,
+                str(script_path),
+                "--workspace-dir",
+                str(workspace),
+                "--case-id",
+                "sandbox-selftest",
+                "--json",
+                *effective_args,
+            ],
+            plugin_root,
+            {},
+            expected_returncode=expected_returncode,
+        )
+    finally:
+        if pin_payload is not None:
+            cleanup = subprocess.run(
+                [
+                    sys.executable,
+                    str(script_path),
+                    "--compose-operation",
+                    "cleanup",
+                    "--workspace-dir",
+                    str(workspace),
+                    "--compose-manifest",
+                    pin_payload["manifest"],
+                    "--compose-manifest-sha256",
+                    pin_payload["manifest_sha256"],
+                    "--json",
+                ],
+                cwd=plugin_root,
+                capture_output=True,
+                text=True,
+            )
+            if cleanup.returncode != 0:
+                raise SystemExit(f"FAILED: sandbox selftest could not clean its pinned Compose fixture: {cleanup.stdout}\n{cleanup.stderr}")
     try:
         status = json.loads(output)
     except json.JSONDecodeError as exc:
@@ -6533,6 +6680,11 @@ def require_sandbox_rejection(status: dict, pattern: str, label: str) -> None:
         raise SystemExit(f"FAILED: sandbox preflight missing pattern {pattern} for {label}: {status}")
     if not status.get("review_only"):
         raise SystemExit(f"FAILED: rejected sandbox status must be review-only for {label}")
+
+
+def require_sandbox_issue(status: dict, issue_code: str, label: str) -> None:
+    if issue_code not in status.get("issue_codes", []):
+        raise SystemExit(f"FAILED: sandbox preflight missing {issue_code} for {label}: {status}")
 
 
 def exercise_sandbox_preflight(script_path: Path, workspace: Path, plugin_root: Path) -> None:
@@ -6621,6 +6773,7 @@ def exercise_sandbox_preflight(script_path: Path, workspace: Path, plugin_root: 
     )
 
     safe_compose = fixtures / "safe-attacker.yml"
+    (workspace / "poc").mkdir(exist_ok=True)
     safe_compose.write_text(
         "services:\n"
         "  attacker:\n"
@@ -6630,9 +6783,6 @@ def exercise_sandbox_preflight(script_path: Path, workspace: Path, plugin_root: 
         "      org.zhulong.managed: \"true\"\n"
         "    cap_drop:\n"
         "      - ALL\n"
-        "    security_opt:\n"
-        "      - no-new-privileges:true\n"
-        "    network_mode: bridge\n"
         "    volumes:\n"
         "      - type: bind\n"
         "        source: ./poc\n"
@@ -6643,6 +6793,545 @@ def exercise_sandbox_preflight(script_path: Path, workspace: Path, plugin_root: 
     status = run_sandbox_preflight(script_path, workspace, plugin_root, ["--compose-file", str(safe_compose)], expected_returncode=0)
     if status.get("status") != "passed" or status.get("findings"):
         raise SystemExit(f"FAILED: safe Zhulong attacker compose should pass sandbox preflight: {status}")
+
+    closed_subset_cases = {
+        "arbitrary-bind": (
+            "services:\n  app:\n    image: alpine\n    privileged: false\n    volumes:\n      - ../arbitrary-host:/loot:ro\n",
+            "COMPOSE_BIND_SOURCE_FORBIDDEN",
+        ),
+        "named-volume": (
+            "services:\n  app:\n    image: alpine\n    privileged: false\n    volumes:\n      - cache:/cache:ro\n",
+            "COMPOSE_VOLUME_UNSUPPORTED",
+        ),
+        "anonymous-volume": (
+            "services:\n  app:\n    image: alpine\n    privileged: false\n    volumes:\n      - /cache\n",
+            "COMPOSE_VOLUME_UNSUPPORTED",
+        ),
+        "external-volume": (
+            "services:\n  app:\n    image: alpine\n    privileged: false\n    volumes: [cache:/cache:ro]\nvolumes:\n  cache:\n    external: true\n",
+            "COMPOSE_VOLUME_UNSUPPORTED",
+        ),
+        "workspace-writable": (
+            "services:\n  app:\n    image: alpine\n    privileged: false\n    volumes:\n      - .:/workspace/output\n",
+            "COMPOSE_BIND_SOURCE_FORBIDDEN",
+        ),
+        "namespace": (
+            "services:\n  app:\n    image: alpine\n    privileged: false\n    network_mode: bridge\n",
+            "COMPOSE_NAMESPACE_UNSUPPORTED",
+        ),
+        "capability": (
+            "services:\n  app:\n    image: alpine\n    privileged: false\n    security_opt: [no-new-privileges:true]\n",
+            "COMPOSE_CAPABILITY_UNSUPPORTED",
+        ),
+        "device": (
+            "services:\n  app:\n    image: alpine\n    privileged: false\n    devices: [/dev/null:/dev/null]\n",
+            "COMPOSE_CAPABILITY_UNSUPPORTED",
+        ),
+        "host-file": (
+            "services:\n  app:\n    build: .\n    privileged: false\n",
+            "COMPOSE_HOST_FILE_UNSUPPORTED",
+        ),
+        "interpolation": (
+            "services:\n  app:\n    image: ${IMAGE_NAME}\n    privileged: false\n",
+            "COMPOSE_FIELD_UNSUPPORTED",
+        ),
+        "duplicate-key": (
+            "services:\n  app:\n    image: alpine\n    image: busybox\n    privileged: false\n",
+            "COMPOSE_INPUT_UNSAFE",
+        ),
+        "anchor-alias": (
+            "services:\n  app: &base\n    image: alpine\n    privileged: false\n  copy:\n    <<: *base\n",
+            "COMPOSE_FIELD_UNSUPPORTED",
+        ),
+    }
+    (workspace.parent / "arbitrary-host").mkdir(exist_ok=True)
+    closed_subset_cases["absolute-arbitrary-bind"] = (
+        "services:\n  app:\n    image: alpine\n    privileged: false\n    volumes:\n"
+        f"      - {workspace.parent / 'arbitrary-host'}:/loot:ro\n",
+        "COMPOSE_BIND_SOURCE_FORBIDDEN",
+    )
+    for name, (content, issue_code) in closed_subset_cases.items():
+        fixture = fixtures / f"{name}.yml"
+        fixture.write_text(content, encoding="utf-8")
+        rejected = run_sandbox_preflight(script_path, workspace, plugin_root, ["--compose-file", str(fixture)], expected_returncode=1)
+        require_sandbox_issue(rejected, issue_code, name)
+
+    output_compose = fixtures / "safe-output.yml"
+    output_compose.write_text(
+        "services:\n"
+        "  app:\n"
+        "    image: alpine\n"
+        "    privileged: false\n"
+        "    volumes:\n"
+        "      - type: bind\n"
+        f"        source: ./evidence/sandbox-selftest/container-output\n"
+        "        target: /workspace/output\n"
+        "        read_only: false\n",
+        encoding="utf-8",
+    )
+    output_status = run_sandbox_preflight(script_path, workspace, plugin_root, ["--compose-file", str(output_compose)], expected_returncode=0)
+    if output_status.get("findings"):
+        raise SystemExit(f"FAILED: exact case output bind should pass: {output_status}")
+
+    target_compose = fixtures / "safe-target.yml"
+    target_compose.write_text(
+        "services:\n  app:\n    image: alpine\n    privileged: false\n    volumes:\n"
+        f"      - {workspace.parent.resolve()}:/workspace/target:ro\n",
+        encoding="utf-8",
+    )
+    target_status = run_sandbox_preflight(script_path, workspace, plugin_root, ["--compose-file", str(target_compose)], expected_returncode=0)
+    if target_status.get("findings"):
+        raise SystemExit(f"FAILED: exact target-repo read-only bind should pass: {target_status}")
+
+    override_compose = fixtures / "safe-override.yml"
+    override_compose.write_text("services:\n  attacker:\n    image: alpine:3.20\n    privileged: false\n", encoding="utf-8")
+    ordered_status = run_sandbox_preflight(
+        script_path,
+        workspace,
+        plugin_root,
+        ["--compose-file", str(safe_compose), "--compose-file", str(override_compose)],
+        expected_returncode=0,
+    )
+    if ordered_status.get("findings"):
+        raise SystemExit(f"FAILED: ordered Compose override inputs should pass: {ordered_status}")
+
+    def require_pin_rejection(path: Path, label: str) -> None:
+        try:
+            input_value = path.relative_to(workspace).as_posix()
+        except ValueError:
+            input_value = str(path.resolve(strict=False))
+        proc = subprocess.run(
+            [
+                sys.executable,
+                str(script_path),
+                "--compose-operation",
+                "pin",
+                "--workspace-dir",
+                str(workspace),
+                "--case-id",
+                "sandbox-selftest",
+                "--compose-file",
+                input_value,
+                "--json",
+            ],
+            cwd=plugin_root,
+            capture_output=True,
+            text=True,
+        )
+        payload = json.loads(proc.stdout)
+        if proc.returncode == 0 or payload.get("issue_code") != "COMPOSE_INPUT_UNSAFE":
+            raise SystemExit(f"FAILED: unsafe Compose pin input passed for {label}: {payload}")
+
+    symlink_input = fixtures / "symlink.yml"
+    symlink_input.unlink(missing_ok=True)
+    symlink_input.symlink_to(safe_compose.name)
+    require_pin_rejection(symlink_input, "symlink")
+    symlink_input.unlink()
+    hardlink_input = fixtures / "hardlink.yml"
+    hardlink_input.unlink(missing_ok=True)
+    os.link(safe_compose, hardlink_input)
+    require_pin_rejection(hardlink_input, "hardlink")
+    hardlink_input.unlink()
+    fifo_input = fixtures / "fifo.yml"
+    fifo_input.unlink(missing_ok=True)
+    os.mkfifo(fifo_input)
+    require_pin_rejection(fifo_input, "FIFO")
+    fifo_input.unlink()
+    real_ancestor = fixtures / "real-ancestor"
+    real_ancestor.mkdir(exist_ok=True)
+    (real_ancestor / "compose.yml").write_text("services: {}\n", encoding="utf-8")
+    linked_ancestor = fixtures / "linked-ancestor"
+    linked_ancestor.unlink(missing_ok=True)
+    linked_ancestor.symlink_to(real_ancestor.name, target_is_directory=True)
+    require_pin_rejection(linked_ancestor / "compose.yml", "ancestor symlink")
+    linked_ancestor.unlink()
+    traversal_proc = subprocess.run(
+        [
+            sys.executable, str(script_path), "--compose-operation", "pin",
+            "--workspace-dir", str(workspace), "--case-id", "sandbox-selftest",
+            "--compose-file", "../outside-compose.yml", "--json",
+        ],
+        cwd=plugin_root,
+        capture_output=True,
+        text=True,
+    )
+    traversal_payload = json.loads(traversal_proc.stdout)
+    if traversal_proc.returncode == 0 or traversal_payload.get("issue_code") != "COMPOSE_INPUT_UNSAFE":
+        raise SystemExit(f"FAILED: relative Compose traversal did not fail closed: {traversal_payload}")
+    outside_input = workspace.parent.parent / "outside-compose.yml"
+    outside_input.write_text("services: {}\n", encoding="utf-8")
+    require_pin_rejection(outside_input, "outside workspace")
+
+    pin_source = fixtures / "pin-stability.yml"
+    pin_source.write_text("services:\n  app:\n    image: alpine\n    privileged: false\n", encoding="utf-8")
+    pin_proc = subprocess.run(
+        [
+            sys.executable, str(script_path), "--compose-operation", "pin",
+            "--workspace-dir", str(workspace), "--case-id", "sandbox-selftest",
+            "--compose-file", str(pin_source.resolve()), "--json",
+        ],
+        cwd=plugin_root,
+        capture_output=True,
+        text=True,
+    )
+    if pin_proc.returncode != 0:
+        raise SystemExit(f"FAILED: Compose identity fixture could not be pinned: {pin_proc.stdout}")
+    pin = json.loads(pin_proc.stdout)
+    pin_source.write_text("services:\n  app:\n    image: changed\n    privileged: true\n", encoding="utf-8")
+    verify_base = [
+        sys.executable, str(script_path), "--compose-operation", "verify",
+        "--workspace-dir", str(workspace), "--compose-manifest", pin["manifest"],
+        "--compose-manifest-sha256", pin["manifest_sha256"], "--json",
+    ]
+    original_verify = subprocess.run(
+        [*verify_base, "--compose-file", pin["compose_files"][0]],
+        cwd=plugin_root,
+        capture_output=True,
+        text=True,
+    )
+    if original_verify.returncode != 0:
+        raise SystemExit(f"FAILED: source mutation changed the pinned Compose snapshot: {original_verify.stdout}")
+    Path(pin["compose_files"][0]).write_text("services: {}\n", encoding="utf-8")
+    drift_verify = subprocess.run(
+        [*verify_base, "--compose-file", pin["compose_files"][0]],
+        cwd=plugin_root,
+        capture_output=True,
+        text=True,
+    )
+    drift_payload = json.loads(drift_verify.stdout)
+    if drift_verify.returncode == 0 or drift_payload.get("issue_code") != "COMPOSE_INPUT_IDENTITY_DRIFT":
+        raise SystemExit(f"FAILED: pinned Compose snapshot mutation did not fail closed: {drift_payload}")
+    cleanup_proc = subprocess.run(
+        [
+            sys.executable, str(script_path), "--compose-operation", "cleanup",
+            "--workspace-dir", str(workspace), "--compose-manifest", pin["manifest"],
+            "--compose-manifest-sha256", pin["manifest_sha256"], "--json",
+        ],
+        cwd=plugin_root,
+        capture_output=True,
+        text=True,
+    )
+    if cleanup_proc.returncode != 0:
+        raise SystemExit(f"FAILED: exact mutated pin set could not be cleaned safely: {cleanup_proc.stdout}")
+
+
+def exercise_compose_bind_identity_repair(plugin_root: Path, temp_root: Path) -> None:
+    """Exercise the production CLI and wrapper against host-bind identity attacks."""
+    preflight = plugin_root / "scripts/check_sandbox_preflight.py"
+    bootstrap = plugin_root / "scripts/bootstrap_verification_workspace.sh"
+    matrix_root = temp_root / "compose-bind-identity-repair"
+    matrix_root.mkdir(parents=True, exist_ok=True)
+
+    def make_workspace(name: str) -> tuple[Path, Path]:
+        target = matrix_root / name / "target"
+        workspace = target / "security-research"
+        workspace.mkdir(parents=True)
+        (workspace / "asr-config.json").write_text(
+            json.dumps({"project_root_name": target.name}) + "\n",
+            encoding="utf-8",
+        )
+        (workspace / "poc").mkdir()
+        (workspace / "evidence").mkdir()
+        return target, workspace
+
+    def run_preflight_case(workspace: Path, volume: str, *, case_id: str = "identity-case") -> dict[str, object]:
+        compose = workspace / "compose.yml"
+        compose.write_text(
+            "services:\n"
+            "  verifier:\n"
+            "    image: local/verifier\n"
+            "    privileged: false\n"
+            "    volumes:\n"
+            f"      - '{volume}'\n",
+            encoding="utf-8",
+        )
+        pin = subprocess.run(
+            [
+                sys.executable,
+                str(preflight),
+                "--compose-operation",
+                "pin",
+                "--workspace-dir",
+                str(workspace),
+                "--case-id",
+                case_id,
+                "--compose-file",
+                "compose.yml",
+                "--json",
+            ],
+            cwd=plugin_root,
+            capture_output=True,
+            text=True,
+        )
+        if pin.returncode != 0:
+            raise SystemExit(f"FAILED: bind identity fixture could not be pinned: {pin.stdout}{pin.stderr}")
+        pin_payload = json.loads(pin.stdout)
+        try:
+            checked = subprocess.run(
+                [
+                    sys.executable,
+                    str(preflight),
+                    "--workspace-dir",
+                    str(workspace),
+                    "--case-id",
+                    case_id,
+                    "--mode",
+                    "docker-compose",
+                    "--compose-file",
+                    pin_payload["compose_files"][0],
+                    "--compose-manifest",
+                    pin_payload["manifest"],
+                    "--compose-manifest-sha256",
+                    pin_payload["manifest_sha256"],
+                    "--compose-project-directory",
+                    str(workspace),
+                    "--json",
+                ],
+                cwd=plugin_root,
+                capture_output=True,
+                text=True,
+            )
+            result = json.loads(checked.stdout)
+            result["_returncode"] = checked.returncode
+            return result
+        finally:
+            cleanup = subprocess.run(
+                [
+                    sys.executable,
+                    str(preflight),
+                    "--compose-operation",
+                    "cleanup",
+                    "--workspace-dir",
+                    str(workspace),
+                    "--compose-manifest",
+                    pin_payload["manifest"],
+                    "--compose-manifest-sha256",
+                    pin_payload["manifest_sha256"],
+                    "--json",
+                ],
+                cwd=plugin_root,
+                capture_output=True,
+                text=True,
+            )
+            if cleanup.returncode != 0:
+                raise SystemExit(f"FAILED: bind identity fixture cleanup failed: {cleanup.stdout}{cleanup.stderr}")
+
+    target, workspace = make_workspace("poc-symlink")
+    outside = workspace.parent / "arbitrary-host"
+    outside.mkdir()
+    (workspace / "poc").rmdir()
+    (workspace / "poc").symlink_to(outside, target_is_directory=True)
+    for source in (str(workspace.resolve() / "poc"), "./poc"):
+        result = run_preflight_case(workspace, f"{source}:/workspace/poc:ro")
+        if result.get("_returncode") == 0 or "COMPOSE_BIND_SOURCE_FORBIDDEN" not in result.get("issue_codes", []):
+            raise SystemExit(f"FAILED: poc symlink bind was accepted: {source}: {result}")
+    if any(outside.iterdir()):
+        raise SystemExit("FAILED: poc symlink test wrote through its arbitrary target")
+
+    _target, wrapper_workspace = make_workspace("wrapper-poc-symlink")
+    wrapper_outside = wrapper_workspace.parent / "wrapper-outside"
+    wrapper_outside.mkdir()
+    (wrapper_workspace / "poc").rmdir()
+    (wrapper_workspace / "poc").symlink_to(wrapper_outside, target_is_directory=True)
+    (wrapper_workspace / "compose.yml").write_text(
+        "services:\n  verifier:\n    image: local/verifier\n    privileged: false\n    volumes:\n      - './poc:/workspace/poc:ro'\n",
+        encoding="utf-8",
+    )
+    wrapper_log = wrapper_workspace / "docker-calls.log"
+    fakebin = wrapper_workspace / "fakebin"
+    fakebin.mkdir()
+    fake_docker = fakebin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf '%s\\n' \"$*\" >> \"$ZHULONG_BIND_REPAIR_DOCKER_LOG\"\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+    wrapper_proc = subprocess.run(
+        [
+            "bash",
+            str(plugin_root / "scripts/run_verification_case.sh"),
+            "--workspace-dir",
+            str(wrapper_workspace),
+            "--case-id",
+            "wrapper-symlink",
+            "--mode",
+            "docker-compose",
+            "--compose-file",
+            "compose.yml",
+            "--compose-service",
+            "verifier",
+            "--timeout-seconds",
+            "10",
+            "--expected-oracle",
+            "WRAPPER_ORACLE",
+        ],
+        cwd=plugin_root,
+        env={
+            **os.environ,
+            "PATH": f"{fakebin}{os.pathsep}{os.environ.get('PATH', '')}",
+            "ZHULONG_BIND_REPAIR_DOCKER_LOG": str(wrapper_log),
+        },
+        capture_output=True,
+        text=True,
+    )
+    if wrapper_proc.returncode == 0 or wrapper_log.exists() or "COMPOSE_BIND_SOURCE_FORBIDDEN" not in (wrapper_proc.stdout + wrapper_proc.stderr):
+        raise SystemExit(f"FAILED: wrapper crossed Docker for a symlink bind: {wrapper_proc.stdout}{wrapper_proc.stderr}")
+    if any(wrapper_outside.iterdir()):
+        raise SystemExit("FAILED: wrapper symlink test wrote through its arbitrary target")
+
+    _target, workspace = make_workspace("evidence-ancestor-symlink")
+    outside = workspace.parent / "evidence-outside"
+    outside.mkdir()
+    (workspace / "evidence").rmdir()
+    (workspace / "evidence").symlink_to(outside, target_is_directory=True)
+    result = run_preflight_case(workspace, "./evidence/identity-case/container-output:/workspace/output")
+    if result.get("_returncode") == 0 or "COMPOSE_BIND_SOURCE_FORBIDDEN" not in result.get("issue_codes", []):
+        raise SystemExit(f"FAILED: evidence ancestor symlink bind was accepted: {result}")
+    if any(outside.iterdir()):
+        raise SystemExit("FAILED: evidence ancestor symlink test wrote through its arbitrary target")
+
+    _target, workspace = make_workspace("output-leaf-symlink")
+    case_dir = workspace / "evidence/identity-case"
+    case_dir.mkdir()
+    outside = workspace.parent / "output-outside"
+    outside.mkdir()
+    (case_dir / "container-output").symlink_to(outside, target_is_directory=True)
+    result = run_preflight_case(workspace, "./evidence/identity-case/container-output:/workspace/output")
+    if result.get("_returncode") == 0 or "COMPOSE_BIND_SOURCE_FORBIDDEN" not in result.get("issue_codes", []):
+        raise SystemExit(f"FAILED: output leaf symlink bind was accepted: {result}")
+
+    for name, make_bad_entry in (("poc-file", lambda path: path.write_text("not-a-directory\n", encoding="utf-8")), ("poc-fifo", os.mkfifo)):
+        _target, workspace = make_workspace(name)
+        bad_poc = workspace / "poc"
+        bad_poc.rmdir()
+        make_bad_entry(bad_poc)
+        result = run_preflight_case(workspace, "./poc:/workspace/poc:ro")
+        if result.get("_returncode") == 0 or "COMPOSE_BIND_SOURCE_FORBIDDEN" not in result.get("issue_codes", []):
+            raise SystemExit(f"FAILED: non-directory poc bind was accepted: {name}: {result}")
+
+    _target, workspace = make_workspace("poc-hardlink")
+    hardlink_source = workspace / "hardlink-source"
+    hardlink_source.write_text("not-a-directory\n", encoding="utf-8")
+    (workspace / "poc").rmdir()
+    os.link(hardlink_source, workspace / "poc")
+    result = run_preflight_case(workspace, "./poc:/workspace/poc:ro")
+    if result.get("_returncode") == 0 or "COMPOSE_BIND_SOURCE_FORBIDDEN" not in result.get("issue_codes", []):
+        raise SystemExit(f"FAILED: hardlink-like poc bind was accepted: {result}")
+
+    for name, make_bad_entry in (("evidence-file", lambda path: path.write_text("not-a-directory\n", encoding="utf-8")), ("evidence-fifo", os.mkfifo)):
+        _target, workspace = make_workspace(name)
+        bad_evidence = workspace / "evidence"
+        bad_evidence.rmdir()
+        make_bad_entry(bad_evidence)
+        result = run_preflight_case(workspace, "./evidence/identity-case/container-output:/workspace/output")
+        if result.get("_returncode") == 0 or "COMPOSE_BIND_SOURCE_FORBIDDEN" not in result.get("issue_codes", []):
+            raise SystemExit(f"FAILED: non-directory evidence ancestor was accepted: {name}: {result}")
+
+    _target, workspace = make_workspace("directory-identity-drift")
+    compose = workspace / "compose.yml"
+    compose.write_text(
+        "services:\n  verifier:\n    image: local/verifier\n    privileged: false\n    volumes:\n      - './poc:/workspace/poc:ro'\n",
+        encoding="utf-8",
+    )
+    pin = subprocess.run(
+        [sys.executable, str(preflight), "--compose-operation", "pin", "--workspace-dir", str(workspace), "--case-id", "identity-case", "--compose-file", "compose.yml", "--json"],
+        cwd=plugin_root,
+        capture_output=True,
+        text=True,
+    )
+    if pin.returncode != 0:
+        raise SystemExit(f"FAILED: identity drift fixture could not be pinned: {pin.stdout}{pin.stderr}")
+    pin_payload = json.loads(pin.stdout)
+    try:
+        first = subprocess.run(
+            [sys.executable, str(preflight), "--workspace-dir", str(workspace), "--case-id", "identity-case", "--mode", "docker-compose", "--compose-file", pin_payload["compose_files"][0], "--compose-manifest", pin_payload["manifest"], "--compose-manifest-sha256", pin_payload["manifest_sha256"], "--compose-project-directory", str(workspace), "--json"],
+            cwd=plugin_root,
+            capture_output=True,
+            text=True,
+        )
+        first_payload = json.loads(first.stdout)
+        if first.returncode != 0:
+            raise SystemExit(f"FAILED: clean bind identity check did not pass: {first.stdout}")
+        expected_identities = first_payload["bind_identities"]
+        poc_identity = expected_identities.get("/workspace/poc", {})
+        if (
+            poc_identity.get("schema_version") != 3
+            or set(poc_identity.get("stable", {})) != {"components"}
+            or set(poc_identity.get("observation", {})) != {"mtime_ns", "nlink"}
+        ):
+            raise SystemExit(f"FAILED: bind identity did not separate stable components from observations: {poc_identity}")
+
+        def verify_expected(expected: dict[str, object]) -> tuple[int, dict[str, object]]:
+            checked = subprocess.run(
+                [sys.executable, str(preflight), "--compose-operation", "verify", "--workspace-dir", str(workspace), "--case-id", "identity-case", "--compose-file", pin_payload["compose_files"][0], "--compose-manifest", pin_payload["manifest"], "--compose-manifest-sha256", pin_payload["manifest_sha256"], "--expected-bind-identities", json.dumps(expected, sort_keys=True, separators=(",", ":")), "--json"],
+                cwd=plugin_root,
+                capture_output=True,
+                text=True,
+            )
+            return checked.returncode, json.loads(checked.stdout)
+
+        for field in ("device", "inode", "file_type", "mode", "uid", "gid"):
+            forged = json.loads(json.dumps(expected_identities))
+            component = forged["/workspace/poc"]["stable"]["components"][-1]
+            component[field] = stat.S_IFREG if field == "file_type" else component[field] + 1
+            returncode, payload = verify_expected(forged)
+            if returncode == 0 or payload.get("issue_code") != "COMPOSE_BIND_SOURCE_FORBIDDEN":
+                raise SystemExit(f"FAILED: forged bind stable field was accepted: {field}: {payload}")
+
+        for label, forged in (
+            ("deleted-map", {}),
+            ("old-schema", {"/workspace/poc": {"schema_version": 2, "present": True}}),
+        ):
+            returncode, payload = verify_expected(forged)
+            if returncode == 0 or payload.get("issue_code") != "COMPOSE_BIND_SOURCE_FORBIDDEN":
+                raise SystemExit(f"FAILED: {label} expected bind identity was accepted: {payload}")
+
+        poc_info = os.stat(workspace / "poc", follow_symlinks=False)
+        os.utime(
+            workspace / "poc",
+            ns=(poc_info.st_atime_ns, poc_info.st_mtime_ns + 1_000_000_000),
+            follow_symlinks=False,
+        )
+        returncode, payload = verify_expected(expected_identities)
+        if returncode == 0 or payload.get("issue_code") != "COMPOSE_BIND_SOURCE_FORBIDDEN":
+            raise SystemExit(f"FAILED: read-only poc observation drift was accepted: {payload}")
+
+        old_poc = workspace / "poc"
+        old_poc.rename(workspace / "poc-old")
+        (workspace / "poc").mkdir()
+        returncode, second_payload = verify_expected(expected_identities)
+        if returncode == 0 or second_payload.get("issue_code") != "COMPOSE_BIND_SOURCE_FORBIDDEN":
+            raise SystemExit(f"FAILED: bind directory identity drift was accepted: {second_payload}")
+    finally:
+        cleanup = subprocess.run(
+            [sys.executable, str(preflight), "--compose-operation", "cleanup", "--workspace-dir", str(workspace), "--compose-manifest", pin_payload["manifest"], "--compose-manifest-sha256", pin_payload["manifest_sha256"], "--json"],
+            cwd=plugin_root,
+            capture_output=True,
+            text=True,
+        )
+        if cleanup.returncode != 0:
+            raise SystemExit(f"FAILED: identity drift fixture cleanup failed: {cleanup.stdout}{cleanup.stderr}")
+
+    for bad_name in ("poc", "evidence", "confirmed"):
+        repo = matrix_root / f"bootstrap-{bad_name}"
+        repo.mkdir()
+        workspace = repo / "security-research-test"
+        workspace.mkdir()
+        outside = repo / "outside"
+        outside.mkdir()
+        (workspace / bad_name).symlink_to(outside, target_is_directory=True)
+        proc = subprocess.run(
+            ["bash", str(bootstrap), "--target-dir", str(repo), "--workspace-name", workspace.name],
+            cwd=plugin_root,
+            capture_output=True,
+            text=True,
+        )
+        if proc.returncode == 0 or (repo / ".asr-latest-workspace").exists() or any(outside.iterdir()):
+            raise SystemExit(f"FAILED: bootstrap followed pre-existing {bad_name} symlink: {proc.stdout}{proc.stderr}")
+
+    print("COMPOSE BIND IDENTITY REPAIR SELFTEST PASSED")
 
 
 def exercise_runner_sandbox_rejection(run_script: Path, workspace: Path, plugin_root: Path) -> None:
@@ -6968,6 +7657,297 @@ def exercise_verification_wrapper_state_boundary(plugin_root: Path, temp_root: P
         raise SystemExit("FAILED: confirmed path did not commit start then result observations")
     if len(poc_calls) != 1 or not any(call.startswith("run ") for call in docker_calls):
         raise SystemExit("FAILED: confirmed path did not invoke exactly one PoC container command")
+
+    compose_workspace = make_workspace("compose-cwd-identity", "verification")
+    compose_source = compose_workspace / "compose.yml"
+    compose_source.write_text(
+        "services:\n"
+        "  app:\n"
+        "    image: stub:compose\n"
+        "    privileged: false\n"
+        "    environment:\n"
+        "      COMPOSE_IDENTITY: WORKSPACE_BYTES\n",
+        encoding="utf-8",
+    )
+    expected_compose_digest = hashlib.sha256(compose_source.read_bytes()).hexdigest()
+    caller_dir = matrix_root / "compose-caller"
+    caller_dir.mkdir(exist_ok=True)
+    (caller_dir / "compose.yml").write_text(
+        "services:\n  app:\n    image: attacker:caller\n    privileged: true\n    environment:\n      COMPOSE_IDENTITY: CALLER_BYTES\n",
+        encoding="utf-8",
+    )
+    compose_log, _ = install_fake_docker(compose_workspace)
+    compose_stub = compose_workspace / "fakebin/docker"
+    compose_stub.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "printf 'argv=%s\\n' \"$*\" >> \"$ZHULONG_DOCKER_CALL_LOG\"\n"
+        "record_output_identity() {\n"
+        "  [[ -n \"${ZHULONG_COMPOSE_SIDE_EFFECT_LOG:-}\" && -n \"${ZHULONG_COMPOSE_OUTPUT_DIR:-}\" ]] || return 0\n"
+        "  python3 -c 'import json,os,stat,sys; s=os.lstat(sys.argv[1]); print(json.dumps({\"label\":sys.argv[2],\"device\":s.st_dev,\"inode\":s.st_ino,\"file_type\":stat.S_IFMT(s.st_mode),\"mode\":stat.S_IMODE(s.st_mode),\"uid\":s.st_uid,\"gid\":s.st_gid,\"mtime_ns\":s.st_mtime_ns,\"nlink\":s.st_nlink},sort_keys=True))' \"$ZHULONG_COMPOSE_OUTPUT_DIR\" \"$1\" >> \"$ZHULONG_COMPOSE_SIDE_EFFECT_LOG\"\n"
+        "}\n"
+        "if [[ \"${1:-}\" == info ]]; then\n"
+        "  case \"${ZHULONG_COMPOSE_OUTPUT_BEHAVIOR:-}\" in\n"
+        "    replace_ancestor)\n"
+        "      record_output_identity before_ancestor\n"
+        "      case_dir=\"${ZHULONG_COMPOSE_OUTPUT_DIR%/container-output}\"\n"
+        "      mv \"$case_dir\" \"$case_dir.before\"\n"
+        "      mkdir \"$case_dir\"\n"
+        "      mv \"$case_dir.before/container-output\" \"$case_dir/container-output\"\n"
+        "      record_output_identity after_ancestor\n"
+        "      ;;\n"
+        "    replace_poc) mv \"$ZHULONG_COMPOSE_POC_DIR\" \"$ZHULONG_COMPOSE_POC_DIR.before\"; mkdir \"$ZHULONG_COMPOSE_POC_DIR\" ;;\n"
+        "    replace_target)\n"
+        "      mv \"$ZHULONG_COMPOSE_TARGET_DIR\" \"$ZHULONG_COMPOSE_TARGET_DIR.before\"\n"
+        "      mkdir \"$ZHULONG_COMPOSE_TARGET_DIR\"\n"
+        "      mv \"$ZHULONG_COMPOSE_TARGET_DIR.before/$ZHULONG_COMPOSE_WORKSPACE_NAME\" \"$ZHULONG_COMPOSE_TARGET_DIR/$ZHULONG_COMPOSE_WORKSPACE_NAME\"\n"
+        "      ;;\n"
+        "  esac\n"
+        "  exit 0\n"
+        "fi\n"
+        "if [[ \"${1:-}\" == image && \"${2:-}\" == inspect ]]; then exit 0; fi\n"
+        "if [[ \"${1:-}\" == compose ]]; then\n"
+        "  shift; compose_file=''; action=''\n"
+        "  while [[ $# -gt 0 ]]; do\n"
+        "    case \"$1\" in\n"
+        "      -f) compose_file=\"${2:-}\"; shift 2 ;;\n"
+        "      config|pull|run) action=\"$1\"; break ;;\n"
+        "      *) shift ;;\n"
+        "    esac\n"
+        "  done\n"
+        "  digest=$(shasum -a 256 \"$compose_file\" | awk '{print $1}')\n"
+        "  marker=$(awk '/COMPOSE_IDENTITY:/ {print $2; exit}' \"$compose_file\")\n"
+        "  printf 'read=%s marker=%s action=%s\\n' \"$digest\" \"$marker\" \"$action\" >> \"$ZHULONG_DOCKER_CALL_LOG\"\n"
+        "  if [[ \"$action\" == config && -n \"${ZHULONG_ORIGINAL_COMPOSE:-}\" ]]; then printf 'services:\\n  app:\\n    image: attacker:changed\\n    privileged: true\\n' > \"$ZHULONG_ORIGINAL_COMPOSE\"; fi\n"
+        "  if [[ \"$action\" == config && \"${ZHULONG_COMPOSE_MUTATE_SNAPSHOT:-0}\" == 1 ]]; then printf 'services: {}\\n' > \"$compose_file\"; fi\n"
+        "  if [[ \"$action\" == config ]]; then printf 'stub:compose\\n'; exit 0; fi\n"
+        "  if [[ \"$action\" == run ]]; then\n"
+        "    if [[ -n \"${ZHULONG_COMPOSE_OUTPUT_BEHAVIOR:-}\" ]]; then\n"
+        "      record_output_identity before\n"
+        "      sleep 0.02\n"
+        "      case \"$ZHULONG_COMPOSE_OUTPUT_BEHAVIOR\" in\n"
+        "        content_file) printf 'artifact\\n' > \"$ZHULONG_COMPOSE_OUTPUT_DIR/artifact.txt\" ;;\n"
+        "        content_nested) mkdir \"$ZHULONG_COMPOSE_OUTPUT_DIR/nested\"; printf 'artifact\\n' > \"$ZHULONG_COMPOSE_OUTPUT_DIR/nested/artifact.txt\" ;;\n"
+        "        replace_symlink) mv \"$ZHULONG_COMPOSE_OUTPUT_DIR\" \"$ZHULONG_COMPOSE_OUTPUT_DIR.before\"; ln -s \"$ZHULONG_COMPOSE_REPLACEMENT_DIR\" \"$ZHULONG_COMPOSE_OUTPUT_DIR\" ;;\n"
+        "        replace_file) mv \"$ZHULONG_COMPOSE_OUTPUT_DIR\" \"$ZHULONG_COMPOSE_OUTPUT_DIR.before\"; printf 'replacement\\n' > \"$ZHULONG_COMPOSE_OUTPUT_DIR\" ;;\n"
+        "        replace_fifo) mv \"$ZHULONG_COMPOSE_OUTPUT_DIR\" \"$ZHULONG_COMPOSE_OUTPUT_DIR.before\"; mkfifo \"$ZHULONG_COMPOSE_OUTPUT_DIR\" ;;\n"
+        "        replace_directory) mv \"$ZHULONG_COMPOSE_OUTPUT_DIR\" \"$ZHULONG_COMPOSE_OUTPUT_DIR.before\"; mkdir \"$ZHULONG_COMPOSE_OUTPUT_DIR\" ;;\n"
+        "        chmod_mode) chmod 0750 \"$ZHULONG_COMPOSE_OUTPUT_DIR\" ;;\n"
+        "      esac\n"
+        "      record_output_identity after\n"
+        "    fi\n"
+        "    printf 'ZHULONG_COMPOSE_ORACLE\\n'; exit 0\n"
+        "  fi\n"
+        "fi\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    compose_stub.chmod(0o755)
+    compose_env = {
+        **os.environ,
+        "PATH": f"{compose_workspace / 'fakebin'}{os.pathsep}{os.environ.get('PATH', '')}",
+        "ZHULONG_DOCKER_CALL_LOG": str(compose_log),
+        "ZHULONG_ORIGINAL_COMPOSE": str(compose_source),
+    }
+    compose_proc = subprocess.run(
+        [
+            "bash", str(wrapper), "--workspace-dir", str(compose_workspace),
+            "--case-id", "compose-identity", "--mode", "docker-compose",
+            "--compose-file", "compose.yml", "--compose-service", "app",
+            "--timeout-seconds", "10", "--expected-oracle", "ZHULONG_COMPOSE_ORACLE",
+        ],
+        cwd=caller_dir,
+        env=compose_env,
+        capture_output=True,
+        text=True,
+    )
+    compose_result_path = compose_workspace / "evidence/compose-identity/verification-result.json"
+    compose_result = json.loads(compose_result_path.read_text(encoding="utf-8")) if compose_result_path.exists() else {}
+    compose_log_text = compose_log.read_text(encoding="utf-8")
+    if compose_proc.returncode != 0 or compose_result.get("status") != "confirmed_in_docker":
+        raise SystemExit(f"FAILED: pinned Compose caller-CWD identity case failed: {compose_proc.stdout}{compose_proc.stderr}")
+    if "CALLER_BYTES" in compose_log_text or f"read={expected_compose_digest} marker=WORKSPACE_BYTES action=config" not in compose_log_text or f"read={expected_compose_digest} marker=WORKSPACE_BYTES action=run" not in compose_log_text:
+        raise SystemExit(f"FAILED: Compose preflight and Docker did not consume the same workspace bytes: {compose_log_text}")
+    if "privileged: true" not in compose_source.read_text(encoding="utf-8"):
+        raise SystemExit("FAILED: Compose TOCTOU fixture did not mutate the original source after config")
+    if f"--project-directory {compose_workspace.resolve()}" not in compose_log_text:
+        raise SystemExit(f"FAILED: Docker Compose calls omitted the canonical project directory: {compose_log_text}")
+    compose_pin_root = compose_workspace / "runtime/compose-inputs"
+    if compose_pin_root.exists() and any(compose_pin_root.iterdir()):
+        raise SystemExit("FAILED: verification wrapper did not clean its one-use Compose pin directory")
+
+    def run_compose_bind_case(name: str, behavior: str, bind_kind: str) -> dict[str, object]:
+        case_root = matrix_root / "compose-bind-runtime" / name
+        target_dir = case_root / "target"
+        workspace = target_dir / "security-research"
+        workspace.mkdir(parents=True)
+        (workspace / "asr-config.json").write_text(
+            json.dumps({"schema_version": 1, "project_root_name": target_dir.name}) + "\n",
+            encoding="utf-8",
+        )
+        (workspace / "audit-log.md").write_text("# Audit Log\n", encoding="utf-8")
+        (workspace / "poc").mkdir()
+        event_prefix = name.replace("-", "_")
+        write_transition(workspace, f"{event_prefix}_intake", "intake", "start")
+        for stage in ("recon", "candidate_generation", "triage", "verification"):
+            write_transition(workspace, f"{event_prefix}_{stage}", stage, "advance")
+
+        case_id = "bind-case"
+        output_dir = workspace / "evidence" / case_id / "container-output"
+        if bind_kind == "output":
+            volume = f"./evidence/{case_id}/container-output:/workspace/output"
+        elif bind_kind == "poc":
+            volume = "./poc:/workspace/poc:ro"
+        elif bind_kind == "target":
+            volume = f"{target_dir.as_posix()}:/workspace/target:ro"
+        else:
+            raise SystemExit(f"FAILED: unknown Compose bind selftest kind: {bind_kind}")
+        (workspace / "compose.yml").write_text(
+            "services:\n"
+            "  app:\n"
+            "    image: stub:compose\n"
+            "    privileged: false\n"
+            "    volumes:\n"
+            f"      - '{volume}'\n",
+            encoding="utf-8",
+        )
+
+        call_log, _ = install_fake_docker(workspace)
+        shutil.copy2(compose_stub, workspace / "fakebin/docker")
+        side_effect_log = workspace / "output-side-effects.jsonl"
+        replacement_dir = case_root / "replacement"
+        replacement_dir.mkdir()
+        events_before = event_names(workspace)
+        proc = subprocess.run(
+            [
+                "bash", str(wrapper), "--workspace-dir", str(workspace),
+                "--case-id", case_id, "--mode", "docker-compose",
+                "--compose-file", "compose.yml", "--compose-service", "app",
+                "--timeout-seconds", "10", "--expected-oracle", "ZHULONG_COMPOSE_ORACLE",
+            ],
+            cwd=caller_dir,
+            env={
+                **os.environ,
+                "PATH": f"{workspace / 'fakebin'}{os.pathsep}{os.environ.get('PATH', '')}",
+                "ZHULONG_DOCKER_CALL_LOG": str(call_log),
+                "ZHULONG_COMPOSE_OUTPUT_BEHAVIOR": behavior,
+                "ZHULONG_COMPOSE_OUTPUT_DIR": str(output_dir),
+                "ZHULONG_COMPOSE_SIDE_EFFECT_LOG": str(side_effect_log),
+                "ZHULONG_COMPOSE_REPLACEMENT_DIR": str(replacement_dir),
+                "ZHULONG_COMPOSE_POC_DIR": str(workspace / "poc"),
+                "ZHULONG_COMPOSE_TARGET_DIR": str(target_dir),
+                "ZHULONG_COMPOSE_WORKSPACE_NAME": workspace.name,
+            },
+            capture_output=True,
+            text=True,
+        )
+        result_path = workspace / "evidence" / case_id / "verification-result.json"
+        return {
+            "proc": proc,
+            "workspace": workspace,
+            "output_dir": output_dir,
+            "replacement_dir": replacement_dir,
+            "result": json.loads(result_path.read_text(encoding="utf-8")) if result_path.exists() else {},
+            "calls": call_log.read_text(encoding="utf-8").splitlines() if call_log.exists() else [],
+            "events_before": events_before,
+            "events_after": event_names(workspace),
+            "side_effects": [json.loads(line) for line in side_effect_log.read_text(encoding="utf-8").splitlines()] if side_effect_log.exists() else [],
+        }
+
+    stable_output_fields = ("device", "inode", "file_type", "mode", "uid", "gid")
+    for behavior in ("content_file", "content_nested"):
+        case = run_compose_bind_case(f"output-{behavior}", behavior, "output")
+        proc = case["proc"]
+        assert isinstance(proc, subprocess.CompletedProcess)
+        calls = case["calls"]
+        side_effects = case["side_effects"]
+        events_before = case["events_before"]
+        events_after = case["events_after"]
+        if proc.returncode != 0 or case["result"].get("status") != "confirmed_in_docker":
+            raise SystemExit(f"FAILED: legal Compose output write was rejected: {behavior}: {proc.stdout}{proc.stderr}")
+        if sum(" action=run" in call for call in calls) != 1:
+            raise SystemExit(f"FAILED: legal Compose output write did not invoke one service run: {behavior}: {calls}")
+        if events_after != events_before + ["verification_case_started", "verification_case_completed"]:
+            raise SystemExit(f"FAILED: legal Compose output write authority events are incorrect: {behavior}: {events_after}")
+        if len(side_effects) != 2 or any(side_effects[0][field] != side_effects[1][field] for field in stable_output_fields):
+            raise SystemExit(f"FAILED: legal Compose output write changed the directory object: {behavior}: {side_effects}")
+        if side_effects[0]["mtime_ns"] == side_effects[1]["mtime_ns"]:
+            raise SystemExit(f"FAILED: legal Compose output write fixture did not change mtime: {behavior}: {side_effects}")
+        if behavior == "content_nested" and side_effects[1]["nlink"] <= side_effects[0]["nlink"]:
+            raise SystemExit(f"FAILED: nested output fixture did not change nlink: {side_effects}")
+        output_dir = case["output_dir"]
+        expected_artifact = output_dir / ("nested/artifact.txt" if behavior == "content_nested" else "artifact.txt")
+        if expected_artifact.read_text(encoding="utf-8") != "artifact\n":
+            raise SystemExit(f"FAILED: legal Compose output side effect is missing: {behavior}")
+        if "COMPOSE_BIND_SOURCE_FORBIDDEN" in (proc.stdout + proc.stderr):
+            raise SystemExit(f"FAILED: legal Compose output write surfaced identity drift: {behavior}")
+
+    for behavior in ("replace_symlink", "replace_file", "replace_fifo", "replace_directory", "chmod_mode"):
+        case = run_compose_bind_case(f"output-{behavior}", behavior, "output")
+        proc = case["proc"]
+        assert isinstance(proc, subprocess.CompletedProcess)
+        calls = case["calls"]
+        if proc.returncode == 0 or "COMPOSE_BIND_SOURCE_FORBIDDEN" not in (proc.stdout + proc.stderr):
+            raise SystemExit(f"FAILED: Compose output object mutation was accepted: {behavior}: {proc.stdout}{proc.stderr}")
+        if sum(" action=run" in call for call in calls) != 1:
+            raise SystemExit(f"FAILED: output mutation fixture did not run exactly once: {behavior}: {calls}")
+        if case["events_after"] != case["events_before"] + ["verification_case_started"]:
+            raise SystemExit(f"FAILED: output mutation crossed the authority-success boundary: {behavior}: {case['events_after']}")
+        if case["result"]:
+            raise SystemExit(f"FAILED: output mutation published a verification result: {behavior}: {case['result']}")
+        if behavior == "replace_symlink" and any(case["replacement_dir"].iterdir()):
+            raise SystemExit("FAILED: output symlink mutation wrote through its replacement target")
+
+    for behavior, bind_kind in (("replace_ancestor", "output"), ("replace_poc", "poc"), ("replace_target", "target")):
+        case = run_compose_bind_case(f"pre-run-{behavior}", behavior, bind_kind)
+        proc = case["proc"]
+        assert isinstance(proc, subprocess.CompletedProcess)
+        if proc.returncode == 0 or "COMPOSE_BIND_SOURCE_FORBIDDEN" not in (proc.stdout + proc.stderr):
+            raise SystemExit(f"FAILED: Compose bind replacement before run was accepted: {behavior}: {proc.stdout}{proc.stderr}")
+        if any(" action=run" in call for call in case["calls"]):
+            raise SystemExit(f"FAILED: pre-run bind replacement reached the service command: {behavior}: {case['calls']}")
+        if case["events_after"] != case["events_before"]:
+            raise SystemExit(f"FAILED: pre-run bind replacement changed authority events: {behavior}: {case['events_after']}")
+        if behavior == "replace_ancestor":
+            side_effects = case["side_effects"]
+            if len(side_effects) != 2 or any(side_effects[0][field] != side_effects[1][field] for field in stable_output_fields):
+                raise SystemExit(f"FAILED: ancestor fixture did not preserve the output leaf object: {side_effects}")
+
+    drift_compose_workspace = make_workspace("compose-snapshot-drift", "verification")
+    drift_compose_source = drift_compose_workspace / "compose.yml"
+    drift_compose_source.write_text(
+        "services:\n  app:\n    image: stub:compose\n    privileged: false\n",
+        encoding="utf-8",
+    )
+    drift_log, _ = install_fake_docker(drift_compose_workspace)
+    shutil.copy2(compose_stub, drift_compose_workspace / "fakebin/docker")
+    drift_events_before = event_names(drift_compose_workspace)
+    drift_env = {
+        **os.environ,
+        "PATH": f"{drift_compose_workspace / 'fakebin'}{os.pathsep}{os.environ.get('PATH', '')}",
+        "ZHULONG_DOCKER_CALL_LOG": str(drift_log),
+        "ZHULONG_COMPOSE_MUTATE_SNAPSHOT": "1",
+    }
+    drift_proc = subprocess.run(
+        [
+            "bash", str(wrapper), "--workspace-dir", str(drift_compose_workspace),
+            "--case-id", "compose-drift", "--mode", "docker-compose",
+            "--compose-file", "compose.yml", "--compose-service", "app",
+            "--timeout-seconds", "10", "--expected-oracle", "ZHULONG_COMPOSE_ORACLE",
+        ],
+        cwd=caller_dir,
+        env=drift_env,
+        capture_output=True,
+        text=True,
+    )
+    drift_log_text = drift_log.read_text(encoding="utf-8")
+    if drift_proc.returncode == 0 or "COMPOSE_INPUT_IDENTITY_DRIFT" not in (drift_proc.stdout + drift_proc.stderr):
+        raise SystemExit(f"FAILED: pinned Compose snapshot drift did not fail closed: {drift_proc.stdout}{drift_proc.stderr}")
+    if "action=run" in drift_log_text or event_names(drift_compose_workspace) != drift_events_before:
+        raise SystemExit(f"FAILED: snapshot drift reached compose run or authority state: {drift_log_text}")
+    drift_pin_root = drift_compose_workspace / "runtime/compose-inputs"
+    if drift_pin_root.exists() and any(drift_pin_root.iterdir()):
+        raise SystemExit("FAILED: snapshot-drift rejection left a reusable Compose pin directory")
 
     for attack in ("stdout_symlink", "stdout_hardlink", "stdout_fifo", "stdout_dir", "result_symlink", "ancestor_symlink", "running_replace"):
         attack_workspace = make_workspace(f"attack-{attack}", "verification")
@@ -10764,6 +11744,11 @@ def selftest_installed_skill(skill_root: Path) -> None:
          str(skill_root / "scripts/write_audit_event.py"),
          str(skill_root / "scripts/validate_audit_protocol.py"),
          str(skill_root / "scripts/recover_audit_state.py"),
+         str(skill_root / "scripts/selftest_rh2_safe_persistence.py"),
+         str(skill_root / "scripts/selftest_rh2_finalization.py"),
+         str(skill_root / "scripts/selftest_rh3_context_protocol.py"),
+         str(skill_root / "scripts/selftest_rh3_1_tool_registry_stage_binding.py"),
+         str(skill_root / "scripts/selftest_rhs1_secret_fixture_hygiene.py"),
          str(skill_root / "scripts/validate_workspace_state.py"),
          str(skill_root / "scripts/validate_target_contract.py"),
          str(skill_root / "scripts/validate_recon_result.py"),
@@ -10787,6 +11772,11 @@ def selftest_installed_skill(skill_root: Path) -> None:
          str(skill_root / "scripts/validate_report_bundle.py"),
          str(skill_root / "scripts/validate_all_report_bundles.py"),
          str(skill_root / "scripts/finalize_audit_workspace.py")], skill_root)
+    run([sys.executable, str(skill_root / "scripts/selftest_rh2_safe_persistence.py")], skill_root)
+    run([sys.executable, str(skill_root / "scripts/selftest_rh2_finalization.py")], skill_root)
+    run([sys.executable, str(skill_root / "scripts/selftest_rh3_context_protocol.py")], skill_root)
+    run([sys.executable, str(skill_root / "scripts/selftest_rh3_1_tool_registry_stage_binding.py")], skill_root)
+    run([sys.executable, str(skill_root / "scripts/selftest_rhs1_secret_fixture_hygiene.py")], skill_root)
     exercise_target_contract_validator(skill_root)
     exercise_tool_registry_contract(skill_root)
     exercise_context_planning_contract(skill_root)
@@ -10911,6 +11901,7 @@ def selftest_installed_skill(skill_root: Path) -> None:
             installed_workspace,
             skill_root,
         )
+        exercise_compose_bind_identity_repair(skill_root, Path(tempdir))
         exercise_runner_sandbox_rejection(
             skill_root / "scripts/run_verification_case.sh",
             installed_workspace,
@@ -11453,6 +12444,8 @@ def main() -> None:
     exercise_p9_protocol_chain_real_workspace_dogfood(plugin_root)
     exercise_target_contract_validator(plugin_root)
     exercise_tool_registry_contract(plugin_root)
+    run([sys.executable, str(plugin_root / "scripts/selftest_rh3_1_tool_registry_stage_binding.py")], plugin_root)
+    run([sys.executable, str(plugin_root / "scripts/selftest_rhs1_secret_fixture_hygiene.py")], plugin_root)
     exercise_context_planning_contract(plugin_root)
     exercise_root_skill_kernel_contract(plugin_root)
     exercise_recon_result_contract(plugin_root)
@@ -11853,7 +12846,7 @@ def main() -> None:
     )
     require_text(
         plugin_root / "scripts/run_initial_probes.sh",
-        "PROBE_STATUS_LABELS=\"ran_ok skipped_tool_missing skipped_no_package_sources failed_nonfatal failed_fatal\"",
+        "PROBE_STATUS_LABELS=\"ran_ok skipped_tool_missing skipped_no_package_sources skipped_requires_isolation failed_nonfatal failed_fatal\"",
         "initial probes stable status labels",
     )
     require_text(
@@ -12048,6 +13041,11 @@ def main() -> None:
          str(plugin_root / "scripts/audit_transition_policy.py"),
          str(plugin_root / "scripts/write_audit_event.py"),
          str(plugin_root / "scripts/validate_audit_protocol.py"),
+         str(plugin_root / "scripts/selftest_rh2_safe_persistence.py"),
+         str(plugin_root / "scripts/selftest_rh2_finalization.py"),
+         str(plugin_root / "scripts/selftest_rh3_context_protocol.py"),
+         str(plugin_root / "scripts/selftest_rh3_1_tool_registry_stage_binding.py"),
+         str(plugin_root / "scripts/selftest_rhs1_secret_fixture_hygiene.py"),
          str(plugin_root / "scripts/validate_workspace_state.py"),
          str(plugin_root / "scripts/validate_target_contract.py"),
          str(plugin_root / "scripts/validate_candidate.py"),
@@ -12065,6 +13063,9 @@ def main() -> None:
          str(plugin_root / "scripts/validate_report_bundle.py"),
          str(plugin_root / "scripts/validate_all_report_bundles.py"),
          str(plugin_root / "scripts/finalize_audit_workspace.py")], plugin_root)
+    run([sys.executable, str(plugin_root / "scripts/selftest_rh2_safe_persistence.py")], plugin_root)
+    run([sys.executable, str(plugin_root / "scripts/selftest_rh2_finalization.py")], plugin_root)
+    run([sys.executable, str(plugin_root / "scripts/selftest_rh3_context_protocol.py")], plugin_root)
 
     run(["bash", "-n", str(plugin_root / "scripts/bootstrap_verification_workspace.sh")], plugin_root)
     run(["bash", "-n", str(plugin_root / "scripts/asr_start.sh")], plugin_root)
@@ -12868,8 +13869,29 @@ def main() -> None:
             raise SystemExit("FAILED: bootstrapped workspace is missing scripts/run-verification-case.sh")
         if not (workspace / "bin/asr-start.sh").exists():
             raise SystemExit("FAILED: bootstrapped workspace is missing asr-start.sh")
+        isolation_marker = Path(tempdir) / "target-build-logic-executed.marker"
+        (repo_dir / "pom.xml").write_text("<project/>\n", encoding="utf-8")
+        (repo_dir / "build.gradle").write_text("// target-controlled fixture\n", encoding="utf-8")
+        (repo_dir / "go.mod").write_text("module example.invalid/selftest\n\ngo 1.22\n", encoding="utf-8")
+        (repo_dir / "main.go").write_text("package main\nfunc main() {}\n", encoding="utf-8")
+        target_gradlew = repo_dir / "gradlew"
+        target_gradlew.write_text(
+            "#!/usr/bin/env bash\n"
+            f"printf executed > {isolation_marker}\n",
+            encoding="utf-8",
+        )
+        target_gradlew.chmod(0o755)
         fake_bin = Path(tempdir) / "fake-bin"
         fake_bin.mkdir(parents=True, exist_ok=True)
+        for isolated_command in ("mvn", "gradle", "golangci-lint"):
+            fake_isolated = fake_bin / isolated_command
+            fake_isolated.write_text(
+                "#!/usr/bin/env bash\n"
+                f"printf executed > {isolation_marker}\n"
+                "exit 0\n",
+                encoding="utf-8",
+            )
+            fake_isolated.chmod(0o755)
         fake_osv = fake_bin / "osv-scanner"
         fake_osv.write_text(
             "#!/usr/bin/env bash\n"
@@ -12959,7 +13981,7 @@ def main() -> None:
             if field not in summary_data:
                 raise SystemExit(f"FAILED: initial-probes-summary.json is missing {field}")
         labels = set(summary_data.get("stable_status_labels") or [])
-        expected_labels = {"ran_ok", "skipped_tool_missing", "skipped_no_package_sources", "failed_nonfatal", "failed_fatal"}
+        expected_labels = {"ran_ok", "skipped_tool_missing", "skipped_no_package_sources", "skipped_requires_isolation", "failed_nonfatal", "failed_fatal"}
         if labels != expected_labels:
             raise SystemExit(f"FAILED: initial probe stable labels mismatch: {sorted(labels)}")
         probes = summary_data.get("probes") or []
@@ -12977,6 +13999,14 @@ def main() -> None:
         )
         if by_name.get("semgrep", {}).get("status") != "skipped_tool_missing":
             raise SystemExit("FAILED: missing semgrep was not classified as skipped_tool_missing")
+        for isolated_probe in ("maven-dependency-tree", "gradle-dependencies", "golangci-lint"):
+            record = by_name.get(isolated_probe, {})
+            if record.get("status") != "skipped_requires_isolation" or record.get("command") != "(not executed)":
+                raise SystemExit(f"FAILED: {isolated_probe} did not fail closed at the host execution boundary: {record}")
+            if "fixed Docker" not in str(record.get("next_action")) or "host" not in str(record.get("next_action")):
+                raise SystemExit(f"FAILED: {isolated_probe} isolation guidance is not actionable: {record}")
+        if isolation_marker.exists():
+            raise SystemExit("FAILED: target-controlled Maven/Gradle/golangci logic executed on the host")
         gitleaks_probe = by_name.get("gitleaks", {})
         if gitleaks_probe.get("status") != "failed_nonfatal":
             raise SystemExit("FAILED: gitleaks leak-found exit was not classified as failed_nonfatal")
@@ -13246,6 +14276,7 @@ def main() -> None:
             sandbox_workspace,
             plugin_root,
         )
+        exercise_compose_bind_identity_repair(plugin_root, Path(tempdir))
         exercise_sandbox_preflight(
             workspace / "bin/check-sandbox-preflight.py",
             sandbox_workspace,
@@ -16797,6 +17828,16 @@ def main() -> None:
             contract_path = build_wrapper_contract(fixture, slug)
             contract = json.loads(contract_path.read_text(encoding="utf-8"))
             binding = contract["source_binding"]
+            prepared_target = fixture / str(binding["materials"]["target_config"])
+            canonical_target = fixture / "zhulong-target.yaml"
+            shutil.copy2(prepared_target, canonical_target)
+            binding["materials"]["target_config"] = "zhulong-target.yaml"
+            prepared_target.unlink()
+            if prepared_target.parent != fixture:
+                prepared_target.parent.rmdir()
+            recon_result = fixture / "recon-result.json"
+            if recon_result.exists():
+                recon_result.unlink()
             binding["materials"]["verifier_verdict"] = "verifier/CAND-0001/verifier-verdict.json"
             write_json_fixture(contract_path, contract)
             old_verdict = fixture / "verifier/verifier-verdict.json"
@@ -17987,9 +19028,13 @@ def main() -> None:
         for authority_dir in (workspace / "candidates", workspace / "verifier"):
             if authority_dir.exists():
                 shutil.rmtree(authority_dir)
+        variant_dir = workspace / "evidence/variant-analysis"
+        if variant_dir.exists():
+            shutil.rmtree(variant_dir)
         disposition_path = workspace / "audit-disposition.json"
         if disposition_path.exists():
             disposition_path.unlink()
+        install_zero_candidate_recon(workspace)
         run_with_env([
             sys.executable,
             str(plugin_root / "scripts/finalize_audit_workspace.py"),
@@ -18167,6 +19212,8 @@ def main() -> None:
         shutil.copy2(plugin_root / "scripts/audit_transition_policy.py", isolated_finalizer_dir / "audit_transition_policy.py")
         shutil.copy2(plugin_root / "scripts/validate_audit_protocol.py", isolated_finalizer_dir / "validate_audit_protocol.py")
         shutil.copy2(plugin_root / "scripts/workspace_state.py", isolated_finalizer_dir / "workspace_state.py")
+        shutil.copy2(plugin_root / "scripts/render_handoff_summary.py", isolated_finalizer_dir / "render_handoff_summary.py")
+        shutil.copy2(plugin_root / "scripts/evidence_io.py", isolated_finalizer_dir / "evidence_io.py")
         shutil.copy2(plugin_root / "scripts/blocked_verification.py", isolated_finalizer_dir / "blocked_verification.py")
         shutil.copy2(plugin_root / "scripts/validate_candidate.py", isolated_finalizer_dir / "validate_candidate.py")
         shutil.copy2(plugin_root / "scripts/candidate_identity.py", isolated_finalizer_dir / "candidate_identity.py")

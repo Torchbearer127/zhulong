@@ -858,6 +858,13 @@ def _writer_portability_matrix(plugin_root: Path) -> set[str]:
     return {"r2-event-portability-write-boundary"}
 
 
+def _synthetic_aws_access_key_id(prefix: str) -> str:
+    if prefix not in {"AKIA", "ASIA"}:
+        raise ValueError("unsupported synthetic AWS access key ID prefix")
+    suffix = "".join(chr(ord("A") + ((index * 7 + 3) % 26)) for index in range(16))
+    return prefix + suffix
+
+
 def _sensitive_value_matrix(
     plugin_root: Path,
     fixture_root: Path,
@@ -865,8 +872,8 @@ def _sensitive_value_matrix(
     clean_html: bytes,
 ) -> set[str]:
     payloads = (
-        ("aws_access_key_id", "AKIAIOSFODNN7EXAMPLE"),
-        ("aws_access_key_id", "ASIAIOSFODNN7EXAMPLE"),
+        ("aws_access_key_id", _synthetic_aws_access_key_id("AKIA")),
+        ("aws_access_key_id", _synthetic_aws_access_key_id("ASIA")),
         ("http_bearer_token", "bEaReR fixture.token-123"),
         ("http_bearer_token", "Bearer\nfixture.token-123"),
         ("github_token", "ghp_fixturePublicValue"),

@@ -80,11 +80,23 @@ Recon 阶段终结登记由后续的独立阶段终结入口负责；本校验�
 
 注册表只约束烛龙自身，无法拦截人工或其他 Agent 的原生工具调用。注册表校验成功仅表示元数据一致，绝不创建 candidate、verdict、disposition 或确认结论。首次扫描输出始终只是 candidate 材料；初始 probes wrapper 会在规范的 `recon` 阶段登记开始事件。原始 Docker CLI、未受控 DAST 或 live-target 工具不会得到 planner 的直连命令提示。只有固定的 Docker verification wrapper 可以生成 Docker oracle material，而这些材料仍必须经过现有 verifier verdict、disposition 和 confirmed bundle 门禁。
 
+工具注册表 schema 的生命周期阶段枚举必须与 `audit_transition_policy.STAGES` 精确一致；单独删除、改名、
+重排、新增阶段或把枚举改成错误类型，production registry validator 都会 fail closed。
+
 在 R2 工作区中，verification wrapper 会在任何 Docker CLI 调用前校验权威 journal/state，并且只接受 `verification/running`，或从 `verification/blocked` 发起的显式重试。它不会自动推进 triage，也不会为了让结果事件通过而改写工作流状态。Docker daemon 与 image 检查属于非 PoC 前置条件；实际 PoC container command 只有在带 revision 绑定的同阶段 start event 提交成功后才会启动。即使 Docker evidence 已存在，result event 提交失败也会令 wrapper 非零退出。R1 继续保持 legacy compatibility；没有状态文件的工作区不会被静默升级为 R2。
 
 ## 上下文建议计划
 
-`assets/context-catalog.json` 声明按阶段可建议阅读的稳定本地 reference。使用显式 target directory 与 phase 运行 `plan_audit_context.py`，可生成确定性的 `context-plan.json`；可选 bug class 只能来自闭合集合的显式输入。planner 仅复用 toolchain planner 的技术栈与攻击面探测，不解析 notes、candidate、handoff 文本或 reference 内容。
+`assets/context-catalog.json` 声明按阶段可建议阅读的稳定本地 reference。运行
+`plan_audit_context.py --target-dir <target-repo> --phase recon --output <audit-workspace>/context-plan.json`
+可生成确定性的计划；可选 bug class 只能来自闭合集合的显式输入。planner 仅复用 toolchain planner 的
+技术栈与攻击面探测，不解析 notes、candidate、handoff 文本或 reference 内容。
+
+`audit_transition_policy.STAGES` 是十个正式 context phase 的唯一 Python 词汇源：`intake`、`recon`、
+`candidate_generation`、`triage`、`verification`、`severity_escalation`、`variant_discovery`、`packaging`、
+`finalization` 和 `recording`。`triage` 与 `recording` 可被直接规划，并选择各自稳定的 phase reference。
+production meta-conformance 会把该 tuple 与 event/state schema、两份 context schema、catalog mapping、
+planner choices 以及 Skill 的命令/阶段声明逐项比较；任一漂移都会 fail closed。
 
 `mandatory` 只表示该计划中的阶段基线阅读建议，不是安全门禁。`optional` 记录精确匹配的 selector 事实，`deferred` 表示与阶段相关但未匹配 selector 的模块。该计划仅供建议：它不证明 Agent 已阅读、理解或使用模块，不执行工具或 reference，不创建证据，不确认发现，也不替代既有 validator、gate 或根 Skill 约束。详见 [`context-planning-r1.md`](runner-contracts/context-planning-r1.md)。
 
@@ -172,6 +184,10 @@ telemetry、网络依赖或新的权限面。
 只有既有权威文件能够证明唯一的 candidate 到 bundle 关系时才展示 confirmed bundle；多 confirmed 或其他无法证明
 一一绑定的工作区会被拒绝，不会按名称或顺序猜配。经过 escaping 的 URL 可以作为可见审阅文本，
 可点击资源仍只允许 canonical workspace-relative link。
+
+发布 selftest 只在运行时构造两类受支持的 AWS Access Key ID prefix 正例，并扫描
+当前源码提交候选与 installed package 的真实 bytes，拒绝完整 provider-shaped 测试字面量。
+该夹具卫生门禁不得弱化 production 分类器、删除任一正例或重写历史证据。
 
 ## 运行时残留与清理机制
 
@@ -654,10 +670,41 @@ transition intent 时会拒绝；真实 R1 caller 必须显式传入 `--protocol
 相同的宿主捕获模型；覆盖 workspace 权威路径的可写 bind mount 会被拒绝。
 
 Sandbox preflight 是 Docker 或证据副作用前必须完成的证明义务。Compose service
-必须声明字面值 `privileged: false`；anchor、alias、插值和非静态 namespace 值都会
-被拒绝。额外 Docker 参数中未知或缺少值的边界参数会被拒绝，只允许文档化的资源
-限制和 `--read-only`。bootstrap 的 workspace name 只能是安全的 ASCII 单目录组件，
-并且目标必须是真实目录的直接子级。
+相对路径固定从规范化后的 audit workspace 解析，不再依赖 caller CWD；随后按原顺序复制到
+一次性、宿主持有的 snapshot 集合。manifest 绑定低敏逻辑路径、SHA-256、大小和文件身份。
+preflight 与每次 Compose config、pull、run 都只读取这些 snapshot，并显式使用 workspace
+作为 project directory。原文件在 preflight 后变化不会改变执行字节；snapshot 身份漂移会在
+service command 前 fail closed。
+
+Compose 采用封闭子集：顶层只允许 `version` 和 `services`，每个 service 都必须声明字面值
+`privileged: false`。anchor、alias、merge、插值、未知字段、build/host-file/include、
+namespace、capability/device/security option 以及 named/anonymous/external volume 均拒绝。
+host bind 只允许三种固定映射：target repository 只读映射到 `/workspace/target`、workspace
+的 `poc/` 只读映射到 `/workspace/poc`，以及当前 case 的非权威 `container-output` 可写映射到
+`/workspace/output`。其他宿主路径即使只读也拒绝。额外 Docker 参数中未知或缺少值的边界参数
+会被拒绝，只允许文档化的资源限制和 `--read-only`。preflight 通过只证明配置处于当前执行
+边界内，不证明 PoC、oracle、verdict、bundle 或 finalization 成立。
+
+Bind source 的身份检查发生在文件系统解析之前。相对 source 按规范化 audit workspace 做词法
+解释；父目录组件和路径别名会被拒绝；target repository、`poc/`、evidence/case 以及
+container-output 路径中所有已经存在的组件都必须由 `lstat` 证明为真实目录。首次使用时尚未
+存在的 output 后缀只能由宿主侧安全目录 helper 创建，且在访问 Docker 前再次检查。bootstrap
+也会在任何 workspace 写入前执行同样的 fail-closed 检查，因此预先存在的 symlink、普通文件、
+FIFO、socket、device 或其他非目录条目不会被跟随。
+
+wrapper 会在每一次 Compose `config`、`pull` 和 `run` 前重复检查 bind 目录，并比较上一次检查
+记录的低敏目录身份。版本化身份把每个已有路径组件的稳定 device、inode、type、mode、uid、gid
+与叶目录的 mtime、link count 观察值分开。任何稳定身份变化都会 fail closed；target 与 `poc/`
+的观察值也继续严格比较，但在可写 `container-output` 内创建文件或子目录导致的正常 mtime、link
+count 变化不等于替换该目录对象。这是重新校验，不是 host path 的原子 pin：当前平台边界信任
+workspace owner 不会在短暂的宿主检查到 Docker 调用窗口中并发替换目录。实现没有声称关闭
+操作系统层面的 TOCTOU 窗口。
+
+Initial probes 仍然只是 advisory，最多提供 candidate material。没有经过单独审计的固定 Docker
+wrapper 时，Maven/Gradle 项目求值和可由目标配置的 golangci-lint plugin loading 不会在宿主机
+运行，而会记录为 `skipped_requires_isolation`。该状态不是通过，也不授权 Agent 或操作者手工执行
+等价宿主命令。npm 调用禁用 lifecycle scripts，Go package loading 强制使用只读 module 模式。
+bootstrap 的 workspace name 只能是安全的 ASCII 单目录组件，并且目标必须是真实目录的直接子级。
 
 `blocked_verification.py` 先消费结构化 verification result、verdict、disposition
 和 normalized event。按 case/candidate identity，未解决的 `blocked_*`、timeout、
@@ -677,3 +724,15 @@ network 和 planner capability 必须分别为空或 prohibited。finalization �
 `strict=true`；`finalization_succeeded` event 还必须绑定相对路径、SHA-256、workspace
 和 `checked_at`。缺失、过期、symlink、摘要不匹配、workspace 不匹配或手写配对都会
 被 assertion 拒绝。
+
+`audit-disposition.json` 通过宿主持有的安全 I/O 路径发布。writer 会拒绝不安全祖先，
+以及非当前用户拥有、存在多链接或不是普通文件的 target；随后在同一目录写临时文件，
+依次完成文件 fsync、身份 CAS、原子替换和目录 fsync。发布后必须安全重开磁盘对象，
+按磁盘字节重新校验 schema、candidate/verdict 绑定及适用的一对一确认链。write、fsync、
+replace、CAS 或写后校验失败时恢复旧 ledger 字节；若恢复本身失败，则返回可区分的错误。
+
+成功收尾时，summary 与 handoff 会先针对准确的 projected terminal journal/state snapshot
+生成并校验，再追加 `finalization_succeeded`。该终态事件是最后一次权威提交，之后只执行
+只读 assertion。若 journal 已追加而 state view 更新失败，journal 继续保持权威，诊断要求
+显式重建 state。对全部一致的 completed workspace 重跑 finalizer 时不会改写字节、重跑
+Docker 检查或追加重复终态；权威链或派生产物漂移会 fail closed，并要求显式 recover 或 reopen。
