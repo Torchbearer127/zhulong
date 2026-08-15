@@ -301,6 +301,8 @@ zhulong/
 │   ├── asr_start.sh                    # 创建或复用审计工作区
 │   ├── manage_docker_resources.py      # Docker 初始基线、精确清理、严格环境卫生检查
 │   ├── check_sandbox_preflight.py      # 危险验证容器前置拒绝
+│   ├── docker_case_lifecycle.py        # 单个验证 case 的 Docker 身份、资源策略与精确清理
+│   ├── run_verification_case.sh        # 仅在 Docker 中执行验证 case 并采集证据
 │   ├── audit_disposition.py            # 工作区级线索判断记录
 │   ├── finalize_audit_workspace.py     # 交接前完成检查
 │   ├── assert_finalized_workspace.py   # 已完成工作区完整性检查

@@ -78,6 +78,16 @@ Use this checklist before publishing a tagged open-source release of Zhulong
   or named/anonymous/external volumes. Host binds are exactly target and `poc/`
   read-only plus current-case `container-output` writable at fixed container
   targets; every other host path is rejected even read-only.
+- [ ] The selected Compose service exists, has no `depends_on`, uses no target
+  reserved lifecycle labels, and has absent or exact `restart: "no"`.
+- [ ] Docker-run and Compose share `docker-case-policy-v1`; dedicated memory,
+  CPU, and PID limits are positive and bounded, while extra Docker arguments
+  cannot override resources or isolation.
+- [ ] Every verification case uses a host-owned receipt with an exact container
+  and unique Compose project identity. Normal, failure, timeout, INT, TERM, and
+  evidence-error paths prove exact zero container/network/volume residue before
+  any completion event; cleanup uncertainty reports
+  `DOCKER_CASE_CLEANUP_FAILED` and cannot confirm a finding.
 - [ ] Verification control files are host-owned. Evidence is read-only inside
   Docker, writable container output is isolated under `/workspace/output`, and
   stdout/stderr oracle bytes come from host-held descriptors. Symlink,

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import signal
 import stat
 import subprocess
 import tempfile
@@ -382,21 +383,49 @@ def run_captured_command(
         stderr_fd = _publish_capture_file(root, stderr_path)
         timed_out = False
         command_started = False
+        previous_handlers: dict[int, Any] = {}
+        process: subprocess.Popen[bytes] | None = None
+
+        def stop_process_group(signum: int) -> None:
+            if process is None or process.poll() is not None:
+                return
+            try:
+                os.killpg(process.pid, signum)
+                process.wait(timeout=2)
+            except (OSError, subprocess.TimeoutExpired):
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except OSError:
+                    pass
+                try:
+                    process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    pass
+
+        def interrupted(signum: int, _frame: Any) -> None:
+            stop_process_group(signum)
+            raise _error("EVIDENCE_CAPTURE_INTERRUPTED", "captured Docker command was interrupted")
+
         try:
-            process = subprocess.Popen(command, stdout=stdout_fd, stderr=stderr_fd)
+            for signum in (signal.SIGINT, signal.SIGTERM):
+                previous_handlers[signum] = signal.getsignal(signum)
+                signal.signal(signum, interrupted)
+            process = subprocess.Popen(command, stdout=stdout_fd, stderr=stderr_fd, start_new_session=True)
             command_started = True
             try:
                 process.wait(timeout=timeout)
             except subprocess.TimeoutExpired:
                 timed_out = True
-                process.kill()
-                process.wait()
+                stop_process_group(signal.SIGKILL)
         except FileNotFoundError as exc:
             _write_all(stderr_fd, (str(exc) + "\n").encode("utf-8", errors="replace"))
             process = None
         except OSError as exc:
             _write_all(stderr_fd, (str(exc) + "\n").encode("utf-8", errors="replace"))
             process = None
+        finally:
+            for signum, handler in previous_handlers.items():
+                signal.signal(signum, handler)
         os.fsync(stdout_fd)
         os.fsync(stderr_fd)
         stdout_intact = _capture_path_intact(root, stdout_path, stdout_fd)

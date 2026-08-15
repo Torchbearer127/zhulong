@@ -883,14 +883,33 @@ The Compose policy is a closed subset. Top-level input contains only `version`
 and `services`; every service declares literal `privileged: false`. Anchors,
 aliases, merges, interpolation, unknown fields, build/host-file/include,
 namespace, capability/device/security-option, and named/anonymous/external
-volume forms are rejected. Host binds are limited to the target repository at
+volume forms are rejected. The selected service must exist, any `depends_on`
+field is rejected, and `restart` is absent or exactly `"no"`. Target-defined
+labels cannot use the reserved `org.zhulong.*` or `com.docker.compose.*`
+namespaces. Host binds are limited to the target repository at
 `/workspace/target` read-only, workspace `poc/` at `/workspace/poc` read-only,
 and the current case's non-authoritative `container-output` at
 `/workspace/output` writable. No other host path is permitted, even read-only.
-Unknown or value-less extra Docker arguments are rejected; only documented
-resource limits and `--read-only` are allowed. A passed preflight proves only
-this execution boundary; it does not prove a PoC, oracle, verdict, bundle, or
-finalization result.
+Extra Docker arguments cannot override resources or isolation. Dedicated
+`--memory`, `--cpus`, and `--pids-limit` values are positive and bounded by
+`docker-case-policy-v1` (16 MiB through 2 GiB, 0.1 through 4 CPUs, and 1 through
+1024 PIDs; defaults remain 512 MiB, 1 CPU, and 256 PIDs). The same host policy
+applies to docker-run and Compose. A passed preflight proves only this execution
+boundary; it does not prove a PoC, oracle, verdict, bundle, or finalization
+result.
+
+Each invocation receives a random case token, an exact container name, and a
+unique Compose project name in a host-owned receipt. Compose execution adds a
+last host-owned override and validates the production merged configuration
+before the service starts. It uses `-p`, `--name`, and `--no-deps`, and image
+inspection or an explicitly requested pull applies only to the selected service.
+Normal exit, failure, timeout, `SIGINT`, `SIGTERM`, and evidence errors share the
+same idempotent cleanup. Cleanup enumerates resources for inspection but removes
+only identities carrying the exact receipt token or exact unique project label;
+it never uses a prefix, wildcard, label selector, or prune. Container, network,
+and volume residue must all be zero before `verification_case_completed` can be
+committed. Cleanup uncertainty returns `DOCKER_CASE_CLEANUP_FAILED`, clears the
+oracle result, and keeps the case blocked.
 
 Bind-source identity is checked before filesystem resolution. Relative sources
 are interpreted lexically from the canonical audit workspace, parent

@@ -522,8 +522,12 @@ chmod +x "$WORKSPACE_DIR/bin/run-verification-case.sh"
 copy_file \
   "$SKILL_DIR/scripts/evidence_io.py" \
   "$WORKSPACE_DIR/bin/evidence_io.py"
+copy_file \
+  "$SKILL_DIR/scripts/docker_case_lifecycle.py" \
+  "$WORKSPACE_DIR/bin/docker_case_lifecycle.py"
 write_text_file "$WORKSPACE_DIR/scripts/run-verification-case.sh" '#!/usr/bin/env bash
 # zhulong-tool-contract: docker-verification-v1; timeout=mandatory; sandbox-preflight=mandatory
+# zhulong-host-policy: docker-case-policy-v1
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 exec bash "$SCRIPT_DIR/../bin/run-verification-case.sh" "$@"

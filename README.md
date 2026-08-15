@@ -344,6 +344,8 @@ zhulong/
 │   ├── asr_start.sh                    # Create or reuse an audit workspace
 │   ├── manage_docker_resources.py      # Docker baseline, exact cleanup, strict hygiene
 │   ├── check_sandbox_preflight.py      # Unsafe verification container rejection
+│   ├── docker_case_lifecycle.py        # Per-case Docker identity, policy, and exact cleanup
+│   ├── run_verification_case.sh        # Docker-only case execution and evidence capture
 │   ├── audit_disposition.py            # Workspace-level issue decision log
 │   ├── finalize_audit_workspace.py     # Completion checks before handoff
 │   ├── assert_finalized_workspace.py   # Finalized workspace integrity checks

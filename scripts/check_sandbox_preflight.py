@@ -121,6 +121,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mode", default="", help="Verification mode, such as docker-run or docker-compose.")
     parser.add_argument("--compose-operation", choices=("preflight", "pin", "verify", "cleanup"), default="preflight")
     parser.add_argument("--compose-file", action="append", default=[], help="Compose source or pinned file. Repeatable and ordered.")
+    parser.add_argument("--compose-service", default="", help="Selected Compose service; must exist in the pinned input set.")
     parser.add_argument("--compose-manifest", default="", help="Pinned Compose manifest path.")
     parser.add_argument("--compose-manifest-sha256", default="", help="Expected pinned manifest SHA-256.")
     parser.add_argument("--compose-project-directory", default="", help="Explicit Compose project directory; must be the workspace.")
@@ -726,6 +727,7 @@ def scan_compose_bytes(
     workspace: Path,
     case_id: str,
     bind_identities: dict[str, Any] | None = None,
+    declared_services: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     try:
         text = data.decode("utf-8", errors="strict")
@@ -752,6 +754,8 @@ def scan_compose_bytes(
     if not isinstance(document, dict) or not isinstance(document.get("services"), dict) or not document["services"]:
         findings.append(_compose_finding("compose_services_unverifiable", logical_source, "Compose services must be a non-empty static mapping.", issue_code="COMPOSE_INPUT_UNSAFE"))
         return findings
+    if declared_services is not None:
+        declared_services.update(name for name in document["services"] if isinstance(name, str))
     for key in document:
         if key not in TOP_LEVEL_FIELDS:
             if key == "volumes":
@@ -784,6 +788,45 @@ def scan_compose_bytes(
             findings.append(_compose_finding("compose_read_only_not_true", logical_source, "If declared, service read_only must be literal true.", issue_code="COMPOSE_FIELD_UNSUPPORTED", excerpt=service_label))
         if "cap_drop" in service and service["cap_drop"] != ["ALL"]:
             findings.append(_compose_finding("compose_cap_drop_unverifiable", logical_source, "cap_drop, when used, must be exactly [ALL].", issue_code="COMPOSE_CAPABILITY_UNSUPPORTED", excerpt=service_label))
+        if "depends_on" in service:
+            findings.append(_compose_finding(
+                "compose_dependency_unsupported",
+                logical_source,
+                "Compose service dependencies are outside the single-service execution contract.",
+                issue_code="COMPOSE_DEPENDENCY_UNSUPPORTED",
+                excerpt=service_label,
+            ))
+        if "restart" in service and (not isinstance(service["restart"], str) or service["restart"] != "no"):
+            findings.append(_compose_finding(
+                "compose_restart_policy_unsafe",
+                logical_source,
+                "Compose restart must be absent or the exact string 'no'.",
+                issue_code="COMPOSE_RESTART_POLICY_UNSAFE",
+                excerpt=service_label,
+            ))
+        if "labels" in service:
+            labels = service["labels"]
+            label_names: list[str] = []
+            if isinstance(labels, dict) and all(isinstance(key, str) for key in labels):
+                label_names = list(labels)
+            elif isinstance(labels, list) and all(isinstance(item, str) and "=" in item for item in labels):
+                label_names = [item.split("=", 1)[0] for item in labels]
+            else:
+                findings.append(_compose_finding(
+                    "compose_labels_unverifiable",
+                    logical_source,
+                    "Compose labels must be a static mapping or key=value list.",
+                    issue_code="COMPOSE_RESERVED_LABEL_FORBIDDEN",
+                    excerpt=service_label,
+                ))
+            if any(name.startswith(("org.zhulong.", "com.docker.compose.")) for name in label_names):
+                findings.append(_compose_finding(
+                    "compose_reserved_label_forbidden",
+                    logical_source,
+                    "Target-defined Compose labels must not claim Zhulong or Compose lifecycle ownership.",
+                    issue_code="COMPOSE_RESERVED_LABEL_FORBIDDEN",
+                    excerpt=service_label,
+                ))
 
         volumes = service.get("volumes", [])
         if not isinstance(volumes, list):
@@ -849,10 +892,12 @@ def inspect_pinned_compose(
     supplied_files: list[str] | None,
     *,
     case_id: str,
+    compose_service: str = "",
     expected_bind_identities: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     verified = verify_compose_inputs(workspace, manifest_value, expected_sha256, supplied_files)
     bind_identities: dict[str, Any] = {}
+    declared_services: set[str] = set()
     findings: list[dict[str, Any]] = []
     for path_value, logical_source in zip(verified["compose_files"], verified["logical_sources"]):
         data, _ = read_stable_workspace_file(workspace, safe_relative(path_value, workspace))
@@ -863,6 +908,7 @@ def inspect_pinned_compose(
                 workspace=workspace,
                 case_id=case_id,
                 bind_identities=bind_identities,
+                declared_services=declared_services,
             )
         )
     verify_compose_inputs(workspace, manifest_value, expected_sha256, supplied_files)
@@ -872,6 +918,8 @@ def inspect_pinned_compose(
             str(first.get("issue_code") or "COMPOSE_INPUT_UNSAFE"),
             "Pinned Compose input failed the closed host-bind or capability policy.",
         )
+    if compose_service and compose_service not in declared_services:
+        raise PinningError("COMPOSE_SERVICE_MISSING", "Selected Compose service is absent from the pinned input set.")
     if expected_bind_identities is not None and not bind_identity_maps_match(expected_bind_identities, bind_identities):
         raise PinningError("COMPOSE_BIND_SOURCE_FORBIDDEN", "Allowed Compose bind directory identity changed during revalidation.")
     verified["bind_identities"] = bind_identities
@@ -905,8 +953,8 @@ def scan_docker_tokens(tokens: list[str], *, source: str) -> list[dict[str, Any]
         "--cgroupns": "docker_run_cgroupns", "--mount": "docker_run_mount", "--volume": "docker_run_volume", "-v": "docker_run_volume",
         "--network": "docker_run_network_override", "--net": "docker_run_network_override", "--publish": "docker_run_publish", "-p": "docker_run_publish",
     }
-    safe_value_options = {"--memory", "-m", "--memory-swap", "--memory-reservation", "--cpus", "--cpu-shares", "--cpu-quota", "--cpu-period", "--pids-limit", "--shm-size", "--ulimit"}
-    safe_flags = {"--read-only"}
+    policy_value_options = {"--memory", "-m", "--memory-swap", "--memory-reservation", "--cpus", "--cpu-shares", "--cpu-quota", "--cpu-period", "--pids-limit", "--shm-size", "--ulimit"}
+    policy_flags = {"--read-only"}
     index = 0
     while index < len(tokens):
         token = tokens[index]
@@ -919,15 +967,18 @@ def scan_docker_tokens(tokens: list[str], *, source: str) -> list[dict[str, Any]
                     index += 1
                 else:
                     add_unique(findings, finding(label="dangerous_shell_flag", pattern="docker_run_arg_missing_value", source_type="docker_run_args", source=source, reason="Docker boundary option is missing its value."))
-            add_unique(findings, finding(label="dangerous_shell_flag", pattern=boundary_options[matched], source_type="docker_run_args", source=source, reason="Extra Docker arguments must not alter isolation or host exposure."))
-        elif option in safe_value_options:
+            add_unique(findings, finding(label="dangerous_shell_flag", pattern=boundary_options[matched], source_type="docker_run_args", source=source, reason="Extra Docker arguments must not alter isolation or host exposure.", issue_code="DOCKER_RESOURCE_OVERRIDE_FORBIDDEN"))
+        elif option in policy_value_options:
             if "=" not in token:
                 if index + 1 >= len(tokens) or tokens[index + 1].startswith("-"):
-                    add_unique(findings, finding(label="dangerous_shell_flag", pattern="docker_run_arg_missing_value", source_type="docker_run_args", source=source, reason="Allowed resource option is missing its value."))
+                    add_unique(findings, finding(label="dangerous_shell_flag", pattern="docker_run_arg_missing_value", source_type="docker_run_args", source=source, reason="Host policy option is missing its value.", issue_code="DOCKER_RESOURCE_OVERRIDE_FORBIDDEN"))
                 else:
                     index += 1
-        elif token not in safe_flags:
-            add_unique(findings, finding(label="dangerous_shell_flag", pattern="docker_run_arg_unknown", source_type="docker_run_args", source=source, reason="Unknown extra Docker argument is outside the safe resource allowlist."))
+            add_unique(findings, finding(label="dangerous_shell_flag", pattern="docker_resource_override_forbidden", source_type="docker_run_args", source=source, reason="Extra Docker arguments must not override the host resource policy.", issue_code="DOCKER_RESOURCE_OVERRIDE_FORBIDDEN"))
+        elif option in policy_flags:
+            add_unique(findings, finding(label="dangerous_shell_flag", pattern="docker_resource_override_forbidden", source_type="docker_run_args", source=source, reason="Extra Docker arguments must not override the host resource policy.", issue_code="DOCKER_RESOURCE_OVERRIDE_FORBIDDEN"))
+        else:
+            add_unique(findings, finding(label="dangerous_shell_flag", pattern="docker_run_arg_unknown", source_type="docker_run_args", source=source, reason="Unknown extra Docker argument is outside the closed wrapper contract.", issue_code="DOCKER_RUN_ARG_UNSUPPORTED"))
         if token_contains_docker_socket(token):
             add_unique(findings, finding(label="credential_exposure_risk", pattern="docker_socket_mount", source_type="docker_run_args", source=source, reason="Docker socket mount exposes host Docker control."))
         index += 1
@@ -955,10 +1006,11 @@ def build_payload(args: argparse.Namespace) -> dict[str, Any]:
     workspace = require_workspace(args.workspace_dir) if args.workspace_dir else None
     findings: list[dict[str, Any]] = []
     bind_identities: dict[str, Any] = {}
+    declared_services: set[str] = set()
     expected_bind_identities = parse_expected_bind_identities(args.expected_bind_identities)
     if args.mode == "docker-compose":
-        if workspace is None or not args.case_id or not args.compose_manifest or not args.compose_manifest_sha256 or not args.compose_project_directory:
-            findings.append(_compose_finding("compose_pin_required", "compose-input", "Compose preflight requires a pinned manifest, digest, case id, and explicit project directory.", issue_code="COMPOSE_INPUT_UNSAFE"))
+        if workspace is None or not args.case_id or not args.compose_service or not args.compose_manifest or not args.compose_manifest_sha256 or not args.compose_project_directory:
+            findings.append(_compose_finding("compose_pin_required", "compose-input", "Compose preflight requires a selected service, pinned manifest, digest, case id, and explicit project directory.", issue_code="COMPOSE_INPUT_UNSAFE"))
         else:
             project = Path(args.compose_project_directory).expanduser().resolve(strict=False)
             if project != workspace:
@@ -974,6 +1026,7 @@ def build_payload(args: argparse.Namespace) -> dict[str, Any]:
                             workspace=workspace,
                             case_id=args.case_id,
                             bind_identities=bind_identities,
+                            declared_services=declared_services,
                         )
                     )
                 verify_compose_inputs(workspace, args.compose_manifest, args.compose_manifest_sha256, args.compose_file)
@@ -986,6 +1039,13 @@ def build_payload(args: argparse.Namespace) -> dict[str, Any]:
                     ))
             except PinningError as exc:
                 findings.append(_compose_finding("compose_input_identity_drift", "compose-input", str(exc), issue_code=exc.code))
+            if args.compose_service and args.compose_service not in declared_services:
+                findings.append(_compose_finding(
+                    "compose_service_missing",
+                    "compose-input",
+                    "Selected Compose service is absent from the pinned input set.",
+                    issue_code="COMPOSE_SERVICE_MISSING",
+                ))
     elif args.compose_file:
         findings.append(_compose_finding("compose_pin_required", "compose-input", "Raw Compose inputs are not accepted outside pinned docker-compose preflight.", issue_code="COMPOSE_INPUT_UNSAFE"))
 
@@ -1014,7 +1074,7 @@ def build_payload(args: argparse.Namespace) -> dict[str, Any]:
         "checked_at": utc_now(), "ok": ok, "status": PASSED_STATUS if ok else REJECTED_STATUS,
         "case_id": args.case_id, "mode": args.mode, "findings": findings, "labels": labels,
         "issue_codes": issue_codes, "resume_step": RESUME_OK if ok else RESUME_UNSAFE, "review_only": not ok,
-        "bind_identities": bind_identities,
+        "bind_identities": bind_identities, "selected_service": args.compose_service,
     }
 
 
@@ -1057,6 +1117,7 @@ def main() -> int:
                         args.compose_manifest_sha256,
                         args.compose_file or None,
                         case_id=args.case_id,
+                        compose_service=args.compose_service,
                         expected_bind_identities=expected_bind_identities,
                     )
                 else:

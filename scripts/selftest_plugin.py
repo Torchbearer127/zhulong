@@ -173,6 +173,7 @@ REQUIRED_FILES = [
     "scripts/run_initial_probes.sh",
     "scripts/run_verification_case.sh",
     "scripts/evidence_io.py",
+    "scripts/docker_case_lifecycle.py",
     "scripts/manage_docker_resources.py",
     "scripts/workspace_state.py",
     "scripts/render_handoff_summary.py",
@@ -208,6 +209,7 @@ REQUIRED_FILES = [
     "scripts/selftest_rh3_context_protocol.py",
     "scripts/selftest_rh3_1_tool_registry_stage_binding.py",
     "scripts/selftest_rhs1_secret_fixture_hygiene.py",
+    "scripts/selftest_rh5_docker_case_lifecycle.py",
     "scripts/validate_workspace_state.py",
     "scripts/validate_target_contract.py",
     "scripts/validate_recon_result.py",
@@ -369,6 +371,7 @@ INSTALLED_SKILL_REQUIRED_FILES = [
     "scripts/run_initial_probes.sh",
     "scripts/run_verification_case.sh",
     "scripts/evidence_io.py",
+    "scripts/docker_case_lifecycle.py",
     "scripts/manage_docker_resources.py",
     "scripts/workspace_state.py",
     "scripts/audit_state_io.py",
@@ -382,6 +385,7 @@ INSTALLED_SKILL_REQUIRED_FILES = [
     "scripts/selftest_rh3_context_protocol.py",
     "scripts/selftest_rh3_1_tool_registry_stage_binding.py",
     "scripts/selftest_rhs1_secret_fixture_hygiene.py",
+    "scripts/selftest_rh5_docker_case_lifecycle.py",
     "scripts/render_confirmed_vuln_docx.py",
     "scripts/recording_identity.py",
     "scripts/auto_record_bundle.py",
@@ -6573,6 +6577,7 @@ def run_sandbox_preflight(
     args: list[str],
     *,
     expected_returncode: int,
+    compose_service: str = "app",
 ) -> dict:
     status_path = workspace / "runtime/sandbox-preflight-status.json"
     status_before = status_path.read_bytes() if status_path.exists() else None
@@ -6609,6 +6614,8 @@ def run_sandbox_preflight(
         effective_args = [
             "--mode",
             "docker-compose",
+            "--compose-service",
+            compose_service,
             "--compose-manifest",
             pin_payload["manifest"],
             "--compose-manifest-sha256",
@@ -6779,8 +6786,6 @@ def exercise_sandbox_preflight(script_path: Path, workspace: Path, plugin_root: 
         "  attacker:\n"
         "    image: alpine:3.20\n"
         "    privileged: false\n"
-        "    labels:\n"
-        "      org.zhulong.managed: \"true\"\n"
         "    cap_drop:\n"
         "      - ALL\n"
         "    volumes:\n"
@@ -6790,7 +6795,14 @@ def exercise_sandbox_preflight(script_path: Path, workspace: Path, plugin_root: 
         "        read_only: true\n",
         encoding="utf-8",
     )
-    status = run_sandbox_preflight(script_path, workspace, plugin_root, ["--compose-file", str(safe_compose)], expected_returncode=0)
+    status = run_sandbox_preflight(
+        script_path,
+        workspace,
+        plugin_root,
+        ["--compose-file", str(safe_compose)],
+        expected_returncode=0,
+        compose_service="attacker",
+    )
     if status.get("status") != "passed" or status.get("findings"):
         raise SystemExit(f"FAILED: safe Zhulong attacker compose should pass sandbox preflight: {status}")
 
@@ -6891,6 +6903,7 @@ def exercise_sandbox_preflight(script_path: Path, workspace: Path, plugin_root: 
         plugin_root,
         ["--compose-file", str(safe_compose), "--compose-file", str(override_compose)],
         expected_returncode=0,
+        compose_service="attacker",
     )
     if ordered_status.get("findings"):
         raise SystemExit(f"FAILED: ordered Compose override inputs should pass: {ordered_status}")
@@ -7077,6 +7090,8 @@ def exercise_compose_bind_identity_repair(plugin_root: Path, temp_root: Path) ->
                     case_id,
                     "--mode",
                     "docker-compose",
+                    "--compose-service",
+                    "verifier",
                     "--compose-file",
                     pin_payload["compose_files"][0],
                     "--compose-manifest",
@@ -7246,7 +7261,7 @@ def exercise_compose_bind_identity_repair(plugin_root: Path, temp_root: Path) ->
     pin_payload = json.loads(pin.stdout)
     try:
         first = subprocess.run(
-            [sys.executable, str(preflight), "--workspace-dir", str(workspace), "--case-id", "identity-case", "--mode", "docker-compose", "--compose-file", pin_payload["compose_files"][0], "--compose-manifest", pin_payload["manifest"], "--compose-manifest-sha256", pin_payload["manifest_sha256"], "--compose-project-directory", str(workspace), "--json"],
+            [sys.executable, str(preflight), "--workspace-dir", str(workspace), "--case-id", "identity-case", "--mode", "docker-compose", "--compose-service", "verifier", "--compose-file", pin_payload["compose_files"][0], "--compose-manifest", pin_payload["manifest"], "--compose-manifest-sha256", pin_payload["manifest_sha256"], "--compose-project-directory", str(workspace), "--json"],
             cwd=plugin_root,
             capture_output=True,
             text=True,
@@ -7706,11 +7721,14 @@ def exercise_verification_wrapper_state_boundary(plugin_root: Path, temp_root: P
         "  exit 0\n"
         "fi\n"
         "if [[ \"${1:-}\" == image && \"${2:-}\" == inspect ]]; then exit 0; fi\n"
+        "if [[ \"${1:-}\" == container && \"${2:-}\" == ls ]]; then exit 0; fi\n"
+        "if [[ \"${1:-}\" == network && \"${2:-}\" == ls ]]; then exit 0; fi\n"
+        "if [[ \"${1:-}\" == volume && \"${2:-}\" == ls ]]; then exit 0; fi\n"
         "if [[ \"${1:-}\" == compose ]]; then\n"
-        "  shift; compose_file=''; action=''\n"
+        "  shift; compose_file=''; override_file=''; action=''\n"
         "  while [[ $# -gt 0 ]]; do\n"
         "    case \"$1\" in\n"
-        "      -f) compose_file=\"${2:-}\"; shift 2 ;;\n"
+        "      -f) if [[ -z \"$compose_file\" ]]; then compose_file=\"${2:-}\"; else override_file=\"${2:-}\"; fi; shift 2 ;;\n"
         "      config|pull|run) action=\"$1\"; break ;;\n"
         "      *) shift ;;\n"
         "    esac\n"
@@ -7720,7 +7738,10 @@ def exercise_verification_wrapper_state_boundary(plugin_root: Path, temp_root: P
         "  printf 'read=%s marker=%s action=%s\\n' \"$digest\" \"$marker\" \"$action\" >> \"$ZHULONG_DOCKER_CALL_LOG\"\n"
         "  if [[ \"$action\" == config && -n \"${ZHULONG_ORIGINAL_COMPOSE:-}\" ]]; then printf 'services:\\n  app:\\n    image: attacker:changed\\n    privileged: true\\n' > \"$ZHULONG_ORIGINAL_COMPOSE\"; fi\n"
         "  if [[ \"$action\" == config && \"${ZHULONG_COMPOSE_MUTATE_SNAPSHOT:-0}\" == 1 ]]; then printf 'services: {}\\n' > \"$compose_file\"; fi\n"
-        "  if [[ \"$action\" == config ]]; then printf 'stub:compose\\n'; exit 0; fi\n"
+        "  if [[ \"$action\" == config ]]; then\n"
+        "    python3 -c 'import json,sys; override=json.load(open(sys.argv[1], encoding=\"utf-8\")); policy=override[\"services\"][\"app\"]; print(json.dumps({\"services\":{\"app\":{\"image\":\"stub:compose\",\"privileged\":False,**policy}}},sort_keys=True))' \"$override_file\"\n"
+        "    exit 0\n"
+        "  fi\n"
         "  if [[ \"$action\" == run ]]; then\n"
         "    if [[ -n \"${ZHULONG_COMPOSE_OUTPUT_BEHAVIOR:-}\" ]]; then\n"
         "      record_output_identity before\n"
@@ -8115,7 +8136,13 @@ def exercise_verification_wrapper_state_boundary(plugin_root: Path, temp_root: P
     proc, result, docker_calls, poc_calls = invoke(legacy_workspace, "legacy-r1")
     if proc.returncode != 0 or result.get("status") != "confirmed_in_docker":
         raise SystemExit("FAILED: R1 wrapper compatibility changed")
-    if authority_fingerprint(legacy_workspace) == legacy_before or len(docker_calls) != 3 or len(poc_calls) != 1:
+    if (
+        authority_fingerprint(legacy_workspace) == legacy_before
+        or sum(call == "info" for call in docker_calls) != 1
+        or sum(call.startswith("image inspect ") for call in docker_calls) != 1
+        or sum(call.startswith("run ") for call in docker_calls) != 1
+        or len(poc_calls) != 1
+    ):
         raise SystemExit("FAILED: R1 wrapper baseline mutation/execution behavior changed")
 
     no_state = make_workspace("no-state", None)
@@ -11749,6 +11776,7 @@ def selftest_installed_skill(skill_root: Path) -> None:
          str(skill_root / "scripts/selftest_rh3_context_protocol.py"),
          str(skill_root / "scripts/selftest_rh3_1_tool_registry_stage_binding.py"),
          str(skill_root / "scripts/selftest_rhs1_secret_fixture_hygiene.py"),
+         str(skill_root / "scripts/selftest_rh5_docker_case_lifecycle.py"),
          str(skill_root / "scripts/validate_workspace_state.py"),
          str(skill_root / "scripts/validate_target_contract.py"),
          str(skill_root / "scripts/validate_recon_result.py"),
@@ -11762,6 +11790,7 @@ def selftest_installed_skill(skill_root: Path) -> None:
          str(skill_root / "scripts/verify_candidate.py"),
          str(skill_root / "scripts/check_sandbox_preflight.py"),
          str(skill_root / "scripts/evidence_io.py"),
+         str(skill_root / "scripts/docker_case_lifecycle.py"),
          str(skill_root / "scripts/manage_docker_resources.py"),
          str(skill_root / "scripts/render_confirmed_vuln_docx.py"),
          str(skill_root / "scripts/recording_identity.py"),
@@ -11777,6 +11806,7 @@ def selftest_installed_skill(skill_root: Path) -> None:
     run([sys.executable, str(skill_root / "scripts/selftest_rh3_context_protocol.py")], skill_root)
     run([sys.executable, str(skill_root / "scripts/selftest_rh3_1_tool_registry_stage_binding.py")], skill_root)
     run([sys.executable, str(skill_root / "scripts/selftest_rhs1_secret_fixture_hygiene.py")], skill_root)
+    run([sys.executable, str(skill_root / "scripts/selftest_rh5_docker_case_lifecycle.py")], skill_root)
     exercise_target_contract_validator(skill_root)
     exercise_tool_registry_contract(skill_root)
     exercise_context_planning_contract(skill_root)
@@ -12446,6 +12476,7 @@ def main() -> None:
     exercise_tool_registry_contract(plugin_root)
     run([sys.executable, str(plugin_root / "scripts/selftest_rh3_1_tool_registry_stage_binding.py")], plugin_root)
     run([sys.executable, str(plugin_root / "scripts/selftest_rhs1_secret_fixture_hygiene.py")], plugin_root)
+    run([sys.executable, str(plugin_root / "scripts/selftest_rh5_docker_case_lifecycle.py")], plugin_root)
     exercise_context_planning_contract(plugin_root)
     exercise_root_skill_kernel_contract(plugin_root)
     exercise_recon_result_contract(plugin_root)
@@ -12926,8 +12957,8 @@ def main() -> None:
     )
     require_text(
         plugin_root / "scripts/run_verification_case.sh",
-        "managed_by_compose_file",
-        "verification runner compose resource limit reporting",
+        "managed_by_host_policy",
+        "verification runner shared host resource policy reporting",
     )
     forbid_text(
         plugin_root / "scripts/run_verification_case.sh",
@@ -13046,6 +13077,7 @@ def main() -> None:
          str(plugin_root / "scripts/selftest_rh3_context_protocol.py"),
          str(plugin_root / "scripts/selftest_rh3_1_tool_registry_stage_binding.py"),
          str(plugin_root / "scripts/selftest_rhs1_secret_fixture_hygiene.py"),
+         str(plugin_root / "scripts/selftest_rh5_docker_case_lifecycle.py"),
          str(plugin_root / "scripts/validate_workspace_state.py"),
          str(plugin_root / "scripts/validate_target_contract.py"),
          str(plugin_root / "scripts/validate_candidate.py"),
@@ -13055,6 +13087,8 @@ def main() -> None:
          str(plugin_root / "scripts/p8_dogfood_metrics.py"),
          str(plugin_root / "scripts/verify_candidate.py"),
          str(plugin_root / "scripts/check_sandbox_preflight.py"),
+         str(plugin_root / "scripts/evidence_io.py"),
+         str(plugin_root / "scripts/docker_case_lifecycle.py"),
          str(plugin_root / "scripts/manage_docker_resources.py"),
          str(plugin_root / "scripts/render_confirmed_vuln_docx.py"),
          str(plugin_root / "scripts/scaffold_bilingual_findings.py"),
@@ -13148,6 +13182,8 @@ def main() -> None:
             raise SystemExit("FAILED: bootstrapped workspace is missing check-sandbox-preflight.py")
         if not (workspace / "bin/evidence_io.py").exists():
             raise SystemExit("FAILED: bootstrapped workspace is missing evidence_io.py")
+        if not (workspace / "bin/docker_case_lifecycle.py").exists():
+            raise SystemExit("FAILED: bootstrapped workspace is missing docker_case_lifecycle.py")
         if not (workspace / "bin/manage-docker-resources.py").exists():
             raise SystemExit("FAILED: bootstrapped workspace is missing manage-docker-resources.py")
         if not (workspace / "bin/render-handoff-summary.py").exists():
@@ -19284,6 +19320,8 @@ def main() -> None:
             raise SystemExit("FAILED: Claude skill sync did not copy check_sandbox_preflight.py")
         if not (installed_skill / "scripts/evidence_io.py").exists():
             raise SystemExit("FAILED: Claude skill sync did not copy evidence_io.py")
+        if not (installed_skill / "scripts/docker_case_lifecycle.py").exists():
+            raise SystemExit("FAILED: Claude skill sync did not copy docker_case_lifecycle.py")
         if not (installed_skill / "scripts/render_handoff_summary.py").exists():
             raise SystemExit("FAILED: Claude skill sync did not copy render_handoff_summary.py")
         if not (installed_skill / "scripts/workspace_state.py").exists():

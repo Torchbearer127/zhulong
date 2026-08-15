@@ -200,7 +200,8 @@ When fixing a product bug, patch the canonical source area:
 - Docker cleanup or residue bugs: `scripts/manage_docker_resources.py`,
   finalization/assertion scripts, Docker hygiene references.
 - Unsafe verification container bugs: `scripts/check_sandbox_preflight.py`,
-  `scripts/run_verification_case.sh`.
+  `scripts/run_verification_case.sh`, `scripts/docker_case_lifecycle.py`,
+  `scripts/evidence_io.py`.
 - Ledger/finalization bugs: `scripts/audit_disposition.py`,
   `scripts/finalize_audit_workspace.py`,
   `scripts/assert_finalized_workspace.py`.

@@ -72,6 +72,25 @@ Docker residue from strict cleanliness checks.
 
 ## End-of-Audit Cleanup
 
+### Verification-case lifecycle
+
+`run-verification-case.sh` owns a narrower lifecycle inside the workspace-level
+baseline contract. Each docker-run or Compose invocation creates a host-owned
+receipt with a random case token, exact container name, unique project name,
+and `docker-case-policy-v1`. The policy defaults to 512 MiB, 1 CPU, and 256
+PIDs and enforces bounded ranges of 16 MiB through 2 GiB, 0.1 through 4 CPUs,
+and 1 through 1024 PIDs. Target Compose input and extra Docker arguments cannot
+override this policy.
+
+Case cleanup inspects Docker state and removes only the exact receipt-owned
+container plus resources with the exact unique Compose project label. It does
+not use prefixes, wildcards, label selectors, or prune. Cleanup and a second
+zero-residue query run before a completion event is eligible to commit. A
+normal result, failure, timeout, signal, or evidence error all use this same
+cleanup path. `DOCKER_CASE_CLEANUP_FAILED` is a blocking result and can never
+be treated as confirmation-ready. Workspace-level cleanup below remains a
+separate final hygiene gate and is not weakened by a successful case cleanup.
+
 If you started the target with Docker Compose, prefer a unique project name for
 this audit so cleanup has an exact handle:
 

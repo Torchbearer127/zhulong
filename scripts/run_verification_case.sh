@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # zhulong-tool-contract: docker-verification-v1; timeout=mandatory; sandbox-preflight=mandatory
+# zhulong-host-policy: docker-case-policy-v1
 
 set -euo pipefail
 
@@ -30,10 +31,9 @@ Usage:
 
 Purpose:
   Run one Docker-only verification case with a mandatory timeout, explicit
-  network setting, conservative docker-run resource limits, and structured
+  network setting, one bounded host resource policy, and structured
   evidence under <audit-workspace>/evidence/<case-id>/.
-  In docker-compose mode, resource limits are managed by the Compose files;
-  docker-run defaults are not reported as effective limits.
+  Docker-run and Docker Compose both use the host-owned docker-case-policy-v1.
 
 Stable outcome labels:
   blocked_docker_unavailable
@@ -68,14 +68,14 @@ Common options:
   --evidence-dir DIR         Default: <workspace>/evidence/<case-id>.
   --network NAME             docker-run network. Default: none.
   --pull-if-missing          Pull only when the image is missing locally.
+  --memory LIMIT             Default: 512m; allowed range: 16m through 2g.
+  --cpus LIMIT               Default: 1; allowed range: 0.1 through 4.
+  --pids-limit N             Default: 256; allowed range: 1 through 1024.
 
 docker-run options:
   --image IMAGE              Required image name or ID.
-  --memory LIMIT             Default: 512m.
-  --cpus LIMIT               Default: 1.
-  --pids-limit N             Default: 256.
-  --no-read-only             Disable read-only root filesystem when required.
-  --docker-arg ARG           Extra docker run argument. Repeat as needed.
+  --docker-arg ARG           Deprecated closed input; policy/boundary overrides
+                             are rejected before Docker execution.
   --no-default-mounts        Do not mount workspace poc/ and evidence dirs.
 
 docker-compose options:
@@ -337,8 +337,28 @@ POC_COMMAND_INVOKED="false"
 WRAPPER_STATUS=""
 AUTHORITY_EVENT_COMMITTED=""
 AUTHORITY_EVENT_ERROR_CODE=""
+VERIFICATION_DIAGNOSTIC_CODE=""
 CONTROL_EVIDENCE_UNSAFE="false"
 CAPTURE_RESULT='{}'
+CAPTURE_HELPER_PID=""
+LIFECYCLE_ACTIVE="false"
+LIFECYCLE_RECEIPT_PATH=""
+LIFECYCLE_RECEIPT_SHA256=""
+LIFECYCLE_OVERRIDE_PATH=""
+LIFECYCLE_OVERRIDE_SHA256=""
+LIFECYCLE_PROJECT_NAME=""
+LIFECYCLE_CONTAINER_NAME=""
+LIFECYCLE_TOKEN=""
+LIFECYCLE_POLICY_JSON='{}'
+DOCKER_CASE_MAY_EXIST="false"
+CLEANUP_ATTEMPTED="false"
+CLEANUP_VERIFIED="false"
+CLEANUP_CONTAINERS_BEFORE="0"
+CLEANUP_NETWORKS_BEFORE="0"
+CLEANUP_VOLUMES_BEFORE="0"
+CLEANUP_CONTAINERS_AFTER="0"
+CLEANUP_NETWORKS_AFTER="0"
+CLEANUP_VOLUMES_AFTER="0"
 
 find_state_writer() {
   if [[ -f "$SCRIPT_DIR/write_audit_event.py" ]]; then
@@ -370,14 +390,212 @@ find_sandbox_preflight() {
   fi
 }
 
+find_case_lifecycle() {
+  if [[ -f "$SCRIPT_DIR/docker_case_lifecycle.py" ]]; then
+    printf '%s\n' "$SCRIPT_DIR/docker_case_lifecycle.py"
+    return
+  fi
+  if [[ -f "$SCRIPT_DIR/docker-case-lifecycle.py" ]]; then
+    printf '%s\n' "$SCRIPT_DIR/docker-case-lifecycle.py"
+    return
+  fi
+  if [[ -f "$SCRIPT_DIR/../bin/docker-case-lifecycle.py" ]]; then
+    printf '%s\n' "$SCRIPT_DIR/../bin/docker-case-lifecycle.py"
+    return
+  fi
+}
+
+validate_resource_policy_or_abort() {
+  local lifecycle output policy_exit code
+  lifecycle="$(find_case_lifecycle)"
+  if [[ -z "$lifecycle" ]]; then
+    echo "verification_status=rejected_unsafe_sandbox"
+    echo "verification_code=DOCKER_CASE_LIFECYCLE_UNSAFE"
+    echo "docker_invoked=false"
+    echo "poc_command_invoked=false"
+    echo "oracle_matched=false"
+    exit 1
+  fi
+  if [[ "$READ_ONLY" != "1" ]]; then
+    echo "verification_status=rejected_unsafe_sandbox"
+    echo "verification_code=DOCKER_RESOURCE_OVERRIDE_FORBIDDEN"
+    echo "docker_invoked=false"
+    echo "poc_command_invoked=false"
+    echo "oracle_matched=false"
+    exit 1
+  fi
+  set +e
+  output="$(python3 "$lifecycle" validate-policy --memory "$MEMORY_LIMIT" --cpus "$CPU_LIMIT" --pids-limit "$PIDS_LIMIT")"
+  policy_exit=$?
+  set -e
+  if [[ "$policy_exit" -ne 0 ]]; then
+    code="$(python3 - "$output" <<'PY'
+import json
+import sys
+try:
+    print(json.loads(sys.argv[1]).get("issue_code") or "DOCKER_RESOURCE_LIMIT_INVALID")
+except Exception:
+    print("DOCKER_RESOURCE_LIMIT_INVALID")
+PY
+)"
+    echo "verification_status=rejected_unsafe_sandbox"
+    echo "verification_code=$code"
+    echo "docker_invoked=false"
+    echo "poc_command_invoked=false"
+    echo "oracle_matched=false"
+    exit 1
+  fi
+}
+
+prepare_case_lifecycle() {
+  local lifecycle payload prepare_exit
+  lifecycle="$(find_case_lifecycle)"
+  local -a prepare_args
+  prepare_args=(
+    prepare
+    --evidence-root "$EVIDENCE_DIR"
+    --case-id "$CASE_ID"
+    --mode "$MODE"
+    --memory "$MEMORY_LIMIT"
+    --cpus "$CPU_LIMIT"
+    --pids-limit "$PIDS_LIMIT"
+  )
+  if [[ "$MODE" == "docker-compose" ]]; then
+    prepare_args+=(--compose-service "$COMPOSE_SERVICE")
+  fi
+  set +e
+  payload="$(python3 "$lifecycle" "${prepare_args[@]}")"
+  prepare_exit=$?
+  set -e
+  if [[ "$prepare_exit" -ne 0 ]]; then
+    printf '%s\n' "$payload" >&2
+    echo "verification_status=rejected_unsafe_sandbox"
+    echo "verification_code=DOCKER_CASE_LIFECYCLE_UNSAFE"
+    echo "authority_event_committed=false"
+    echo "docker_invoked=false"
+    echo "poc_command_invoked=false"
+    echo "oracle_matched=false"
+    exit 1
+  fi
+  lifecycle_values=()
+  while IFS= read -r lifecycle_value; do
+    lifecycle_values+=("$lifecycle_value")
+  done < <(python3 - "$payload" <<'PY'
+import json
+import sys
+value = json.loads(sys.argv[1])
+for key in ("receipt_path", "receipt_sha256", "override_path", "override_sha256", "project_name", "container_name", "token"):
+    print(value[key])
+print(json.dumps(value["resource_policy"], sort_keys=True, separators=(",", ":")))
+PY
+)
+  if [[ "${#lifecycle_values[@]}" -ne 8 ]]; then
+    echo "verification_status=rejected_unsafe_sandbox"
+    echo "verification_code=DOCKER_CASE_RECEIPT_DRIFT"
+    echo "authority_event_committed=false"
+    echo "docker_invoked=false"
+    echo "poc_command_invoked=false"
+    echo "oracle_matched=false"
+    exit 1
+  fi
+  LIFECYCLE_RECEIPT_PATH="${lifecycle_values[0]}"
+  LIFECYCLE_RECEIPT_SHA256="${lifecycle_values[1]}"
+  LIFECYCLE_OVERRIDE_PATH="${lifecycle_values[2]}"
+  LIFECYCLE_OVERRIDE_SHA256="${lifecycle_values[3]}"
+  LIFECYCLE_PROJECT_NAME="${lifecycle_values[4]}"
+  LIFECYCLE_CONTAINER_NAME="${lifecycle_values[5]}"
+  LIFECYCLE_TOKEN="${lifecycle_values[6]}"
+  LIFECYCLE_POLICY_JSON="${lifecycle_values[7]}"
+  LIFECYCLE_ACTIVE="true"
+}
+
+ensure_case_cleanup() {
+  if [[ "$DOCKER_CASE_MAY_EXIST" != "true" ]]; then
+    CLEANUP_ATTEMPTED="false"
+    CLEANUP_VERIFIED="true"
+    return 0
+  fi
+  if [[ "$CLEANUP_VERIFIED" == "true" ]]; then
+    return 0
+  fi
+  local lifecycle payload cleanup_exit
+  lifecycle="$(find_case_lifecycle)"
+  CLEANUP_ATTEMPTED="true"
+  set +e
+  payload="$(python3 "$lifecycle" cleanup \
+    --evidence-root "$EVIDENCE_DIR" \
+    --receipt "$LIFECYCLE_RECEIPT_PATH" \
+    --receipt-sha256 "$LIFECYCLE_RECEIPT_SHA256" \
+    --docker docker)"
+  cleanup_exit=$?
+  set -e
+  cleanup_values=()
+  while IFS= read -r cleanup_value; do
+    cleanup_values+=("$cleanup_value")
+  done < <(python3 - "$payload" <<'PY'
+import json
+import sys
+try:
+    value = json.loads(sys.argv[1])
+except Exception:
+    value = {}
+before = value.get("residue_counts_before", {})
+after = value.get("residue_counts_after", {})
+print("true" if value.get("cleanup_verified") is True else "false")
+for source in (before, after):
+    for key in ("containers", "networks", "volumes"):
+        item = source.get(key, 0)
+        print(item if isinstance(item, int) and not isinstance(item, bool) and item >= 0 else 0)
+PY
+)
+  CLEANUP_VERIFIED="${cleanup_values[0]:-false}"
+  CLEANUP_CONTAINERS_BEFORE="${cleanup_values[1]:-0}"
+  CLEANUP_NETWORKS_BEFORE="${cleanup_values[2]:-0}"
+  CLEANUP_VOLUMES_BEFORE="${cleanup_values[3]:-0}"
+  CLEANUP_CONTAINERS_AFTER="${cleanup_values[4]:-0}"
+  CLEANUP_NETWORKS_AFTER="${cleanup_values[5]:-0}"
+  CLEANUP_VOLUMES_AFTER="${cleanup_values[6]:-0}"
+  [[ "$cleanup_exit" -eq 0 && "$CLEANUP_VERIFIED" == "true" ]]
+}
+
+cleanup_wrapper_resources() {
+  local original_status="${1:-1}"
+  trap - EXIT INT TERM
+    if [[ "$LIFECYCLE_ACTIVE" == "true" && "$DOCKER_CASE_MAY_EXIST" == "true" && "$CLEANUP_VERIFIED" != "true" ]]; then
+    if ! ensure_case_cleanup; then
+      echo "verification_status=rejected_unsafe_sandbox"
+      echo "verification_code=DOCKER_CASE_CLEANUP_FAILED"
+      echo "oracle_matched=false"
+      original_status=1
+    fi
+  fi
+  if ! cleanup_pinned_compose; then
+    original_status=1
+  fi
+  exit "$original_status"
+}
+
+handle_wrapper_signal() {
+  local signal_name="$1" signal_exit=130
+  [[ "$signal_name" == "TERM" ]] && signal_exit=143
+  if [[ -n "$CAPTURE_HELPER_PID" ]]; then
+    kill -"$signal_name" "$CAPTURE_HELPER_PID" >/dev/null 2>&1 || true
+    wait "$CAPTURE_HELPER_PID" >/dev/null 2>&1 || true
+    CAPTURE_HELPER_PID=""
+  fi
+  if [[ "$LIFECYCLE_ACTIVE" == "true" && "$DOCKER_CASE_MAY_EXIST" == "true" ]]; then
+    ensure_case_cleanup >/dev/null 2>&1 || true
+  fi
+  exit "$signal_exit"
+}
+
 COMPOSE_PIN_ACTIVE="false"
 COMPOSE_PIN_MANIFEST=""
 COMPOSE_PIN_MANIFEST_SHA256=""
 COMPOSE_BIND_IDENTITIES_JSON=""
 
 cleanup_pinned_compose() {
-  local original_status="${1:-1}" cleanup_status=0 preflight
-  trap - EXIT
+  local cleanup_status=0 preflight
   if [[ "$COMPOSE_PIN_ACTIVE" == "true" ]]; then
     preflight="$(find_sandbox_preflight)"
     set +e
@@ -391,12 +609,11 @@ cleanup_pinned_compose() {
     set -e
     if [[ "$cleanup_status" -ne 0 ]]; then
       echo "ERROR: pinned Compose input cleanup was refused because its identity changed." >&2
-      if [[ "$original_status" -eq 0 ]]; then
-        original_status=1
-      fi
+      return 1
     fi
+    COMPOSE_PIN_ACTIVE="false"
   fi
-  exit "$original_status"
+  return 0
 }
 
 pin_compose_inputs() {
@@ -445,7 +662,6 @@ pin_compose_inputs() {
   COMPOSE_PIN_MANIFEST="$manifest_path"
   COMPOSE_PIN_MANIFEST_SHA256="$manifest_digest"
   COMPOSE_PIN_ACTIVE="true"
-  trap 'cleanup_pinned_compose "$?"' EXIT
 }
 
 verify_pinned_compose_or_abort() {
@@ -453,10 +669,11 @@ verify_pinned_compose_or_abort() {
   local preflight verify_payload verify_exit
   local -a verify_args
   preflight="$(find_sandbox_preflight)"
-  verify_args=(
+    verify_args=(
     --compose-operation verify
     --workspace-dir "$WORKSPACE_DIR"
-    --case-id "$CASE_ID"
+      --case-id "$CASE_ID"
+      --compose-service "$COMPOSE_SERVICE"
     --compose-manifest "$COMPOSE_PIN_MANIFEST"
     --compose-manifest-sha256 "$COMPOSE_PIN_MANIFEST_SHA256"
     --json
@@ -484,6 +701,10 @@ except Exception:
     print("COMPOSE_INPUT_IDENTITY_DRIFT")
 PY
 )"
+    if ! ensure_case_cleanup; then
+      VERIFICATION_DIAGNOSTIC_CODE="DOCKER_CASE_CLEANUP_FAILED"
+      classify_and_exit "rejected_unsafe_sandbox" "Pinned Compose input changed and exact Docker case cleanup could not be verified." "" "false"
+    fi
     echo "verification_status=rejected_unsafe_sandbox"
     echo "verification_code=$verification_code"
     echo "authority_event_committed=false"
@@ -541,7 +762,7 @@ PY
 
 SANDBOX_PREFLIGHT_PAYLOAD=""
 early_sandbox_preflight() {
-  local preflight preflight_exit
+  local preflight preflight_exit preflight_code
   preflight="$(find_sandbox_preflight)"
   if [[ -z "$preflight" ]]; then
     echo "ERROR: Sandbox preflight helper is missing; no evidence or authority file was created." >&2
@@ -566,6 +787,7 @@ early_sandbox_preflight() {
       preflight_args+=(--compose-file "$compose_file")
     done
     preflight_args+=(
+      --compose-service "$COMPOSE_SERVICE"
       --compose-manifest "$COMPOSE_PIN_MANIFEST"
       --compose-manifest-sha256 "$COMPOSE_PIN_MANIFEST_SHA256"
       --compose-project-directory "$WORKSPACE_DIR"
@@ -577,7 +799,18 @@ early_sandbox_preflight() {
   set -e
   if [[ "$preflight_exit" -ne 0 ]]; then
     printf '%s\n' "$SANDBOX_PREFLIGHT_PAYLOAD" >&2
+    preflight_code="$(python3 - "$SANDBOX_PREFLIGHT_PAYLOAD" <<'PY'
+import json
+import sys
+try:
+    codes = json.loads(sys.argv[1]).get("issue_codes", [])
+    print(codes[0] if codes else "SANDBOX_PREFLIGHT_FAILED")
+except Exception:
+    print("SANDBOX_PREFLIGHT_FAILED")
+PY
+)"
     echo "verification_status=rejected_unsafe_sandbox"
+    echo "verification_code=$preflight_code"
     echo "docker_invoked=false"
     echo "poc_command_invoked=false"
     echo "oracle_matched=false"
@@ -977,7 +1210,7 @@ emit_result_json() {
   local exit_code="$3"
   local oracle_matched="$4"
   shift 4
-  if ! python3 - "$SCRIPT_DIR" "$WORKSPACE_DIR" "$EVIDENCE_DIR" "$CASE_ID" "$MODE" "$status" "$reason" "$exit_code" "$oracle_matched" "$TIMEOUT_SECONDS" "$EXPECTED_ORACLE" "$IMAGE" "$NETWORK" "$MEMORY_LIMIT" "$CPU_LIMIT" "$PIDS_LIMIT" "$READ_ONLY" "$PULL_IF_MISSING" "$STDOUT_PATH" "$STDERR_PATH" "$COMMAND_JSON_PATH" "$DOCKER_CLI_INVOKED" "$POC_COMMAND_INVOKED" "$WRAPPER_STATUS" "$AUTHORITY_EVENT_COMMITTED" "$AUTHORITY_EVENT_ERROR_CODE" <<'PY'
+  if ! python3 - "$SCRIPT_DIR" "$WORKSPACE_DIR" "$EVIDENCE_DIR" "$CASE_ID" "$MODE" "$status" "$reason" "$exit_code" "$oracle_matched" "$TIMEOUT_SECONDS" "$EXPECTED_ORACLE" "$IMAGE" "$NETWORK" "$MEMORY_LIMIT" "$CPU_LIMIT" "$PIDS_LIMIT" "$READ_ONLY" "$PULL_IF_MISSING" "$STDOUT_PATH" "$STDERR_PATH" "$COMMAND_JSON_PATH" "$DOCKER_CLI_INVOKED" "$POC_COMMAND_INVOKED" "$WRAPPER_STATUS" "$AUTHORITY_EVENT_COMMITTED" "$AUTHORITY_EVENT_ERROR_CODE" "$VERIFICATION_DIAGNOSTIC_CODE" "$LIFECYCLE_RECEIPT_SHA256" "$CLEANUP_ATTEMPTED" "$CLEANUP_VERIFIED" "$CLEANUP_CONTAINERS_BEFORE" "$CLEANUP_NETWORKS_BEFORE" "$CLEANUP_VOLUMES_BEFORE" "$CLEANUP_CONTAINERS_AFTER" "$CLEANUP_NETWORKS_AFTER" "$CLEANUP_VOLUMES_AFTER" "$LIFECYCLE_POLICY_JSON" <<'PY'
 import json
 import sys
 from datetime import datetime, timezone
@@ -1010,7 +1243,18 @@ evidence_dir,
     wrapper_status,
 authority_event_committed,
 authority_event_error_code,
-) = sys.argv[1:27]
+verification_code,
+receipt_sha256,
+cleanup_attempted,
+cleanup_verified,
+cleanup_containers_before,
+cleanup_networks_before,
+cleanup_volumes_before,
+cleanup_containers_after,
+cleanup_networks_after,
+cleanup_volumes_after,
+resource_policy_json,
+) = sys.argv[1:38]
 sys.path.insert(0, script_dir)
 from evidence_io import SafeEvidenceError, atomic_write_json, safe_read_json
 workspace_path = Path(workspace).resolve()
@@ -1047,6 +1291,22 @@ data = {
     "image_policy": "prefer_local_or_cached_image; pull_only_when_explicitly_requested_with_pull_if_missing",
     "network": network,
     "finished_at": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
+    "docker_case_lifecycle": {
+        "receipt_sha256": receipt_sha256,
+        "cleanup_attempted": cleanup_attempted == "true",
+        "cleanup_verified": cleanup_verified == "true",
+        "residue_counts_before": {
+            "containers": int(cleanup_containers_before),
+            "networks": int(cleanup_networks_before),
+            "volumes": int(cleanup_volumes_before),
+        },
+        "residue_counts_after": {
+            "containers": int(cleanup_containers_after),
+            "networks": int(cleanup_networks_after),
+            "volumes": int(cleanup_volumes_after),
+        },
+        "resource_policy": json.loads(resource_policy_json),
+    },
 }
 if wrapper_status:
     data["wrapper_status"] = wrapper_status
@@ -1054,19 +1314,16 @@ if authority_event_committed:
     data["authority_event_committed"] = authority_event_committed == "true"
 if authority_event_error_code:
     data["authority_event_error_code"] = authority_event_error_code
-if mode == "docker-compose":
-    data["resource_limits"] = {
-        "managed_by_compose_file": True,
-        "docker_run_defaults_applied": False,
-        "note": "Docker Compose mode uses limits from the compose files; docker-run defaults are not applied.",
-    }
-else:
-    data["resource_limits"] = {
-        "memory": memory_limit,
-        "cpus": cpu_limit,
-        "pids_limit": pids_limit,
-        "read_only_rootfs": read_only == "1",
-    }
+if verification_code:
+    data["verification_code"] = verification_code
+data["resource_limits"] = {
+    "policy_version": "docker-case-policy-v1",
+    "memory": memory_limit,
+    "cpus": cpu_limit,
+    "pids_limit": int(pids_limit),
+    "read_only_rootfs": read_only == "1",
+    "managed_by_host_policy": True,
+}
 try:
     atomic_write_json(evidence_path, Path(evidence_dir, "verification-result.json"), data)
 except SafeEvidenceError as exc:
@@ -1121,6 +1378,14 @@ classify_and_exit() {
   local exit_code="${3:-}"
   local oracle_matched="${4:-false}"
   local event_committed="true"
+  local cleanup_failed="false"
+  if ! ensure_case_cleanup; then
+    status="rejected_unsafe_sandbox"
+    reason="Docker case cleanup could not prove exact zero residue."
+    oracle_matched="false"
+    cleanup_failed="true"
+    VERIFICATION_DIAGNOSTIC_CODE="DOCKER_CASE_CLEANUP_FAILED"
+  fi
   WRAPPER_STATUS="authority_event_pending"
   AUTHORITY_EVENT_COMMITTED=""
   AUTHORITY_EVENT_ERROR_CODE=""
@@ -1256,6 +1521,12 @@ classify_and_exit() {
   fi
 
   echo "verification_status=$status"
+  if [[ -n "$VERIFICATION_DIAGNOSTIC_CODE" ]]; then
+    echo "verification_code=$VERIFICATION_DIAGNOSTIC_CODE"
+  fi
+  if [[ "$cleanup_failed" == "true" ]]; then
+    echo "oracle_matched=false"
+  fi
   echo "evidence_dir=$EVIDENCE_DIR"
   echo "result_json=$EVIDENCE_DIR/verification-result.json"
 
@@ -1265,6 +1536,10 @@ classify_and_exit() {
   exit 1
 }
 
+trap 'cleanup_wrapper_resources "$?"' EXIT
+trap 'handle_wrapper_signal INT' INT
+trap 'handle_wrapper_signal TERM' TERM
+validate_resource_policy_or_abort
 pin_compose_inputs
 early_sandbox_preflight
 ensure_host_evidence_directories
@@ -1274,6 +1549,7 @@ STDOUT_PATH="$EVIDENCE_DIR/stdout.log"
 STDERR_PATH="$EVIDENCE_DIR/stderr.log"
 COMMAND_JSON_PATH="$EVIDENCE_DIR/command.json"
 SANDBOX_PREFLIGHT_JSON="$EVIDENCE_DIR/sandbox-preflight.json"
+prepare_case_lifecycle
 write_sandbox_preflight_evidence
 read_authority_preflight
 
@@ -1295,6 +1571,66 @@ atomic_write_json(Path(evidence_dir), path, [scrub(arg) for arg in sys.argv[5:]]
 PY
 }
 
+prepare_compose_config_or_abort() {
+  local lifecycle capture_payload capture_exit config_exit capture_integrity validation_payload validation_exit validation_code
+  local config_path="$EVIDENCE_DIR/compose-config.json"
+  local config_stderr="$EVIDENCE_DIR/compose-config.stderr.log"
+  verify_pinned_compose_or_abort
+  set +e
+  capture_payload="$(python3 - "$SCRIPT_DIR" "$EVIDENCE_DIR" "$config_path" "$config_stderr" "${COMPOSE_ARGS[@]}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+script_dir, root_value, stdout_value, stderr_value = sys.argv[1:5]
+command = ["docker", "compose", *sys.argv[5:], "config", "--format", "json"]
+sys.path.insert(0, script_dir)
+from evidence_io import SafeEvidenceError, run_captured_command
+try:
+    value = run_captured_command(
+        Path(root_value), Path(stdout_value), Path(stderr_value), command,
+        timeout=60, expected_oracle="",
+    )
+except SafeEvidenceError as exc:
+    print(json.dumps({"ok": False, "code": exc.code}, sort_keys=True))
+    raise SystemExit(3)
+print(json.dumps({"ok": True, **value}, sort_keys=True))
+PY
+)"
+  capture_exit=$?
+  set -e
+  verify_pinned_compose_or_abort
+  if [[ "$capture_exit" -ne 0 ]]; then
+    VERIFICATION_DIAGNOSTIC_CODE="COMPOSE_CONFIG_UNVERIFIABLE"
+    write_empty_command_json
+    classify_and_exit "rejected_unsafe_sandbox" "Merged Compose configuration could not be captured safely." "" "false"
+  fi
+  config_exit="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("exit_code", 127))' "$capture_payload")"
+  capture_integrity="$(python3 -c 'import json,sys; print("true" if json.loads(sys.argv[1]).get("capture_integrity") is True else "false")' "$capture_payload")"
+  if [[ "$config_exit" -ne 0 || "$capture_integrity" != "true" ]]; then
+    VERIFICATION_DIAGNOSTIC_CODE="COMPOSE_CONFIG_UNVERIFIABLE"
+    write_empty_command_json
+    classify_and_exit "rejected_unsafe_sandbox" "Merged Compose configuration did not pass host-owned capture." "$config_exit" "false"
+  fi
+  lifecycle="$(find_case_lifecycle)"
+  set +e
+  validation_payload="$(python3 "$lifecycle" validate-config \
+    --evidence-root "$EVIDENCE_DIR" \
+    --receipt "$LIFECYCLE_RECEIPT_PATH" \
+    --receipt-sha256 "$LIFECYCLE_RECEIPT_SHA256" \
+    --override "$LIFECYCLE_OVERRIDE_PATH" \
+    --config-json "$config_path")"
+  validation_exit=$?
+  set -e
+  if [[ "$validation_exit" -ne 0 ]]; then
+    validation_code="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("issue_code") or "COMPOSE_CONFIG_POLICY_MISMATCH")' "$validation_payload" 2>/dev/null || printf '%s' COMPOSE_CONFIG_POLICY_MISMATCH)"
+    VERIFICATION_DIAGNOSTIC_CODE="$validation_code"
+    write_empty_command_json
+    classify_and_exit "rejected_unsafe_sandbox" "Merged Compose configuration failed the host resource policy." "" "false"
+  fi
+  IMAGE="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["selected_image"])' "$validation_payload")"
+}
+
 if [[ "$MODE" == "docker-compose" ]]; then
   verify_pinned_compose_or_abort
 else
@@ -1314,12 +1650,11 @@ case "$MODE" in
     if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
       if [[ "$PULL_IF_MISSING" == "1" ]]; then
         set +e
-        pull_output="$(docker pull "$IMAGE" 2>&1)"
+        docker pull "$IMAGE" >/dev/null 2>&1
         pull_exit=$?
         set -e
-        write_host_text "$EVIDENCE_DIR/image-pull.log" "$pull_output"
         if [[ "$pull_exit" -ne 0 ]]; then
-          write_host_text "$STDERR_PATH" "Image pull failed for $IMAGE\n$pull_output"
+          write_host_text "$STDERR_PATH" "The explicitly requested image pull failed."
           write_empty_command_json
           classify_and_exit "blocked_missing_image" "Required image is missing locally and explicit pull failed."
         fi
@@ -1331,12 +1666,17 @@ case "$MODE" in
     fi
     RUN_COMMAND=(
       docker run --rm
-      --name "zhulong-${SAFE_CASE_ID}-$$"
+      --name "$LIFECYCLE_CONTAINER_NAME"
       --label "org.zhulong.managed=true"
+      --label "org.zhulong.case=$LIFECYCLE_TOKEN"
+      --label "org.zhulong.policy=docker-case-policy-v1"
+      --label "org.zhulong.project=$LIFECYCLE_PROJECT_NAME"
       --label "org.zhulong.workspace=$WORKSPACE_LABEL"
       --memory "$MEMORY_LIMIT"
+      --memory-swap "$MEMORY_LIMIT"
       --cpus "$CPU_LIMIT"
       --pids-limit "$PIDS_LIMIT"
+      --restart no
       --cap-drop ALL
       --security-opt no-new-privileges
       --network "$NETWORK"
@@ -1364,63 +1704,51 @@ PY
         --workdir /workspace/poc
       )
     fi
-    if [[ "${#EXTRA_DOCKER_ARGS[@]}" -gt 0 ]]; then
-      RUN_COMMAND+=("${EXTRA_DOCKER_ARGS[@]}")
-    fi
     RUN_COMMAND+=("$IMAGE")
     if [[ "${#CASE_COMMAND[@]}" -gt 0 ]]; then
       RUN_COMMAND+=("${CASE_COMMAND[@]}")
     fi
     ;;
   docker-compose)
-    COMPOSE_ARGS=(--project-directory "$WORKSPACE_DIR")
+    COMPOSE_ARGS=(-p "$LIFECYCLE_PROJECT_NAME" --project-directory "$WORKSPACE_DIR")
     for compose_file in "${COMPOSE_FILES[@]}"; do
       COMPOSE_ARGS+=(-f "$compose_file")
     done
-    verify_pinned_compose_or_abort
-    set +e
-    compose_config_output="$(docker compose "${COMPOSE_ARGS[@]}" config --images 2>/dev/null)"
-    compose_config_exit=$?
-    set -e
-    verify_pinned_compose_or_abort
-    if [[ "$compose_config_exit" -ne 0 ]]; then
-      echo "verification_status=rejected_unsafe_sandbox"
-      echo "verification_code=COMPOSE_CONFIG_UNVERIFIABLE"
-      echo "authority_event_committed=false"
-      echo "docker_invoked=true"
-      echo "poc_command_invoked=false"
-      echo "oracle_matched=false"
-      exit 1
-    fi
-    missing_images=()
-    while IFS= read -r compose_image; do
-      [[ -n "$compose_image" ]] || continue
-      if ! docker image inspect "$compose_image" >/dev/null 2>&1; then
-        missing_images+=("$compose_image")
-      fi
-    done <<<"$compose_config_output"
-    if [[ "${#missing_images[@]}" -gt 0 ]]; then
+    COMPOSE_ARGS+=(-f "$LIFECYCLE_OVERRIDE_PATH")
+    prepare_compose_config_or_abort
+    if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
       if [[ "$PULL_IF_MISSING" == "1" ]]; then
         verify_pinned_compose_or_abort
         set +e
-        pull_output="$(docker compose "${COMPOSE_ARGS[@]}" pull "$COMPOSE_SERVICE" 2>&1)"
+        docker compose "${COMPOSE_ARGS[@]}" pull "$COMPOSE_SERVICE" >/dev/null 2>&1
         pull_exit=$?
         set -e
         verify_pinned_compose_or_abort
-        write_host_text "$EVIDENCE_DIR/image-pull.log" "$pull_output"
         if [[ "$pull_exit" -ne 0 ]]; then
-          write_host_text "$STDERR_PATH" "Compose image pull failed for service $COMPOSE_SERVICE\n$pull_output"
+          write_host_text "$STDERR_PATH" "Compose image pull failed for the selected service."
           write_empty_command_json
-          classify_and_exit "blocked_missing_image" "One or more compose images are missing locally and explicit pull failed."
+          classify_and_exit "blocked_missing_image" "The selected Compose image is missing locally and explicit pull failed."
+        fi
+        prepare_compose_config_or_abort
+        if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+          write_host_text "$STDERR_PATH" "Selected Compose image is still missing after the explicit pull attempt."
+          write_empty_command_json
+          classify_and_exit "blocked_missing_image" "The selected Compose image remains missing after explicit pull."
         fi
       else
-        write_host_text "$STDERR_PATH" "Compose images missing locally: ${missing_images[*]}"
+        write_host_text "$STDERR_PATH" "The selected Compose image is missing locally."
         write_empty_command_json
-        classify_and_exit "blocked_missing_image" "One or more compose images are missing locally; rerun with --pull-if-missing only if network pull is acceptable."
+        classify_and_exit "blocked_missing_image" "The selected Compose image is missing locally; rerun with --pull-if-missing only if network pull is acceptable."
       fi
     fi
     verify_pinned_compose_or_abort
-    RUN_COMMAND=(docker compose "${COMPOSE_ARGS[@]}" run --rm -T "$COMPOSE_SERVICE")
+    prepare_compose_config_or_abort
+    RUN_COMMAND=(docker compose "${COMPOSE_ARGS[@]}" run --rm --no-deps --name "$LIFECYCLE_CONTAINER_NAME" -T \
+      --label "org.zhulong.managed=true" \
+      --label "org.zhulong.case=$LIFECYCLE_TOKEN" \
+      --label "org.zhulong.policy=docker-case-policy-v1" \
+      --label "org.zhulong.project=$LIFECYCLE_PROJECT_NAME" \
+      "$COMPOSE_SERVICE")
     if [[ "${#CASE_COMMAND[@]}" -gt 0 ]]; then
       RUN_COMMAND+=("${CASE_COMMAND[@]}")
     fi
@@ -1446,16 +1774,18 @@ if ! commit_verification_start_event; then
 fi
 
 POC_COMMAND_INVOKED="true"
+DOCKER_CASE_MAY_EXIST="true"
+CAPTURE_RESPONSE_PATH="$EVIDENCE_DIR/capture-response.json"
 set +e
-CAPTURE_RESULT="$(python3 - "$SCRIPT_DIR" "$WORKSPACE_DIR" "$STDOUT_PATH" "$STDERR_PATH" "$TIMEOUT_SECONDS" "$EXPECTED_ORACLE" "${RUN_COMMAND[@]}" <<'PY'
+python3 - "$SCRIPT_DIR" "$WORKSPACE_DIR" "$EVIDENCE_DIR" "$CAPTURE_RESPONSE_PATH" "$STDOUT_PATH" "$STDERR_PATH" "$TIMEOUT_SECONDS" "$EXPECTED_ORACLE" "${RUN_COMMAND[@]}" <<'PY' &
 import json
 import sys
 from pathlib import Path
 
-script_dir, root_value, stdout_value, stderr_value, timeout_value, oracle_value = sys.argv[1:7]
-command = sys.argv[7:]
+script_dir, root_value, evidence_root, response_value, stdout_value, stderr_value, timeout_value, oracle_value = sys.argv[1:9]
+command = sys.argv[9:]
 sys.path.insert(0, script_dir)
-from evidence_io import SafeEvidenceError, run_captured_command
+from evidence_io import SafeEvidenceError, atomic_write_json, run_captured_command
 
 try:
     result = run_captured_command(
@@ -1467,13 +1797,35 @@ try:
         expected_oracle=oracle_value,
     )
 except SafeEvidenceError as exc:
-    print(json.dumps({"ok": False, "code": exc.code, "message": exc.message}, sort_keys=True))
+    atomic_write_json(Path(evidence_root), Path(response_value), {"ok": False, "code": exc.code})
     raise SystemExit(3)
-print(json.dumps({"ok": True, **result}, sort_keys=True))
+atomic_write_json(Path(evidence_root), Path(response_value), {"ok": True, **result})
+PY
+CAPTURE_HELPER_PID=$!
+wait "$CAPTURE_HELPER_PID"
+CAPTURE_HELPER_EXIT=$?
+CAPTURE_HELPER_PID=""
+set -e
+set +e
+CAPTURE_RESULT="$(python3 - "$SCRIPT_DIR" "$EVIDENCE_DIR" "$CAPTURE_RESPONSE_PATH" <<'PY'
+import json
+import sys
+from pathlib import Path
+script_dir, root_value, path_value = sys.argv[1:]
+sys.path.insert(0, script_dir)
+from evidence_io import SafeEvidenceError, safe_read_json
+try:
+    print(json.dumps(safe_read_json(Path(root_value), Path(path_value)), sort_keys=True))
+except SafeEvidenceError:
+    raise SystemExit(1)
 PY
 )"
-CAPTURE_HELPER_EXIT=$?
+CAPTURE_READ_EXIT=$?
 set -e
+if [[ "$CAPTURE_READ_EXIT" -ne 0 ]]; then
+  CAPTURE_RESULT='{"ok":false,"code":"EVIDENCE_CAPTURE_FAILED"}'
+  CAPTURE_HELPER_EXIT=3
+fi
 verify_pinned_compose_or_abort
 if [[ "$CAPTURE_HELPER_EXIT" -ne 0 ]]; then
   CONTROL_EVIDENCE_UNSAFE="true"

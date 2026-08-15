@@ -679,11 +679,24 @@ service command 前 fail closed。
 Compose 采用封闭子集：顶层只允许 `version` 和 `services`，每个 service 都必须声明字面值
 `privileged: false`。anchor、alias、merge、插值、未知字段、build/host-file/include、
 namespace、capability/device/security option 以及 named/anonymous/external volume 均拒绝。
-host bind 只允许三种固定映射：target repository 只读映射到 `/workspace/target`、workspace
+选定的 service 必须存在；只要出现 `depends_on` 就拒绝；`restart` 只能省略或精确写为 `"no"`；
+目标定义的 label 不得使用保留的 `org.zhulong.*` 或 `com.docker.compose.*` 命名空间。host bind
+只允许三种固定映射：target repository 只读映射到 `/workspace/target`、workspace
 的 `poc/` 只读映射到 `/workspace/poc`，以及当前 case 的非权威 `container-output` 可写映射到
-`/workspace/output`。其他宿主路径即使只读也拒绝。额外 Docker 参数中未知或缺少值的边界参数
-会被拒绝，只允许文档化的资源限制和 `--read-only`。preflight 通过只证明配置处于当前执行
-边界内，不证明 PoC、oracle、verdict、bundle 或 finalization 成立。
+`/workspace/output`。其他宿主路径即使只读也拒绝。额外 Docker 参数不能覆盖资源或隔离策略；
+专用的 `--memory`、`--cpus` 和 `--pids-limit` 必须为正数，并受
+`docker-case-policy-v1` 硬上限约束：内存 16 MiB 到 2 GiB、CPU 0.1 到 4、PID 1 到 1024；默认值
+仍为 512 MiB、1 CPU 和 256 PID。docker-run 与 Compose 使用同一份宿主策略。preflight 通过只
+证明配置处于当前执行边界内，不证明 PoC、oracle、verdict、bundle 或 finalization 成立。
+
+每次调用都会在宿主持有的 receipt 中生成随机 case token、精确 container name 和唯一 Compose
+project name。Compose 在输入文件之后追加最后一层宿主 override，并在 service 启动前校验 production
+合并配置；执行时显式使用 `-p`、`--name` 和 `--no-deps`，镜像检查及显式请求的 pull 也只针对选定
+service。正常退出、失败、timeout、`SIGINT`、`SIGTERM` 和证据错误共用同一套幂等清理。清理过程可
+枚举资源用于检查，但只删除携带 receipt 精确 token 或唯一 project label 的资源，不使用前缀、通配、
+label selector 或 prune。container、network、volume 残留都为零后，才允许提交
+`verification_case_completed`。无法证明清理完成时返回 `DOCKER_CASE_CLEANUP_FAILED`，清除 oracle
+命中并保持 blocked。
 
 Bind source 的身份检查发生在文件系统解析之前。相对 source 按规范化 audit workspace 做词法
 解释；父目录组件和路径别名会被拒绝；target repository、`poc/`、evidence/case 以及
