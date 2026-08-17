@@ -861,9 +861,12 @@ The verification wrapper owns control evidence. `verification-result.json`,
 `command.json`, sandbox status, `stdout.log`, `stderr.log`, and authority
 references are created or replaced with host-owned, identity-checked file
 descriptors and same-directory atomic publication. `/workspace/evidence` is
-read-only when it is mounted into a Docker-run case; a separate
-`/workspace/output` mount is the only default writable container-output area,
-and output files are review-only attachments. The oracle reads bytes held by
+read-only when it is mounted into a Docker-run case. `/workspace/output` is a
+fixed 64 MiB container tmpfs, not a writable host
+bind. After execution the wrapper imports it through a host-owned staging
+directory with 64 MiB aggregate, 16 MiB per-file, 4096-entry,
+regular-file-only, no-link/no-special-file limits, then atomically publishes
+the validated `container-output` attachment. The oracle reads bytes held by
 the host capture descriptors, never reopens a container-replaceable pathname.
 Symlink, hardlink, FIFO, directory, ancestor drift, and running pathname
 replacement therefore fail closed and cannot write `stage-status.json` or
@@ -887,9 +890,11 @@ volume forms are rejected. The selected service must exist, any `depends_on`
 field is rejected, and `restart` is absent or exactly `"no"`. Target-defined
 labels cannot use the reserved `org.zhulong.*` or `com.docker.compose.*`
 namespaces. Host binds are limited to the target repository at
-`/workspace/target` read-only, workspace `poc/` at `/workspace/poc` read-only,
-and the current case's non-authoritative `container-output` at
-`/workspace/output` writable. No other host path is permitted, even read-only.
+`/workspace/target` read-only and workspace `poc/` at `/workspace/poc` read-only.
+The current case's output is
+provided by the fixed `/workspace/output` tmpfs and published to the
+non-authoritative `container-output` only after bounded host import validation.
+No other host path is permitted, even read-only.
 Extra Docker arguments cannot override resources or isolation. Dedicated
 `--memory`, `--cpus`, and `--pids-limit` values are positive and bounded by
 `docker-case-policy-v1` (16 MiB through 2 GiB, 0.1 through 4 CPUs, and 1 through
@@ -903,36 +908,40 @@ unique Compose project name in a host-owned receipt. Compose execution adds a
 last host-owned override and validates the production merged configuration
 before the service starts. It uses `-p`, `--name`, and `--no-deps`, and image
 inspection or an explicitly requested pull applies only to the selected service.
-Normal exit, failure, timeout, `SIGINT`, `SIGTERM`, and evidence errors share the
-same idempotent cleanup. Cleanup enumerates resources for inspection but removes
+Normal exit, failure, timeout, `SIGINT`, `SIGTERM`, output-import failure, and
+evidence errors share the same idempotent cleanup. Bounded stdout/stderr
+capture terminates the whole Docker process group at the 16 MiB per-stream
+limit, before any result is eligible for publication. Cleanup enumerates
+resources for inspection but removes
 only identities carrying the exact receipt token or exact unique project label;
 it never uses a prefix, wildcard, label selector, or prune. Container, network,
-and volume residue must all be zero before `verification_case_completed` can be
-committed. Cleanup uncertainty returns `DOCKER_CASE_CLEANUP_FAILED`, clears the
-oracle result, and keeps the case blocked.
+and volume residue must be zero for three consecutive observations before
+`verification_case_completed` can be committed. Pinned Compose cleanup runs
+before result publication and the verification event; cleanup uncertainty
+returns `DOCKER_CASE_CLEANUP_FAILED`, clears the oracle result, and keeps the
+case blocked.
 
 Bind-source identity is checked before filesystem resolution. Relative sources
 are interpreted lexically from the canonical audit workspace, parent
 components and path aliases are rejected, and every existing component of an
-allowed target-repository, `poc/`, evidence/case, or container-output path is
-verified with `lstat` as a real directory. A not-yet-created output suffix may
-be created only by the wrapper's host-owned directory helper and is checked
-again before Docker access. Bootstrap performs the same fail-closed checks
-before any workspace write, so a pre-existing symlink, regular file, FIFO,
-socket, device, or other non-directory entry cannot be followed.
+allowed target-repository or `poc/` path is verified with `lstat` as a real
+directory. `/workspace/output` accepts no host bind; it is provided by the
+fixed-size container tmpfs, while the host-owned staging directory is created
+only by a safe directory helper and checked again before Docker access.
+Bootstrap performs the same fail-closed checks before any workspace write, so a
+pre-existing symlink, regular file, FIFO, socket, device, or other
+non-directory entry cannot be followed.
 
-The wrapper repeats the bind-directory check before each Compose `config`,
-`pull`, and `run`, and compares the low-sensitivity directory identity captured
-by the previous check. The versioned identity keeps stable device, inode, type,
-mode, uid, and gid for every existing path component separate from the leaf
-directory's mtime and link-count observations. Stable identity changes always
-fail closed. Target and `poc/` observations also remain strict; ordinary mtime
-or link-count changes caused by files and subdirectories written inside the
-writable `container-output` do not mean that its directory object was replaced.
-This is revalidation, not an atomic host-path pin: the supported platform
-boundary trusts the workspace owner not to replace a directory concurrently
-during the short host-side check-to-Docker interval. The implementation does
-not claim to close that OS-level TOCTOU window.
+The wrapper repeats the host-bind directory check before each Compose
+`config`, `pull`, and `run`, and compares the low-sensitivity directory identity
+captured by the previous check. The versioned identity keeps stable device,
+inode, type, mode, uid, and gid for every existing path component separate from
+the leaf directory's mtime and link-count observations. Stable identity changes
+always fail closed. Target and `poc/` observations also remain strict. This is
+revalidation, not an atomic host-path pin: the supported platform boundary
+trusts the workspace owner not to replace a directory concurrently during the
+short host-side check-to-Docker interval. The implementation does not claim to
+close that OS-level TOCTOU window.
 
 Initial probes remain advisory and candidate-only. Maven and Gradle project
 evaluation and target-configurable golangci-lint plugin loading are not run on

@@ -5,6 +5,7 @@
 set -euo pipefail
 
 STABLE_LABELS="blocked_state_precondition blocked_authority_event_commit blocked_docker_unavailable blocked_missing_image failed_timeout failed_resource_limit rejected_unsafe_sandbox rejected_not_reproducible confirmed_in_docker"
+OUTPUT_TMPFS_SPEC="/workspace/output:rw,nosuid,nodev,noexec,size=64m"
 
 usage() {
   cat <<'EOF'
@@ -34,6 +35,9 @@ Purpose:
   network setting, one bounded host resource policy, and structured
   evidence under <audit-workspace>/evidence/<case-id>/.
   Docker-run and Docker Compose both use the host-owned docker-case-policy-v1.
+  Default mounts provide a 64 MiB container tmpfs at /workspace/output; images
+  must provide a static sh so the wrapper can stream validated output before
+  stopping the container. Missing markers or unsafe output fail closed.
 
 Stable outcome labels:
   blocked_docker_unavailable
@@ -341,6 +345,10 @@ VERIFICATION_DIAGNOSTIC_CODE=""
 CONTROL_EVIDENCE_UNSAFE="false"
 CAPTURE_RESULT='{}'
 CAPTURE_HELPER_PID=""
+CAPTURE_LAUNCH_STATE="idle"
+PENDING_SIGNAL=""
+OUTPUT_READY_MARKER=""
+OUTPUT_SCRIPT=""
 LIFECYCLE_ACTIVE="false"
 LIFECYCLE_RECEIPT_PATH=""
 LIFECYCLE_RECEIPT_SHA256=""
@@ -359,6 +367,7 @@ CLEANUP_VOLUMES_BEFORE="0"
 CLEANUP_CONTAINERS_AFTER="0"
 CLEANUP_NETWORKS_AFTER="0"
 CLEANUP_VOLUMES_AFTER="0"
+CLEANUP_SETTLEMENT_CHECKS="0"
 
 find_state_writer() {
   if [[ -f "$SCRIPT_DIR/write_audit_event.py" ]]; then
@@ -506,7 +515,28 @@ PY
   LIFECYCLE_CONTAINER_NAME="${lifecycle_values[5]}"
   LIFECYCLE_TOKEN="${lifecycle_values[6]}"
   LIFECYCLE_POLICY_JSON="${lifecycle_values[7]}"
+  if [[ "$DEFAULT_MOUNTS" == "1" ]]; then
+    OUTPUT_READY_MARKER="ZHULONG_OUTPUT_READY_${LIFECYCLE_TOKEN}"
+  else
+    OUTPUT_READY_MARKER=""
+  fi
   LIFECYCLE_ACTIVE="true"
+}
+
+prepare_output_handshake() {
+  [[ "$DEFAULT_MOUNTS" == "1" ]] || return 0
+  local quoted_command
+  if [[ "${#CASE_COMMAND[@]}" -gt 0 ]]; then
+    quoted_command="$(python3 - "${CASE_COMMAND[@]}" <<'PY'
+import shlex
+import sys
+print(" ".join(shlex.quote(value) for value in sys.argv[1:]) or ":")
+PY
+    )"
+  else
+    quoted_command=":"
+  fi
+  OUTPUT_SCRIPT="set +e; ${quoted_command}; _zhulong_rc=\$?; printf '%s:%s\\n' '${OUTPUT_READY_MARKER}' \"\$_zhulong_rc\"; while :; do sleep 1; done"
 }
 
 ensure_case_cleanup() {
@@ -546,6 +576,7 @@ for source in (before, after):
     for key in ("containers", "networks", "volumes"):
         item = source.get(key, 0)
         print(item if isinstance(item, int) and not isinstance(item, bool) and item >= 0 else 0)
+print(value.get("settlement_checks", 0) if isinstance(value.get("settlement_checks", 0), int) else 0)
 PY
 )
   CLEANUP_VERIFIED="${cleanup_values[0]:-false}"
@@ -555,6 +586,7 @@ PY
   CLEANUP_CONTAINERS_AFTER="${cleanup_values[4]:-0}"
   CLEANUP_NETWORKS_AFTER="${cleanup_values[5]:-0}"
   CLEANUP_VOLUMES_AFTER="${cleanup_values[6]:-0}"
+  CLEANUP_SETTLEMENT_CHECKS="${cleanup_values[7]:-0}"
   [[ "$cleanup_exit" -eq 0 && "$CLEANUP_VERIFIED" == "true" ]]
 }
 
@@ -578,6 +610,10 @@ cleanup_wrapper_resources() {
 handle_wrapper_signal() {
   local signal_name="$1" signal_exit=130
   [[ "$signal_name" == "TERM" ]] && signal_exit=143
+  if [[ "$CAPTURE_LAUNCH_STATE" == "launching" ]]; then
+    PENDING_SIGNAL="$signal_name"
+    return 0
+  fi
   if [[ -n "$CAPTURE_HELPER_PID" ]]; then
     kill -"$signal_name" "$CAPTURE_HELPER_PID" >/dev/null 2>&1 || true
     wait "$CAPTURE_HELPER_PID" >/dev/null 2>&1 || true
@@ -821,11 +857,11 @@ PY
 ensure_host_evidence_directories() {
   local output ensure_exit ensure_code
   set +e
-  output="$(python3 - "$SCRIPT_DIR" "$WORKSPACE_DIR" "$EVIDENCE_DIR" "$CONTAINER_OUTPUT_DIR" "$MODE" "$DEFAULT_MOUNTS" <<'PY'
+  output="$(python3 - "$SCRIPT_DIR" "$WORKSPACE_DIR" "$EVIDENCE_DIR" "$MODE" "$DEFAULT_MOUNTS" <<'PY'
 import sys
 from pathlib import Path
 
-script_dir, workspace, evidence_dir, output_dir, mode, default_mounts = sys.argv[1:]
+script_dir, workspace, evidence_dir, mode, default_mounts = sys.argv[1:]
 sys.path.insert(0, script_dir)
 from evidence_io import SafeEvidenceError, ensure_host_directory
 
@@ -834,7 +870,6 @@ try:
     if mode == "docker-run" and default_mounts == "1":
         ensure_host_directory(root, root / "poc")
     ensure_host_directory(root, Path(evidence_dir))
-    ensure_host_directory(root, Path(output_dir))
 except SafeEvidenceError as exc:
     print(exc.code)
     raise SystemExit(1)
@@ -1210,7 +1245,7 @@ emit_result_json() {
   local exit_code="$3"
   local oracle_matched="$4"
   shift 4
-  if ! python3 - "$SCRIPT_DIR" "$WORKSPACE_DIR" "$EVIDENCE_DIR" "$CASE_ID" "$MODE" "$status" "$reason" "$exit_code" "$oracle_matched" "$TIMEOUT_SECONDS" "$EXPECTED_ORACLE" "$IMAGE" "$NETWORK" "$MEMORY_LIMIT" "$CPU_LIMIT" "$PIDS_LIMIT" "$READ_ONLY" "$PULL_IF_MISSING" "$STDOUT_PATH" "$STDERR_PATH" "$COMMAND_JSON_PATH" "$DOCKER_CLI_INVOKED" "$POC_COMMAND_INVOKED" "$WRAPPER_STATUS" "$AUTHORITY_EVENT_COMMITTED" "$AUTHORITY_EVENT_ERROR_CODE" "$VERIFICATION_DIAGNOSTIC_CODE" "$LIFECYCLE_RECEIPT_SHA256" "$CLEANUP_ATTEMPTED" "$CLEANUP_VERIFIED" "$CLEANUP_CONTAINERS_BEFORE" "$CLEANUP_NETWORKS_BEFORE" "$CLEANUP_VOLUMES_BEFORE" "$CLEANUP_CONTAINERS_AFTER" "$CLEANUP_NETWORKS_AFTER" "$CLEANUP_VOLUMES_AFTER" "$LIFECYCLE_POLICY_JSON" <<'PY'
+  if ! python3 - "$SCRIPT_DIR" "$WORKSPACE_DIR" "$EVIDENCE_DIR" "$CASE_ID" "$MODE" "$status" "$reason" "$exit_code" "$oracle_matched" "$TIMEOUT_SECONDS" "$EXPECTED_ORACLE" "$IMAGE" "$NETWORK" "$MEMORY_LIMIT" "$CPU_LIMIT" "$PIDS_LIMIT" "$READ_ONLY" "$PULL_IF_MISSING" "$STDOUT_PATH" "$STDERR_PATH" "$COMMAND_JSON_PATH" "$DOCKER_CLI_INVOKED" "$POC_COMMAND_INVOKED" "$WRAPPER_STATUS" "$AUTHORITY_EVENT_COMMITTED" "$AUTHORITY_EVENT_ERROR_CODE" "$VERIFICATION_DIAGNOSTIC_CODE" "$LIFECYCLE_RECEIPT_SHA256" "$CLEANUP_ATTEMPTED" "$CLEANUP_VERIFIED" "$CLEANUP_CONTAINERS_BEFORE" "$CLEANUP_NETWORKS_BEFORE" "$CLEANUP_VOLUMES_BEFORE" "$CLEANUP_CONTAINERS_AFTER" "$CLEANUP_NETWORKS_AFTER" "$CLEANUP_VOLUMES_AFTER" "$CLEANUP_SETTLEMENT_CHECKS" "$LIFECYCLE_POLICY_JSON" <<'PY'
 import json
 import sys
 from datetime import datetime, timezone
@@ -1253,8 +1288,9 @@ cleanup_volumes_before,
 cleanup_containers_after,
 cleanup_networks_after,
 cleanup_volumes_after,
+cleanup_settlement_checks,
 resource_policy_json,
-) = sys.argv[1:38]
+) = sys.argv[1:39]
 sys.path.insert(0, script_dir)
 from evidence_io import SafeEvidenceError, atomic_write_json, safe_read_json
 workspace_path = Path(workspace).resolve()
@@ -1305,6 +1341,7 @@ data = {
             "networks": int(cleanup_networks_after),
             "volumes": int(cleanup_volumes_after),
         },
+        "settlement_checks": int(cleanup_settlement_checks),
         "resource_policy": json.loads(resource_policy_json),
     },
 }
@@ -1385,6 +1422,15 @@ classify_and_exit() {
     oracle_matched="false"
     cleanup_failed="true"
     VERIFICATION_DIAGNOSTIC_CODE="DOCKER_CASE_CLEANUP_FAILED"
+  fi
+  if [[ "$MODE" == "docker-compose" && "$COMPOSE_PIN_ACTIVE" == "true" ]]; then
+    if ! cleanup_pinned_compose; then
+      status="rejected_unsafe_sandbox"
+      reason="Pinned Compose input cleanup could not be verified before publication."
+      oracle_matched="false"
+      cleanup_failed="true"
+      VERIFICATION_DIAGNOSTIC_CODE="COMPOSE_INPUT_CLEANUP_FAILED"
+    fi
   fi
   WRAPPER_STATUS="authority_event_pending"
   AUTHORITY_EVENT_COMMITTED=""
@@ -1550,6 +1596,7 @@ STDERR_PATH="$EVIDENCE_DIR/stderr.log"
 COMMAND_JSON_PATH="$EVIDENCE_DIR/command.json"
 SANDBOX_PREFLIGHT_JSON="$EVIDENCE_DIR/sandbox-preflight.json"
 prepare_case_lifecycle
+prepare_output_handshake
 write_sandbox_preflight_evidence
 read_authority_preflight
 
@@ -1665,7 +1712,7 @@ case "$MODE" in
       fi
     fi
     RUN_COMMAND=(
-      docker run --rm
+      docker run
       --name "$LIFECYCLE_CONTAINER_NAME"
       --label "org.zhulong.managed=true"
       --label "org.zhulong.case=$LIFECYCLE_TOKEN"
@@ -1685,27 +1732,28 @@ case "$MODE" in
       RUN_COMMAND+=(--read-only --tmpfs /tmp:rw,noexec,nosuid,size=64m)
     fi
     if [[ "$DEFAULT_MOUNTS" == "1" ]]; then
-      python3 - "$SCRIPT_DIR" "$WORKSPACE_DIR" "$WORKSPACE_DIR/poc" "$CONTAINER_OUTPUT_DIR" <<'PY'
+      python3 - "$SCRIPT_DIR" "$WORKSPACE_DIR" "$WORKSPACE_DIR/poc" <<'PY'
 import sys
 from pathlib import Path
 
-script_dir, root_value, poc_value, output_value = sys.argv[1:]
+script_dir, root_value, poc_value = sys.argv[1:]
 sys.path.insert(0, script_dir)
 from evidence_io import ensure_host_directory
 
 root = Path(root_value)
 ensure_host_directory(root, Path(poc_value))
-ensure_host_directory(root, Path(output_value))
 PY
       RUN_COMMAND+=(
         --mount "type=bind,source=$WORKSPACE_DIR/poc,target=/workspace/poc,readonly"
         --mount "type=bind,source=$EVIDENCE_DIR,target=/workspace/evidence,readonly"
-        --mount "type=bind,source=$CONTAINER_OUTPUT_DIR,target=/workspace/output"
+        --tmpfs "$OUTPUT_TMPFS_SPEC"
         --workdir /workspace/poc
       )
     fi
     RUN_COMMAND+=("$IMAGE")
-    if [[ "${#CASE_COMMAND[@]}" -gt 0 ]]; then
+    if [[ "$DEFAULT_MOUNTS" == "1" ]]; then
+      RUN_COMMAND+=(sh -c "$OUTPUT_SCRIPT")
+    elif [[ "${#CASE_COMMAND[@]}" -gt 0 ]]; then
       RUN_COMMAND+=("${CASE_COMMAND[@]}")
     fi
     ;;
@@ -1743,13 +1791,15 @@ PY
     fi
     verify_pinned_compose_or_abort
     prepare_compose_config_or_abort
-    RUN_COMMAND=(docker compose "${COMPOSE_ARGS[@]}" run --rm --no-deps --name "$LIFECYCLE_CONTAINER_NAME" -T \
+    RUN_COMMAND=(docker compose "${COMPOSE_ARGS[@]}" run --no-deps --name "$LIFECYCLE_CONTAINER_NAME" -T \
       --label "org.zhulong.managed=true" \
       --label "org.zhulong.case=$LIFECYCLE_TOKEN" \
       --label "org.zhulong.policy=docker-case-policy-v1" \
       --label "org.zhulong.project=$LIFECYCLE_PROJECT_NAME" \
       "$COMPOSE_SERVICE")
-    if [[ "${#CASE_COMMAND[@]}" -gt 0 ]]; then
+    if [[ "$DEFAULT_MOUNTS" == "1" ]]; then
+      RUN_COMMAND+=(sh -c "$OUTPUT_SCRIPT")
+    elif [[ "${#CASE_COMMAND[@]}" -gt 0 ]]; then
       RUN_COMMAND+=("${CASE_COMMAND[@]}")
     fi
     ;;
@@ -1776,16 +1826,35 @@ fi
 POC_COMMAND_INVOKED="true"
 DOCKER_CASE_MAY_EXIST="true"
 CAPTURE_RESPONSE_PATH="$EVIDENCE_DIR/capture-response.json"
+CAPTURE_LAUNCH_STATE="launching"
 set +e
-python3 - "$SCRIPT_DIR" "$WORKSPACE_DIR" "$EVIDENCE_DIR" "$CAPTURE_RESPONSE_PATH" "$STDOUT_PATH" "$STDERR_PATH" "$TIMEOUT_SECONDS" "$EXPECTED_ORACLE" "${RUN_COMMAND[@]}" <<'PY' &
+python3 - "$SCRIPT_DIR" "$WORKSPACE_DIR" "$EVIDENCE_DIR" "$CAPTURE_RESPONSE_PATH" "$STDOUT_PATH" "$STDERR_PATH" "$TIMEOUT_SECONDS" "$EXPECTED_ORACLE" "$OUTPUT_READY_MARKER" "$LIFECYCLE_RECEIPT_PATH" "$LIFECYCLE_RECEIPT_SHA256" "$CONTAINER_OUTPUT_DIR" "${RUN_COMMAND[@]}" <<'PY' &
 import json
+import subprocess
 import sys
 from pathlib import Path
 
-script_dir, root_value, evidence_root, response_value, stdout_value, stderr_value, timeout_value, oracle_value = sys.argv[1:9]
-command = sys.argv[9:]
+script_dir, root_value, evidence_root, response_value, stdout_value, stderr_value, timeout_value, oracle_value, completion_marker, receipt_path, receipt_digest, output_dir = sys.argv[1:13]
+command = sys.argv[13:]
 sys.path.insert(0, script_dir)
 from evidence_io import SafeEvidenceError, atomic_write_json, run_captured_command
+
+def import_output(_exit_code: int) -> None:
+    if not completion_marker:
+        return
+    lifecycle = str(Path(script_dir) / "docker_case_lifecycle.py")
+    result = subprocess.run(
+        [sys.executable, lifecycle, "import-output", "--evidence-root", evidence_root,
+         "--receipt", receipt_path, "--receipt-sha256", receipt_digest,
+         "--output-dir", output_dir, "--docker", "docker"],
+        check=False, capture_output=True, text=True, timeout=60,
+    )
+    if result.returncode != 0:
+        try:
+            code = json.loads(result.stdout).get("issue_code") or "EVIDENCE_OUTPUT_IMPORT_FAILED"
+        except (TypeError, json.JSONDecodeError):
+            code = "EVIDENCE_OUTPUT_IMPORT_FAILED"
+        raise SafeEvidenceError(code, "bounded container output import failed")
 
 try:
     result = run_captured_command(
@@ -1795,6 +1864,8 @@ try:
         command,
         timeout=int(timeout_value),
         expected_oracle=oracle_value,
+        completion_marker=completion_marker or None,
+        on_completion=import_output if completion_marker else None,
     )
 except SafeEvidenceError as exc:
     atomic_write_json(Path(evidence_root), Path(response_value), {"ok": False, "code": exc.code})
@@ -1802,9 +1873,16 @@ except SafeEvidenceError as exc:
 atomic_write_json(Path(evidence_root), Path(response_value), {"ok": True, **result})
 PY
 CAPTURE_HELPER_PID=$!
+CAPTURE_LAUNCH_STATE="active"
+if [[ -n "$PENDING_SIGNAL" ]]; then
+  pending_signal="$PENDING_SIGNAL"
+  PENDING_SIGNAL=""
+  kill -"$pending_signal" "$CAPTURE_HELPER_PID" >/dev/null 2>&1 || true
+fi
 wait "$CAPTURE_HELPER_PID"
 CAPTURE_HELPER_EXIT=$?
 CAPTURE_HELPER_PID=""
+CAPTURE_LAUNCH_STATE="idle"
 set -e
 set +e
 CAPTURE_RESULT="$(python3 - "$SCRIPT_DIR" "$EVIDENCE_DIR" "$CAPTURE_RESPONSE_PATH" <<'PY'
@@ -1819,17 +1897,15 @@ try:
 except SafeEvidenceError:
     raise SystemExit(1)
 PY
-)"
-CAPTURE_READ_EXIT=$?
-set -e
-if [[ "$CAPTURE_READ_EXIT" -ne 0 ]]; then
+  )"
+  CAPTURE_READ_EXIT=$?
+  set -e
+  if [[ "$CAPTURE_READ_EXIT" -ne 0 ]]; then
   CAPTURE_RESULT='{"ok":false,"code":"EVIDENCE_CAPTURE_FAILED"}'
   CAPTURE_HELPER_EXIT=3
 fi
 verify_pinned_compose_or_abort
 if [[ "$CAPTURE_HELPER_EXIT" -ne 0 ]]; then
-  CONTROL_EVIDENCE_UNSAFE="true"
-  POC_COMMAND_INVOKED="false"
   capture_code="$(python3 - "$CAPTURE_RESULT" <<'PY'
 import json
 import sys
@@ -1839,6 +1915,20 @@ except Exception:
     print("EVIDENCE_CAPTURE_FAILED")
 PY
 )"
+  if [[ "$capture_code" == "EVIDENCE_SIZE_LIMIT" ]]; then
+    VERIFICATION_DIAGNOSTIC_CODE="$capture_code"
+    classify_and_exit "failed_resource_limit" "Docker stdout/stderr exceeded the host-owned bounded capture limit." "" "false"
+  fi
+  if [[ "$capture_code" == "EVIDENCE_OUTPUT_LIMIT" ]]; then
+    VERIFICATION_DIAGNOSTIC_CODE="$capture_code"
+    classify_and_exit "failed_resource_limit" "Container output exceeded the host-owned bounded import limit." "" "false"
+  fi
+  if [[ "$capture_code" == EVIDENCE_OUTPUT_* || "$capture_code" == "EVIDENCE_COMPLETION_MARKER_MISSING" ]]; then
+    VERIFICATION_DIAGNOSTIC_CODE="$capture_code"
+    classify_and_exit "rejected_unsafe_sandbox" "Container output could not be imported through the host-owned bounded staging path." "" "false"
+  fi
+  CONTROL_EVIDENCE_UNSAFE="true"
+  POC_COMMAND_INVOKED="false"
   classify_and_exit "rejected_unsafe_sandbox" "Host-owned stdout/stderr capture could not be established safely ($capture_code)." "" "false"
 fi
 

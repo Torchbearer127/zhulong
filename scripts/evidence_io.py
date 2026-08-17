@@ -5,10 +5,12 @@ from __future__ import annotations
 import json
 import os
 import re
+import selectors
 import signal
 import stat
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 from typing import Any, Callable
 
@@ -372,6 +374,8 @@ def run_captured_command(
     *,
     timeout: int,
     expected_oracle: str,
+    completion_marker: str | None = None,
+    on_completion: Callable[[int], None] | None = None,
 ) -> dict[str, Any]:
     try:
         oracle = re.compile(expected_oracle, flags=re.MULTILINE) if expected_oracle else None
@@ -379,12 +383,20 @@ def run_captured_command(
         raise _error("ORACLE_REGEX_INVALID", "expected oracle is not a valid regular expression") from exc
     stdout_fd = _publish_capture_file(root, stdout_path)
     stderr_fd = -1
+    selector: selectors.BaseSelector | None = None
     try:
         stderr_fd = _publish_capture_file(root, stderr_path)
         timed_out = False
         command_started = False
         previous_handlers: dict[int, Any] = {}
+        previous_mask: Any = None
         process: subprocess.Popen[bytes] | None = None
+        streams: dict[int, bytearray] = {1: bytearray(), 2: bytearray()}
+        limit_error: SafeEvidenceError | None = None
+        completion_error: SafeEvidenceError | None = None
+        completion_observed = False
+        completion_exit_code: int | None = None
+        marker_bytes = completion_marker.encode("ascii") if completion_marker else b""
 
         def stop_process_group(signum: int) -> None:
             if process is None or process.poll() is not None:
@@ -406,17 +418,91 @@ def run_captured_command(
             stop_process_group(signum)
             raise _error("EVIDENCE_CAPTURE_INTERRUPTED", "captured Docker command was interrupted")
 
+        def append_capture(fd: int, stream_id: int, chunk: bytes) -> None:
+            nonlocal limit_error, completion_error, completion_observed, completion_exit_code
+            if not chunk:
+                return
+            current = len(streams[stream_id])
+            remaining = MAX_CAPTURE_BYTES - current
+            if remaining <= 0:
+                limit_error = _error("EVIDENCE_SIZE_LIMIT", "captured Docker output exceeds its size limit")
+                return
+            accepted = chunk[:remaining]
+            _write_all(fd, accepted)
+            streams[stream_id].extend(accepted)
+            if len(accepted) != len(chunk):
+                limit_error = _error("EVIDENCE_SIZE_LIMIT", "captured Docker output exceeds its size limit")
+            if marker_bytes and not completion_observed:
+                match = re.search(re.escape(marker_bytes) + rb":([0-9]{1,3})\n", bytes(streams[stream_id]))
+                if match is not None:
+                    completion_observed = True
+                    completion_exit_code = int(match.group(1))
+                    if on_completion is not None:
+                        try:
+                            on_completion(completion_exit_code)
+                        except SafeEvidenceError as exc:
+                            completion_error = exc
+                        except OSError as exc:
+                            completion_error = _error("EVIDENCE_OUTPUT_IMPORT_FAILED", "bounded output import failed safely")
+                    stop_process_group(signal.SIGTERM)
+
         try:
             for signum in (signal.SIGINT, signal.SIGTERM):
                 previous_handlers[signum] = signal.getsignal(signum)
                 signal.signal(signum, interrupted)
-            process = subprocess.Popen(command, stdout=stdout_fd, stderr=stderr_fd, start_new_session=True)
-            command_started = True
+            # Block external termination only across Popen and assignment of the
+            # process object. A pending signal is delivered once the child PID is
+            # known, so cleanup cannot race an unbound child.
+            if hasattr(signal, "pthread_sigmask"):
+                previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM})
             try:
-                process.wait(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                timed_out = True
-                stop_process_group(signal.SIGKILL)
+                process = subprocess.Popen(
+                    command,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    start_new_session=True,
+                )
+                command_started = True
+            finally:
+                if previous_mask is not None:
+                    signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+                    previous_mask = None
+
+            selector = selectors.DefaultSelector()
+            assert process.stdout is not None and process.stderr is not None
+            for stream_id, pipe in ((1, process.stdout), (2, process.stderr)):
+                os.set_blocking(pipe.fileno(), False)
+                selector.register(pipe, selectors.EVENT_READ, stream_id)
+            deadline = time.monotonic() + timeout
+            while selector.get_map():
+                if limit_error is not None:
+                    stop_process_group(signal.SIGKILL)
+                remaining_time = max(0.0, deadline - time.monotonic())
+                if process.poll() is None and remaining_time <= 0:
+                    timed_out = True
+                    stop_process_group(signal.SIGKILL)
+                events = selector.select(0.1 if process.poll() is None else 0)
+                if not events and process.poll() is not None:
+                    # A pipe can become readable after process exit; select one
+                    # more time through the regular loop before closing it.
+                    events = selector.select(0.05)
+                for key, _ in events:
+                    stream_id = int(key.data)
+                    try:
+                        chunk = os.read(key.fd, 65536)
+                    except BlockingIOError:
+                        continue
+                    if not chunk:
+                        selector.unregister(key.fileobj)
+                        key.fileobj.close()
+                        continue
+                    append_capture(stdout_fd if stream_id == 1 else stderr_fd, stream_id, chunk)
+                if limit_error is not None and process.poll() is not None:
+                    # Continue draining already-buffered bytes only up to the
+                    # hard cap, then close the pipes deterministically.
+                    pass
+            if process.poll() is None:
+                process.wait(timeout=2)
         except FileNotFoundError as exc:
             _write_all(stderr_fd, (str(exc) + "\n").encode("utf-8", errors="replace"))
             process = None
@@ -424,21 +510,34 @@ def run_captured_command(
             _write_all(stderr_fd, (str(exc) + "\n").encode("utf-8", errors="replace"))
             process = None
         finally:
+            if selector is not None:
+                selector.close()
+            if previous_mask is not None:
+                signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
             for signum, handler in previous_handlers.items():
                 signal.signal(signum, handler)
+        if limit_error is not None:
+            raise limit_error
+        if completion_marker and not completion_observed:
+            raise _error("EVIDENCE_COMPLETION_MARKER_MISSING", "Docker command did not publish the bounded output completion marker")
+        if completion_error is not None:
+            raise completion_error
         os.fsync(stdout_fd)
         os.fsync(stderr_fd)
         stdout_intact = _capture_path_intact(root, stdout_path, stdout_fd)
         stderr_intact = _capture_path_intact(root, stderr_path, stderr_fd)
-        stdout_bytes = _read_capture_fd(stdout_fd)
-        stderr_bytes = _read_capture_fd(stderr_fd)
+        stdout_bytes = bytes(streams[1])
+        stderr_bytes = bytes(streams[2])
         text = (stdout_bytes + b"\n" + stderr_bytes).decode("utf-8", errors="ignore")
         return {
-            "exit_code": 124 if timed_out else 127 if process is None else int(process.returncode),
+            "exit_code": 124 if timed_out else completion_exit_code if completion_observed and completion_exit_code is not None else 127 if process is None else int(process.returncode),
             "oracle_matched": bool(oracle.search(text)) if oracle is not None else False,
             "resource_limit_detected": bool(re.search(r"out of memory|oom|memory limit|pids limit|cannot allocate memory|resource temporarily unavailable", text, re.I)),
             "capture_integrity": stdout_intact and stderr_intact,
             "command_started": command_started,
+            "stdout_bytes": len(stdout_bytes),
+            "stderr_bytes": len(stderr_bytes),
+            "completion_observed": completion_observed,
         }
     finally:
         os.close(stdout_fd)

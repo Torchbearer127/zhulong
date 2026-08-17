@@ -84,12 +84,21 @@ override this policy.
 
 Case cleanup inspects Docker state and removes only the exact receipt-owned
 container plus resources with the exact unique Compose project label. It does
-not use prefixes, wildcards, label selectors, or prune. Cleanup and a second
-zero-residue query run before a completion event is eligible to commit. A
-normal result, failure, timeout, signal, or evidence error all use this same
-cleanup path. `DOCKER_CASE_CLEANUP_FAILED` is a blocking result and can never
-be treated as confirmation-ready. Workspace-level cleanup below remains a
-separate final hygiene gate and is not weakened by a successful case cleanup.
+not use prefixes, wildcards, label selectors, or prune. The selected service's
+`/workspace/output` is a fixed-size 64 MiB container tmpfs, never a writable
+host bind. After the command publishes a private completion marker, the wrapper
+streams the live tmpfs through a bounded `docker exec` tar reader into a
+host-owned staging directory with 64 MiB aggregate, 16 MiB per-file,
+4096-entry, regular-file-only, no-link/no-special-file limits, and atomically
+publishes it only after validation. Images used with default output mounts must
+provide a static `sh`; a missing marker or tar stream fails closed. Cleanup and
+three consecutive zero-residue observations run
+before a completion event is eligible to commit. A normal result, failure,
+timeout, signal, output-import error, or evidence error all use this same
+cleanup path. `DOCKER_CASE_CLEANUP_FAILED` and output-limit/import failures are
+blocking results and can never be treated as confirmation-ready. Workspace-level
+cleanup below remains a separate final hygiene gate and is not weakened by a
+successful case cleanup.
 
 If you started the target with Docker Compose, prefer a unique project name for
 this audit so cleanup has an exact handle:

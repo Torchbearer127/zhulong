@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -30,7 +31,9 @@ def sha256(path: Path) -> str:
 STUB = r'''#!/usr/bin/env python3
 import json
 import os
+import re
 import sys
+import tarfile
 import tempfile
 import time
 from pathlib import Path
@@ -64,6 +67,15 @@ if args[:2] == ["image", "inspect"]:
 
 if args[:3] in (["container", "ls", "--all"], ["network", "ls", "--no-trunc"]):
     kind = args[0]
+    if kind == "container" and os.environ.get("ZHULONG_RH5_STUB_DELAY_CREATE") == "1":
+        phase = state.get("delayed_phase")
+        if phase == "pending_zero":
+            state["delayed_phase"] = "residue"
+            save(state)
+        elif phase == "residue" and state.get("container") is None:
+            state["container"] = state.get("delayed_container")
+            state["delayed_phase"] = "restored"
+            save(state)
     if state[kind] is not None:
         print("case-" + kind)
     print(state["unrelated"][kind])
@@ -96,12 +108,27 @@ if len(args) >= 3 and args[1] == "rm":
     kind = args[0]
     if os.environ.get("ZHULONG_RH5_STUB_CLEANUP_FAIL") == kind:
         raise SystemExit(1)
+    if kind == "container" and os.environ.get("ZHULONG_RH5_STUB_DELAY_CREATE") == "1" and state.get("delayed_phase") == "zero":
+        state["delayed_container"] = state.get("container")
+        state["delayed_phase"] = "pending_zero"
     state[kind] = None
     save(state)
     raise SystemExit(0)
 
 if args[0] == "pull":
     raise SystemExit(1)
+
+if args[0] == "cp":
+    destination = Path(args[-1])
+    destination.mkdir(parents=True, exist_ok=True)
+    (destination / "stub-output.txt").write_text("RH5_OUTPUT\n", encoding="utf-8")
+    raise SystemExit(0)
+
+if args[0] == "exec":
+    with tempfile.TemporaryDirectory() as temp_value:
+        with tarfile.open(fileobj=sys.stdout.buffer, mode="w|") as archive:
+            archive.add(temp_value, arcname=".", recursive=True)
+    raise SystemExit(0)
 
 if args[0] == "run":
     name = args[args.index("--name") + 1]
@@ -111,10 +138,16 @@ if args[0] == "run":
             key, item = args[index + 1].split("=", 1)
             labels[key] = item
     state["container"] = {"name": name, "labels": labels}
+    if os.environ.get("ZHULONG_RH5_STUB_DELAY_CREATE") == "1":
+        state["delayed_phase"] = "zero"
     save(state)
     if os.environ.get("ZHULONG_RH5_STUB_SLEEP") == "1":
         time.sleep(30)
     print("RH5_ORACLE")
+    marker_match = re.search(r"ZHULONG_OUTPUT_READY_[0-9a-f]{32}", " ".join(args))
+    marker = marker_match.group(0) + ":0" if marker_match else ""
+    if marker:
+        print(marker)
     raise SystemExit(0)
 
 if args[0] == "compose":
@@ -142,6 +175,10 @@ if args[0] == "compose":
         if os.environ.get("ZHULONG_RH5_STUB_SLEEP") == "1":
             time.sleep(30)
         print("RH5_ORACLE")
+        marker_match = re.search(r"ZHULONG_OUTPUT_READY_[0-9a-f]{32}", " ".join(args))
+        marker = marker_match.group(0) + ":0" if marker_match else ""
+        if marker:
+            print(marker)
         raise SystemExit(0)
 
 raise SystemExit(2)
@@ -309,6 +346,14 @@ def main() -> int:
         require(result.returncode == 0, "legal docker-run case failed")
         state_value = json.loads(state.read_text())
         require(state_value["container"] is None and state_value["unrelated"] == {"container": "unrelated-c", "network": "unrelated-n", "volume": "unrelated-v"}, "exact cleanup touched unrelated resources")
+
+        delayed_env = dict(env)
+        delayed_env["ZHULONG_RH5_STUB_DELAY_CREATE"] = "1"
+        result = run(wrapper_command(plugin_root, workspace, "delayed-create", "docker-run"), cwd=plugin_root, env=delayed_env)
+        require(result.returncode == 0, f"delayed-create settlement path failed: {result.stdout!r} {result.stderr!r}")
+        delayed_result = json.loads((workspace / "evidence/delayed-create/verification-result.json").read_text())
+        require(delayed_result["docker_case_lifecycle"]["cleanup_verified"] is True and delayed_result["docker_case_lifecycle"]["settlement_checks"] >= 5, "delayed-create did not require a stable zero-residue window")
+        require(json.loads(state.read_text())["container"] is None, "delayed-create settlement left case residue")
 
         fail_env = dict(env)
         fail_env["ZHULONG_RH5_STUB_CLEANUP_FAIL"] = "container"

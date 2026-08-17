@@ -662,8 +662,8 @@ transition intent 时会拒绝；真实 R1 caller 必须显式传入 `--protocol
 验证 wrapper 拥有权威证据控制文件。`verification-result.json`、
 `command.json`、sandbox 状态、`stdout.log`、`stderr.log` 和权威引用都由宿主
 通过拥有者/文件身份检查的文件描述符及同目录原子发布创建或替换。Docker-run
-模式挂载 `/workspace/evidence` 时必须只读；需要容器写出的内容只能放到单独的
-`/workspace/output`，这些文件只能作为待审附件。oracle 只读取宿主持有的捕获
+模式挂载 `/workspace/evidence` 时必须只读；容器写出的内容只能放到固定 64 MiB
+tmpfs `/workspace/output`，完成后经宿主受限导入才成为待审附件。oracle 只读取宿主持有的捕获
 描述符字节，容器退出后不会按可替换 pathname 重开文件。symlink、hardlink、FIFO、
 目录、祖先漂移和运行中 pathname replacement 都会 fail closed，不能写穿
 `stage-status.json`，也不能把 case 变成 `confirmed_in_docker`。Compose 模式使用
@@ -682,8 +682,11 @@ namespace、capability/device/security option 以及 named/anonymous/external vo
 选定的 service 必须存在；只要出现 `depends_on` 就拒绝；`restart` 只能省略或精确写为 `"no"`；
 目标定义的 label 不得使用保留的 `org.zhulong.*` 或 `com.docker.compose.*` 命名空间。host bind
 只允许三种固定映射：target repository 只读映射到 `/workspace/target`、workspace
-的 `poc/` 只读映射到 `/workspace/poc`，以及当前 case 的非权威 `container-output` 可写映射到
-`/workspace/output`。其他宿主路径即使只读也拒绝。额外 Docker 参数不能覆盖资源或隔离策略；
+的 `poc/` 只读映射到 `/workspace/poc`。`/workspace/output` 固定为容器内 64 MiB tmpfs，不再是可写
+宿主 bind；容器发布私有完成标记后，wrapper 在容器停止前通过受限的 `docker exec` tar 流导入到宿主
+staging 目录，再原子发布为非权威 `container-output` 附件。导入限制总计 64 MiB、单文件 16 MiB、4096
+个条目、仅普通文件，拒绝 link 和特殊文件。使用默认 output mount 的镜像必须提供静态 `sh`；缺少完成
+标记或 tar 流都会 fail closed。其他宿主路径即使只读也拒绝。额外 Docker 参数不能覆盖资源或隔离策略；
 专用的 `--memory`、`--cpus` 和 `--pids-limit` 必须为正数，并受
 `docker-case-policy-v1` 硬上限约束：内存 16 MiB 到 2 GiB、CPU 0.1 到 4、PID 1 到 1024；默认值
 仍为 512 MiB、1 CPU 和 256 PID。docker-run 与 Compose 使用同一份宿主策略。preflight 通过只
@@ -692,26 +695,26 @@ namespace、capability/device/security option 以及 named/anonymous/external vo
 每次调用都会在宿主持有的 receipt 中生成随机 case token、精确 container name 和唯一 Compose
 project name。Compose 在输入文件之后追加最后一层宿主 override，并在 service 启动前校验 production
 合并配置；执行时显式使用 `-p`、`--name` 和 `--no-deps`，镜像检查及显式请求的 pull 也只针对选定
-service。正常退出、失败、timeout、`SIGINT`、`SIGTERM` 和证据错误共用同一套幂等清理。清理过程可
+service。正常退出、失败、timeout、`SIGINT`、`SIGTERM`、输出导入失败和证据错误共用同一套幂等清理。stdout/stderr
+由宿主持续流式捕获，每路 16 MiB 到达硬上限就终止整个 Docker 进程组，之后才允许发布结果。清理过程可
 枚举资源用于检查，但只删除携带 receipt 精确 token 或唯一 project label 的资源，不使用前缀、通配、
-label selector 或 prune。container、network、volume 残留都为零后，才允许提交
-`verification_case_completed`。无法证明清理完成时返回 `DOCKER_CASE_CLEANUP_FAILED`，清除 oracle
-命中并保持 blocked。
+label selector 或 prune。container、network、volume 残留必须连续三次观察为零后，才允许提交
+`verification_case_completed`。结果发布和 verification event 之前还必须完成 pinned Compose 清理；
+无法证明清理完成时返回 `DOCKER_CASE_CLEANUP_FAILED`，清除 oracle 命中并保持 blocked。
 
 Bind source 的身份检查发生在文件系统解析之前。相对 source 按规范化 audit workspace 做词法
-解释；父目录组件和路径别名会被拒绝；target repository、`poc/`、evidence/case 以及
-container-output 路径中所有已经存在的组件都必须由 `lstat` 证明为真实目录。首次使用时尚未
-存在的 output 后缀只能由宿主侧安全目录 helper 创建，且在访问 Docker 前再次检查。bootstrap
-也会在任何 workspace 写入前执行同样的 fail-closed 检查，因此预先存在的 symlink、普通文件、
-FIFO、socket、device 或其他非目录条目不会被跟随。
+解释；父目录组件和路径别名会被拒绝；target repository 与 `poc/` 路径中所有已经存在的组件
+都必须由 `lstat` 证明为真实目录。`/workspace/output` 不接受任何宿主 bind，而由容器内固定
+大小的 tmpfs 提供；宿主 staging 目录只能由安全 helper 创建，并在访问 Docker 前再次检查。
+bootstrap 也会在任何 workspace 写入前执行同样的 fail-closed 检查，因此预先存在的 symlink、
+普通文件、FIFO、socket、device 或其他非目录条目不会被跟随。
 
-wrapper 会在每一次 Compose `config`、`pull` 和 `run` 前重复检查 bind 目录，并比较上一次检查
+wrapper 会在每一次 Compose `config`、`pull` 和 `run` 前重复检查 host bind 目录，并比较上一次检查
 记录的低敏目录身份。版本化身份把每个已有路径组件的稳定 device、inode、type、mode、uid、gid
 与叶目录的 mtime、link count 观察值分开。任何稳定身份变化都会 fail closed；target 与 `poc/`
-的观察值也继续严格比较，但在可写 `container-output` 内创建文件或子目录导致的正常 mtime、link
-count 变化不等于替换该目录对象。这是重新校验，不是 host path 的原子 pin：当前平台边界信任
-workspace owner 不会在短暂的宿主检查到 Docker 调用窗口中并发替换目录。实现没有声称关闭
-操作系统层面的 TOCTOU 窗口。
+的观察值也继续严格比较。这是重新校验，不是 host path 的原子 pin：当前平台边界信任 workspace
+owner 不会在短暂的宿主检查到 Docker 调用窗口中并发替换目录。实现没有声称关闭操作系统层面的
+TOCTOU 窗口。
 
 Initial probes 仍然只是 advisory，最多提供 candidate material。没有经过单独审计的固定 Docker
 wrapper 时，Maven/Gradle 项目求值和可由目标配置的 golangci-lint plugin loading 不会在宿主机

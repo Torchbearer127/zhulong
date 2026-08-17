@@ -583,9 +583,7 @@ def bind_identity_matches(expected: dict[str, Any], current: dict[str, Any], tar
         return False
     if expected["present"] is False:
         return True
-    # A writable output bind may legitimately gain children. mtime/nlink are
-    # observations, not directory-object identity, for that one mapping.
-    return target == "/workspace/output" or expected["observation"] == current["observation"]
+    return expected["observation"] == current["observation"]
 
 
 def bind_identity_maps_match(expected: dict[str, Any], current: dict[str, Any]) -> bool:
@@ -694,19 +692,17 @@ def classify_bind(
     source, path_issue_code, path_reason = logical_bind_source(source_value, workspace=workspace, explicit_bind=explicit_bind)
     if source is None:
         return False, path_issue_code or "COMPOSE_BIND_SOURCE_FORBIDDEN", path_reason or "Compose bind source is outside the closed subset."
-    target_repo, poc_dir, evidence_root = compose_roots(workspace)
-    output_dir = evidence_root / case_id / "container-output"
+    target_repo, poc_dir, _evidence_root = compose_roots(workspace)
     allowed: tuple[tuple[Path, str, bool], ...] = (
         (target_repo, "/workspace/target", True),
         (poc_dir, "/workspace/poc", True),
-        (output_dir, "/workspace/output", False),
     )
     for allowed_source, allowed_target, must_be_ro in allowed:
         if source == allowed_source and target_value == allowed_target and (not must_be_ro or read_only):
             try:
                 identity_value = require_real_directory(
                     source,
-                    allow_missing_suffix=source == output_dir,
+                    allow_missing_suffix=False,
                     issue_code="COMPOSE_BIND_SOURCE_FORBIDDEN",
                 )
             except PinningError as exc:
@@ -877,7 +873,7 @@ def parse_expected_bind_identities(value: str) -> dict[str, Any] | None:
         raise PinningError("COMPOSE_BIND_SOURCE_FORBIDDEN", "Repeated Compose bind identity input is invalid.") from exc
     if not isinstance(parsed, dict):
         raise PinningError("COMPOSE_BIND_SOURCE_FORBIDDEN", "Repeated Compose bind identity input is invalid.")
-    allowed_targets = {"/workspace/target", "/workspace/poc", "/workspace/output"}
+    allowed_targets = {"/workspace/target", "/workspace/poc"}
     if any(not isinstance(target, str) or target not in allowed_targets for target in parsed):
         raise PinningError("COMPOSE_BIND_SOURCE_FORBIDDEN", "Repeated Compose bind identity target is invalid.")
     for identity_value in parsed.values():
@@ -929,10 +925,7 @@ def inspect_pinned_compose(
 def validate_default_mount_directories(workspace: Path, case_id: str) -> list[dict[str, Any]]:
     _target_repo, poc_dir, evidence_root = compose_roots(workspace)
     findings: list[dict[str, Any]] = []
-    for path, label, allow_missing_suffix in (
-        (poc_dir, "docker-run-poc", False),
-        (evidence_root / case_id / "container-output", "docker-run-output", True),
-    ):
+    for path, label, allow_missing_suffix in ((poc_dir, "docker-run-poc", False),):
         try:
             require_real_directory(path, allow_missing_suffix=allow_missing_suffix, issue_code="COMPOSE_BIND_SOURCE_FORBIDDEN")
         except PinningError as exc:

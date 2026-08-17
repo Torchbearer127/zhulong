@@ -76,8 +76,8 @@ Use this checklist before publishing a tagged open-source release of Zhulong
   `privileged: false`; no anchors/aliases/merges/interpolation, unknown fields,
   build/host-file/include, namespaces, capabilities/devices/security options,
   or named/anonymous/external volumes. Host binds are exactly target and `poc/`
-  read-only plus current-case `container-output` writable at fixed container
-  targets; every other host path is rejected even read-only.
+  read-only; `/workspace/output` is a fixed-size container tmpfs and is never a
+  host bind. Every other host path is rejected even read-only.
 - [ ] The selected Compose service exists, has no `depends_on`, uses no target
   reserved lifecycle labels, and has absent or exact `restart: "no"`.
 - [ ] Docker-run and Compose share `docker-case-policy-v1`; dedicated memory,

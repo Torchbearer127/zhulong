@@ -290,7 +290,9 @@ the five-minute freshness window. A stale, symlinked, hard-linked, malformed,
 or path-only status is rejected before the finalized state can pass.
 
 The wrapper owns evidence files on the host. The evidence tree is mounted
-read-only in Docker; only a separate `container-output` directory is writable.
+read-only in Docker; `/workspace/output` is a fixed 64 MiB container tmpfs and
+the separate `container-output` directory is published only after a live
+bounded tar stream and host-owned staging validation.
 The command oracle reads stdout/stderr through host file descriptors opened
 before the container starts, and verifies that the descriptor and pathname
 still identify the same regular, single-link, current-user-owned file after

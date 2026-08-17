@@ -210,6 +210,7 @@ REQUIRED_FILES = [
     "scripts/selftest_rh3_1_tool_registry_stage_binding.py",
     "scripts/selftest_rhs1_secret_fixture_hygiene.py",
     "scripts/selftest_rh5_docker_case_lifecycle.py",
+    "scripts/selftest_rh6_host_output_signal.py",
     "scripts/validate_workspace_state.py",
     "scripts/validate_target_contract.py",
     "scripts/validate_recon_result.py",
@@ -386,6 +387,7 @@ INSTALLED_SKILL_REQUIRED_FILES = [
     "scripts/selftest_rh3_1_tool_registry_stage_binding.py",
     "scripts/selftest_rhs1_secret_fixture_hygiene.py",
     "scripts/selftest_rh5_docker_case_lifecycle.py",
+    "scripts/selftest_rh6_host_output_signal.py",
     "scripts/render_confirmed_vuln_docx.py",
     "scripts/recording_identity.py",
     "scripts/auto_record_bundle.py",
@@ -6881,9 +6883,8 @@ def exercise_sandbox_preflight(script_path: Path, workspace: Path, plugin_root: 
         "        read_only: false\n",
         encoding="utf-8",
     )
-    output_status = run_sandbox_preflight(script_path, workspace, plugin_root, ["--compose-file", str(output_compose)], expected_returncode=0)
-    if output_status.get("findings"):
-        raise SystemExit(f"FAILED: exact case output bind should pass: {output_status}")
+    output_status = run_sandbox_preflight(script_path, workspace, plugin_root, ["--compose-file", str(output_compose)], expected_returncode=1)
+    require_sandbox_issue(output_status, "COMPOSE_BIND_SOURCE_FORBIDDEN", "host-output-bind")
 
     target_compose = fixtures / "safe-target.yml"
     target_compose.write_text(
@@ -7548,8 +7549,10 @@ def exercise_verification_wrapper_state_boundary(plugin_root: Path, temp_root: P
             "  mv \"$ZHULONG_TEST_WRITER\" \"$ZHULONG_TEST_WRITER.hidden\"\n"
             "fi\n"
             "if [[ \"$1\" == \"info\" && \"$ZHULONG_STUB_BEHAVIOR\" == \"blocked\" ]]; then exit 1; fi\n"
+            "if [[ \"$1\" == \"exec\" ]]; then python3 -c 'import pathlib,sys,tarfile,tempfile; d=tempfile.mkdtemp(); tarfile.open(fileobj=sys.stdout.buffer, mode=\"w|\").add(d, arcname=\".\", recursive=True)'; exit 0; fi\n"
             "if [[ \"$1\" == \"run\" ]]; then\n"
             "  printf 'poc-command\\n' >> \"$ZHULONG_POC_COMMAND_LOG\"\n"
+            "  marker_token=''; for value in \"$@\"; do if [[ \"$value\" =~ (ZHULONG_OUTPUT_READY_[0-9a-f]{32}) ]]; then marker_token=\"${BASH_REMATCH[1]}\"; fi; done\n"
             "  evidence=''\n"
             "  for arg in \"$@\"; do\n"
             "    case \"$arg\" in\n"
@@ -7571,9 +7574,10 @@ def exercise_verification_wrapper_state_boundary(plugin_root: Path, temp_root: P
             "--transition-kind advance --from-stage verification --from-status running "
             "--message 'Concurrent writer moved the stage after Docker.' --accept-current-revision >/dev/null\n"
             "  fi\n"
-            "  if [[ \"$ZHULONG_STUB_BEHAVIOR\" == \"not_reproduced\" ]]; then printf 'no-match\\n'; exit 0; fi\n"
+            "  if [[ \"$ZHULONG_STUB_BEHAVIOR\" == \"not_reproduced\" ]]; then printf 'no-match\\n'; if [[ -n \"$marker_token\" ]]; then printf '%s:0\\n' \"$marker_token\"; fi; exit 0; fi\n"
             "  if [[ \"$ZHULONG_STUB_BEHAVIOR\" == \"timeout\" ]]; then exit 124; fi\n"
             "  printf 'ZHULONG_STUB_ORACLE\\n'\n"
+            "  if [[ \"$*\" =~ (ZHULONG_OUTPUT_READY_[0-9a-f]{32}) ]]; then printf '%s:0\\n' \"${BASH_REMATCH[1]}\"; fi\n"
             "fi\n"
             "exit 0\n",
             encoding="utf-8",
@@ -7724,7 +7728,9 @@ def exercise_verification_wrapper_state_boundary(plugin_root: Path, temp_root: P
         "if [[ \"${1:-}\" == container && \"${2:-}\" == ls ]]; then exit 0; fi\n"
         "if [[ \"${1:-}\" == network && \"${2:-}\" == ls ]]; then exit 0; fi\n"
         "if [[ \"${1:-}\" == volume && \"${2:-}\" == ls ]]; then exit 0; fi\n"
+        "if [[ \"${1:-}\" == exec ]]; then python3 -c 'import os,sys,tarfile,tempfile; d=os.environ.get(\"ZHULONG_COMPOSE_OUTPUT_DIR\") or tempfile.mkdtemp(); tarfile.open(fileobj=sys.stdout.buffer, mode=\"w|\").add(d, arcname=\".\", recursive=True)'; exit 0; fi\n"
         "if [[ \"${1:-}\" == compose ]]; then\n"
+        "  marker_token=''; for value in \"$@\"; do if [[ \"$value\" =~ (ZHULONG_OUTPUT_READY_[0-9a-f]{32}) ]]; then marker_token=\"${BASH_REMATCH[1]}\"; fi; done\n"
         "  shift; compose_file=''; override_file=''; action=''\n"
         "  while [[ $# -gt 0 ]]; do\n"
         "    case \"$1\" in\n"
@@ -7757,7 +7763,7 @@ def exercise_verification_wrapper_state_boundary(plugin_root: Path, temp_root: P
         "      esac\n"
         "      record_output_identity after\n"
         "    fi\n"
-        "    printf 'ZHULONG_COMPOSE_ORACLE\\n'; exit 0\n"
+        "    printf 'ZHULONG_COMPOSE_ORACLE\\n'; if [[ -n \"$marker_token\" ]]; then printf '%s:0\\n' \"$marker_token\"; fi; exit 0\n"
         "  fi\n"
         "fi\n"
         "exit 1\n",
@@ -7784,7 +7790,7 @@ def exercise_verification_wrapper_state_boundary(plugin_root: Path, temp_root: P
     )
     compose_result_path = compose_workspace / "evidence/compose-identity/verification-result.json"
     compose_result = json.loads(compose_result_path.read_text(encoding="utf-8")) if compose_result_path.exists() else {}
-    compose_log_text = compose_log.read_text(encoding="utf-8")
+    compose_log_text = compose_log.read_text(encoding="utf-8") if compose_log.exists() else ""
     if compose_proc.returncode != 0 or compose_result.get("status") != "confirmed_in_docker":
         raise SystemExit(f"FAILED: pinned Compose caller-CWD identity case failed: {compose_proc.stdout}{compose_proc.stderr}")
     if "CALLER_BYTES" in compose_log_text or f"read={expected_compose_digest} marker=WORKSPACE_BYTES action=config" not in compose_log_text or f"read={expected_compose_digest} marker=WORKSPACE_BYTES action=run" not in compose_log_text:
@@ -7815,8 +7821,13 @@ def exercise_verification_wrapper_state_boundary(plugin_root: Path, temp_root: P
 
         case_id = "bind-case"
         output_dir = workspace / "evidence" / case_id / "container-output"
+        observed_output_dir = case_root / "observed-output"
+        observed_output_dir.mkdir(parents=True)
         if bind_kind == "output":
-            volume = f"./evidence/{case_id}/container-output:/workspace/output"
+            # RH.6 no longer permits a host-owned output bind. Keep this
+            # fixture's source Compose file otherwise ordinary while the fake
+            # runtime exports its tmpfs contents through the live tar path.
+            volume = "./poc:/workspace/poc:ro"
         elif bind_kind == "poc":
             volume = "./poc:/workspace/poc:ro"
         elif bind_kind == "target":
@@ -7852,7 +7863,7 @@ def exercise_verification_wrapper_state_boundary(plugin_root: Path, temp_root: P
                 "PATH": f"{workspace / 'fakebin'}{os.pathsep}{os.environ.get('PATH', '')}",
                 "ZHULONG_DOCKER_CALL_LOG": str(call_log),
                 "ZHULONG_COMPOSE_OUTPUT_BEHAVIOR": behavior,
-                "ZHULONG_COMPOSE_OUTPUT_DIR": str(output_dir),
+                "ZHULONG_COMPOSE_OUTPUT_DIR": str(observed_output_dir),
                 "ZHULONG_COMPOSE_SIDE_EFFECT_LOG": str(side_effect_log),
                 "ZHULONG_COMPOSE_REPLACEMENT_DIR": str(replacement_dir),
                 "ZHULONG_COMPOSE_POC_DIR": str(workspace / "poc"),
@@ -7903,23 +7914,7 @@ def exercise_verification_wrapper_state_boundary(plugin_root: Path, temp_root: P
         if "COMPOSE_BIND_SOURCE_FORBIDDEN" in (proc.stdout + proc.stderr):
             raise SystemExit(f"FAILED: legal Compose output write surfaced identity drift: {behavior}")
 
-    for behavior in ("replace_symlink", "replace_file", "replace_fifo", "replace_directory", "chmod_mode"):
-        case = run_compose_bind_case(f"output-{behavior}", behavior, "output")
-        proc = case["proc"]
-        assert isinstance(proc, subprocess.CompletedProcess)
-        calls = case["calls"]
-        if proc.returncode == 0 or "COMPOSE_BIND_SOURCE_FORBIDDEN" not in (proc.stdout + proc.stderr):
-            raise SystemExit(f"FAILED: Compose output object mutation was accepted: {behavior}: {proc.stdout}{proc.stderr}")
-        if sum(" action=run" in call for call in calls) != 1:
-            raise SystemExit(f"FAILED: output mutation fixture did not run exactly once: {behavior}: {calls}")
-        if case["events_after"] != case["events_before"] + ["verification_case_started"]:
-            raise SystemExit(f"FAILED: output mutation crossed the authority-success boundary: {behavior}: {case['events_after']}")
-        if case["result"]:
-            raise SystemExit(f"FAILED: output mutation published a verification result: {behavior}: {case['result']}")
-        if behavior == "replace_symlink" and any(case["replacement_dir"].iterdir()):
-            raise SystemExit("FAILED: output symlink mutation wrote through its replacement target")
-
-    for behavior, bind_kind in (("replace_ancestor", "output"), ("replace_poc", "poc"), ("replace_target", "target")):
+    for behavior, bind_kind in (("replace_poc", "poc"), ("replace_target", "target")):
         case = run_compose_bind_case(f"pre-run-{behavior}", behavior, bind_kind)
         proc = case["proc"]
         assert isinstance(proc, subprocess.CompletedProcess)
@@ -11777,6 +11772,7 @@ def selftest_installed_skill(skill_root: Path) -> None:
          str(skill_root / "scripts/selftest_rh3_1_tool_registry_stage_binding.py"),
          str(skill_root / "scripts/selftest_rhs1_secret_fixture_hygiene.py"),
          str(skill_root / "scripts/selftest_rh5_docker_case_lifecycle.py"),
+         str(skill_root / "scripts/selftest_rh6_host_output_signal.py"),
          str(skill_root / "scripts/validate_workspace_state.py"),
          str(skill_root / "scripts/validate_target_contract.py"),
          str(skill_root / "scripts/validate_recon_result.py"),
@@ -11807,6 +11803,7 @@ def selftest_installed_skill(skill_root: Path) -> None:
     run([sys.executable, str(skill_root / "scripts/selftest_rh3_1_tool_registry_stage_binding.py")], skill_root)
     run([sys.executable, str(skill_root / "scripts/selftest_rhs1_secret_fixture_hygiene.py")], skill_root)
     run([sys.executable, str(skill_root / "scripts/selftest_rh5_docker_case_lifecycle.py")], skill_root)
+    run([sys.executable, str(skill_root / "scripts/selftest_rh6_host_output_signal.py")], skill_root)
     exercise_target_contract_validator(skill_root)
     exercise_tool_registry_contract(skill_root)
     exercise_context_planning_contract(skill_root)
@@ -12477,6 +12474,7 @@ def main() -> None:
     run([sys.executable, str(plugin_root / "scripts/selftest_rh3_1_tool_registry_stage_binding.py")], plugin_root)
     run([sys.executable, str(plugin_root / "scripts/selftest_rhs1_secret_fixture_hygiene.py")], plugin_root)
     run([sys.executable, str(plugin_root / "scripts/selftest_rh5_docker_case_lifecycle.py")], plugin_root)
+    run([sys.executable, str(plugin_root / "scripts/selftest_rh6_host_output_signal.py")], plugin_root)
     exercise_context_planning_contract(plugin_root)
     exercise_root_skill_kernel_contract(plugin_root)
     exercise_recon_result_contract(plugin_root)
@@ -13078,6 +13076,7 @@ def main() -> None:
          str(plugin_root / "scripts/selftest_rh3_1_tool_registry_stage_binding.py"),
          str(plugin_root / "scripts/selftest_rhs1_secret_fixture_hygiene.py"),
          str(plugin_root / "scripts/selftest_rh5_docker_case_lifecycle.py"),
+         str(plugin_root / "scripts/selftest_rh6_host_output_signal.py"),
          str(plugin_root / "scripts/validate_workspace_state.py"),
          str(plugin_root / "scripts/validate_target_contract.py"),
          str(plugin_root / "scripts/validate_candidate.py"),
