@@ -663,11 +663,13 @@ transition intent 时会拒绝；真实 R1 caller 必须显式传入 `--protocol
 `command.json`、sandbox 状态、`stdout.log`、`stderr.log` 和权威引用都由宿主
 通过拥有者/文件身份检查的文件描述符及同目录原子发布创建或替换。Docker-run
 模式挂载 `/workspace/evidence` 时必须只读；容器写出的内容只能放到固定 64 MiB
-tmpfs `/workspace/output`，完成后经宿主受限导入才成为待审附件。oracle 只读取宿主持有的捕获
-描述符字节，容器退出后不会按可替换 pathname 重开文件。symlink、hardlink、FIFO、
-目录、祖先漂移和运行中 pathname replacement 都会 fail closed，不能写穿
-`stage-status.json`，也不能把 case 变成 `confirmed_in_docker`。Compose 模式使用
-相同的宿主捕获模型；覆盖 workspace 权威路径的可写 bind mount 会被拒绝。
+tmpfs `/workspace/output`，仅作为非权威 scratch。新执行不会导入容器文件或创建
+`container-output`；历史 bundle 仍保持只读兼容。宿主以前台方式运行显式 argv，完成状态
+只由 Docker CLI 的退出、超时和信号结果决定。oracle 只读取宿主持有的捕获描述符字节，
+容器退出后不会按可替换 pathname 重开文件。symlink、hardlink、FIFO、目录、祖先漂移和
+运行中 pathname replacement 都会 fail closed，不能写穿 `stage-status.json`，也不能把
+case 变成 `confirmed_in_docker`。Compose 模式使用相同的宿主捕获模型；覆盖 workspace
+权威路径的可写 bind mount 会被拒绝。
 
 Sandbox preflight 是 Docker 或证据副作用前必须完成的证明义务。Compose service
 相对路径固定从规范化后的 audit workspace 解析，不再依赖 caller CWD；随后按原顺序复制到
@@ -683,10 +685,9 @@ namespace、capability/device/security option 以及 named/anonymous/external vo
 目标定义的 label 不得使用保留的 `org.zhulong.*` 或 `com.docker.compose.*` 命名空间。host bind
 只允许三种固定映射：target repository 只读映射到 `/workspace/target`、workspace
 的 `poc/` 只读映射到 `/workspace/poc`。`/workspace/output` 固定为容器内 64 MiB tmpfs，不再是可写
-宿主 bind；容器发布私有完成标记后，wrapper 在容器停止前通过受限的 `docker exec` tar 流导入到宿主
-staging 目录，再原子发布为非权威 `container-output` 附件。导入限制总计 64 MiB、单文件 16 MiB、4096
-个条目、仅普通文件，拒绝 link 和特殊文件。使用默认 output mount 的镜像必须提供静态 `sh`；缺少完成
-标记或 tar 流都会 fail closed。其他宿主路径即使只读也拒绝。额外 Docker 参数不能覆盖资源或隔离策略；
+宿主 bind，仅作为非权威 scratch。新执行以前台方式运行显式 service argv，并强制合并配置中的
+`logging.driver=none`；不读取容器文件，不生成 `container-output`。历史 bundle 保持只读兼容。
+其他宿主路径即使只读也拒绝。额外 Docker 参数不能覆盖资源或隔离策略；
 专用的 `--memory`、`--cpus` 和 `--pids-limit` 必须为正数，并受
 `docker-case-policy-v1` 硬上限约束：内存 16 MiB 到 2 GiB、CPU 0.1 到 4、PID 1 到 1024；默认值
 仍为 512 MiB、1 CPU 和 256 PID。docker-run 与 Compose 使用同一份宿主策略。preflight 通过只

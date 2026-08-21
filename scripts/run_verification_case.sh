@@ -35,9 +35,9 @@ Purpose:
   network setting, one bounded host resource policy, and structured
   evidence under <audit-workspace>/evidence/<case-id>/.
   Docker-run and Docker Compose both use the host-owned docker-case-policy-v1.
-  Default mounts provide a 64 MiB container tmpfs at /workspace/output; images
-  must provide a static sh so the wrapper can stream validated output before
-  stopping the container. Missing markers or unsafe output fail closed.
+  Default mounts provide a 64 MiB non-authoritative container tmpfs at
+  /workspace/output. Completion is determined only from the host-observed
+  Docker CLI result and bounded host stdout/stderr.
 
 Stable outcome labels:
   blocked_docker_unavailable
@@ -75,6 +75,8 @@ Common options:
   --memory LIMIT             Default: 512m; allowed range: 16m through 2g.
   --cpus LIMIT               Default: 1; allowed range: 0.1 through 4.
   --pids-limit N             Default: 256; allowed range: 1 through 1024.
+  An explicit non-empty command after -- is mandatory; container output cannot
+  publish completion markers or override the host-observed result.
 
 docker-run options:
   --image IMAGE              Required image name or ID.
@@ -212,6 +214,8 @@ fail_usage() {
   exit 2
 }
 
+[[ "${#CASE_COMMAND[@]}" -gt 0 ]] || fail_usage "VERIFICATION_COMMAND_REQUIRED: an explicit container command after -- is required."
+
 [[ -n "$WORKSPACE_DIR" ]] || fail_usage "--workspace-dir is required."
 [[ -n "$CASE_ID" ]] || fail_usage "--case-id is required."
 [[ -n "$MODE" ]] || fail_usage "--mode is required."
@@ -331,8 +335,6 @@ then
 fi
 validate_declared_verification_use
 EVIDENCE_DIR="$EXPECTED_EVIDENCE_DIR"
-CONTAINER_OUTPUT_DIR="$EVIDENCE_DIR/container-output"
-
 WORKSPACE_LABEL="$(basename "$WORKSPACE_DIR")"
 AUTHORITY_MODE="no_state"
 R2_STATE_REVISION=""
@@ -347,8 +349,6 @@ CAPTURE_RESULT='{}'
 CAPTURE_HELPER_PID=""
 CAPTURE_LAUNCH_STATE="idle"
 PENDING_SIGNAL=""
-OUTPUT_READY_MARKER=""
-OUTPUT_SCRIPT=""
 LIFECYCLE_ACTIVE="false"
 LIFECYCLE_RECEIPT_PATH=""
 LIFECYCLE_RECEIPT_SHA256=""
@@ -515,28 +515,7 @@ PY
   LIFECYCLE_CONTAINER_NAME="${lifecycle_values[5]}"
   LIFECYCLE_TOKEN="${lifecycle_values[6]}"
   LIFECYCLE_POLICY_JSON="${lifecycle_values[7]}"
-  if [[ "$DEFAULT_MOUNTS" == "1" ]]; then
-    OUTPUT_READY_MARKER="ZHULONG_OUTPUT_READY_${LIFECYCLE_TOKEN}"
-  else
-    OUTPUT_READY_MARKER=""
-  fi
   LIFECYCLE_ACTIVE="true"
-}
-
-prepare_output_handshake() {
-  [[ "$DEFAULT_MOUNTS" == "1" ]] || return 0
-  local quoted_command
-  if [[ "${#CASE_COMMAND[@]}" -gt 0 ]]; then
-    quoted_command="$(python3 - "${CASE_COMMAND[@]}" <<'PY'
-import shlex
-import sys
-print(" ".join(shlex.quote(value) for value in sys.argv[1:]) or ":")
-PY
-    )"
-  else
-    quoted_command=":"
-  fi
-  OUTPUT_SCRIPT="set +e; ${quoted_command}; _zhulong_rc=\$?; printf '%s:%s\\n' '${OUTPUT_READY_MARKER}' \"\$_zhulong_rc\"; while :; do sleep 1; done"
 }
 
 ensure_case_cleanup() {
@@ -1590,13 +1569,11 @@ pin_compose_inputs
 early_sandbox_preflight
 ensure_host_evidence_directories
 EVIDENCE_DIR="$(cd "$EVIDENCE_DIR" && pwd -P)"
-CONTAINER_OUTPUT_DIR="$EVIDENCE_DIR/container-output"
 STDOUT_PATH="$EVIDENCE_DIR/stdout.log"
 STDERR_PATH="$EVIDENCE_DIR/stderr.log"
 COMMAND_JSON_PATH="$EVIDENCE_DIR/command.json"
 SANDBOX_PREFLIGHT_JSON="$EVIDENCE_DIR/sandbox-preflight.json"
 prepare_case_lifecycle
-prepare_output_handshake
 write_sandbox_preflight_evidence
 read_authority_preflight
 
@@ -1724,6 +1701,7 @@ case "$MODE" in
       --cpus "$CPU_LIMIT"
       --pids-limit "$PIDS_LIMIT"
       --restart no
+      --log-driver none
       --cap-drop ALL
       --security-opt no-new-privileges
       --network "$NETWORK"
@@ -1751,11 +1729,7 @@ PY
       )
     fi
     RUN_COMMAND+=("$IMAGE")
-    if [[ "$DEFAULT_MOUNTS" == "1" ]]; then
-      RUN_COMMAND+=(sh -c "$OUTPUT_SCRIPT")
-    elif [[ "${#CASE_COMMAND[@]}" -gt 0 ]]; then
-      RUN_COMMAND+=("${CASE_COMMAND[@]}")
-    fi
+    RUN_COMMAND+=("${CASE_COMMAND[@]}")
     ;;
   docker-compose)
     COMPOSE_ARGS=(-p "$LIFECYCLE_PROJECT_NAME" --project-directory "$WORKSPACE_DIR")
@@ -1797,11 +1771,7 @@ PY
       --label "org.zhulong.policy=docker-case-policy-v1" \
       --label "org.zhulong.project=$LIFECYCLE_PROJECT_NAME" \
       "$COMPOSE_SERVICE")
-    if [[ "$DEFAULT_MOUNTS" == "1" ]]; then
-      RUN_COMMAND+=(sh -c "$OUTPUT_SCRIPT")
-    elif [[ "${#CASE_COMMAND[@]}" -gt 0 ]]; then
-      RUN_COMMAND+=("${CASE_COMMAND[@]}")
-    fi
+    RUN_COMMAND+=("${CASE_COMMAND[@]}")
     ;;
 esac
 
@@ -1828,33 +1798,15 @@ DOCKER_CASE_MAY_EXIST="true"
 CAPTURE_RESPONSE_PATH="$EVIDENCE_DIR/capture-response.json"
 CAPTURE_LAUNCH_STATE="launching"
 set +e
-python3 - "$SCRIPT_DIR" "$WORKSPACE_DIR" "$EVIDENCE_DIR" "$CAPTURE_RESPONSE_PATH" "$STDOUT_PATH" "$STDERR_PATH" "$TIMEOUT_SECONDS" "$EXPECTED_ORACLE" "$OUTPUT_READY_MARKER" "$LIFECYCLE_RECEIPT_PATH" "$LIFECYCLE_RECEIPT_SHA256" "$CONTAINER_OUTPUT_DIR" "${RUN_COMMAND[@]}" <<'PY' &
+python3 - "$SCRIPT_DIR" "$WORKSPACE_DIR" "$EVIDENCE_DIR" "$CAPTURE_RESPONSE_PATH" "$STDOUT_PATH" "$STDERR_PATH" "$TIMEOUT_SECONDS" "$EXPECTED_ORACLE" "${RUN_COMMAND[@]}" <<'PY' &
 import json
-import subprocess
 import sys
 from pathlib import Path
 
-script_dir, root_value, evidence_root, response_value, stdout_value, stderr_value, timeout_value, oracle_value, completion_marker, receipt_path, receipt_digest, output_dir = sys.argv[1:13]
-command = sys.argv[13:]
+script_dir, root_value, evidence_root, response_value, stdout_value, stderr_value, timeout_value, oracle_value = sys.argv[1:9]
+command = sys.argv[9:]
 sys.path.insert(0, script_dir)
 from evidence_io import SafeEvidenceError, atomic_write_json, run_captured_command
-
-def import_output(_exit_code: int) -> None:
-    if not completion_marker:
-        return
-    lifecycle = str(Path(script_dir) / "docker_case_lifecycle.py")
-    result = subprocess.run(
-        [sys.executable, lifecycle, "import-output", "--evidence-root", evidence_root,
-         "--receipt", receipt_path, "--receipt-sha256", receipt_digest,
-         "--output-dir", output_dir, "--docker", "docker"],
-        check=False, capture_output=True, text=True, timeout=60,
-    )
-    if result.returncode != 0:
-        try:
-            code = json.loads(result.stdout).get("issue_code") or "EVIDENCE_OUTPUT_IMPORT_FAILED"
-        except (TypeError, json.JSONDecodeError):
-            code = "EVIDENCE_OUTPUT_IMPORT_FAILED"
-        raise SafeEvidenceError(code, "bounded container output import failed")
 
 try:
     result = run_captured_command(
@@ -1864,8 +1816,6 @@ try:
         command,
         timeout=int(timeout_value),
         expected_oracle=oracle_value,
-        completion_marker=completion_marker or None,
-        on_completion=import_output if completion_marker else None,
     )
 except SafeEvidenceError as exc:
     atomic_write_json(Path(evidence_root), Path(response_value), {"ok": False, "code": exc.code})
@@ -1918,14 +1868,6 @@ PY
   if [[ "$capture_code" == "EVIDENCE_SIZE_LIMIT" ]]; then
     VERIFICATION_DIAGNOSTIC_CODE="$capture_code"
     classify_and_exit "failed_resource_limit" "Docker stdout/stderr exceeded the host-owned bounded capture limit." "" "false"
-  fi
-  if [[ "$capture_code" == "EVIDENCE_OUTPUT_LIMIT" ]]; then
-    VERIFICATION_DIAGNOSTIC_CODE="$capture_code"
-    classify_and_exit "failed_resource_limit" "Container output exceeded the host-owned bounded import limit." "" "false"
-  fi
-  if [[ "$capture_code" == EVIDENCE_OUTPUT_* || "$capture_code" == "EVIDENCE_COMPLETION_MARKER_MISSING" ]]; then
-    VERIFICATION_DIAGNOSTIC_CODE="$capture_code"
-    classify_and_exit "rejected_unsafe_sandbox" "Container output could not be imported through the host-owned bounded staging path." "" "false"
   fi
   CONTROL_EVIDENCE_UNSAFE="true"
   POC_COMMAND_INVOKED="false"

@@ -862,12 +862,13 @@ The verification wrapper owns control evidence. `verification-result.json`,
 references are created or replaced with host-owned, identity-checked file
 descriptors and same-directory atomic publication. `/workspace/evidence` is
 read-only when it is mounted into a Docker-run case. `/workspace/output` is a
-fixed 64 MiB container tmpfs, not a writable host
-bind. After execution the wrapper imports it through a host-owned staging
-directory with 64 MiB aggregate, 16 MiB per-file, 4096-entry,
-regular-file-only, no-link/no-special-file limits, then atomically publishes
-the validated `container-output` attachment. The oracle reads bytes held by
-the host capture descriptors, never reopens a container-replaceable pathname.
+fixed 64 MiB container tmpfs used only as non-authoritative scratch, not a
+writable host bind. New executions never import container files or create
+`container-output`; historical bundles containing it remain read-only
+compatible. The host runs one explicit foreground command and derives
+completion from the Docker CLI exit/deadline/signal result. The oracle reads
+bounded bytes held by the host capture descriptors, never reopens a
+container-replaceable pathname.
 Symlink, hardlink, FIFO, directory, ancestor drift, and running pathname
 replacement therefore fail closed and cannot write `stage-status.json` or
 turn a case into `confirmed_in_docker`. Compose cases receive the same host
@@ -891,10 +892,12 @@ field is rejected, and `restart` is absent or exactly `"no"`. Target-defined
 labels cannot use the reserved `org.zhulong.*` or `com.docker.compose.*`
 namespaces. Host binds are limited to the target repository at
 `/workspace/target` read-only and workspace `poc/` at `/workspace/poc` read-only.
-The current case's output is
-provided by the fixed `/workspace/output` tmpfs and published to the
-non-authoritative `container-output` only after bounded host import validation.
-No other host path is permitted, even read-only.
+The current case's output is provided only by the fixed `/workspace/output`
+tmpfs as non-authoritative scratch. New executions do not read container files
+or create `container-output`; historical bundles remain readable. The selected
+service and docker-run invocation use the exact `logging.driver=none` policy,
+and the host starts one foreground command with an explicit argv. No other
+host path is permitted, even read-only.
 Extra Docker arguments cannot override resources or isolation. Dedicated
 `--memory`, `--cpus`, and `--pids-limit` values are positive and bounded by
 `docker-case-policy-v1` (16 MiB through 2 GiB, 0.1 through 4 CPUs, and 1 through
@@ -908,8 +911,8 @@ unique Compose project name in a host-owned receipt. Compose execution adds a
 last host-owned override and validates the production merged configuration
 before the service starts. It uses `-p`, `--name`, and `--no-deps`, and image
 inspection or an explicitly requested pull applies only to the selected service.
-Normal exit, failure, timeout, `SIGINT`, `SIGTERM`, output-import failure, and
-evidence errors share the same idempotent cleanup. Bounded stdout/stderr
+Normal exit, failure, timeout, `SIGINT`, `SIGTERM`, and evidence errors share
+the same idempotent cleanup. Bounded stdout/stderr
 capture terminates the whole Docker process group at the 16 MiB per-stream
 limit, before any result is eligible for publication. Cleanup enumerates
 resources for inspection but removes

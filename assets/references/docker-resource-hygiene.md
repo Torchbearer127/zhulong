@@ -86,16 +86,15 @@ Case cleanup inspects Docker state and removes only the exact receipt-owned
 container plus resources with the exact unique Compose project label. It does
 not use prefixes, wildcards, label selectors, or prune. The selected service's
 `/workspace/output` is a fixed-size 64 MiB container tmpfs, never a writable
-host bind. After the command publishes a private completion marker, the wrapper
-streams the live tmpfs through a bounded `docker exec` tar reader into a
-host-owned staging directory with 64 MiB aggregate, 16 MiB per-file,
-4096-entry, regular-file-only, no-link/no-special-file limits, and atomically
-publishes it only after validation. Images used with default output mounts must
-provide a static `sh`; a missing marker or tar stream fails closed. Cleanup and
+host bind, and is non-authoritative scratch only. New executions run one explicit
+foreground command and use bounded host-owned stdout/stderr; they do not read
+container files or create `container-output`. Historical bundles containing
+that directory remain readable. The merged Compose configuration and docker-run
+invocation require the exact `logging.driver=none` policy. Cleanup and
 three consecutive zero-residue observations run
 before a completion event is eligible to commit. A normal result, failure,
-timeout, signal, output-import error, or evidence error all use this same
-cleanup path. `DOCKER_CASE_CLEANUP_FAILED` and output-limit/import failures are
+timeout, signal, or evidence error all use this same
+cleanup path. `DOCKER_CASE_CLEANUP_FAILED` and output-limit failures are
 blocking results and can never be treated as confirmation-ready. Workspace-level
 cleanup below remains a separate final hygiene gate and is not weakened by a
 successful case cleanup.

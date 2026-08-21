@@ -12,7 +12,7 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 
 MAX_CONTROL_BYTES = 2 * 1024 * 1024
@@ -374,8 +374,6 @@ def run_captured_command(
     *,
     timeout: int,
     expected_oracle: str,
-    completion_marker: str | None = None,
-    on_completion: Callable[[int], None] | None = None,
 ) -> dict[str, Any]:
     try:
         oracle = re.compile(expected_oracle, flags=re.MULTILINE) if expected_oracle else None
@@ -393,10 +391,6 @@ def run_captured_command(
         process: subprocess.Popen[bytes] | None = None
         streams: dict[int, bytearray] = {1: bytearray(), 2: bytearray()}
         limit_error: SafeEvidenceError | None = None
-        completion_error: SafeEvidenceError | None = None
-        completion_observed = False
-        completion_exit_code: int | None = None
-        marker_bytes = completion_marker.encode("ascii") if completion_marker else b""
 
         def stop_process_group(signum: int) -> None:
             if process is None or process.poll() is not None:
@@ -419,7 +413,7 @@ def run_captured_command(
             raise _error("EVIDENCE_CAPTURE_INTERRUPTED", "captured Docker command was interrupted")
 
         def append_capture(fd: int, stream_id: int, chunk: bytes) -> None:
-            nonlocal limit_error, completion_error, completion_observed, completion_exit_code
+            nonlocal limit_error
             if not chunk:
                 return
             current = len(streams[stream_id])
@@ -432,19 +426,6 @@ def run_captured_command(
             streams[stream_id].extend(accepted)
             if len(accepted) != len(chunk):
                 limit_error = _error("EVIDENCE_SIZE_LIMIT", "captured Docker output exceeds its size limit")
-            if marker_bytes and not completion_observed:
-                match = re.search(re.escape(marker_bytes) + rb":([0-9]{1,3})\n", bytes(streams[stream_id]))
-                if match is not None:
-                    completion_observed = True
-                    completion_exit_code = int(match.group(1))
-                    if on_completion is not None:
-                        try:
-                            on_completion(completion_exit_code)
-                        except SafeEvidenceError as exc:
-                            completion_error = exc
-                        except OSError as exc:
-                            completion_error = _error("EVIDENCE_OUTPUT_IMPORT_FAILED", "bounded output import failed safely")
-                    stop_process_group(signal.SIGTERM)
 
         try:
             for signum in (signal.SIGINT, signal.SIGTERM):
@@ -518,10 +499,6 @@ def run_captured_command(
                 signal.signal(signum, handler)
         if limit_error is not None:
             raise limit_error
-        if completion_marker and not completion_observed:
-            raise _error("EVIDENCE_COMPLETION_MARKER_MISSING", "Docker command did not publish the bounded output completion marker")
-        if completion_error is not None:
-            raise completion_error
         os.fsync(stdout_fd)
         os.fsync(stderr_fd)
         stdout_intact = _capture_path_intact(root, stdout_path, stdout_fd)
@@ -530,14 +507,13 @@ def run_captured_command(
         stderr_bytes = bytes(streams[2])
         text = (stdout_bytes + b"\n" + stderr_bytes).decode("utf-8", errors="ignore")
         return {
-            "exit_code": 124 if timed_out else completion_exit_code if completion_observed and completion_exit_code is not None else 127 if process is None else int(process.returncode),
+            "exit_code": 124 if timed_out else 127 if process is None else int(process.returncode),
             "oracle_matched": bool(oracle.search(text)) if oracle is not None else False,
             "resource_limit_detected": bool(re.search(r"out of memory|oom|memory limit|pids limit|cannot allocate memory|resource temporarily unavailable", text, re.I)),
             "capture_integrity": stdout_intact and stderr_intact,
             "command_started": command_started,
             "stdout_bytes": len(stdout_bytes),
             "stderr_bytes": len(stderr_bytes),
-            "completion_observed": completion_observed,
         }
     finally:
         os.close(stdout_fd)

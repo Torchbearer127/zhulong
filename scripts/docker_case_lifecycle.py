@@ -8,13 +8,9 @@ import json
 import os
 import re
 import secrets
-import signal
 import stat
 import subprocess
 import sys
-import shutil
-import tarfile
-import tempfile
 import time
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -36,10 +32,6 @@ DEFAULT_MEMORY = "512m"
 DEFAULT_CPUS = "1"
 DEFAULT_PIDS_LIMIT = 256
 OUTPUT_TMPFS_SIZE = "64m"
-OUTPUT_MAX_BYTES = 64 * 1024 * 1024
-OUTPUT_MAX_FILE_BYTES = 16 * 1024 * 1024
-OUTPUT_MAX_ENTRIES = 4096
-OUTPUT_MAX_TRANSFER_BYTES = 96 * 1024 * 1024
 MIN_MEMORY_BYTES = 16 * 1024 * 1024
 MAX_MEMORY_BYTES = 2 * 1024 * 1024 * 1024
 MIN_CPUS = Decimal("0.1")
@@ -260,6 +252,7 @@ def prepare(args: argparse.Namespace) -> dict[str, Any]:
             "cpus": float(Decimal(policy["cpus"])),
             "pids_limit": policy["pids_limit"],
             "labels": labels,
+            "logging": {"driver": "none"},
             "tmpfs": [f"/workspace/output:rw,nosuid,nodev,noexec,size={OUTPUT_TMPFS_SIZE}"],
         }
     override_raw = canonical_json_bytes(override)
@@ -338,6 +331,8 @@ def validate_config(args: argparse.Namespace) -> dict[str, Any]:
         raise LifecycleError("COMPOSE_CONFIG_POLICY_MISMATCH", "selected service capability policy changed")
     if service.get("security_opt") != ["no-new-privileges:true"]:
         raise LifecycleError("COMPOSE_CONFIG_POLICY_MISMATCH", "selected service security option policy changed")
+    if service.get("logging") != {"driver": "none"}:
+        raise LifecycleError("COMPOSE_CONFIG_POLICY_MISMATCH", "selected service logging policy changed")
     if service.get("tmpfs") != [f"/workspace/output:rw,nosuid,nodev,noexec,size={OUTPUT_TMPFS_SIZE}"]:
         raise LifecycleError("COMPOSE_CONFIG_POLICY_MISMATCH", "selected service output tmpfs policy changed")
     volumes = service.get("volumes", [])
@@ -373,215 +368,6 @@ def validate_config(args: argparse.Namespace) -> dict[str, Any]:
         "selected_image": image,
         "receipt_sha256": args.receipt_sha256,
     }
-
-
-def _output_root(root: Path, output: Path) -> Path:
-    root = root.absolute()
-    output = output.absolute()
-    try:
-        relative = output.relative_to(root)
-    except ValueError as exc:
-        raise LifecycleError("EVIDENCE_PATH_ESCAPE", "container output is outside the host evidence root") from exc
-    if len(relative.parts) != 1 or any(part in {"", ".", ".."} for part in relative.parts):
-        raise LifecycleError("EVIDENCE_PATH_UNSAFE", "container output path is not a direct host evidence child")
-    if stat.S_ISLNK(os.lstat(root).st_mode) or not stat.S_ISDIR(os.lstat(root).st_mode):
-        raise LifecycleError("EVIDENCE_ROOT_UNSAFE", "host evidence root is unsafe")
-    return output
-
-
-def _validate_output_tree(root: Path) -> tuple[int, int]:
-    total = 0
-    entries = 0
-    pending = [root]
-    while pending:
-        current = pending.pop()
-        try:
-            children = list(os.scandir(current))
-        except OSError as exc:
-            raise LifecycleError("EVIDENCE_OUTPUT_IMPORT_FAILED", "container output staging could not be read safely") from exc
-        for child in children:
-            entries += 1
-            if entries > OUTPUT_MAX_ENTRIES or child.name in {"", ".", ".."} or "/" in child.name or "\\" in child.name:
-                raise LifecycleError("EVIDENCE_OUTPUT_LIMIT", "container output entry count or name is outside the host policy")
-            try:
-                info = os.lstat(child.path)
-            except OSError as exc:
-                raise LifecycleError("EVIDENCE_OUTPUT_IMPORT_FAILED", "container output entry could not be inspected") from exc
-            if stat.S_ISLNK(info.st_mode) or stat.S_ISSOCK(info.st_mode) or stat.S_ISFIFO(info.st_mode) or stat.S_ISCHR(info.st_mode) or stat.S_ISBLK(info.st_mode):
-                raise LifecycleError("EVIDENCE_OUTPUT_UNSAFE_ENTRY", "container output contains a link or special file")
-            mode = stat.S_IMODE(info.st_mode)
-            if mode & 0o022:
-                raise LifecycleError("EVIDENCE_OUTPUT_UNSAFE_MODE", "container output contains a group/world-writable entry")
-            if stat.S_ISDIR(info.st_mode):
-                pending.append(Path(child.path))
-                continue
-            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
-                raise LifecycleError("EVIDENCE_OUTPUT_UNSAFE_ENTRY", "container output contains a non-regular or hard-linked file")
-            if info.st_size > OUTPUT_MAX_FILE_BYTES:
-                raise LifecycleError("EVIDENCE_OUTPUT_LIMIT", "container output file exceeds its size limit")
-            total += info.st_size
-            if total > OUTPUT_MAX_BYTES:
-                raise LifecycleError("EVIDENCE_OUTPUT_LIMIT", "container output exceeds its aggregate size limit")
-    return total, entries
-
-
-class _BoundedReader:
-    def __init__(self, stream: Any, limit: int) -> None:
-        self.stream = stream
-        self.limit = limit
-        self.total = 0
-
-    def read(self, size: int = -1) -> bytes:
-        if size < 0:
-            size = self.limit - self.total + 1
-        if self.total >= self.limit:
-            raise LifecycleError("EVIDENCE_OUTPUT_LIMIT", "container output transfer exceeds its stream limit")
-        raw = self.stream.read(min(size, self.limit - self.total + 1))
-        self.total += len(raw)
-        if self.total > self.limit:
-            raise LifecycleError("EVIDENCE_OUTPUT_LIMIT", "container output transfer exceeds its stream limit")
-        return raw
-
-
-def _safe_tar_member_path(name: str) -> tuple[str, ...]:
-    if not isinstance(name, str) or not name or name.startswith(("/", "\\")) or "\\" in name:
-        raise LifecycleError("EVIDENCE_OUTPUT_UNSAFE_ENTRY", "container output archive contains an unsafe path")
-    raw_parts = tuple(part for part in name.split("/") if part != "")
-    while raw_parts and raw_parts[0] == ".":
-        raw_parts = raw_parts[1:]
-    if any(part in {".", ".."} for part in raw_parts):
-        raise LifecycleError("EVIDENCE_OUTPUT_UNSAFE_ENTRY", "container output archive contains an unsafe path")
-    return raw_parts
-
-
-def _ensure_staging_parent(staging: Path, parts: tuple[str, ...]) -> Path:
-    current = staging
-    for part in parts:
-        current = current / part
-        try:
-            info = os.lstat(current)
-        except FileNotFoundError:
-            os.mkdir(current, 0o700)
-            info = os.lstat(current)
-        if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
-            raise LifecycleError("EVIDENCE_OUTPUT_UNSAFE_ENTRY", "container output archive parent is unsafe")
-    return current
-
-
-def _stream_container_output(docker: str, container: str, staging: Path) -> tuple[int, int]:
-    command = [docker, "exec", container, "tar", "-C", "/workspace/output", "-cf", "-", "."]
-    try:
-        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, start_new_session=True)
-    except OSError as exc:
-        raise LifecycleError("EVIDENCE_OUTPUT_IMPORT_FAILED", "Docker output import could not start") from exc
-    entry_paths: set[tuple[str, ...]] = set()
-    entry_count = 0
-    total = 0
-    try:
-        assert process.stdout is not None
-        reader = _BoundedReader(process.stdout, OUTPUT_MAX_TRANSFER_BYTES)
-        archive = None
-        try:
-            archive = tarfile.open(fileobj=reader, mode="r|")
-            for member in archive:
-                parts = _safe_tar_member_path(member.name)
-                if not parts:
-                    continue
-                entry_count += 1
-                if entry_count > OUTPUT_MAX_ENTRIES:
-                    raise LifecycleError("EVIDENCE_OUTPUT_LIMIT", "container output archive has too many entries")
-                if parts in entry_paths:
-                    raise LifecycleError("EVIDENCE_OUTPUT_UNSAFE_ENTRY", "container output archive contains a duplicate path")
-                entry_paths.add(parts)
-                mode = member.mode & 0o7777
-                if mode & 0o022:
-                    raise LifecycleError("EVIDENCE_OUTPUT_UNSAFE_MODE", "container output archive contains a writable group or world entry")
-                if member.isdir():
-                    _ensure_staging_parent(staging, parts)
-                    continue
-                if not member.isfile():
-                    raise LifecycleError("EVIDENCE_OUTPUT_UNSAFE_ENTRY", "container output archive contains a link or special file")
-                if member.size > OUTPUT_MAX_FILE_BYTES or total + member.size > OUTPUT_MAX_BYTES:
-                    raise LifecycleError("EVIDENCE_OUTPUT_LIMIT", "container output archive exceeds its size limit")
-                parent = _ensure_staging_parent(staging, parts[:-1])
-                destination = parent / parts[-1]
-                if destination.exists() or destination.is_symlink():
-                    raise LifecycleError("EVIDENCE_OUTPUT_UNSAFE_ENTRY", "container output archive contains a duplicate path")
-                source = archive.extractfile(member)
-                if source is None:
-                    raise LifecycleError("EVIDENCE_OUTPUT_IMPORT_FAILED", "container output archive file could not be read")
-                fd = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
-                try:
-                    remaining = member.size
-                    while remaining:
-                        chunk = source.read(min(65536, remaining))
-                        if not chunk:
-                            raise LifecycleError("EVIDENCE_OUTPUT_IMPORT_FAILED", "container output archive file was truncated")
-                        os.write(fd, chunk)
-                        remaining -= len(chunk)
-                    os.fsync(fd)
-                finally:
-                    os.close(fd)
-                total += member.size
-        except tarfile.TarError as exc:
-            raise LifecycleError("EVIDENCE_OUTPUT_IMPORT_FAILED", "container output archive is invalid") from exc
-        finally:
-            if archive is not None:
-                archive.close()
-        try:
-            exit_code = process.wait(timeout=60)
-        except subprocess.TimeoutExpired:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except OSError:
-                pass
-            try:
-                process.wait(timeout=5)
-            except (OSError, subprocess.TimeoutExpired):
-                pass
-            raise LifecycleError("EVIDENCE_OUTPUT_IMPORT_FAILED", "Docker output import timed out")
-        except OSError as exc:
-            raise LifecycleError("EVIDENCE_OUTPUT_IMPORT_FAILED", "Docker output import could not be waited safely") from exc
-    finally:
-        if process.poll() is None:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except OSError:
-                pass
-            try:
-                process.wait(timeout=5)
-            except (OSError, subprocess.TimeoutExpired):
-                pass
-    if exit_code != 0:
-        raise LifecycleError("EVIDENCE_OUTPUT_IMPORT_FAILED", "Docker output import failed")
-    return total, entry_count
-
-
-def import_output(args: argparse.Namespace) -> dict[str, Any]:
-    root = require_root(Path(args.evidence_root))
-    receipt = load_receipt(root, Path(args.receipt), args.receipt_sha256)
-    output = _output_root(root, Path(args.output_dir))
-    if output.exists() or output.is_symlink():
-        raise LifecycleError("EVIDENCE_TARGET_DRIFT", "container output destination already exists")
-    staging = Path(tempfile.mkdtemp(prefix=f".{output.name}.import-", dir=root))
-    try:
-        total, entries = _stream_container_output(args.docker, receipt["container_name"], staging)
-        checked_total, checked_entries = _validate_output_tree(staging)
-        if (total, entries) != (checked_total, checked_entries):
-            raise LifecycleError("EVIDENCE_OUTPUT_IMPORT_FAILED", "container output archive validation was inconsistent")
-        if output.exists() or output.is_symlink():
-            raise LifecycleError("EVIDENCE_TARGET_DRIFT", "container output destination changed during publication")
-        os.replace(staging, output)
-        staging = Path()
-        directory_fd = os.open(root, os.O_RDONLY)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
-        return {"ok": True, "status": "imported", "total_bytes": total, "entry_count": entries}
-    finally:
-        if staging != Path() and staging.exists():
-            shutil.rmtree(staging, ignore_errors=True)
 
 
 def _docker(docker: str, *arguments: str) -> tuple[bool, str]:
@@ -785,6 +571,14 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def historical_output_only(_args: argparse.Namespace) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "status": "rejected",
+        "issue_code": "CONTAINER_OUTPUT_HISTORICAL_ONLY",
+    }
+
+
 def main() -> int:
     args = parse_args()
     try:
@@ -797,7 +591,7 @@ def main() -> int:
         elif args.operation == "cleanup":
             result = cleanup(args)
         else:
-            result = import_output(args)
+            result = historical_output_only(args)
     except (LifecycleError, SafeEvidenceError) as exc:
         code = exc.code if hasattr(exc, "code") else "DOCKER_CASE_LIFECYCLE_UNSAFE"
         print(json.dumps({"ok": False, "status": "rejected", "issue_code": code}, sort_keys=True))

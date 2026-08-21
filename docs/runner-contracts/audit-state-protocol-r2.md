@@ -290,17 +290,20 @@ the five-minute freshness window. A stale, symlinked, hard-linked, malformed,
 or path-only status is rejected before the finalized state can pass.
 
 The wrapper owns evidence files on the host. The evidence tree is mounted
-read-only in Docker; `/workspace/output` is a fixed 64 MiB container tmpfs and
-the separate `container-output` directory is published only after a live
-bounded tar stream and host-owned staging validation.
-The command oracle reads stdout/stderr through host file descriptors opened
-before the container starts, and verifies that the descriptor and pathname
-still identify the same regular, single-link, current-user-owned file after
-the process exits. Symlink, hard-link, FIFO, directory replacement, ancestor
-replacement, and result-path replacement attacks fail closed and cannot alter
-the stage state or external marker. A positive Docker oracle therefore remains
-necessary but is never sufficient without the normal verifier, disposition,
-bundle, and finalization gates.
+read-only in Docker; `/workspace/output` is a fixed 64 MiB container tmpfs used
+only as non-authoritative scratch. New executions do not create or import a
+`container-output` directory. Historical bundles containing that directory
+remain readable without being rewritten.
+The host starts one foreground Docker/Compose command with an explicit argv and
+observes its CLI exit, deadline, and signal result. The command oracle reads
+bounded stdout/stderr through host file descriptors opened before the container
+starts, and verifies that the descriptor and pathname still identify the same
+regular, single-link, current-user-owned file after the process exits. Symlink,
+hard-link, FIFO, directory replacement, ancestor replacement, and result-path
+replacement attacks fail closed and cannot alter the stage state or completion
+authority. A positive Docker oracle therefore remains necessary but is
+never sufficient without the normal verifier, disposition, bundle, and
+finalization gates.
 
 Structured blocker facts are authoritative for closure. A current
 `blocked_missing_image`, timeout, resource, unsafe-sandbox, or unverified

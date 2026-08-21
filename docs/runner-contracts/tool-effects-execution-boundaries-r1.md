@@ -104,13 +104,11 @@ capability/device/security-option, interpolation, anchor/alias/merge, and
 named/anonymous/external-volume forms are rejected. Host binds are limited to
 the target repository at `/workspace/target` read-only and workspace `poc/` at
 `/workspace/poc` read-only. The current case's `/workspace/output` is a fixed
-64 MiB container tmpfs; output is imported only through bounded host-owned
-staging (64 MiB aggregate, 16 MiB per file, 4096 entries, regular files only,
-no links or special files) and then published as the non-authoritative
-`container-output` attachment. The wrapper streams the live tmpfs before
-stopping the container; default-output images must provide a static `sh` or
-the completion marker/tar import fails closed. Other host paths are rejected
-even when read-only.
+64 MiB container tmpfs used only as non-authoritative scratch; new executions
+do not import container files or create `container-output`. Historical bundles
+remain readable. The selected service must use the exact `logging.driver=none`
+policy, and the wrapper starts one foreground command with an explicit argv.
+Other host paths are rejected even when read-only.
 
 The bind check retains the source's logical spelling until the closed-set
 comparison is complete; it does not compare only resolved targets. Existing
@@ -119,9 +117,8 @@ pre-existing unsafe directory entries before writing, and the wrapper repeats
 the identity check before every Compose config, pull, and run. Stable identity
 for every existing component (device, inode, type, mode, uid, and gid) is kept
 separate from leaf mtime and link-count observations. Stable drift always
-rejects; target and `poc/` observations remain strict, while ordinary content
-writes may change those observations for the container's tmpfs output before it
-is imported as `container-output`.
+rejects; target and `poc/` observations remain strict, while ordinary writes to
+the container tmpfs remain non-authoritative.
 This is an explicit revalidation boundary under a trusted workspace-owner
 assumption, not an atomic host-path pin or an OS-level TOCTOU guarantee.
 

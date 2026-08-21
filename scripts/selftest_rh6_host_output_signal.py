@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Focused deterministic checks for the RH.6 output and signal boundary."""
+"""Focused deterministic checks for the host-owned completion contract."""
 from __future__ import annotations
 
-import os
+import inspect
 import json
+import os
 import signal
 import subprocess
 import sys
@@ -14,12 +15,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from docker_case_lifecycle import (  # noqa: E402
-    OUTPUT_MAX_FILE_BYTES,
-    OUTPUT_MAX_BYTES,
-    LifecycleError,
-    _validate_output_tree,
-)
+from docker_case_lifecycle import LifecycleError  # noqa: E402
 from evidence_io import MAX_CAPTURE_BYTES, SafeEvidenceError, run_captured_command  # noqa: E402
 
 
@@ -32,208 +28,133 @@ def run(command: list[str], *, cwd: Path, env: dict[str, str] | None = None) -> 
     return subprocess.run(command, cwd=cwd, env=env, text=True, capture_output=True, timeout=20, check=False)
 
 
-def test_capture_bounds(root: Path) -> None:
-    normal = root / "normal"
-    normal.mkdir()
-    value = run_captured_command(
-        normal,
-        normal / "stdout.log",
-        normal / "stderr.log",
-        [sys.executable, "-c", "print('RH6_ORACLE')"],
-        timeout=5,
-        expected_oracle="RH6_ORACLE",
-    )
-    require(value["oracle_matched"] is True and value["capture_integrity"] is True, "normal bounded capture failed")
-    require((normal / "stdout.log").stat().st_size < MAX_CAPTURE_BYTES, "normal capture reached the hard limit")
+def test_capture_api(root: Path) -> None:
+    parameters = inspect.signature(run_captured_command).parameters
+    require("completion_marker" not in parameters, "completion marker remains in capture API")
+    require("on_completion" not in parameters, "completion callback remains in capture API")
 
-    for stream, code in (("stdout", "import sys; sys.stdout.write('x' * (17 * 1024 * 1024))"),
-                         ("stderr", "import sys; sys.stderr.write('x' * (17 * 1024 * 1024))")):
-        case = root / f"{stream}-flood"
+    for expected_exit, stdout, stderr in ((0, "OK\nMARKER:17\n", ""), (1, "MARKER:0\n", "failed\n"),
+                                           (130, "success\nMARKER:0\n", "interrupted\n"), (143, "", "MARKER:0\n")):
+        case = root / f"exit-{expected_exit}"
         case.mkdir()
-        try:
-            run_captured_command(
-                case,
-                case / "stdout.log",
-                case / "stderr.log",
-                [sys.executable, "-c", code],
-                timeout=5,
-                expected_oracle="RH6_ORACLE",
-            )
-        except SafeEvidenceError as exc:
-            require(exc.code == "EVIDENCE_SIZE_LIMIT", f"{stream} flood used unstable code: {exc.code}")
-        else:
-            raise SystemExit(f"FAILED: {stream} flood was accepted")
-        target = case / f"{stream}.log"
-        require(target.stat().st_size == MAX_CAPTURE_BYTES, f"{stream} capture exceeded bounded size")
+        code = (
+            "import sys; "
+            f"sys.stdout.write({stdout!r}); sys.stderr.write({stderr!r}); "
+            f"raise SystemExit({expected_exit})"
+        )
+        value = run_captured_command(
+            case, case / "stdout.log", case / "stderr.log", [sys.executable, "-c", code],
+            timeout=5, expected_oracle="MARKER",
+        )
+        require(value["exit_code"] == expected_exit, f"host exit {expected_exit} was rewritten")
+        require(value["oracle_matched"] is True, "bounded stdout/stderr oracle was not observed")
+        require(value["capture_integrity"] is True, "host capture identity was not preserved")
 
-
-def test_output_tree(root: Path) -> None:
-    valid = root / "valid"
-    (valid / "nested").mkdir(parents=True)
-    (valid / "nested" / "small.txt").write_text("safe\n", encoding="utf-8")
-    total, entries = _validate_output_tree(valid)
-    require(total == 5 and entries == 2, "valid nested output was rejected")
-
-    symlink = root / "symlink"
-    symlink.mkdir()
-    (symlink / "escape").symlink_to("/etc", target_is_directory=True)
+    flood = root / "flood"
+    flood.mkdir()
     try:
-        _validate_output_tree(symlink)
-    except LifecycleError as exc:
-        require(exc.code == "EVIDENCE_OUTPUT_UNSAFE_ENTRY", "symlink output used an unstable code")
+        run_captured_command(
+            flood, flood / "stdout.log", flood / "stderr.log",
+            [sys.executable, "-c", "import sys; sys.stdout.write('x' * (17 * 1024 * 1024))"],
+            timeout=5, expected_oracle="MARKER",
+        )
+    except SafeEvidenceError as exc:
+        require(exc.code == "EVIDENCE_SIZE_LIMIT", f"flood used unstable diagnostic: {exc.code}")
     else:
-        raise SystemExit("FAILED: output symlink was accepted")
-
-    hardlink = root / "hardlink"
-    hardlink.mkdir()
-    source = hardlink / "source.txt"
-    source.write_text("hardlink\n", encoding="utf-8")
-    os.link(source, hardlink / "copy.txt")
-    try:
-        _validate_output_tree(hardlink)
-    except LifecycleError as exc:
-        require(exc.code == "EVIDENCE_OUTPUT_UNSAFE_ENTRY", "hardlink output used an unstable code")
-    else:
-        raise SystemExit("FAILED: output hardlink was accepted")
-
-    fifo = root / "fifo"
-    fifo.mkdir()
-    fifo_path = fifo / "named-pipe"
-    os.mkfifo(fifo_path)
-    try:
-        try:
-            _validate_output_tree(fifo)
-        except LifecycleError as exc:
-            require(exc.code == "EVIDENCE_OUTPUT_UNSAFE_ENTRY", "FIFO output used an unstable code")
-        else:
-            raise SystemExit("FAILED: output FIFO was accepted")
-    finally:
-        fifo_path.unlink(missing_ok=True)
-
-    oversized = root / "oversized"
-    oversized.mkdir()
-    with (oversized / "large.bin").open("wb") as handle:
-        handle.truncate(OUTPUT_MAX_FILE_BYTES + 1)
-    try:
-        _validate_output_tree(oversized)
-    except LifecycleError as exc:
-        require(exc.code == "EVIDENCE_OUTPUT_LIMIT", "oversized output used an unstable code")
-    else:
-        raise SystemExit("FAILED: oversized output was accepted")
-
-    many = root / "many"
-    many.mkdir()
-    for index in range(4097):
-        (many / f"entry-{index}").write_text("x", encoding="utf-8")
-    try:
-        _validate_output_tree(many)
-    except LifecycleError as exc:
-        require(exc.code == "EVIDENCE_OUTPUT_LIMIT", "entry-count overflow used an unstable code")
-    else:
-        raise SystemExit("FAILED: entry-count overflow was accepted")
+        raise SystemExit("FAILED: stdout flood was accepted")
+    require((flood / "stdout.log").stat().st_size == MAX_CAPTURE_BYTES, "capture exceeded hard limit")
 
 
-def test_signal_group_contract(root: Path) -> None:
+def test_signal_contract(root: Path) -> None:
     case = root / "signal"
     case.mkdir()
     child = subprocess.Popen(
-        [sys.executable, "-c", "import signal,time; signal.signal(signal.SIGTERM, lambda *_: time.sleep(30)); time.sleep(30)"],
-        start_new_session=True,
+        [sys.executable, "-c", "import time; time.sleep(30)"], start_new_session=True,
     )
     try:
         os.killpg(child.pid, signal.SIGTERM)
-        try:
-            child.wait(timeout=2)
-        except subprocess.TimeoutExpired:
-            os.killpg(child.pid, signal.SIGKILL)
-            child.wait(timeout=2)
-        require(child.returncode != 0, "process-group signal did not terminate the child")
+        child.wait(timeout=2)
+        require(child.returncode != 0, "owned process group signal did not terminate child")
     finally:
         if child.poll() is None:
             os.killpg(child.pid, signal.SIGKILL)
             child.wait(timeout=2)
 
 
-def test_cli_output_import(root: Path) -> None:
-    lifecycle = ROOT / "scripts" / "docker_case_lifecycle.py"
-    evidence_root = root / "import-cli"
-    evidence_root.mkdir()
-    stub = root / "docker-cp-stub.py"
-    stub.write_text(
-        "#!/usr/bin/env python3\n"
-        "import os, pathlib, sys, tarfile, tempfile\n"
-        "args = sys.argv[1:]\n"
-        "if args and args[0] == 'exec':\n"
-        "    with tempfile.TemporaryDirectory() as temp_value:\n"
-        "        source = pathlib.Path(temp_value)\n"
-        "        mode = os.environ.get('RH6_IMPORT_MODE', 'valid')\n"
-        "        if mode == 'valid':\n"
-        "            (source / 'nested').mkdir()\n"
-        "            (source / 'nested' / 'attachment.txt').write_text('RH6_IMPORT\\n')\n"
-        "        elif mode == 'symlink':\n"
-        "            (source / 'escape').symlink_to('/etc', target_is_directory=True)\n"
-        "        elif mode == 'oversized':\n"
-        "            (source / 'oversized.bin').open('wb').truncate(16 * 1024 * 1024 + 1)\n"
-        "        with tarfile.open(fileobj=sys.stdout.buffer, mode='w|') as archive:\n"
-        "            archive.add(source, arcname='.', recursive=True)\n"
-        "    raise SystemExit(0)\n"
-        "destination = pathlib.Path(sys.argv[-1])\n"
-        "destination.mkdir(parents=True, exist_ok=True)\n"
-        "mode = os.environ.get('RH6_IMPORT_MODE', 'valid')\n"
-        "if mode == 'valid':\n"
-        "    (destination / 'nested').mkdir()\n"
-        "    (destination / 'nested' / 'attachment.txt').write_text('RH6_IMPORT\\n')\n"
-        "elif mode == 'symlink':\n"
-        "    (destination / 'escape').symlink_to('/etc', target_is_directory=True)\n"
-        "elif mode == 'oversized':\n"
-        "    (destination / 'oversized.bin').open('wb').truncate(16 * 1024 * 1024 + 1)\n"
-        "else:\n"
-        "    raise SystemExit(3)\n",
+def test_empty_command_before_docker(root: Path) -> None:
+    log = root / "empty-command-docker.log"
+    fake_docker = root / "empty-command-docker.py"
+    fake_docker.write_text(
+        "import pathlib\n"
+        f"pathlib.Path({str(log)!r}).write_text('called\\n', encoding='utf-8')\n",
         encoding="utf-8",
     )
-    stub.chmod(0o755)
-    env = os.environ.copy()
-    env["RH6_IMPORT_MODE"] = "valid"
+    env = {**os.environ, "PATH": f"{root}{os.pathsep}{os.environ.get('PATH', '')}"}
+    fake_docker.chmod(0o755)
+    wrapper = ROOT / "scripts" / "run_verification_case.sh"
+    result = run([
+        "bash", str(wrapper), "--workspace-dir", str(root / "missing-workspace"),
+        "--case-id", "empty", "--mode", "docker-run", "--image", "stub:local",
+        "--timeout-seconds", "1", "--expected-oracle", "MARKER", "--docker-arg", "--log-driver",
+    ], cwd=ROOT, env=env)
+    require(result.returncode == 2 and "VERIFICATION_COMMAND_REQUIRED" in result.stderr, "empty command was not rejected")
+    require(not log.exists(), "empty command reached Docker")
 
-    prepared = run([
+
+def test_historical_import_is_read_only(root: Path) -> None:
+    lifecycle = ROOT / "scripts" / "docker_case_lifecycle.py"
+    evidence_root = root / "historical"
+    evidence_root.mkdir()
+    docker_log = root / "docker.log"
+    docker = root / "docker-stub.py"
+    docker.write_text(
+        "import pathlib, sys\n"
+        f"pathlib.Path({str(docker_log)!r}).write_text('called\\n', encoding='utf-8')\n"
+        "raise SystemExit(0)\n",
+        encoding="utf-8",
+    )
+    receipt = run([
         sys.executable, str(lifecycle), "prepare", "--evidence-root", str(evidence_root),
-        "--case-id", "import-valid", "--mode", "docker-run",
-    ], cwd=ROOT, env=env)
-    require(prepared.returncode == 0, f"output-import receipt prepare failed: {prepared.stdout} {prepared.stderr}")
-    receipt = json.loads(prepared.stdout)
-    output = evidence_root / "container-output-valid"
-    imported = run([
+        "--case-id", "historical", "--mode", "docker-run",
+    ], cwd=ROOT)
+    require(receipt.returncode == 0, "historical fixture receipt could not be prepared")
+    value = json.loads(receipt.stdout)
+    output = evidence_root / "container-output"
+    before = sorted(path.name for path in evidence_root.iterdir())
+    rejected = run([
         sys.executable, str(lifecycle), "import-output", "--evidence-root", str(evidence_root),
-        "--receipt", receipt["receipt_path"], "--receipt-sha256", receipt["receipt_sha256"],
-        "--output-dir", str(output), "--docker", str(stub),
-    ], cwd=ROOT, env=env)
-    require(imported.returncode == 0 and (output / "nested" / "attachment.txt").read_text(encoding="utf-8") == "RH6_IMPORT\n", f"valid output import did not publish atomically: rc={imported.returncode} stdout={imported.stdout!r} stderr={imported.stderr!r}")
-    require(not list(evidence_root.glob(".container-output-valid.import-*")), "valid output import left staging residue")
+        "--receipt", value["receipt_path"], "--receipt-sha256", value["receipt_sha256"],
+        "--output-dir", str(output), "--docker", str(docker),
+    ], cwd=ROOT)
+    require(rejected.returncode != 0, "new execution still accepted container output import")
+    require("CONTAINER_OUTPUT_HISTORICAL_ONLY" in rejected.stdout, "historical-only diagnostic missing")
+    require(not docker_log.exists(), "historical-only compatibility invoked Docker")
+    require(not output.exists(), "historical-only compatibility created output")
+    require(before == sorted(path.name for path in evidence_root.iterdir()), "historical compatibility wrote evidence")
 
-    for mode, expected_code in (("symlink", "EVIDENCE_OUTPUT_UNSAFE_ENTRY"), ("oversized", "EVIDENCE_OUTPUT_LIMIT")):
-        env["RH6_IMPORT_MODE"] = mode
-        prepared = run([
-            sys.executable, str(lifecycle), "prepare", "--evidence-root", str(evidence_root),
-            "--case-id", f"import-{mode}", "--mode", "docker-run",
-        ], cwd=ROOT, env=env)
-        require(prepared.returncode == 0, f"{mode} output receipt prepare failed")
-        receipt = json.loads(prepared.stdout)
-        output = evidence_root / f"container-output-{mode}"
-        rejected = run([
-            sys.executable, str(lifecycle), "import-output", "--evidence-root", str(evidence_root),
-            "--receipt", receipt["receipt_path"], "--receipt-sha256", receipt["receipt_sha256"],
-            "--output-dir", str(output), "--docker", str(stub),
-        ], cwd=ROOT, env=env)
-        require(rejected.returncode != 0 and expected_code in rejected.stdout, f"{mode} output import was not fail-closed: {rejected.stdout}")
-        require(not output.exists() and not list(evidence_root.glob(f".container-output-{mode}.import-*")), f"{mode} output import left a published or staging path")
+
+def test_lifecycle_policy_has_no_output_authority(root: Path) -> None:
+    import docker_case_lifecycle as lifecycle
+
+    require(not hasattr(lifecycle, "import_output"), "active output importer remains exported")
+    require(not hasattr(lifecycle, "_stream_container_output"), "container tar stream remains active")
+    try:
+        lifecycle._output_root(root, root / "container-output")  # type: ignore[attr-defined]
+    except (AttributeError, LifecycleError):
+        pass
+    else:
+        raise SystemExit("FAILED: container output root remains a new execution API")
+
+
 def main() -> int:
-    with tempfile.TemporaryDirectory(prefix="zhulong-rh6-selftest-") as value:
+    with tempfile.TemporaryDirectory(prefix="zhulong-rh6-contraction-selftest-") as value:
         root = Path(value)
-        test_capture_bounds(root)
-        test_output_tree(root)
-        test_cli_output_import(root)
-        test_signal_group_contract(root)
-    print("HOST OUTPUT QUOTA / SIGNAL CLOSURE SELFTEST PASSED: bounded capture, safe import tree, and process-group signal handling")
+        test_capture_api(root)
+        test_signal_contract(root)
+        test_empty_command_before_docker(root)
+        test_historical_import_is_read_only(root)
+        test_lifecycle_policy_has_no_output_authority(root)
+    print("HOST COMPLETION ORACLE CONTRACTION SELFTEST PASSED: foreground host outcome, bounded capture, historical-only output")
     return 0
 
 

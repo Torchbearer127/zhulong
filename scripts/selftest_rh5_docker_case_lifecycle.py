@@ -224,7 +224,7 @@ def make_workspace(root: Path) -> Path:
     return workspace
 
 
-def wrapper_command(plugin_root: Path, workspace: Path, case_id: str, mode: str, compose: Path | None = None) -> list[str]:
+def wrapper_command(plugin_root: Path, workspace: Path, case_id: str, mode: str, compose: Path | None = None, extra: list[str] | None = None) -> list[str]:
     command = [
         "bash", str(plugin_root / "scripts/run_verification_case.sh"),
         "--workspace-dir", str(workspace), "--case-id", case_id,
@@ -235,6 +235,8 @@ def wrapper_command(plugin_root: Path, workspace: Path, case_id: str, mode: str,
     else:
         assert compose is not None
         command.extend(["--compose-file", str(compose.relative_to(workspace)), "--compose-service", "runner"])
+    command.extend(extra or [])
+    command.extend(["--", "true"])
     return command
 
 
@@ -273,12 +275,12 @@ def main() -> int:
             ("512m", "1", "0"), ("512m", "1", "1025"),
         ]
         for index, (memory, cpus, pids) in enumerate(policy_cases):
-            result = run(wrapper_command(plugin_root, workspace, f"policy-{index}", "docker-run") + [
+            result = run(wrapper_command(plugin_root, workspace, f"policy-{index}", "docker-run", extra=[
                 "--memory", memory, "--cpus", cpus, "--pids-limit", pids,
-            ], cwd=plugin_root, env=env)
+            ]), cwd=plugin_root, env=env)
             require(result.returncode != 0 and "DOCKER_RESOURCE_LIMIT_INVALID" in result.stdout, f"invalid dedicated resource limit was accepted: rc={result.returncode} stdout={result.stdout!r} stderr={result.stderr!r}")
         for value in ("--memory", "--memory=1g", "-m", "--cpus=2", "--pids-limit", "--read-only"):
-            result = run(wrapper_command(plugin_root, workspace, "override-" + str(abs(hash(value))), "docker-run") + ["--docker-arg", value], cwd=plugin_root, env=env)
+            result = run(wrapper_command(plugin_root, workspace, "override-" + str(abs(hash(value))), "docker-run", extra=["--docker-arg", value]), cwd=plugin_root, env=env)
             require(result.returncode != 0 and "DOCKER_RESOURCE_OVERRIDE_FORBIDDEN" in result.stdout, f"resource override was accepted: {value}; rc={result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
 
         compose_cases = {

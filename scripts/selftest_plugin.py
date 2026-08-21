@@ -7182,6 +7182,8 @@ def exercise_compose_bind_identity_repair(plugin_root: Path, temp_root: Path) ->
             "10",
             "--expected-oracle",
             "WRAPPER_ORACLE",
+            "--",
+            "true",
         ],
         cwd=plugin_root,
         env={
@@ -7782,6 +7784,7 @@ def exercise_verification_wrapper_state_boundary(plugin_root: Path, temp_root: P
             "--case-id", "compose-identity", "--mode", "docker-compose",
             "--compose-file", "compose.yml", "--compose-service", "app",
             "--timeout-seconds", "10", "--expected-oracle", "ZHULONG_COMPOSE_ORACLE",
+            "--", "true",
         ],
         cwd=caller_dir,
         env=compose_env,
@@ -7824,9 +7827,8 @@ def exercise_verification_wrapper_state_boundary(plugin_root: Path, temp_root: P
         observed_output_dir = case_root / "observed-output"
         observed_output_dir.mkdir(parents=True)
         if bind_kind == "output":
-            # RH.6 no longer permits a host-owned output bind. Keep this
-            # fixture's source Compose file otherwise ordinary while the fake
-            # runtime exports its tmpfs contents through the live tar path.
+            # The fake runtime mutates only its private scratch directory; the
+            # host-side container-output path must remain absent.
             volume = "./poc:/workspace/poc:ro"
         elif bind_kind == "poc":
             volume = "./poc:/workspace/poc:ro"
@@ -7856,6 +7858,7 @@ def exercise_verification_wrapper_state_boundary(plugin_root: Path, temp_root: P
                 "--case-id", case_id, "--mode", "docker-compose",
                 "--compose-file", "compose.yml", "--compose-service", "app",
                 "--timeout-seconds", "10", "--expected-oracle", "ZHULONG_COMPOSE_ORACLE",
+                "--", "true",
             ],
             cwd=caller_dir,
             env={
@@ -7878,6 +7881,7 @@ def exercise_verification_wrapper_state_boundary(plugin_root: Path, temp_root: P
             "proc": proc,
             "workspace": workspace,
             "output_dir": output_dir,
+            "observed_output_dir": observed_output_dir,
             "replacement_dir": replacement_dir,
             "result": json.loads(result_path.read_text(encoding="utf-8")) if result_path.exists() else {},
             "calls": call_log.read_text(encoding="utf-8").splitlines() if call_log.exists() else [],
@@ -7896,23 +7900,24 @@ def exercise_verification_wrapper_state_boundary(plugin_root: Path, temp_root: P
         events_before = case["events_before"]
         events_after = case["events_after"]
         if proc.returncode != 0 or case["result"].get("status") != "confirmed_in_docker":
-            raise SystemExit(f"FAILED: legal Compose output write was rejected: {behavior}: {proc.stdout}{proc.stderr}")
+            raise SystemExit(f"FAILED: legal Compose foreground case was rejected: {behavior}: {proc.stdout}{proc.stderr}")
         if sum(" action=run" in call for call in calls) != 1:
-            raise SystemExit(f"FAILED: legal Compose output write did not invoke one service run: {behavior}: {calls}")
+            raise SystemExit(f"FAILED: legal Compose foreground case did not invoke one service run: {behavior}: {calls}")
         if events_after != events_before + ["verification_case_started", "verification_case_completed"]:
-            raise SystemExit(f"FAILED: legal Compose output write authority events are incorrect: {behavior}: {events_after}")
+            raise SystemExit(f"FAILED: legal Compose foreground authority events are incorrect: {behavior}: {events_after}")
         if len(side_effects) != 2 or any(side_effects[0][field] != side_effects[1][field] for field in stable_output_fields):
-            raise SystemExit(f"FAILED: legal Compose output write changed the directory object: {behavior}: {side_effects}")
+            raise SystemExit(f"FAILED: scratch fixture changed its own directory object: {behavior}: {side_effects}")
         if side_effects[0]["mtime_ns"] == side_effects[1]["mtime_ns"]:
-            raise SystemExit(f"FAILED: legal Compose output write fixture did not change mtime: {behavior}: {side_effects}")
+            raise SystemExit(f"FAILED: scratch fixture did not change mtime: {behavior}: {side_effects}")
         if behavior == "content_nested" and side_effects[1]["nlink"] <= side_effects[0]["nlink"]:
-            raise SystemExit(f"FAILED: nested output fixture did not change nlink: {side_effects}")
+            raise SystemExit(f"FAILED: nested scratch fixture did not change nlink: {side_effects}")
         output_dir = case["output_dir"]
-        expected_artifact = output_dir / ("nested/artifact.txt" if behavior == "content_nested" else "artifact.txt")
+        observed_output_dir = case["observed_output_dir"]
+        expected_artifact = observed_output_dir / ("nested/artifact.txt" if behavior == "content_nested" else "artifact.txt")
         if expected_artifact.read_text(encoding="utf-8") != "artifact\n":
-            raise SystemExit(f"FAILED: legal Compose output side effect is missing: {behavior}")
-        if "COMPOSE_BIND_SOURCE_FORBIDDEN" in (proc.stdout + proc.stderr):
-            raise SystemExit(f"FAILED: legal Compose output write surfaced identity drift: {behavior}")
+            raise SystemExit(f"FAILED: scratch fixture side effect is missing: {behavior}")
+        if output_dir.exists() or any(" exec " in call or " tar" in call for call in calls):
+            raise SystemExit(f"FAILED: foreground case imported container output: {behavior}: {calls}")
 
     for behavior, bind_kind in (("replace_poc", "poc"), ("replace_target", "target")):
         case = run_compose_bind_case(f"pre-run-{behavior}", behavior, bind_kind)
@@ -7950,6 +7955,7 @@ def exercise_verification_wrapper_state_boundary(plugin_root: Path, temp_root: P
             "--case-id", "compose-drift", "--mode", "docker-compose",
             "--compose-file", "compose.yml", "--compose-service", "app",
             "--timeout-seconds", "10", "--expected-oracle", "ZHULONG_COMPOSE_ORACLE",
+            "--", "true",
         ],
         cwd=caller_dir,
         env=drift_env,
