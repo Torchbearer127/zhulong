@@ -9091,9 +9091,9 @@ def exercise_audit_state_protocol_r2(plugin_root: Path) -> None:
 
     protocol_doc = plugin_root / "docs/runner-contracts/audit-state-protocol-r2.md"
     require_text(protocol_doc, "audit-events.jsonl", "R2 audit journal authority wording")
-    require_text(protocol_doc, "P9.2", "R2 deferred lock/CAS wording")
-    require_text(protocol_doc, "P9.3", "R2 deferred transition graph wording")
-    require_text(protocol_doc, "P9.4", "R2 deferred rebuild/migration wording")
+    require_text(protocol_doc, "## R2 并发写入与物化视图", "R2 concurrency/materialized-view documentation")
+    require_text(protocol_doc, "## R2 转换策略", "R2 transition policy documentation")
+    require_text(protocol_doc, "## 一致性诊断与状态重建", "R2 consistency and rebuild documentation")
     for workflow_doc in [
         plugin_root / "docs/WORKFLOW_DETAILS.md",
         plugin_root / "docs/WORKFLOW_DETAILS.zh-CN.md",

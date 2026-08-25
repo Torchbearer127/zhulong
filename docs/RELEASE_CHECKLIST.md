@@ -93,6 +93,13 @@ Use this checklist before publishing a tagged open-source release of Zhulong
   stdout/stderr oracle bytes come from host-held descriptors. Symlink,
   hardlink, FIFO, directory, ancestor drift, and running pathname replacement
   attacks fail closed without changing candidate/verdict/disposition authority.
+- [ ] Completion facts come from the host-observed Docker CLI exit, timeout, and
+  signal outcomes. stdout/stderr content and marker-like text cannot override
+  those outcomes.
+- [ ] New executions do not import container filesystem output. Historical
+  `container-output` material remains read-only compatibility data only.
+- [ ] Docker-run and Compose enforce `logging.driver=none`, while host-held
+  stdout/stderr capture remains bounded.
 - [ ] Bootstrap workspace names are validated as one direct-child ASCII
   component before mkdir, copy, latest-workspace publication, or event writes.
 - [ ] The R2 verification wrapper validates synchronized canonical journal/state
@@ -179,7 +186,7 @@ Use this checklist before publishing a tagged open-source release of Zhulong
 - [ ] R2 writes use a persistent workspace advisory lock, explicit CAS or
   current-revision intent, journal fsync before atomic state replacement, and
   fail closed on unsafe paths, stale views, or partial commits.
-- [ ] New R2 writes include one complete P9.3 transition metadata set and pass
+- [ ] New R2 writes include one complete transition metadata set and pass
   the authoritative `scripts/audit_transition_policy.py` check inside the same
   workspace lock before journal append; rejected transitions change neither journal
   nor state view.
@@ -190,7 +197,8 @@ Use this checklist before publishing a tagged open-source release of Zhulong
 - [ ] `resume`, `skip`, `return`, and `reopen` include a non-default reason,
   reason detail, portable subject, workspace-relative evidence reference, and
   structured next action; `observe` never changes state.
-- [ ] Pre-P9.3 R2 journals remain visibly classified as `pre_policy_r2` and R1
+- [ ] Earlier R2 journals without transition-policy metadata remain visibly
+  classified as `pre_policy_r2`, and R1
   remains legacy-compatible without invented transition facts or silent migration.
 - [ ] Workflow transition events are never treated as candidate, verdict,
   disposition, bundle, recording, or finalization authority; the existing
@@ -207,7 +215,7 @@ Use this checklist before publishing a tagged open-source release of Zhulong
   CAS or an explicit missing-state expectation; consumers never auto-apply rebuild.
 - [ ] Conflicting state-CAS intents return `STATE_CAS_INTENT_CONFLICT` in JSON before
   lock acquisition or writes; LF/CRLF journal acceptance preserves exact-byte digests.
-- [ ] The dedicated P9.5 state-protocol runner passes its manifest, concurrency,
+- [ ] The dedicated audit-state protocol runner passes its manifest, concurrency,
   hard-exit, immutability, and source/Claude/Codex deterministic-layout checks without
   Docker, PoC, replay, network, or package-manager execution.
 - [ ] R1 migration preflight reports source digests and redacted/local-field
@@ -473,4 +481,8 @@ Publish only when:
 - [ ] Confirmed bundles validate.
 - [ ] No local absolute paths or stale package names remain in public docs.
 - [ ] No broad Docker prune or PID signaling path is present.
+- [ ] The exact release candidate commit passes a real Docker matrix covering
+  successful exit, nonzero exit, timeout, host signal, cleanup fault, and
+  Compose. Case-owned residue reaches zero; when a cached image is used, the
+  matrix performs no pull, build, or external network access.
 - [ ] Release notes summarize the core safety gates and real-world dogfood status.

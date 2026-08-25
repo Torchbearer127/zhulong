@@ -35,15 +35,15 @@ R2 event 必须包含：
 - stage、event_type、event_name、from_status、to_status、reason_code；
 - subjects、evidence_refs、next_actions、expected_state_revision、details。
 
-P9.3 新写入还必须作为一个完整集合包含 `from_stage`、`transition_kind`、
+新的 R2 写入还必须作为一个完整集合包含 `from_stage`、`transition_kind`、
 `transition_policy_version=1`、`blocker` 与 `resume_step`。`from_stage` 只在新 journal
 的首条 `start` event 中为 null；其余值由 writer 在工作区锁内从当前物化视图派生，调用方可用
 `--from-stage` / `--from-status` 提供预期值，但只能被交叉检查，不能覆盖锁内事实。
 `transition_kind` 的稳定值是 `start`、`observe`、`advance`、`pause`、`block`、`resume`、
 `skip`、`return`、`reopen`、`complete`。
 
-P9.4 后的新 R2 writer event 还必须携带非空 `plugin_version`，使后续 state 可只从
-journal 重建。该字段在 schema 中保持可选只为接受 P9.1-P9.3 历史记录；恢复逻辑绝不从
+采用转换策略 v1 后的新 R2 writer event 还必须携带非空 `plugin_version`，使后续 state
+可只从 journal 重建。该字段在 schema 中保持可选只为接受较早的历史记录；恢复逻辑绝不从
 当前安装的 Skill/plugin 版本反推历史值。
 
 seq 从 1 开始。run_id、subjects 与 next_actions 的 ID 是可移植逻辑标识，不能使用
@@ -94,7 +94,7 @@ event_log_digest 的格式为 sha256: 后接 64 位小写十六进制字符。�
 status 为 running 或 completed 时，二者必须为 null。R2 validator 与转换策略只检查记录
 一致性，不把 event name 或 completed 状态解释为完成证明。
 
-## P9.3 转换策略
+## R2 转换策略
 
 `scripts/audit_transition_policy.py` 是唯一权威、版本化的转换策略表示；schema、文档和
 selftest 只校验或说明它，不能另行定义 edge list。策略只处理 workflow history，不读取或
@@ -132,12 +132,11 @@ code，且不追加 journal 或替换 state view。
 
 ### 旧 R2 前缀与 R1
 
-P9.3 前的 schema-valid R2 records 没有上述完整 metadata 集合，仍保持可读且在 JSONL
-校验输出中显式标为 `pre_policy_r2`。若后面追加 P9.3 event，分类为
+较早的 schema-valid R2 records 没有上述完整 metadata 集合，仍保持可读且在 JSONL 校验输出中
+显式标为 `pre_policy_r2`。若后面追加转换策略事件，分类为
 `pre_policy_r2_prefix_then_transition_policy_v1`；策略从已接受旧前缀最后一个物化
-stage/status 开始，不回填、重写或伪造旧 event 的 intent。P9.4 的 inspector 会保留该
-分类并据此判断字段来源。R1 继续以 `legacy_r1` 读写，绝不伪装成已通过 R2/P9.3
-转换验证。
+stage/status 开始，不回填、重写或伪造旧 event 的 intent。统一检查器会保留该分类并据此判断
+字段来源。R1 继续以 `legacy_r1` 读写，绝不伪装成已通过 R2 转换策略验证。
 
 ## 只读校验与 R1 兼容
 
@@ -164,9 +163,9 @@ R1 输入不会被静默重写为 R2。R1/R2 混合 JSONL、未知 schema versio
 畸形 R1 数据都会被拒绝。该工具从不创建、迁移、修复、锁定或重写工作区文件，也不会
 执行 event 内容、命令、Docker、PoC 或网络活动。
 
-## P9.2 并发写入与物化视图
+## R2 并发写入与物化视图
 
-P9.2 为单个工作区提供持久的 `.audit-state.lock`。支持 POSIX advisory lock 的平台使用
+R2 为单个工作区提供持久的 `.audit-state.lock`。支持 POSIX advisory lock 的平台使用
 `fcntl.flock`；没有受支持后端时 writer 以 `LOCK_UNSUPPORTED` fail closed，绝不会在未加锁
 状态继续。锁文件保留在工作区，避免删除后产生 inode race；锁、journal 与 state path 都必须是
 非 symlink 的普通文件。
@@ -184,7 +183,7 @@ R2 调用者必须明确说明 revision 意图：
   并分配下一个值；
 - R1 不支持 R2 CAS，成功输出显式 `cas_mode=unavailable`，而不是伪造 revision 保护。
 
-R2 writer 在锁内按如下顺序执行：校验已有 journal/state（包括已有 P9.3 policy suffix）、
+R2 writer 在锁内按如下顺序执行：校验已有 journal/state（包括已有转换策略后缀）、
 检查 CAS 与调用方预期 source、从锁内当前 state 派生 `from_stage`/`from_status`、构造并校验
 完整 transition metadata 和 FSM-lite 规则、分配连续 `seq` 与 `state_revision`、追加一条确定性
 紧凑 JSON 并 flush/fsync journal、从**精确已提交 bytes**计算
@@ -194,7 +193,7 @@ R2 writer 在锁内按如下顺序执行：校验已有 journal/state（包括�
 这不是两个文件的原子事务。若 journal fsync 成功而 state 临时写入或替换失败，journal 仍是
 权威记录，writer 返回 `journal_committed=true` 与 `state_view_updated=false`，不会截断或要求调用者
 盲目重试。后续写入会以 `STATE_VIEW_MISSING` 或 `STATE_VIEW_OUT_OF_SYNC` fail closed；通用 replay /
-rebuild 必须通过下述 P9.4 显式 CAS 命令完成，writer 本身不会自动修复。
+rebuild 必须通过下述显式 CAS 命令完成，writer 本身不会自动修复。
 
 R2 event 使用显式 `--evidence-ref`；writer 不会把任意 `--detail` 值提升为 evidence reference。
 兼容 `--detail`/旧 `--details-json` 仅接受有记录的标量 metadata 映射；嵌套或无效值在触碰
@@ -206,11 +205,11 @@ journal/state 前失败。既有 stage alias 在 writer 边界确定性映射，
 `state_view_updated` 与 `cas_mode`；失败输出包含稳定 issue code，且部分提交不会给出“重试同一
 event”的建议。
 
-## P9.4 一致性诊断与状态重建
+## 一致性诊断与状态重建
 
 `scripts/recover_audit_state.py` 是只读检查和显式 state rebuild 入口。默认及 `--check`
-只读取精确 bytes，并报告 journal/state digest、protocol mode、event count、P9.3 policy
-分类、字段 drift、rebuildability 和稳定 issue code。统一 inspector 区分：空 journal、
+只读取精确 bytes，并报告 journal/state digest、protocol mode、event count、转换策略分类、
+字段差异、rebuildability 和稳定 issue code。统一检查器区分：空 journal、
 非 UTF-8、缺少最终 newline、不可解析的非 newline 尾部、中间/换行终止损坏、mixed R1/R2、
 unsupported schema、duplicate/gap/non-monotonic seq、revision chain、run ID 和 transition
 sequence 错误。`JOURNAL_TAIL_INCOMPLETE` 与 `JOURNAL_MIDDLE_CORRUPTION` 都只提供诊断，
@@ -219,7 +218,7 @@ sequence 错误。`JOURNAL_TAIL_INCOMPLETE` 与 `JOURNAL_MIDDLE_CORRUPTION` 都�
 state 字段来源固定如下：schema/plugin、seq/revision/digest 与最后事件身份从协议和精确
 journal bytes 派生；`plugin_version` 只来自最后 event，或来自与一个精确有效 journal
 prefix digest、seq/revision 和事件字段全部匹配的旧 state；`blocker`/`resume_step` 只来自
-显式 P9.3 event，或来自同样锚定且指向最后历史 event 的旧 state。缺失来源返回
+显式转换策略事件，或来自同样锚定且指向最后历史 event 的旧 state。缺失来源返回
 `STATE_REBUILD_METADATA_UNAVAILABLE`，不使用 wall clock、mtime、机器路径、当前安装版本或
 推测文本。对应 rebuildability 是 `complete_from_journal`、
 `complete_with_anchored_legacy_metadata`、`blocked_missing_metadata`、
@@ -243,10 +242,10 @@ workspace 前返回非零的 `STATE_CAS_INTENT_CONFLICT`。这是调用意图冲
 实际使用字段。这是历史 provenance，不表示该版本必然是最后 event 的 plugin version；未锚定或
 fabricated 值仍被拒绝。
 
-## P9.5 回归闭包
+## 回归闭包
 
-`scripts/selftest_audit_state_protocol.py` 是独立的标准库回归入口。P9.5-r2 manifest 对 closure fixture
-子树采用封闭文件清单与 SHA-256 登记，拒绝符号链接、隐藏工具状态和未登记文件；每个 case 都从实际
+`scripts/selftest_audit_state_protocol.py` 是独立的标准库回归入口。R2 协议 manifest 对 closure
+fixture 子树采用封闭文件清单与 SHA-256 登记，拒绝符号链接、隐藏工具状态和未登记文件；每个 case 都从实际
 journal/state 计算协议模式、journal/transition/rebuild 分类与末端 stage/status，而不是相信标签。
 runner 同时输出逐案 ledger 与由 ledger 归约的指标，主 selftest 会校验 fixture、并发、硬退出与终态
 执行记录的固定集合。它读取严格 fixture manifest，
@@ -278,7 +277,7 @@ seq/revision、补写历史或重排事件。
 及诊断；这不是静默丢弃，也不表示该 workspace 已完成 R2 verification。新生产 caller 不得
 通过隐含兼容模式表达 R2 transition intent。
 
-## P9 closure security boundary
+## 收尾安全边界
 
 The state protocol is not an authority escape hatch. A finalization event may
 claim Docker cleanliness only when `docker/docker-cleanliness-status.json` is

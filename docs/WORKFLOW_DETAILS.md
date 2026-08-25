@@ -28,14 +28,15 @@ journal and stage-status.json as a derived materialized current-state view.
 Shape-valid records do not prove a vulnerability, Docker confirmation, bundle
 validity, or workspace completion. New R2 writes use a locked writer with
 explicit CAS/current-revision intent and an explicit transition intent.
-The authoritative P9.3 policy records source stage, controls local state changes,
-conservative forward/return/optional-stage relationships, and evidence-bearing
-resume/skip/return/reopen actions. Old R2 records remain visibly classified as
-pre-policy history, while valid R1 workspaces remain read/write compatible without
-silent migration. P9.4 adds a byte-aware shared inspector, field-level drift
-diagnostics, read-only R1 migration preflight, and an explicit double-digest-CAS
-command that can atomically rebuild only stage-status.json. Consumers never
-auto-repair, and audit-events.jsonl is never truncated, rewritten, or synthesized. See
+The authoritative R2 transition policy records source stage and controls local
+state changes, conservative forward/return/optional-stage relationships, and
+evidence-bearing resume/skip/return/reopen actions. Old R2 records remain visibly
+classified as pre-policy history, while valid R1 workspaces remain read/write
+compatible without silent migration. R2 also provides a shared byte-aware
+inspector, field-level drift diagnostics, read-only R1 migration preflight, and
+an explicit double-digest-CAS command that can atomically rebuild only
+stage-status.json. Consumers never auto-repair, and audit-events.jsonl is never
+truncated, rewritten, or synthesized. See
 [audit-state-protocol-r2.md](runner-contracts/audit-state-protocol-r2.md).
 Before any new R2 journal append, the canonical locked writer also screens its
 published event text for local host paths, `file:` URIs, and common credential

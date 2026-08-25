@@ -2,12 +2,24 @@
 
 ## 0.6.0
 
-- added file-backed, recoverable audit state with an append-only authority event log, derived workspace views, revision-locked writes, and explicit recovery
-- added advisory structured handoff, immutable checkpoints, and machine-readable next-actions for fresh-context resume
-- added an offline static audit timeline in JSON and HTML with built-in safety sanitization
-- added candidate identity, fingerprinting, deduplication, and bounded triage so repeat findings are tracked consistently
-- added strict production validators across recon, triage, candidate, verdict, disposition, handoff, checkpoint, next-actions, timeline, and finalization authority boundaries
-- added source, Claude installed, and Codex installed layout synchronization and selftests
+- added recoverable file-backed audit state with an append-only event history, derived workspace views, revision-checked writes, and explicit recovery
+- added structured handoff, immutable checkpoints, next actions, and context planning for reliable continuation across sessions
+- added an offline audit timeline in JSON and HTML with built-in sensitive-data protection
+- added candidate identity, fingerprinting, deduplication, and bounded triage so repeat findings remain traceable
+- added strict validation across reconnaissance, triage, candidates, verdicts, disposition, handoff, checkpoints, next actions, timelines, and finalization
+- added safe authority-file persistence and ordered finalization so incomplete or uncertain work cannot be presented as complete
+- added isolated Docker and Compose execution with bounded resources, pinned inputs, host-observed results, and exact cleanup
+- made host-observed exit, timeout, and signal outcomes authoritative; bounded stdout/stderr capture and historical-only container output prevent text from overriding execution facts
+- added source, Claude installed, and Codex installed layout synchronization and selftests, with release-candidate validation for real Docker execution and sensitive-data handling
+
+## 0.5.0
+
+- added a contract layer for target, candidate, verifier, and disposition data with strict schemas and validation
+- added verification workspace bootstrap and independent candidate verification helpers
+- required variant discovery before a workspace can be finalized as complete
+- added reviewer-readiness checks for report structure, evidence quality, and cross-artifact consistency
+- hardened confirmed-bundle generation, validation, replay metadata, and historical bundle compatibility
+- separated readiness waits from reviewer pauses so incomplete review work is not mistaken for a completed result
 
 ## 0.4.0
 
@@ -35,7 +47,7 @@
 - added metadata-only Claude plugin package manifest at `.claude-plugin/plugin.json`
 - documented Claude skill sync versus Claude plugin-style package discovery paths
 - extended self-test coverage for Claude plugin manifest shape, relative paths, and absence of required hooks/MCP/apps/agents/commands/background services
-- added P5 audit disposition ledger support with workspace-level `audit-disposition.json`
+- added an audit disposition ledger with workspace-level `audit-disposition.json`
 - added OMC runtime hygiene status with teammate PIDs treated as review-only
 - removed plugin-owned teammate PID signaling; the suspect-PID review path no longer terminates teammate processes
 - added Docker / sandbox preflight rejection for unsafe verification configurations
