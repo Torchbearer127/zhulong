@@ -680,8 +680,10 @@ Compose 模式使用相同的宿主机捕获模型；覆盖工作区权威路径
 服务命令前从严拒绝。
 
 Compose 采用封闭子集：顶层只允许 `version` 和 `services`，每个服务都必须声明字面值
-`privileged: false`。锚点、别名、合并、插值、未知字段、`build`/`host-file`/`include`、命名空间、
-能力/设备/安全选项以及命名卷、匿名卷或外部卷均会被拒绝。选定的服务必须
+`privileged: false`。锚点、别名、合并、插值、未知字段、`build`/`host-file`/`include`、
+`pid`/`ipc`/`uts`/`cgroup`/`userns_mode`、能力/设备/安全选项以及命名卷、匿名卷或外部卷均会被拒绝。
+如果服务声明 `network_mode`，只能使用精确的静态字符串 `none`；省略是允许的，因为宿主持有的
+生命周期覆盖配置会补上 `none`。选定的服务必须
 存在；只要出现 `depends_on` 就拒绝；`restart` 只能省略或精确写为 `"no"`。目标定义的标签不得
 使用保留的 `org.zhulong.*` 或 `com.docker.compose.*` 命名空间。宿主机绑定挂载只允许三种固定映射：
 目标仓库只读映射到 `/workspace/target`、工作区的 `poc/` 只读映射到 `/workspace/poc`。
@@ -689,12 +691,17 @@ Compose 采用封闭子集：顶层只允许 `version` 和 `services`，每个�
 以前台方式运行显式服务参数数组，并强制合并配置中的 `logging.driver=none`；不读取容器文件，不生成
 `container-output`。历史漏洞包保持只读兼容。其他宿主机路径即使只读也拒绝。额外 Docker 参数不能覆盖
 资源或隔离策略；专用的 `--memory`、`--cpus` 和 `--pids-limit` 必须为正数，并受
-`docker-case-policy-v1` 硬上限约束：内存 16 MiB 到 2 GiB、CPU 0.1 到 4、PID 1 到 1024；默认值仍为
-512 MiB、1 CPU 和 256 PID。Docker 运行模式与 Compose 使用同一份宿主机策略。预检通过只证明配置处于
+`docker-case-policy-v2` 硬上限约束：内存 16 MiB 到 2 GiB、CPU 0.1 到 4、PID 1 到 1024；默认值仍为
+512 MiB、1 CPU 和 256 PID。Docker 运行模式会把静态的 `none`、`bridge` 或非 host 自定义网络写入
+schema 2 回执，并拒绝控制字符和不安全名称；Compose 始终派生 `network_mode: none`，不接受 Docker
+运行模式的网络值。预检通过只证明配置处于
 当前执行边界内，不证明 PoC、判定依据、核验结论、漏洞包或收尾成立。
 
 每次调用都会在宿主机持有的回执中生成随机案例令牌、精确的容器名称和唯一的 Compose 项目名称。
-Compose 在输入文件之后追加最后一层宿主机覆盖配置，并在服务启动前校验生产环境合并配置；执行时
+新回执使用 schema 2 和 `docker-case-policy-v2`。精确的 schema 1 / `docker-case-policy-v1` 历史回执只允许
+进入身份安全的清理流程；配置校验、权威事件、结果发布和新的准备流程都会拒绝它们，不会改写历史回执。
+Compose 在输入文件之后追加最后一层宿主机覆盖配置，将选定服务的 `network_mode` 强制设为 `none`，
+并把该值绑定到回执策略；服务启动前还会校验生产环境合并配置，缺失或漂移都会拒绝。执行时
 显式使用 `-p`、`--name` 和 `--no-deps`，镜像检查及显式请求的 `pull` 也只针对选定服务。正常退出、
 失败、超时、`SIGINT`、`SIGTERM`、证据捕获失败、输出超限或其他证据错误共用同一套幂等清理。宿主机
 持续流式捕获标准输出和标准错误，每路 16 MiB 到达硬上限就终止整个 Docker 进程组，之后才允许发布结果。

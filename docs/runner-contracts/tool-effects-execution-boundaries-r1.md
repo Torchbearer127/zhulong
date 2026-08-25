@@ -99,9 +99,12 @@ service command, and the one-use set is cleaned without reuse.
 
 The supported Compose subset is deliberately closed: top level contains only
 `version` and `services`; every service is a static mapping with literal
-`privileged: false`; unknown, build/host-file/include, namespace,
-capability/device/security-option, interpolation, anchor/alias/merge, and
-named/anonymous/external-volume forms are rejected. Host binds are limited to
+`privileged: false`; unknown, build/host-file/include,
+`pid`/`ipc`/`uts`/`cgroup`/`userns_mode`, capability/device/security-option,
+interpolation, anchor/alias/merge, and named/anonymous/external-volume forms
+are rejected. If present, `network_mode` must be the exact static string
+`none`; omission is allowed because the host-owned lifecycle override supplies
+and validates `none`. Host binds are limited to
 the target repository at `/workspace/target` read-only and workspace `poc/` at
 `/workspace/poc` read-only. The current case's `/workspace/output` is a fixed
 64 MiB container tmpfs used only as non-authoritative scratch; new executions
@@ -109,6 +112,13 @@ do not import container files or create `container-output`. Historical bundles
 remain readable. The selected service must use the exact `logging.driver=none`
 policy, and the wrapper starts one foreground command with an explicit argv.
 Other host paths are rejected even when read-only.
+
+The host-owned Docker lifecycle now writes receipt schema 2 with
+`docker-case-policy-v2`. Docker-run binds its validated static `none`,
+`bridge`, or non-host custom network into the receipt policy; Compose derives
+`network_mode: none` independently. Exact schema-1 `docker-case-policy-v1`
+receipts are historical cleanup-only inputs and are rejected by preparation,
+config validation, authority, and result publication.
 
 The bind check retains the source's logical spelling until the closed-set
 comparison is complete; it does not compare only resolved targets. Existing

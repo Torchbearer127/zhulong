@@ -77,10 +77,16 @@ Docker residue from strict cleanliness checks.
 `run-verification-case.sh` owns a narrower lifecycle inside the workspace-level
 baseline contract. Each docker-run or Compose invocation creates a host-owned
 receipt with a random case token, exact container name, unique project name,
-and `docker-case-policy-v1`. The policy defaults to 512 MiB, 1 CPU, and 256
+and `docker-case-policy-v2` with receipt schema 2. The policy defaults to 512 MiB, 1 CPU, and 256
 PIDs and enforces bounded ranges of 16 MiB through 2 GiB, 0.1 through 4 CPUs,
-and 1 through 1024 PIDs. Target Compose input and extra Docker arguments cannot
-override this policy.
+and 1 through 1024 PIDs. Docker-run records the requested static `none`,
+`bridge`, or non-host custom network in the receipt policy. Compose always
+records and injects `network_mode: none`; source input may omit it, but any
+explicit value must be the exact static string `none`, and the merged
+configuration must retain it. Exact historical schema 1 / `docker-case-policy-v1`
+receipts are accepted only by identity-safe cleanup; they are not valid for
+prepare, config validation, authority, or result publication.
+Target Compose input and extra Docker arguments cannot override this policy.
 
 Case cleanup inspects Docker state and removes only the exact receipt-owned
 container plus resources with the exact unique Compose project label. It does

@@ -74,15 +74,26 @@ Use this checklist before publishing a tagged open-source release of Zhulong
   compose run/PoC.
 - [ ] Compose preflight enforces the documented closed subset: literal
   `privileged: false`; no anchors/aliases/merges/interpolation, unknown fields,
-  build/host-file/include, namespaces, capabilities/devices/security options,
-  or named/anonymous/external volumes. Host binds are exactly target and `poc/`
-  read-only; `/workspace/output` is a fixed-size container tmpfs and is never a
-  host bind. Every other host path is rejected even read-only.
+  build/host-file/include, `pid`/`ipc`/`uts`/`cgroup`/`userns_mode`,
+  capabilities/devices/security options, or named/anonymous/external volumes.
+  If present, `network_mode` is the exact static string `none`; omission is
+  allowed because the host-owned override supplies it. Host binds are exactly
+  target and `poc/` read-only; `/workspace/output` is a fixed-size container
+  tmpfs and is never a host bind. Every other host path is rejected even
+  read-only.
 - [ ] The selected Compose service exists, has no `depends_on`, uses no target
   reserved lifecycle labels, and has absent or exact `restart: "no"`.
-- [ ] Docker-run and Compose share `docker-case-policy-v1`; dedicated memory,
-  CPU, and PID limits are positive and bounded, while extra Docker arguments
-  cannot override resources or isolation.
+- [ ] Docker-run and Compose use schema 2 and `docker-case-policy-v2`; dedicated
+  memory, CPU, and PID limits are positive and bounded, while extra Docker
+  arguments cannot override resources or isolation. Docker-run records only
+  static `none`, `bridge`, or non-host custom network names and rejects control
+  characters and unsafe names. Compose always derives `network_mode: none`.
+  The Compose policy binds
+  `network_mode: none` into the receipt and rejects a missing or drifted value
+  in both the host-owned override and merged configuration.
+- [ ] Exact historical schema-1 `docker-case-policy-v1` receipts are accepted
+  only by strict identity-safe cleanup; they are rejected by prepare, config
+  validation, authority, and result publication, and are never rewritten.
 - [ ] Every verification case uses a host-owned receipt with an exact container
   and unique Compose project identity. Normal, failure, timeout, INT, TERM, and
   evidence-error paths prove exact zero container/network/volume residue before

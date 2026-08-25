@@ -527,7 +527,7 @@ copy_file \
   "$WORKSPACE_DIR/bin/docker_case_lifecycle.py"
 write_text_file "$WORKSPACE_DIR/scripts/run-verification-case.sh" '#!/usr/bin/env bash
 # zhulong-tool-contract: docker-verification-v1; timeout=mandatory; sandbox-preflight=mandatory
-# zhulong-host-policy: docker-case-policy-v1
+# zhulong-host-policy: docker-case-policy-v2
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 exec bash "$SCRIPT_DIR/../bin/run-verification-case.sh" "$@"

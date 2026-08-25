@@ -283,11 +283,36 @@ def main() -> int:
             result = run(wrapper_command(plugin_root, workspace, "override-" + str(abs(hash(value))), "docker-run", extra=["--docker-arg", value]), cwd=plugin_root, env=env)
             require(result.returncode != 0 and "DOCKER_RESOURCE_OVERRIDE_FORBIDDEN" in result.stdout, f"resource override was accepted: {value}; rc={result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
 
+        for network in ("none", "bridge", "audit-network"):
+            case_id = "network-" + network
+            result = run(wrapper_command(plugin_root, workspace, case_id, "docker-run", extra=["--network", network]), cwd=plugin_root, env=env)
+            require(result.returncode == 0 and "verification_status=confirmed_in_docker" in result.stdout, f"legal docker-run network case failed: {network}; stdout={result.stdout!r}; stderr={result.stderr!r}")
+            result_json = json.loads((workspace / "evidence" / case_id / "verification-result.json").read_text())
+            require(result_json["network"] == network, f"docker-run result lost requested network: {network}")
+            require(result_json["docker_case_lifecycle"]["resource_policy"]["network_mode"] == network, f"docker-run receipt policy did not bind network_mode={network}")
+            require(result_json["resource_limits"]["policy_version"] == "docker-case-policy-v2", "docker-run result published a non-current policy")
+
+        for network in ("host", "bad/name", "bad network", "audit\nnetwork", "service:other", "${NETWORK}"):
+            case_id = "network-invalid-" + str(abs(hash(network)))
+            before = len(read_log(log)) if log.exists() else 0
+            result = run(wrapper_command(plugin_root, workspace, case_id, "docker-run", extra=["--network", network]), cwd=plugin_root, env=env)
+            after = len(read_log(log)) if log.exists() else 0
+            require(result.returncode != 0 and before == after and "DOCKER_NETWORK_UNSAFE" in result.stdout, f"unsafe docker-run network was accepted: {network!r}; stdout={result.stdout!r}; stderr={result.stderr!r}")
+
         compose_cases = {
             "depends": "depends_on: []",
             "restart": "restart: always",
             "reserved-zhulong": "labels: {org.zhulong.case: forged}",
             "reserved-compose": "labels: {com.docker.compose.project: forged}",
+            "network-bridge": "network_mode: bridge",
+            "network-host": "network_mode: host",
+            "network-custom": "network_mode: custom-network",
+            "network-default": "network_mode: default",
+            "network-service": "network_mode: service:other",
+            "network-container": "network_mode: container:other",
+            "network-name": "network_mode: audit-network",
+            "network-non-string": "network_mode: false",
+            "network-dynamic": "network_mode: ${NETWORK_MODE}",
         }
         for name, extra in compose_cases.items():
             source = workspace / f"compose-{name}.yaml"
@@ -296,19 +321,32 @@ def main() -> int:
             result = run(wrapper_command(plugin_root, workspace, f"compose-{name}", "docker-compose", source), cwd=plugin_root, env=env)
             after = len(read_log(log)) if log.exists() else 0
             require(result.returncode != 0 and before == after, f"unsafe Compose case reached Docker: {name}")
+            if name.startswith("network-"):
+                require("COMPOSE_NAMESPACE_UNSUPPORTED" in result.stderr, f"unsafe Compose network case did not use the stable namespace issue code: {name}; stderr={result.stderr!r}")
         missing = workspace / "compose-missing.yaml"
         missing.write_text("services:\n  other:\n    image: local/rh5-test\n    privileged: false\n    restart: \"no\"\n", encoding="utf-8")
         result = run(wrapper_command(plugin_root, workspace, "compose-missing", "docker-compose", missing), cwd=plugin_root, env=env)
         require(result.returncode != 0 and "COMPOSE_SERVICE_MISSING" in result.stderr, "missing selected service did not fail closed")
 
+        explicit_none = workspace / "compose-none.yaml"
+        explicit_none.write_text("services:\n  runner:\n    image: local/rh5-test\n    privileged: false\n    network_mode: none\n", encoding="utf-8")
+        result = run(wrapper_command(plugin_root, workspace, "compose-none", "docker-compose", explicit_none), cwd=plugin_root, env=env)
+        require(result.returncode == 0 and "verification_status=confirmed_in_docker" in result.stdout, f"literal network_mode:none Compose case did not confirm: rc={result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
+        explicit_config = json.loads((workspace / "evidence/compose-none/compose-config.json").read_text())
+        require(explicit_config["services"]["runner"].get("network_mode") == "none", "literal network_mode:none was not preserved in merged Compose config")
+
         safe_compose = workspace / "compose-safe.yaml"
         safe_compose.write_text("services:\n  runner:\n    image: local/rh5-test\n    privileged: false\n    restart: \"no\"\n", encoding="utf-8")
-        result = run(wrapper_command(plugin_root, workspace, "compose-ok", "docker-compose", safe_compose), cwd=plugin_root, env=env)
+        result = run(wrapper_command(plugin_root, workspace, "compose-ok", "docker-compose", safe_compose, extra=["--network", "bridge"]), cwd=plugin_root, env=env)
         require(result.returncode == 0 and "verification_status=confirmed_in_docker" in result.stdout, f"legal Compose case did not confirm after cleanup: rc={result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
+        safe_config = json.loads((workspace / "evidence/compose-ok/compose-config.json").read_text())
+        require(safe_config["services"]["runner"].get("network_mode") == "none", "Compose override did not force network_mode none when source omitted it")
         calls = read_log(log)
         compose_run = next(call for call in reversed(calls) if "compose" in call and "run" in call)
         require("-p" in compose_run and "--name" in compose_run and "--no-deps" in compose_run, "Compose run lacks exact lifecycle flags")
         result_json = json.loads((workspace / "evidence/compose-ok/verification-result.json").read_text())
+        require(result_json["network"] == "none", "Compose result borrowed docker-run network input")
+        require(result_json["docker_case_lifecycle"]["resource_policy"]["network_mode"] == "none", "Compose lifecycle policy borrowed docker-run network input")
         require(result_json["docker_case_lifecycle"]["cleanup_verified"] is True, "legal Compose cleanup was not verified")
         require(result_json["docker_case_lifecycle"]["residue_counts_after"] == {"containers": 0, "networks": 0, "volumes": 0}, "legal Compose left lifecycle residue")
 
@@ -320,15 +358,22 @@ def main() -> int:
         receipt_value = json.loads(Path(first_value["receipt_path"]).read_text())
         policy = receipt_value["policy"]
         labels = receipt_value["labels"]
+        override_value = json.loads(Path(first_value["override_path"]).read_text())
+        require(receipt_value.get("schema_version") == 2 and policy.get("version") == "docker-case-policy-v2", "new lifecycle receipt did not use schema/policy v2")
+        require(policy.get("network_mode") == "none", "Compose lifecycle policy did not bind network_mode none")
+        require(override_value["services"]["runner"].get("network_mode") == "none", "Compose lifecycle override did not inject network_mode none")
         valid_service = {
             "image": "local/rh5-test", "restart": "no", "read_only": True,
             "cap_drop": ["ALL"], "security_opt": ["no-new-privileges:true"],
+            "network_mode": "none",
             "mem_limit": policy["memory_bytes"], "memswap_limit": policy["memory_bytes"],
             "cpus": float(policy["cpus"]), "pids_limit": policy["pids_limit"], "labels": labels,
         }
         config_path = workspace / "evidence/config-mutation.json"
         override_path = Path(first_value["override_path"])
-        for field in ("mem_limit", "memswap_limit", "cpus", "pids_limit", "labels", "read_only", "cap_drop", "security_opt", "restart", "privileged"):
+        receipt_path = Path(first_value["receipt_path"])
+        original_receipt = receipt_path.read_bytes()
+        for field in ("mem_limit", "memswap_limit", "cpus", "pids_limit", "labels", "read_only", "cap_drop", "security_opt", "restart", "privileged", "network_mode"):
             mutated = dict(valid_service)
             if field == "restart":
                 mutated[field] = "always"
@@ -343,6 +388,96 @@ def main() -> int:
                 "--override", str(override_path), "--config-json", str(config_path),
             ], cwd=plugin_root)
             require(rejected.returncode != 0 and "COMPOSE_CONFIG_POLICY_MISMATCH" in rejected.stdout, f"merged Compose policy mutation was accepted: {field}")
+
+        config_path.write_text(json.dumps({"services": {"runner": {**valid_service, "network_mode": "bridge"}}}), encoding="utf-8")
+        rejected = run([
+            sys.executable, str(lifecycle), "validate-config", "--evidence-root", str(workspace / "evidence"),
+            "--receipt", first_value["receipt_path"], "--receipt-sha256", first_value["receipt_sha256"],
+            "--override", str(override_path), "--config-json", str(config_path),
+        ], cwd=plugin_root)
+        require(rejected.returncode != 0 and "COMPOSE_CONFIG_POLICY_MISMATCH" in rejected.stdout, "merged Compose network_mode drift was accepted")
+
+        config_path.write_text(json.dumps({"services": {"runner": valid_service}}), encoding="utf-8")
+        original_override = override_path.read_bytes()
+        forged_override = json.loads(original_override)
+        forged_override["services"]["runner"].pop("network_mode")
+        override_path.write_text(json.dumps(forged_override, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        forged_receipt = json.loads(original_receipt)
+        forged_receipt["override_sha256"] = sha256(override_path)
+        receipt_path.write_text(json.dumps(forged_receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        forged_receipt_digest = sha256(receipt_path)
+        rejected = run([
+            sys.executable, str(lifecycle), "validate-config", "--evidence-root", str(workspace / "evidence"),
+            "--receipt", str(receipt_path), "--receipt-sha256", forged_receipt_digest,
+            "--override", str(override_path), "--config-json", str(config_path),
+        ], cwd=plugin_root)
+        require(rejected.returncode != 0 and "COMPOSE_CONFIG_POLICY_MISMATCH" in rejected.stdout, "Compose override network_mode omission was accepted")
+        override_path.write_bytes(original_override)
+        receipt_path.write_bytes(original_receipt)
+
+        legacy = json.loads(original_receipt)
+        legacy["schema_version"] = 1
+        legacy_policy = {key: value for key, value in legacy["policy"].items() if key != "network_mode"}
+        legacy_policy["version"] = "docker-case-policy-v1"
+        legacy["policy"] = legacy_policy
+        legacy["labels"] = dict(legacy["labels"])
+        legacy["labels"]["org.zhulong.policy"] = "docker-case-policy-v1"
+        legacy_path = workspace / "evidence/legacy-v1-receipt.json"
+        legacy_path.write_text(json.dumps(legacy, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        legacy_digest = sha256(legacy_path)
+        legacy_cleanup = run([
+            sys.executable, str(lifecycle), "cleanup", "--evidence-root", str(workspace / "evidence"),
+            "--receipt", str(legacy_path), "--receipt-sha256", legacy_digest, "--docker", str(docker_stub),
+        ], cwd=plugin_root, env=env)
+        require(legacy_cleanup.returncode == 0 and json.loads(legacy_cleanup.stdout).get("policy_version") == "docker-case-policy-v1", "exact legacy v1 receipt was not accepted for cleanup-only")
+        legacy_config = run([
+            sys.executable, str(lifecycle), "validate-config", "--evidence-root", str(workspace / "evidence"),
+            "--receipt", str(legacy_path), "--receipt-sha256", legacy_digest,
+            "--override", str(override_path), "--config-json", str(config_path),
+        ], cwd=plugin_root, env=env)
+        require(legacy_config.returncode != 0 and "DOCKER_CASE_RECEIPT_DRIFT" in legacy_config.stdout, "legacy v1 receipt entered config validation")
+        legacy_drift = dict(legacy)
+        legacy_drift["policy"] = dict(legacy["policy"])
+        legacy_drift["policy"]["memory"] = "1g"
+        legacy_path.write_text(json.dumps(legacy_drift, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        rejected = run([
+            sys.executable, str(lifecycle), "cleanup", "--evidence-root", str(workspace / "evidence"),
+            "--receipt", str(legacy_path), "--receipt-sha256", sha256(legacy_path), "--docker", str(docker_stub),
+        ], cwd=plugin_root, env=env)
+        require(rejected.returncode != 0 and "DOCKER_CASE_RECEIPT_DRIFT" in rejected.stdout, "legacy policy-drift receipt was accepted")
+        legacy_extra = dict(legacy)
+        legacy_extra["unexpected"] = True
+        legacy_path.write_text(json.dumps(legacy_extra, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        rejected = run([
+            sys.executable, str(lifecycle), "cleanup", "--evidence-root", str(workspace / "evidence"),
+            "--receipt", str(legacy_path), "--receipt-sha256", sha256(legacy_path), "--docker", str(docker_stub),
+        ], cwd=plugin_root, env=env)
+        require(rejected.returncode != 0 and "DOCKER_CASE_RECEIPT_DRIFT" in rejected.stdout, "legacy extra-key receipt was accepted")
+        legacy_path.write_text('{"schema_version":1,"policy":', encoding="utf-8")
+        rejected = run([
+            sys.executable, str(lifecycle), "cleanup", "--evidence-root", str(workspace / "evidence"),
+            "--receipt", str(legacy_path), "--receipt-sha256", sha256(legacy_path), "--docker", str(docker_stub),
+        ], cwd=plugin_root, env=env)
+        require(rejected.returncode != 0 and "DOCKER_CASE_RECEIPT_DRIFT" in rejected.stdout, "malformed legacy receipt was accepted")
+        legacy_path.write_text(json.dumps(legacy, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        legacy_path.unlink()
+        legacy_path.symlink_to("/dev/null")
+        rejected = run([
+            sys.executable, str(lifecycle), "cleanup", "--evidence-root", str(workspace / "evidence"),
+            "--receipt", str(legacy_path), "--receipt-sha256", legacy_digest, "--docker", str(docker_stub),
+        ], cwd=plugin_root, env=env)
+        require(rejected.returncode != 0 and "EVIDENCE_TARGET_UNSAFE" in rejected.stdout, "legacy symlink receipt was accepted")
+        legacy_path.unlink()
+        legacy_path.write_text(json.dumps(legacy, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        legacy_hardlink = workspace / "evidence/legacy-v1-hardlink.json"
+        os.link(legacy_path, legacy_hardlink)
+        rejected = run([
+            sys.executable, str(lifecycle), "cleanup", "--evidence-root", str(workspace / "evidence"),
+            "--receipt", str(legacy_hardlink), "--receipt-sha256", legacy_digest, "--docker", str(docker_stub),
+        ], cwd=plugin_root, env=env)
+        require(rejected.returncode != 0 and "EVIDENCE_TARGET_UNSAFE" in rejected.stdout, "legacy hardlink receipt was accepted")
+        legacy_hardlink.unlink()
+        legacy_path.unlink()
 
         result = run(wrapper_command(plugin_root, workspace, "run-ok", "docker-run"), cwd=plugin_root, env=env)
         require(result.returncode == 0, "legal docker-run case failed")
@@ -408,6 +543,12 @@ def main() -> int:
         rejected = run([sys.executable, str(lifecycle), "cleanup", "--evidence-root", str(workspace / "evidence"), "--receipt", str(fifo_path), "--receipt-sha256", receipt_digest, "--docker", str(docker_stub)], cwd=plugin_root, env=env)
         require(rejected.returncode != 0 and "EVIDENCE_TARGET_UNSAFE" in rejected.stdout, "FIFO lifecycle receipt was accepted")
         fifo_path.unlink()
+        forged = json.loads(original)
+        forged["policy"]["network_mode"] = "bridge"
+        receipt_path.write_text(json.dumps(forged, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        rejected = run([sys.executable, str(lifecycle), "cleanup", "--evidence-root", str(workspace / "evidence"), "--receipt", str(receipt_path), "--receipt-sha256", sha256(receipt_path), "--docker", str(docker_stub)], cwd=plugin_root, env=env)
+        require(rejected.returncode != 0 and "DOCKER_CASE_RECEIPT_DRIFT" in rejected.stdout, "forged Compose network policy receipt was accepted")
+        receipt_path.write_bytes(original)
         forged = json.loads(original)
         forged["token"] = "0" * 32
         receipt_path.write_text(json.dumps(forged, indent=2, sort_keys=True) + "\n", encoding="utf-8")

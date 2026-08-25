@@ -25,8 +25,10 @@ from evidence_io import (
 )
 
 
-POLICY_VERSION = "docker-case-policy-v1"
-RECEIPT_SCHEMA_VERSION = 1
+POLICY_VERSION = "docker-case-policy-v2"
+LEGACY_POLICY_VERSION = "docker-case-policy-v1"
+RECEIPT_SCHEMA_VERSION = 2
+LEGACY_RECEIPT_SCHEMA_VERSION = 1
 CLEANUP_SCHEMA_VERSION = 1
 DEFAULT_MEMORY = "512m"
 DEFAULT_CPUS = "1"
@@ -41,6 +43,7 @@ MAX_PIDS = 1024
 CASE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 TOKEN_RE = re.compile(r"^[0-9a-f]{32}$")
 DOCKER_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,62}$")
+NETWORK_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 MEMORY_RE = re.compile(r"^([1-9][0-9]*)(b|k|kb|kib|m|mb|mib|g|gb|gib)?$", re.I)
 RESERVED_LABELS = {
     "org.zhulong.managed": "true",
@@ -60,6 +63,8 @@ def sha256_bytes(raw: bytes) -> str:
 
 
 def memory_bytes(value: str) -> int:
+    if not isinstance(value, str):
+        raise LifecycleError("DOCKER_RESOURCE_LIMIT_INVALID", "memory limit must be a positive bounded Docker memory value")
     match = MEMORY_RE.fullmatch(value.strip())
     if not match:
         raise LifecycleError("DOCKER_RESOURCE_LIMIT_INVALID", "memory limit must be a positive bounded Docker memory value")
@@ -110,12 +115,38 @@ def normalize_cpu(value: Decimal) -> str:
     return rendered.rstrip("0").rstrip(".") if "." in rendered else rendered
 
 
-def validate_policy(memory: str, cpus: str, pids_limit: str | int) -> dict[str, Any]:
+def validate_network(value: Any) -> str:
+    if not isinstance(value, str) or value == "host" or not NETWORK_RE.fullmatch(value):
+        raise LifecycleError("DOCKER_NETWORK_UNSAFE", "network must be none, bridge, or a static non-host Docker network name")
+    return value
+
+
+def validate_policy(memory: str, cpus: str, pids_limit: str | int, network_mode: str = "none") -> dict[str, Any]:
+    memory_size = memory_bytes(memory)
+    cpus_decimal = cpu_value(cpus)
+    pids = pids_value(pids_limit)
+    network = validate_network(network_mode)
+    return {
+        "version": POLICY_VERSION,
+        "memory": memory.lower(),
+        "memory_bytes": memory_size,
+        "cpus": normalize_cpu(cpus_decimal),
+        "pids_limit": pids,
+        "network_mode": network,
+        "read_only": True,
+        "cap_drop": ["ALL"],
+        "security_opt": ["no-new-privileges:true"],
+        "restart": "no",
+        "output_tmpfs": OUTPUT_TMPFS_SIZE,
+    }
+
+
+def validate_legacy_policy(memory: str, cpus: str, pids_limit: str | int) -> dict[str, Any]:
     memory_size = memory_bytes(memory)
     cpus_decimal = cpu_value(cpus)
     pids = pids_value(pids_limit)
     return {
-        "version": POLICY_VERSION,
+        "version": LEGACY_POLICY_VERSION,
         "memory": memory.lower(),
         "memory_bytes": memory_size,
         "cpus": normalize_cpu(cpus_decimal),
@@ -129,13 +160,13 @@ def validate_policy(memory: str, cpus: str, pids_limit: str | int) -> dict[str, 
 
 
 def safe_case_component(case_id: str) -> str:
-    if not CASE_ID_RE.fullmatch(case_id) or case_id in {".", ".."}:
+    if not isinstance(case_id, str) or not CASE_ID_RE.fullmatch(case_id) or case_id in {".", ".."}:
         raise LifecycleError("DOCKER_CASE_LIFECYCLE_UNSAFE", "case id is not a safe logical identifier")
     return re.sub(r"[^a-z0-9_.-]", "-", case_id.lower())[:28].strip(".-_") or "case"
 
 
 def validate_service(value: str) -> str:
-    if not CASE_ID_RE.fullmatch(value) or value in {".", ".."}:
+    if not isinstance(value, str) or not CASE_ID_RE.fullmatch(value) or value in {".", ".."}:
         raise LifecycleError("DOCKER_CASE_LIFECYCLE_UNSAFE", "Compose service is not a safe static identifier")
     return value
 
@@ -169,14 +200,20 @@ def _labels(value: Any) -> dict[str, str]:
     raise LifecycleError("COMPOSE_CONFIG_POLICY_MISMATCH", "merged Compose labels are not a static mapping")
 
 
-def validate_receipt(value: Any) -> dict[str, Any]:
+def _validate_receipt_common(
+    value: Any,
+    *,
+    schema_version: int,
+    expected_policy: dict[str, Any],
+    label_policy: str,
+) -> dict[str, Any]:
     required = {
         "schema_version", "policy", "case_id", "mode", "token", "project_name",
         "container_name", "compose_service", "labels", "override_sha256",
     }
     if not isinstance(value, dict) or set(value) != required:
         raise LifecycleError("DOCKER_CASE_RECEIPT_DRIFT", "Docker case receipt shape is invalid")
-    if value.get("schema_version") != RECEIPT_SCHEMA_VERSION:
+    if value.get("schema_version") != schema_version:
         raise LifecycleError("DOCKER_CASE_RECEIPT_DRIFT", "Docker case receipt schema is unsupported")
     safe_case_component(value.get("case_id", ""))
     if value.get("mode") not in {"docker-run", "docker-compose"}:
@@ -194,16 +231,17 @@ def validate_receipt(value: Any) -> dict[str, Any]:
     elif service is not None:
         raise LifecycleError("DOCKER_CASE_RECEIPT_DRIFT", "docker-run receipt must not name a Compose service")
     policy = value.get("policy")
-    if not isinstance(policy, dict) or set(policy) != {
-        "version", "memory", "memory_bytes", "cpus", "pids_limit", "read_only",
-        "cap_drop", "security_opt", "restart", "output_tmpfs",
-    }:
+    if not isinstance(policy, dict) or set(policy) != set(expected_policy):
         raise LifecycleError("DOCKER_CASE_RECEIPT_DRIFT", "Docker case policy receipt is invalid")
-    expected_policy = validate_policy(policy.get("memory", ""), policy.get("cpus", ""), policy.get("pids_limit", ""))
     if policy != expected_policy:
         raise LifecycleError("DOCKER_CASE_RECEIPT_DRIFT", "Docker case policy receipt changed")
     labels = value.get("labels")
-    expected_labels = dict(RESERVED_LABELS)
+    expected_labels = {
+        "org.zhulong.managed": "true",
+        "org.zhulong.case": "",
+        "org.zhulong.policy": label_policy,
+    }
+    expected_labels = dict(expected_labels)
     expected_labels["org.zhulong.case"] = token
     expected_labels["org.zhulong.project"] = value["project_name"]
     if labels != expected_labels:
@@ -213,7 +251,50 @@ def validate_receipt(value: Any) -> dict[str, Any]:
     return value
 
 
-def load_receipt(root: Path, path: Path, expected_digest: str) -> dict[str, Any]:
+def validate_receipt(value: Any) -> dict[str, Any]:
+    policy_keys = {
+        "version", "memory", "memory_bytes", "cpus", "pids_limit", "read_only",
+        "network_mode", "cap_drop", "security_opt", "restart", "output_tmpfs",
+    }
+    policy = value.get("policy") if isinstance(value, dict) else None
+    if not isinstance(policy, dict) or set(policy) != policy_keys:
+        raise LifecycleError("DOCKER_CASE_RECEIPT_DRIFT", "Docker case policy receipt is invalid")
+    try:
+        expected_policy = validate_policy(policy["memory"], policy["cpus"], policy["pids_limit"], policy["network_mode"])
+    except LifecycleError as exc:
+        raise LifecycleError("DOCKER_CASE_RECEIPT_DRIFT", "Docker case policy receipt changed") from exc
+    value = _validate_receipt_common(
+        value,
+        schema_version=RECEIPT_SCHEMA_VERSION,
+        expected_policy=expected_policy,
+        label_policy=POLICY_VERSION,
+    )
+    if value["mode"] == "docker-compose" and value["policy"]["network_mode"] != "none":
+        raise LifecycleError("DOCKER_CASE_RECEIPT_DRIFT", "Compose receipts must use network_mode none")
+    return value
+
+
+def validate_legacy_receipt(value: Any) -> dict[str, Any]:
+    policy_keys = {
+        "version", "memory", "memory_bytes", "cpus", "pids_limit", "read_only",
+        "cap_drop", "security_opt", "restart", "output_tmpfs",
+    }
+    policy = value.get("policy") if isinstance(value, dict) else None
+    if not isinstance(policy, dict) or set(policy) != policy_keys:
+        raise LifecycleError("DOCKER_CASE_RECEIPT_DRIFT", "Legacy Docker case policy receipt is invalid")
+    try:
+        expected_policy = validate_legacy_policy(policy["memory"], policy["cpus"], policy["pids_limit"])
+    except LifecycleError as exc:
+        raise LifecycleError("DOCKER_CASE_RECEIPT_DRIFT", "Legacy Docker case policy receipt changed") from exc
+    return _validate_receipt_common(
+        value,
+        schema_version=LEGACY_RECEIPT_SCHEMA_VERSION,
+        expected_policy=expected_policy,
+        label_policy=LEGACY_POLICY_VERSION,
+    )
+
+
+def _load_receipt_document(root: Path, path: Path, expected_digest: str) -> Any:
     if not re.fullmatch(r"[0-9a-f]{64}", expected_digest):
         raise LifecycleError("DOCKER_CASE_RECEIPT_DRIFT", "an exact receipt digest is required")
     raw = safe_read_bytes(root, path)
@@ -225,6 +306,17 @@ def load_receipt(root: Path, path: Path, expected_digest: str) -> dict[str, Any]
         raise LifecycleError("DOCKER_CASE_RECEIPT_DRIFT", "Docker case receipt is invalid JSON") from exc
     if canonical_json_bytes(value) != raw:
         raise LifecycleError("DOCKER_CASE_RECEIPT_DRIFT", "Docker case receipt is not canonical")
+    return value
+
+
+def load_receipt(root: Path, path: Path, expected_digest: str) -> dict[str, Any]:
+    return validate_receipt(_load_receipt_document(root, path, expected_digest))
+
+
+def load_cleanup_receipt(root: Path, path: Path, expected_digest: str) -> dict[str, Any]:
+    value = _load_receipt_document(root, path, expected_digest)
+    if isinstance(value, dict) and value.get("schema_version") == LEGACY_RECEIPT_SCHEMA_VERSION:
+        return validate_legacy_receipt(value)
     return validate_receipt(value)
 
 
@@ -232,7 +324,9 @@ def prepare(args: argparse.Namespace) -> dict[str, Any]:
     root = require_root(Path(args.evidence_root))
     case = safe_case_component(args.case_id)
     service = validate_service(args.compose_service) if args.mode == "docker-compose" else None
-    policy = validate_policy(args.memory, args.cpus, args.pids_limit)
+    requested_network = validate_network(args.network)
+    network_mode = "none" if args.mode == "docker-compose" else requested_network
+    policy = validate_policy(args.memory, args.cpus, args.pids_limit, network_mode)
     token = secrets.token_hex(16)
     project = f"zhulong-{case[:20]}-{token[:12]}"
     container = f"zhulong-{case[:20]}-{token[12:24]}"
@@ -247,6 +341,7 @@ def prepare(args: argparse.Namespace) -> dict[str, Any]:
             "read_only": True,
             "cap_drop": ["ALL"],
             "security_opt": ["no-new-privileges:true"],
+            "network_mode": policy["network_mode"],
             "mem_limit": policy["memory"],
             "memswap_limit": policy["memory"],
             "cpus": float(Decimal(policy["cpus"])),
@@ -312,8 +407,17 @@ def validate_config(args: argparse.Namespace) -> dict[str, Any]:
     if receipt["mode"] != "docker-compose":
         raise LifecycleError("COMPOSE_CONFIG_POLICY_MISMATCH", "only Compose receipts have a merged configuration")
     override_path = Path(args.override)
-    if sha256_bytes(safe_read_bytes(root, override_path)) != receipt["override_sha256"]:
+    override_raw = safe_read_bytes(root, override_path)
+    if sha256_bytes(override_raw) != receipt["override_sha256"]:
         raise LifecycleError("DOCKER_CASE_RECEIPT_DRIFT", "host-owned Compose override changed")
+    try:
+        override = json.loads(override_raw)
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise LifecycleError("COMPOSE_CONFIG_POLICY_MISMATCH", "host-owned Compose override is not valid JSON") from exc
+    override_services = override.get("services") if isinstance(override, dict) else None
+    override_service = override_services.get(receipt["compose_service"]) if isinstance(override_services, dict) else None
+    if not isinstance(override_service, dict) or override_service.get("network_mode") != receipt["policy"]["network_mode"]:
+        raise LifecycleError("COMPOSE_CONFIG_POLICY_MISMATCH", "host-owned Compose override network policy changed")
     config = safe_read_json(root, Path(args.config_json))
     services = config.get("services") if isinstance(config, dict) else None
     service = services.get(receipt["compose_service"]) if isinstance(services, dict) else None
@@ -323,6 +427,8 @@ def validate_config(args: argparse.Namespace) -> dict[str, Any]:
         raise LifecycleError("COMPOSE_CONFIG_POLICY_MISMATCH", "selected service gained unsupported dependencies")
     if service.get("privileged", False) is not False:
         raise LifecycleError("COMPOSE_CONFIG_POLICY_MISMATCH", "selected service privileged policy changed")
+    if service.get("network_mode") != receipt["policy"]["network_mode"]:
+        raise LifecycleError("COMPOSE_CONFIG_POLICY_MISMATCH", "selected service network policy changed")
     if service.get("restart", "no") != "no":
         raise LifecycleError("COMPOSE_CONFIG_POLICY_MISMATCH", "selected service restart policy changed")
     if service.get("read_only") is not True:
@@ -458,7 +564,7 @@ def scan_owned_resources(docker: str, receipt: dict[str, Any]) -> tuple[bool, di
 
 def cleanup(args: argparse.Namespace) -> dict[str, Any]:
     root = require_root(Path(args.evidence_root))
-    receipt = load_receipt(root, Path(args.receipt), args.receipt_sha256)
+    receipt = load_cleanup_receipt(root, Path(args.receipt), args.receipt_sha256)
     before_ok, before, before_conflicts = scan_owned_resources(args.docker, receipt)
     command_failures = 0
     settlement_checks = 0
@@ -511,7 +617,7 @@ def cleanup(args: argparse.Namespace) -> dict[str, Any]:
     )
     report = {
         "schema_version": CLEANUP_SCHEMA_VERSION,
-        "policy_version": POLICY_VERSION,
+        "policy_version": receipt["policy"]["version"],
         "receipt_sha256": args.receipt_sha256,
         "cleanup_attempted": True,
         "cleanup_verified": verified,
@@ -539,6 +645,7 @@ def parse_args() -> argparse.Namespace:
     policy_parser.add_argument("--memory", default=DEFAULT_MEMORY)
     policy_parser.add_argument("--cpus", default=DEFAULT_CPUS)
     policy_parser.add_argument("--pids-limit", default=str(DEFAULT_PIDS_LIMIT))
+    policy_parser.add_argument("--network", default="none")
 
     prepare_parser = subparsers.add_parser("prepare")
     prepare_parser.add_argument("--evidence-root", required=True)
@@ -548,6 +655,7 @@ def parse_args() -> argparse.Namespace:
     prepare_parser.add_argument("--memory", default=DEFAULT_MEMORY)
     prepare_parser.add_argument("--cpus", default=DEFAULT_CPUS)
     prepare_parser.add_argument("--pids-limit", default=str(DEFAULT_PIDS_LIMIT))
+    prepare_parser.add_argument("--network", default="none")
 
     config_parser = subparsers.add_parser("validate-config")
     config_parser.add_argument("--evidence-root", required=True)
@@ -583,7 +691,7 @@ def main() -> int:
     args = parse_args()
     try:
         if args.operation == "validate-policy":
-            result = {"ok": True, "status": "valid", "resource_policy": validate_policy(args.memory, args.cpus, args.pids_limit)}
+            result = {"ok": True, "status": "valid", "resource_policy": validate_policy(args.memory, args.cpus, args.pids_limit, args.network)}
         elif args.operation == "prepare":
             result = prepare(args)
         elif args.operation == "validate-config":

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # zhulong-tool-contract: docker-verification-v1; timeout=mandatory; sandbox-preflight=mandatory
-# zhulong-host-policy: docker-case-policy-v1
+# zhulong-host-policy: docker-case-policy-v2
 
 set -euo pipefail
 
@@ -34,7 +34,7 @@ Purpose:
   Run one Docker-only verification case with a mandatory timeout, explicit
   network setting, one bounded host resource policy, and structured
   evidence under <audit-workspace>/evidence/<case-id>/.
-  Docker-run and Docker Compose both use the host-owned docker-case-policy-v1.
+  Docker-run and Docker Compose both use the host-owned docker-case-policy-v2.
   Default mounts provide a 64 MiB non-authoritative container tmpfs at
   /workspace/output. Completion is determined only from the host-observed
   Docker CLI result and bounded host stdout/stderr.
@@ -416,6 +416,7 @@ find_case_lifecycle() {
 
 validate_resource_policy_or_abort() {
   local lifecycle output policy_exit code
+  local -a policy_args
   lifecycle="$(find_case_lifecycle)"
   if [[ -z "$lifecycle" ]]; then
     echo "verification_status=rejected_unsafe_sandbox"
@@ -434,7 +435,8 @@ validate_resource_policy_or_abort() {
     exit 1
   fi
   set +e
-  output="$(python3 "$lifecycle" validate-policy --memory "$MEMORY_LIMIT" --cpus "$CPU_LIMIT" --pids-limit "$PIDS_LIMIT")"
+  policy_args=(validate-policy --memory "$MEMORY_LIMIT" --cpus "$CPU_LIMIT" --pids-limit "$PIDS_LIMIT" --network "$NETWORK")
+  output="$(python3 "$lifecycle" "${policy_args[@]}")"
   policy_exit=$?
   set -e
   if [[ "$policy_exit" -ne 0 ]]; then
@@ -454,6 +456,9 @@ PY
     echo "oracle_matched=false"
     exit 1
   fi
+  if [[ "$MODE" == "docker-compose" ]]; then
+    NETWORK="none"
+  fi
 }
 
 prepare_case_lifecycle() {
@@ -470,7 +475,9 @@ prepare_case_lifecycle() {
     --pids-limit "$PIDS_LIMIT"
   )
   if [[ "$MODE" == "docker-compose" ]]; then
-    prepare_args+=(--compose-service "$COMPOSE_SERVICE")
+    prepare_args+=(--compose-service "$COMPOSE_SERVICE" --network none)
+  else
+    prepare_args+=(--network "$NETWORK")
   fi
   set +e
   payload="$(python3 "$lifecycle" "${prepare_args[@]}")"
@@ -1333,7 +1340,7 @@ if authority_event_error_code:
 if verification_code:
     data["verification_code"] = verification_code
 data["resource_limits"] = {
-    "policy_version": "docker-case-policy-v1",
+    "policy_version": "docker-case-policy-v2",
     "memory": memory_limit,
     "cpus": cpu_limit,
     "pids_limit": int(pids_limit),
@@ -1693,7 +1700,7 @@ case "$MODE" in
       --name "$LIFECYCLE_CONTAINER_NAME"
       --label "org.zhulong.managed=true"
       --label "org.zhulong.case=$LIFECYCLE_TOKEN"
-      --label "org.zhulong.policy=docker-case-policy-v1"
+      --label "org.zhulong.policy=docker-case-policy-v2"
       --label "org.zhulong.project=$LIFECYCLE_PROJECT_NAME"
       --label "org.zhulong.workspace=$WORKSPACE_LABEL"
       --memory "$MEMORY_LIMIT"
@@ -1768,7 +1775,7 @@ PY
     RUN_COMMAND=(docker compose "${COMPOSE_ARGS[@]}" run --no-deps --name "$LIFECYCLE_CONTAINER_NAME" -T \
       --label "org.zhulong.managed=true" \
       --label "org.zhulong.case=$LIFECYCLE_TOKEN" \
-      --label "org.zhulong.policy=docker-case-policy-v1" \
+      --label "org.zhulong.policy=docker-case-policy-v2" \
       --label "org.zhulong.project=$LIFECYCLE_PROJECT_NAME" \
       "$COMPOSE_SERVICE")
     RUN_COMMAND+=("${CASE_COMMAND[@]}")

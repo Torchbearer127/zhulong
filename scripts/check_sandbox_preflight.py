@@ -66,7 +66,7 @@ SERVICE_FIELDS = {
     "user", "read_only", "healthcheck", "depends_on", "volumes", "labels",
     "cap_drop", "init", "restart", "stop_grace_period",
 }
-NAMESPACE_FIELDS = {"network_mode", "pid", "ipc", "uts", "cgroup", "userns_mode"}
+NAMESPACE_FIELDS = {"pid", "ipc", "uts", "cgroup", "userns_mode"}
 CAPABILITY_FIELDS = {"cap_add", "devices", "device_cgroup_rules", "security_opt", "volumes_from"}
 HOST_FILE_FIELDS = {"build", "env_file", "secrets", "configs", "extends", "develop", "label_file", "credential_spec", "include"}
 
@@ -772,7 +772,10 @@ def scan_compose_bytes(
         if service.get("privileged") is not False:
             findings.append(_compose_finding("privileged_not_static_false", logical_source, "Every Compose service must declare literal privileged: false.", issue_code="COMPOSE_CAPABILITY_UNSUPPORTED", excerpt=service_label))
         for field in service:
-            if field in NAMESPACE_FIELDS:
+            if field == "network_mode":
+                if not isinstance(service[field], str) or service[field] != "none":
+                    findings.append(_compose_finding("compose_network_mode_unsafe", logical_source, "Compose network_mode must be absent or the exact static string 'none'.", issue_code="COMPOSE_NAMESPACE_UNSUPPORTED", excerpt=service_label))
+            elif field in NAMESPACE_FIELDS:
                 findings.append(_compose_finding(f"compose_{field}_unsafe", logical_source, f"Compose namespace field {field!r} is not permitted.", issue_code="COMPOSE_NAMESPACE_UNSUPPORTED", excerpt=service_label))
             elif field in CAPABILITY_FIELDS:
                 findings.append(_compose_finding(f"compose_{field}_unsafe", logical_source, f"Compose capability/device field {field!r} is not permitted.", issue_code="COMPOSE_CAPABILITY_UNSUPPORTED", excerpt=service_label))
@@ -861,6 +864,9 @@ def scan_compose_bytes(
             )
             if not allowed:
                 findings.append(_compose_finding("compose_bind_forbidden", logical_source, reason, issue_code=issue_code, excerpt=service_label))
+    namespace_findings = [item for item in findings if item.get("issue_code") == "COMPOSE_NAMESPACE_UNSUPPORTED"]
+    if namespace_findings:
+        findings = namespace_findings + [item for item in findings if item.get("issue_code") != "COMPOSE_NAMESPACE_UNSUPPORTED"]
     return findings
 
 
@@ -908,6 +914,9 @@ def inspect_pinned_compose(
             )
         )
     verify_compose_inputs(workspace, manifest_value, expected_sha256, supplied_files)
+    namespace_findings = [item for item in findings if item.get("issue_code") == "COMPOSE_NAMESPACE_UNSUPPORTED"]
+    if namespace_findings:
+        findings = namespace_findings + [item for item in findings if item.get("issue_code") != "COMPOSE_NAMESPACE_UNSUPPORTED"]
     if findings:
         first = findings[0]
         raise PinningError(
@@ -1042,6 +1051,10 @@ def build_payload(args: argparse.Namespace) -> dict[str, Any]:
     elif args.compose_file:
         findings.append(_compose_finding("compose_pin_required", "compose-input", "Raw Compose inputs are not accepted outside pinned docker-compose preflight.", issue_code="COMPOSE_INPUT_UNSAFE"))
 
+    namespace_findings = [item for item in findings if item.get("issue_code") == "COMPOSE_NAMESPACE_UNSUPPORTED"]
+    if namespace_findings:
+        findings = namespace_findings + [item for item in findings if item.get("issue_code") != "COMPOSE_NAMESPACE_UNSUPPORTED"]
+
     if args.mode == "docker-run" and args.verify_default_mounts:
         if workspace is None or not args.case_id:
             findings.append(_compose_finding("default_mount_directory_unsafe", "docker-run-mounts", "Docker-run default mounts require a workspace and case id.", issue_code="COMPOSE_BIND_SOURCE_FORBIDDEN"))
@@ -1062,6 +1075,8 @@ def build_payload(args: argparse.Namespace) -> dict[str, Any]:
         findings.extend(scan_text(" ".join(docker_tokens), source="docker_run_args", source_type="docker_run_args"))
     labels = sorted({str(item.get("label")) for item in findings if item.get("label")})
     issue_codes = sorted({str(item.get("issue_code")) for item in findings if item.get("issue_code")})
+    if "COMPOSE_NAMESPACE_UNSUPPORTED" in issue_codes:
+        issue_codes = ["COMPOSE_NAMESPACE_UNSUPPORTED"] + [code for code in issue_codes if code != "COMPOSE_NAMESPACE_UNSUPPORTED"]
     ok = not findings
     return {
         "checked_at": utc_now(), "ok": ok, "status": PASSED_STATUS if ok else REJECTED_STATUS,

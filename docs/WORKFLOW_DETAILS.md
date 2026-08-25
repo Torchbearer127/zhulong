@@ -887,11 +887,13 @@ run, while snapshot identity drift fails before the service command.
 The Compose policy is a closed subset. Top-level input contains only `version`
 and `services`; every service declares literal `privileged: false`. Anchors,
 aliases, merges, interpolation, unknown fields, build/host-file/include,
-namespace, capability/device/security-option, and named/anonymous/external
-volume forms are rejected. The selected service must exist, any `depends_on`
-field is rejected, and `restart` is absent or exactly `"no"`. Target-defined
-labels cannot use the reserved `org.zhulong.*` or `com.docker.compose.*`
-namespaces. Host binds are limited to the target repository at
+`pid`/`ipc`/`uts`/`cgroup`/`userns_mode`, capability/device/security-option,
+and named/anonymous/external volume forms are rejected. If a service declares
+`network_mode`, it must be the exact static string `none`; omission is allowed
+because the host-owned lifecycle override supplies `none`. The selected service
+must exist, any `depends_on` field is rejected, and `restart` is absent or
+exactly `"no"`. Target-defined labels cannot use the reserved
+`org.zhulong.*` or `com.docker.compose.*` namespaces. Host binds are limited to the target repository at
 `/workspace/target` read-only and workspace `poc/` at `/workspace/poc` read-only.
 The current case's output is provided only by the fixed `/workspace/output`
 tmpfs as non-authoritative scratch. New executions do not read container files
@@ -901,17 +903,25 @@ and the host starts one foreground command with an explicit argv. No other
 host path is permitted, even read-only.
 Extra Docker arguments cannot override resources or isolation. Dedicated
 `--memory`, `--cpus`, and `--pids-limit` values are positive and bounded by
-`docker-case-policy-v1` (16 MiB through 2 GiB, 0.1 through 4 CPUs, and 1 through
-1024 PIDs; defaults remain 512 MiB, 1 CPU, and 256 PIDs). The same host policy
-applies to docker-run and Compose. A passed preflight proves only this execution
+`docker-case-policy-v2` (16 MiB through 2 GiB, 0.1 through 4 CPUs, and 1 through
+1024 PIDs; defaults remain 512 MiB, 1 CPU, and 256 PIDs). Docker-run records
+the requested static `none`, `bridge`, or non-host custom network in its schema-2
+receipt and rejects control characters and unsafe names. Compose derives
+`network_mode: none` independently of the Docker-run network option. A passed preflight proves only this execution
 boundary; it does not prove a PoC, oracle, verdict, bundle, or finalization
 result.
 
 Each invocation receives a random case token, an exact container name, and a
 unique Compose project name in a host-owned receipt. Compose execution adds a
-last host-owned override and validates the production merged configuration
-before the service starts. It uses `-p`, `--name`, and `--no-deps`, and image
+last host-owned override that sets the selected service's `network_mode` to
+`none`, binds that value into the receipt policy, and validates the production
+merged configuration for missing or drifted network policy before the service
+starts. It uses `-p`, `--name`, and `--no-deps`, and image
 inspection or an explicitly requested pull applies only to the selected service.
+New receipts use schema 2 and `docker-case-policy-v2`. Exact schema-1
+`docker-case-policy-v1` receipts are historical cleanup-only inputs: cleanup
+may inspect and remove their exact owned resources, but config validation,
+authority, result publication, and new preparation reject them.
 Normal exit, failure, timeout, `SIGINT`, `SIGTERM`, and evidence errors share
 the same idempotent cleanup. Bounded stdout/stderr
 capture terminates the whole Docker process group at the 16 MiB per-stream

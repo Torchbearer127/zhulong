@@ -6808,6 +6808,21 @@ def exercise_sandbox_preflight(script_path: Path, workspace: Path, plugin_root: 
     if status.get("status") != "passed" or status.get("findings"):
         raise SystemExit(f"FAILED: safe Zhulong attacker compose should pass sandbox preflight: {status}")
 
+    compose_none = fixtures / "network-none.yml"
+    compose_none.write_text(
+        "services:\n  app:\n    image: alpine\n    privileged: false\n    network_mode: none\n",
+        encoding="utf-8",
+    )
+    none_status = run_sandbox_preflight(
+        script_path,
+        workspace,
+        plugin_root,
+        ["--compose-file", str(compose_none)],
+        expected_returncode=0,
+    )
+    if none_status.get("status") != "passed" or none_status.get("findings"):
+        raise SystemExit(f"FAILED: literal Compose network_mode:none should pass sandbox preflight: {none_status}")
+
     closed_subset_cases = {
         "arbitrary-bind": (
             "services:\n  app:\n    image: alpine\n    privileged: false\n    volumes:\n      - ../arbitrary-host:/loot:ro\n",
@@ -6831,6 +6846,38 @@ def exercise_sandbox_preflight(script_path: Path, workspace: Path, plugin_root: 
         ),
         "namespace": (
             "services:\n  app:\n    image: alpine\n    privileged: false\n    network_mode: bridge\n",
+            "COMPOSE_NAMESPACE_UNSUPPORTED",
+        ),
+        "namespace-host": (
+            "services:\n  app:\n    image: alpine\n    privileged: false\n    network_mode: host\n",
+            "COMPOSE_NAMESPACE_UNSUPPORTED",
+        ),
+        "namespace-custom": (
+            "services:\n  app:\n    image: alpine\n    privileged: false\n    network_mode: custom-network\n",
+            "COMPOSE_NAMESPACE_UNSUPPORTED",
+        ),
+        "namespace-default": (
+            "services:\n  app:\n    image: alpine\n    privileged: false\n    network_mode: default\n",
+            "COMPOSE_NAMESPACE_UNSUPPORTED",
+        ),
+        "namespace-service": (
+            "services:\n  app:\n    image: alpine\n    privileged: false\n    network_mode: service:other\n",
+            "COMPOSE_NAMESPACE_UNSUPPORTED",
+        ),
+        "namespace-container": (
+            "services:\n  app:\n    image: alpine\n    privileged: false\n    network_mode: container:other\n",
+            "COMPOSE_NAMESPACE_UNSUPPORTED",
+        ),
+        "namespace-name": (
+            "services:\n  app:\n    image: alpine\n    privileged: false\n    network_mode: audit-network\n",
+            "COMPOSE_NAMESPACE_UNSUPPORTED",
+        ),
+        "namespace-non-string": (
+            "services:\n  app:\n    image: alpine\n    privileged: false\n    network_mode: false\n",
+            "COMPOSE_NAMESPACE_UNSUPPORTED",
+        ),
+        "namespace-dynamic": (
+            "services:\n  app:\n    image: alpine\n    privileged: false\n    network_mode: ${NETWORK_MODE}\n",
             "COMPOSE_NAMESPACE_UNSUPPORTED",
         ),
         "capability": (
@@ -6869,6 +6916,23 @@ def exercise_sandbox_preflight(script_path: Path, workspace: Path, plugin_root: 
         fixture.write_text(content, encoding="utf-8")
         rejected = run_sandbox_preflight(script_path, workspace, plugin_root, ["--compose-file", str(fixture)], expected_returncode=1)
         require_sandbox_issue(rejected, issue_code, name)
+
+    dynamic_network_fixture = fixtures / "namespace-dynamic.yml"
+    dynamic_network_fixture.write_text(
+        "services:\n  app:\n    image: alpine\n    privileged: false\n    network_mode: ${NETWORK_MODE}\n",
+        encoding="utf-8",
+    )
+    dynamic_network_status = run_sandbox_preflight(
+        script_path,
+        workspace,
+        plugin_root,
+        ["--compose-file", str(dynamic_network_fixture)],
+        expected_returncode=1,
+    )
+    if not dynamic_network_status.get("issue_codes") or dynamic_network_status["issue_codes"][0] != "COMPOSE_NAMESPACE_UNSUPPORTED":
+        raise SystemExit(f"FAILED: dynamic network namespace was not the primary CLI issue code: {dynamic_network_status}")
+    if "COMPOSE_FIELD_UNSUPPORTED" not in dynamic_network_status.get("issue_codes", []):
+        raise SystemExit(f"FAILED: dynamic network namespace lost the interpolation diagnostic: {dynamic_network_status}")
 
     output_compose = fixtures / "safe-output.yml"
     output_compose.write_text(
