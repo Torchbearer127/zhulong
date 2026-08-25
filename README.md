@@ -12,7 +12,7 @@ with Docker reproduction before confirmation.</strong></p>
 
 <p>
   <a href="#"><img alt="Version" src="https://img.shields.io/badge/version-0.6.0-blue.svg?style=flat-square" /></a>
-  <a href="#"><img alt="Status" src="https://img.shields.io/badge/status-release--candidate-yellow.svg?style=flat-square" /></a>
+  <a href="#"><img alt="Status" src="https://img.shields.io/badge/status-release-brightgreen.svg?style=flat-square" /></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-green.svg?style=flat-square" /></a>
   <a href="#quick-start"><img alt="Runtime" src="https://img.shields.io/badge/runtime-Local%20Agent-111111.svg?style=flat-square" /></a>
   <a href="#audit-workflow"><img alt="Verification" src="https://img.shields.io/badge/verification-Docker--first-2496ED.svg?style=flat-square" /></a>
