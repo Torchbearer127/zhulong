@@ -43,6 +43,7 @@ except ImportError:  # pragma: no cover
 
 VIDEO_SUFFIXES = {".mp4", ".mov", ".mkv", ".m4v", ".webm", ".gif", ".webp"}
 STAGES = ("identity", "code_or_trigger_context", "final_impact")
+RUNTIME_REPLAY_LOG_RELATIVE_PATH = "attachments/evidence/replay-runtime-output.log"
 SCREENSHOT_PATHS = {
     "identity": "attachments/evidence/screenshots/01-target-identity.png",
     "code_or_trigger_context": "attachments/evidence/screenshots/02-code-or-trigger-context.png",
@@ -68,6 +69,13 @@ def write_json_atomic(path: Path, value: Mapping[str, Any]) -> None:
     temporary = path.with_name(path.name + f".tmp-{os.getpid()}-{uuid.uuid4().hex[:8]}")
     temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     os.replace(temporary, path)
+
+
+def write_recording_runtime_replay_log(staging_bundle: Path, replay_output: str) -> str:
+    runtime_log = staging_bundle / RUNTIME_REPLAY_LOG_RELATIVE_PATH
+    runtime_log.parent.mkdir(parents=True, exist_ok=True)
+    runtime_log.write_text(replay_output, encoding="utf-8")
+    return RUNTIME_REPLAY_LOG_RELATIVE_PATH
 
 
 def discover_run_script(bundle: Path, explicit: str | None = None) -> Path:
@@ -1070,7 +1078,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[recording] raw OBS output retained outside bundle: {raw_video}")
         validate_video_capture(raw_video)
         manifest = build_recording_manifest(staging_bundle, raw_video, staging_script, session, identity, adapter.obs_metadata(), replay_rc, args.video_name)
-        (staging_bundle / "attachments/evidence/replay-output.log").write_text(replay_output, encoding="utf-8")
+        write_recording_runtime_replay_log(staging_bundle, replay_output)
 
         report_validator = Path(__file__).with_name("validate_report_bundle.py")
         report_result = command_output([sys.executable, str(report_validator), "--bundle-dir", str(staging_bundle)])

@@ -36,6 +36,7 @@ LANGUAGE_ALIASES = {
 
 
 REPLAY_LOG_RELATIVE_PATH = "attachments/evidence/replay-output.log"
+RUNTIME_REPLAY_LOG_RELATIVE_PATH = "attachments/evidence/replay-runtime-output.log"
 
 try:
     from recording_identity import canonical_identity_from_documents
@@ -1291,8 +1292,8 @@ def build_generated_recording_shell(
         'SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"',
         'ATTACH_DIR="$SCRIPT_DIR/attachments"',
         'EVIDENCE_DIR="$ATTACH_DIR/evidence"',
-        'REPLAY_LOG_REL="attachments/evidence/replay-output.log"',
-        'REPLAY_LOG="$EVIDENCE_DIR/replay-output.log"',
+        'REPLAY_LOG_REL="attachments/evidence/replay-runtime-output.log"',
+        'REPLAY_LOG="$EVIDENCE_DIR/replay-runtime-output.log"',
         f"SUCCESS_MARKER={shell_quote(success_marker)}",
         f"DIRECT_IMPACT_MARKER={shell_quote(direct_impact_marker)}",
         'cd "$SCRIPT_DIR"',
@@ -1343,7 +1344,7 @@ def build_generated_recording_shell(
         "",
         "init_replay_log() {",
         "    mkdir -p \"$EVIDENCE_DIR\"",
-        "    printf '%s\\n' \"Zhulong reviewer replay log\" > \"$REPLAY_LOG\"",
+        "    printf '%s\\n' \"Zhulong reviewer runtime replay log\" > \"$REPLAY_LOG\"",
         "    printf '%s\\n' \"Generated at: $(date -u '+%Y-%m-%dT%H:%M:%SZ')\" >> \"$REPLAY_LOG\"",
         "}",
         "",
@@ -1353,20 +1354,27 @@ def build_generated_recording_shell(
         "",
         "run_logged_command() {",
         "    command_text=\"$1\"",
-        "    command_output=\"$EVIDENCE_DIR/replay-command-output.$$\"",
+        "    command_stdout=\"$EVIDENCE_DIR/replay-command-stdout.$$\"",
+        "    command_stderr=\"$EVIDENCE_DIR/replay-command-stderr.$$\"",
         f"    printf '%s%s %s%s\\n' \"$C_CYAN\" {shell_quote(strings['run_command'])} \"$command_text\" \"$C_RESET\"",
         "    log_line \"\"",
         "    log_line \"[command] $command_text\"",
-        "    if sh -c \"$command_text\" > \"$command_output\" 2>&1; then",
-        "        cat \"$command_output\"",
-        "        cat \"$command_output\" >> \"$REPLAY_LOG\"",
-        "        rm -f \"$command_output\"",
+        "    if sh -c \"$command_text\" > \"$command_stdout\" 2> \"$command_stderr\"; then",
+        "        status=0",
+        "    else",
+        "        status=\"$?\"",
+        "    fi",
+        "    log_line \"stdout:\"",
+        "    cat \"$command_stdout\" || true",
+        "    cat \"$command_stdout\" >> \"$REPLAY_LOG\" || true",
+        "    log_line \"stderr:\"",
+        "    cat \"$command_stderr\" >&2 || true",
+        "    cat \"$command_stderr\" >> \"$REPLAY_LOG\" || true",
+        "    log_line \"exit status: $status\"",
+        "    rm -f \"$command_stdout\" \"$command_stderr\"",
+        "    if [ \"$status\" -eq 0 ]; then",
         "        return 0",
         "    fi",
-        "    status=\"$?\"",
-        "    cat \"$command_output\" >&2 || true",
-        "    cat \"$command_output\" >> \"$REPLAY_LOG\" || true",
-        "    rm -f \"$command_output\"",
         f"    printf '%s %s\\n' {shell_quote(strings['command_failed'])} \"$REPLAY_LOG_REL\" >&2",
         "    exit \"$status\"",
         "}",
@@ -1853,21 +1861,51 @@ def first_localized_step_value(finding: dict[str, Any], keys: tuple[str, ...], l
     return ""
 
 
-def collect_bundled_attachment_paths(path_map: dict[str, str]) -> list[str]:
-    paths = sorted({value for value in path_map.values() if value.startswith("attachments/")})
+def bundle_relative_existing_file(bundle_dir: Path, rel: str, *, label: str) -> Path:
+    text = str(rel or "").strip()
+    rel_path = PurePosixPath(text)
+    if (
+        not text
+        or rel_path.is_absolute()
+        or ".." in rel_path.parts
+        or any(part == "" for part in rel_path.parts)
+    ):
+        raise SystemExit(f"{label} must be a bundle-relative file path: {text or '<empty>'}")
+    target = bundle_dir / Path(text)
+    try:
+        target.resolve().relative_to(bundle_dir.resolve())
+    except ValueError as exc:
+        raise SystemExit(f"{label} escapes the confirmed bundle: {text}") from exc
+    if target.is_symlink():
+        raise SystemExit(f"{label} must not be a symlink: {text}")
+    if not target.is_file():
+        raise SystemExit(f"{label} is missing from confirmed bundle: {text}")
+    return target
+
+
+def collect_bundled_attachment_paths(path_map: dict[str, str], bundle_dir: Path) -> list[str]:
+    paths = sorted(
+        {
+            value
+            for value in path_map.values()
+            if value.startswith("attachments/")
+            and not (bundle_dir / Path(value)).is_symlink()
+            and (bundle_dir / Path(value)).is_file()
+        }
+    )
     return paths
 
 
-def infer_poc_path(finding: dict[str, Any], path_map: dict[str, str]) -> str:
+def infer_poc_path(finding: dict[str, Any], path_map: dict[str, str], bundle_dir: Path) -> str:
     explicit = ensure_mapping(finding.get("verification_evidence")).get("poc_path")
     rel = bundled_path_for_value(explicit, path_map)
     if rel:
         return rel
-    for value in collect_bundled_attachment_paths(path_map):
+    for value in collect_bundled_attachment_paths(path_map, bundle_dir):
         lowered = value.lower()
         if "/poc/" in lowered or lowered.endswith(".py") or lowered.endswith(".js") or lowered.endswith(".sh"):
             return value
-    attachments = collect_bundled_attachment_paths(path_map)
+    attachments = collect_bundled_attachment_paths(path_map, bundle_dir)
     return attachments[0] if attachments else ""
 
 
@@ -1895,9 +1933,16 @@ def write_verification_evidence(
     if isinstance(raw_evidence_files, list):
         for item in raw_evidence_files:
             rel = bundled_path_for_value(item, path_map)
-            if rel and rel not in evidence_files:
+            if not rel:
+                continue
+            bundle_relative_existing_file(
+                output_path.parent,
+                rel,
+                label=f"declared evidence file is missing ({item})",
+            )
+            if rel not in evidence_files:
                 evidence_files.append(rel)
-    for rel in collect_bundled_attachment_paths(path_map):
+    for rel in collect_bundled_attachment_paths(path_map, output_path.parent):
         if rel not in evidence_files:
             evidence_files.append(rel)
     has_generated_replay_script = any(
@@ -1908,24 +1953,31 @@ def write_verification_evidence(
     )
     if has_generated_replay_script:
         replay_log_path = output_path.parent / REPLAY_LOG_RELATIVE_PATH
-        replay_log_path.parent.mkdir(parents=True, exist_ok=True)
         if not replay_log_path.exists():
-            replay_log_path.write_text(
-                "Zhulong reviewer replay log placeholder.\n"
-                "Run the bundle-root replay script to refresh this file with live reviewer output.\n"
-                f"Replay contract direct-impact marker: {direct_impact_marker}\n",
-                encoding="utf-8",
+            raise SystemExit(
+                "historical replay transcript is required at "
+                f"{REPLAY_LOG_RELATIVE_PATH}; do not create a placeholder replay log."
             )
+        bundle_relative_existing_file(
+            output_path.parent,
+            REPLAY_LOG_RELATIVE_PATH,
+            label="historical replay transcript",
+        )
         if REPLAY_LOG_RELATIVE_PATH not in evidence_files:
             evidence_files.append(REPLAY_LOG_RELATIVE_PATH)
 
-    poc_path = bundled_path_for_value(provided.get("poc_path"), path_map) or infer_poc_path(finding, path_map)
+    poc_path = bundled_path_for_value(provided.get("poc_path"), path_map) or infer_poc_path(finding, path_map, output_path.parent)
     if not poc_path:
         raise SystemExit(
             "verification_evidence.poc_path is required for confirmed bundles. "
             "Set findings[].verification_evidence.poc_path to a PoC file that is "
             "bundled under attachments/, or include a PoC attachment that the renderer can copy."
         )
+    bundle_relative_existing_file(
+        output_path.parent,
+        poc_path,
+        label="verification_evidence.poc_path",
+    )
     if poc_path and poc_path not in evidence_files:
         evidence_files.insert(0, poc_path)
 

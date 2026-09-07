@@ -347,6 +347,9 @@ Use this checklist before publishing a tagged open-source release of Zhulong
 - [ ] Registered replay logs are real transcripts with command/output/oracle
   signals, not placeholders or marker-only files; copied successful transcripts
   carry portable provenance and direct-impact markers are not appended manually.
+- [ ] Generated helpers and recording automation keep runtime replay output in
+  `attachments/evidence/replay-runtime-output.log` and never overwrite the
+  registered historical proof transcript at `attachments/evidence/replay-output.log`.
 - [ ] The replay transcript corpus under
   `assets/fixtures/replay-transcript-corpus/` covers positive and negative
   examples, and docs state that replay trust does not require a single rigid log format.

@@ -108,6 +108,7 @@ ROOT_SCRIPT_UNAVAILABLE_CONTEXT_PATTERN = re.compile(
     r"Structured code-level analysis is incomplete|Real-world exploitation context is incomplete",
     re.IGNORECASE,
 )
+RUNTIME_REPLAY_LOG_RELATIVE_PATH = "attachments/evidence/replay-runtime-output.log"
 ROOT_SCRIPT_REPLAY_LOG_WRITE_PATTERN = re.compile(
     r"(?:>\s*\"?\$REPLAY_LOG\"?|>>\s*\"?\$REPLAY_LOG\"?|\btee\s+(?:-a\s+)?\"?\$REPLAY_LOG\"?)"
 )
@@ -3398,7 +3399,8 @@ def validate_replay_log_evidence_registration(
             "bundle replay .log evidence must be registered in verification-evidence.json evidence_files "
             "or attachments/reviewer-evidence-index.json"
         )
-    missing = sorted(declared_logs - registered_logs)
+    declared_proof_logs = declared_logs - {RUNTIME_REPLAY_LOG_RELATIVE_PATH}
+    missing = sorted(declared_proof_logs - registered_logs)
     if missing:
         fail(
             "bundle-root replay script .log output is not registered as reviewer evidence: "
@@ -5152,7 +5154,16 @@ def root_script_captures_raw_command_output(text: str) -> bool:
         if not re.match(r"^(?:run|execute|replay|proof)_", helper_name):
             continue
         body = "\n".join(extract_shell_function_body(text, helper_name))
-        if "REPLAY_LOG" not in body or "2>&1" not in body:
+        if "REPLAY_LOG" not in body:
+            continue
+        if (
+            re.search(r">\s*\"?\$?[A-Za-z_][A-Za-z0-9_]*\"?\s+2>\s*\"?\$?[A-Za-z_][A-Za-z0-9_]*\"?", body)
+            and len(re.findall(r"\bcat\s+\"?\$?[A-Za-z_][A-Za-z0-9_]*\"?\s*>>\s*\"?\$REPLAY_LOG\"?", body)) >= 2
+            and "stdout" in body.lower()
+            and "stderr" in body.lower()
+        ):
+            return True
+        if "2>&1" not in body:
             continue
         if re.search(r"\bcat\s+\"?\$?[A-Za-z_][A-Za-z0-9_]*\"?\s*>>\s*\"?\$REPLAY_LOG\"?", body):
             return True

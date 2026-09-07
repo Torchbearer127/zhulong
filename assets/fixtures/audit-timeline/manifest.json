@@ -138,8 +138,8 @@
         "complete"
       ],
       "flow_count": 1,
-      "golden_html_sha256": "sha256:0009271e76b11c1c9c18d69dfdbecc8b079074dad30af9634ca4017475c2c674",
-      "golden_json_sha256": "sha256:d5ec166bbb04a60027bb9c3973a59db757382721856f21fdca8139c6ebd39350",
+      "golden_html_sha256": "sha256:7b2cd2c7e69de5346d1882e5f1881413dd2ec3e5ffa645cee5bad42f1be139b5",
+      "golden_json_sha256": "sha256:682ace1f0a24b5366643af47d458943049d05b287cc2d5e21d66761653b015ce",
       "id": "completed-confirmed",
       "protocol_mode": "r2"
     }

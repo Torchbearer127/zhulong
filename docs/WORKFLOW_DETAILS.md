@@ -389,6 +389,11 @@ Replay logs must be real command/output/oracle transcripts. Marker-only replay
 logs and logs with manually appended direct-impact markers are invalid. Copied
 successful transcripts need portable provenance, such as
 `bundle-build-manifest.json` or reviewer-facing evidence.
+`attachments/evidence/replay-output.log` is the historical proof transcript
+role. Generated replay helpers and the recording automation write fresh runtime
+stdout/stderr to `attachments/evidence/replay-runtime-output.log` instead; that
+runtime log is useful reviewer material, but it must not overwrite or replace
+the registered first-run proof transcript.
 
 The replay transcript corpus in `assets/fixtures/replay-transcript-corpus/`
 anchors this trust boundary with positive and negative static samples. The

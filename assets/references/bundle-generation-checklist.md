@@ -25,7 +25,11 @@ Before creating a final `confirmed/<slug>/` bundle:
 - Confirm the staged/final bundle contains synchronized `validity-review.json`, bundle-local `findings.json`, `verification-evidence.json`, reviewer index fields, a DOCX validity section, and manifest contract/tested-ref/source-binding hashes.
 - Let the wrapper render into `confirmed/.staging/<slug>`, validate the staging bundle, promote only after validation passes, and run batch validation.
 - Failed builds stay under `confirmed/.staging/` and must not be called confirmed deliverables.
-- Do not create marker-only replay logs. Replay logs must come from the reviewer helper path and be registered in evidence.
+- Do not create marker-only replay logs. Registered proof replay logs must come
+  from real reviewer/helper transcript evidence and be registered in evidence.
+- Generated helpers and recording automation must write new runtime stdout/stderr
+  to `attachments/evidence/replay-runtime-output.log`; they must not overwrite
+  the first-run proof transcript at `attachments/evidence/replay-output.log`.
 - Registered replay logs must be real transcripts with command/output/oracle
   evidence. Do not manually append direct-impact markers to placeholder or thin
   logs.

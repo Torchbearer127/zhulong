@@ -299,6 +299,10 @@ bash <audit-workspace>/bin/check_omc_runtime.sh --json
 复现日志必须包含真实的命令、输出和成功判据。仅含标记的复现日志，或手工追加直接
 影响标记的日志都无效。复制已有成功记录时必须提供可移植的来源信息，例如
 `bundle-build-manifest.json` 或面向审核员的证据记录。
+`attachments/evidence/replay-output.log` 承担历史证明 transcript 角色。生成的 replay
+helper 与录屏自动化把新的 stdout/stderr 运行输出写入
+`attachments/evidence/replay-runtime-output.log`；该 runtime 日志是审核材料，但不能覆盖
+或替代已登记的首次证明记录。
 
 `assets/fixtures/replay-transcript-corpus/` 中的复现记录样本集通过静态正反例固定这条
 信任边界。校验器不要求唯一且僵化的日志格式：只要真实记录包含命令、原始输出、成功

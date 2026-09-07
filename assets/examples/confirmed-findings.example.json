@@ -59,7 +59,8 @@
       "oracle_token": "root:x:0:0:",
       "evidence_files": [
         "attachments/poc/path_traversal.py",
-        "attachments/docker/docker-compose.attacker.yml"
+        "attachments/docker/docker-compose.attacker.yml",
+        "attachments/evidence/replay-output.log"
       ],
       "severity_escalation_attempted": true,
       "severity_escalation_result": "Severity escalation was attempted in Docker; arbitrary sensitive-file read was confirmed, while code execution or write impact was not claimed."
@@ -272,6 +273,12 @@
         "purpose": "执行目录遍历 PoC。",
         "purpose_en": "Execute the path traversal PoC.",
         "note": "提交包内将呈现为 attachments/poc/path_traversal.py。"
+      },
+      {
+        "path": "evidence/replay-output.log",
+        "purpose": "Docker 复现的历史 reviewer proof transcript。",
+        "purpose_en": "Historical reviewer proof transcript from the Docker replay.",
+        "note": "提交包内将呈现为 attachments/evidence/replay-output.log。"
       }
     ],
     "bundle_root_artifacts": [

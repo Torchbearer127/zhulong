@@ -1499,6 +1499,345 @@ def load_validate_report_bundle_module(root: Path):
     return module
 
 
+def load_render_confirmed_vuln_docx_module(root: Path):
+    module_path = root / "scripts/render_confirmed_vuln_docx.py"
+    spec = importlib.util.spec_from_file_location("zhulong_render_confirmed_vuln_docx_selftest", module_path)
+    if spec is None or spec.loader is None:
+        raise SystemExit(f"FAILED: could not load render_confirmed_vuln_docx.py from {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_auto_record_bundle_module(root: Path):
+    module_path = root / "scripts/auto_record_bundle.py"
+    spec = importlib.util.spec_from_file_location("zhulong_auto_record_bundle_selftest", module_path)
+    if spec is None or spec.loader is None:
+        raise SystemExit(f"FAILED: could not load auto_record_bundle.py from {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def issue23_trusted_history_log() -> str:
+    return "\n".join(
+        [
+            "Zhulong reviewer replay log",
+            "Generated at: 2026-09-06T00:00:00Z",
+            "[command] sh -c 'printf ISSUE23_SUCCESS_MARKER'",
+            "stdout:",
+            "ISSUE23_SUCCESS_MARKER",
+            "stderr:",
+            "issue23 historical stderr",
+            "success marker verified with grep -Fq",
+            "exit status: 0",
+            "DIRECT_IMPACT_CONFIRMED",
+            "",
+        ]
+    )
+
+
+def issue23_finding(commands: list[str], *, include_history: bool, evidence_files: list[str] | None = None) -> dict[str, object]:
+    declared_evidence = evidence_files
+    if declared_evidence is None:
+        declared_evidence = ["evidence/replay-output.log"] if include_history else []
+    attachments = [{"path": "poc/reproduce.sh", "purpose": "deterministic PoC command"}]
+    if include_history:
+        attachments.append({"path": "evidence/replay-output.log", "purpose": "reviewer replay proof transcript"})
+    return {
+        "project_name": "issue23-selftest-target",
+        "vulnerability_name": "Issue23 evidence integrity regression",
+        "vulnerability_name_zh": "Issue23 证据完整性回归",
+        "slug": "issue23-evidence-integrity",
+        "docker_verified": True,
+        "vuln_type": "Evidence integrity regression",
+        "version_affected": "selftest-ref",
+        "repository_url": "https://example.invalid/issue23-selftest-target",
+        "severity": "High",
+        "description": [
+            "The selftest fixture models a confirmed vulnerability bundle with a reviewer proof transcript."
+        ],
+        "impact": {
+            "package": "issue23-selftest-target",
+            "component": "reviewer evidence pipeline",
+            "affected_versions": "selftest-ref",
+            "repo_url": "https://example.invalid/issue23-selftest-target",
+            "extra": ["The confirmed impact marker is ISSUE23_SUCCESS_MARKER."],
+        },
+        "cvss": {
+            "vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:L/A:N",
+            "score": "8.2",
+            "severity": "High",
+            "rationale": [
+                "A confirmed attacker-controlled input reaches the vulnerable evidence consumer and exposes sensitive output."
+            ],
+        },
+        "analysis": [
+            "Attacker-controlled input: reviewer-controlled replay command output.",
+            "Trigger path: generated helper command execution writes replay evidence.",
+            "Dangerous operation: conflating historical proof transcripts with runtime helper logs.",
+            "Root cause: missing role separation and fail-closed evidence checks.",
+            "Existing checks fail because placeholder or missing evidence can appear as registered replay proof.",
+        ],
+        "code_context": [
+            {
+                "location": "scripts/render_confirmed_vuln_docx.py:run_logged_command",
+                "summary": "Generated helper output must not overwrite the first-run replay proof transcript.",
+                "source": "reviewer replay command",
+                "sink": "bundle-local replay evidence files",
+                "snippet": "run_logged_command \"$command_text\"",
+                "explanation": "The runtime helper log and the historical proof transcript have different reviewer roles and must remain separate.",
+            }
+        ],
+        "reproduction": [
+            {
+                "title": "Run deterministic reviewer replay command",
+                "details": ["Execute a harmless fixed shell command in the generated reviewer helper."],
+                "commands": commands,
+                "expected": ["The helper preserves the original replay proof transcript."],
+                "observed": ["ISSUE23_SUCCESS_MARKER"],
+                "results": ["ISSUE23_SUCCESS_MARKER"],
+            }
+        ],
+        "verification_status": "confirmed_in_docker",
+        "verification_evidence": {
+            "finding_slug": "issue23-evidence-integrity",
+            "docker_image": "selftest-docker-service",
+            "docker_command": "docker compose up -d",
+            "poc_path": "poc/reproduce.sh",
+            "evidence_files": declared_evidence,
+            "expected_observation": "The helper preserves the original replay proof transcript.",
+            "observed_observation": "ISSUE23_SUCCESS_MARKER",
+            "oracle_token": "ISSUE23_SUCCESS_MARKER",
+            "severity_escalation_attempted": True,
+            "severity_escalation_result": "High impact confirmed by deterministic selftest fixture.",
+        },
+        "attachments": attachments,
+        "bundle_root_artifacts": [
+            {
+                "generator": "reviewer-recording-shell",
+                "output_name": "run-issue23-recording.sh",
+                "purpose": "reviewer helper generated for evidence-integrity selftest",
+                "generator_options": {"modes": ["quick"]},
+            }
+        ],
+    }
+
+
+def write_issue23_fixture(repo_dir: Path, workspace: Path, finding: dict[str, object], *, include_history: bool) -> Path:
+    workspace.mkdir(parents=True, exist_ok=True)
+    (repo_dir / "poc").mkdir(parents=True, exist_ok=True)
+    (repo_dir / "poc/reproduce.sh").write_text("#!/bin/sh\nprintf '%s\\n' ISSUE23_SUCCESS_MARKER\n", encoding="utf-8")
+    if include_history:
+        (repo_dir / "evidence").mkdir(parents=True, exist_ok=True)
+        (repo_dir / "evidence/replay-output.log").write_text(issue23_trusted_history_log(), encoding="utf-8")
+    input_path = workspace / "findings.json"
+    payload = dict(finding)
+    payload["project_root_dir"] = str(repo_dir)
+    input_path.write_text(json.dumps({"findings": [payload]}, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return input_path
+
+
+def run_issue23_renderer(plugin_root: Path, repo_dir: Path, workspace: Path, finding: dict[str, object], *, include_history: bool) -> subprocess.CompletedProcess[str]:
+    input_path = write_issue23_fixture(repo_dir, workspace, finding, include_history=include_history)
+    (workspace / "confirmed").mkdir(parents=True, exist_ok=True)
+    return subprocess.run(
+        [
+            sys.executable,
+            str(plugin_root / "scripts/render_confirmed_vuln_docx.py"),
+            "--input",
+            str(input_path),
+            "--output-dir",
+            str(workspace / "confirmed"),
+            "--language",
+            "en-US",
+        ],
+        cwd=plugin_root,
+        capture_output=True,
+        text=True,
+    )
+
+
+def issue23_rendered_bundle(workspace: Path) -> Path:
+    bundles = [path for path in (workspace / "confirmed").iterdir() if path.is_dir()]
+    if len(bundles) != 1:
+        raise SystemExit(f"FAILED: issue23 renderer expected exactly one confirmed bundle, got {len(bundles)}")
+    return bundles[0]
+
+
+def write_issue23_fake_docker(fakebin: Path) -> None:
+    fakebin.mkdir(parents=True, exist_ok=True)
+    docker = fakebin / "docker"
+    docker.write_text(
+        "#!/bin/sh\n"
+        "case \"${1:-}\" in\n"
+        "  info) exit 0 ;;\n"
+        "  ps) exit 0 ;;\n"
+        "  *) exit 0 ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+
+
+def run_issue23_generated_helper(plugin_root: Path, finding: dict[str, object], bundle: Path) -> subprocess.CompletedProcess[str]:
+    renderer = load_render_confirmed_vuln_docx_module(plugin_root)
+    script_text = renderer.build_generated_recording_shell(
+        finding,
+        "en-US",
+        {},
+        {"generator_options": {"modes": ["quick"]}},
+    )
+    script_path = bundle / "run-issue23-recording.sh"
+    script_path.write_text(script_text, encoding="utf-8")
+    script_path.chmod(0o755)
+    fakebin = bundle / "fakebin"
+    write_issue23_fake_docker(fakebin)
+    env = os.environ.copy()
+    env["PATH"] = str(fakebin) + os.pathsep + env.get("PATH", "")
+    env["REVIEWER_PAUSE_SHORT"] = "0"
+    env["REVIEWER_PAUSE_LONG"] = "0"
+    env["ZHULONG_READY_WAIT_SECONDS"] = "0"
+    env["ZHULONG_READY_RETRY_COUNT"] = "1"
+    return subprocess.run(
+        ["/bin/sh", str(script_path), "quick", "docker"],
+        cwd=bundle,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+
+def exercise_issue23_evidence_integrity(plugin_root: Path) -> None:
+    with tempfile.TemporaryDirectory(prefix="zhulong-issue23-evidence-") as tempdir:
+        temp_root = Path(tempdir)
+
+        success_bundle = temp_root / "success-bundle"
+        history_path = success_bundle / "attachments/evidence/replay-output.log"
+        history_path.parent.mkdir(parents=True, exist_ok=True)
+        history_path.write_text(issue23_trusted_history_log(), encoding="utf-8")
+        history_before = history_path.read_bytes()
+        success = run_issue23_generated_helper(
+            plugin_root,
+            issue23_finding(["printf '%s\\n' ISSUE23_SUCCESS_MARKER"], include_history=True),
+            success_bundle,
+        )
+        runtime_log = success_bundle / "attachments/evidence/replay-runtime-output.log"
+        if success.returncode != 0:
+            raise SystemExit(f"FAILED: issue23 generated helper rejected a harmless successful command: {success.stderr}")
+        if history_path.read_bytes() != history_before:
+            raise SystemExit("FAILED: issue23 generated helper overwrote the historical replay proof transcript")
+        if not runtime_log.is_file():
+            raise SystemExit("FAILED: issue23 generated helper did not write a separate runtime replay log")
+        runtime_text = runtime_log.read_text(encoding="utf-8")
+        for expected in ("stdout:", "stderr:", "ISSUE23_SUCCESS_MARKER", "exit status: 0", "DIRECT_IMPACT_CONFIRMED"):
+            if expected not in runtime_text:
+                raise SystemExit(f"FAILED: issue23 runtime replay log is missing expected command evidence: {expected}")
+
+        failure_bundle = temp_root / "failure-bundle"
+        failure_history = failure_bundle / "attachments/evidence/replay-output.log"
+        failure_history.parent.mkdir(parents=True, exist_ok=True)
+        failure_history.write_text(issue23_trusted_history_log(), encoding="utf-8")
+        failure_before = failure_history.read_bytes()
+        failure = run_issue23_generated_helper(
+            plugin_root,
+            issue23_finding(
+                [
+                    "printf '%s\\n' ISSUE23_SUCCESS_MARKER; printf '%s\\n' issue23-failure-stderr >&2; exit 7",
+                    "printf '%s\\n' SHOULD_NOT_RUN",
+                ],
+                include_history=True,
+            ),
+            failure_bundle,
+        )
+        failure_runtime = failure_bundle / "attachments/evidence/replay-runtime-output.log"
+        failure_output = failure.stdout + failure.stderr
+        if failure.returncode != 7:
+            raise SystemExit(f"FAILED: issue23 generated helper swallowed a failed command exit code: {failure.returncode}")
+        if failure_history.read_bytes() != failure_before:
+            raise SystemExit("FAILED: issue23 generated helper changed historical replay proof on command failure")
+        if "SHOULD_NOT_RUN" in failure_output or "VULNERABILITY CONFIRMED" in failure_output:
+            raise SystemExit("FAILED: issue23 generated helper continued after a failed replay command")
+        failure_runtime_text = failure_runtime.read_text(encoding="utf-8")
+        for expected in ("stdout:", "stderr:", "issue23-failure-stderr", "exit status: 7"):
+            if expected not in failure_runtime_text:
+                raise SystemExit(f"FAILED: issue23 failed runtime replay log is missing expected evidence: {expected}")
+
+        missing_workspace = temp_root / "missing-history-workspace"
+        missing_repo = temp_root / "missing-history-repo"
+        missing_result = run_issue23_renderer(
+            plugin_root,
+            missing_repo,
+            missing_workspace,
+            issue23_finding(["printf '%s\\n' ISSUE23_SUCCESS_MARKER"], include_history=False),
+            include_history=False,
+        )
+        if missing_result.returncode == 0:
+            raise SystemExit("FAILED: issue23 renderer created a confirmed bundle without a historical replay proof transcript")
+        if "historical replay transcript" not in (missing_result.stdout + missing_result.stderr):
+            raise SystemExit("FAILED: issue23 renderer missing-history rejection did not name the historical replay transcript")
+
+        missing_evidence_workspace = temp_root / "missing-evidence-workspace"
+        missing_evidence_repo = temp_root / "missing-evidence-repo"
+        missing_evidence_result = run_issue23_renderer(
+            plugin_root,
+            missing_evidence_repo,
+            missing_evidence_workspace,
+            issue23_finding(
+                ["printf '%s\\n' ISSUE23_SUCCESS_MARKER"],
+                include_history=True,
+                evidence_files=["evidence/replay-output.log", "evidence/missing-required.log"],
+            ),
+            include_history=True,
+        )
+        if missing_evidence_result.returncode == 0:
+            raise SystemExit("FAILED: issue23 renderer accepted a declared evidence file that was not bundled")
+        if "declared evidence file is missing" not in (missing_evidence_result.stdout + missing_evidence_result.stderr):
+            raise SystemExit("FAILED: issue23 renderer missing-evidence rejection did not name the missing declared evidence")
+
+        valid_workspace = temp_root / "valid-workspace"
+        valid_repo = temp_root / "valid-repo"
+        valid_result = run_issue23_renderer(
+            plugin_root,
+            valid_repo,
+            valid_workspace,
+            issue23_finding(["printf '%s\\n' ISSUE23_SUCCESS_MARKER"], include_history=True),
+            include_history=True,
+        )
+        if valid_result.returncode != 0:
+            raise SystemExit(f"FAILED: issue23 renderer rejected a bundle with real historical replay proof: {valid_result.stderr}")
+        valid_bundle = issue23_rendered_bundle(valid_workspace)
+        rendered_history = valid_bundle / "attachments/evidence/replay-output.log"
+        rendered_runtime = valid_bundle / "attachments/evidence/replay-runtime-output.log"
+        if rendered_history.read_text(encoding="utf-8") != issue23_trusted_history_log():
+            raise SystemExit("FAILED: issue23 renderer did not preserve the historical replay proof transcript bytes")
+        verification = json.loads((valid_bundle / "verification-evidence.json").read_text(encoding="utf-8"))
+        evidence_files = verification.get("evidence_files", [])
+        if "attachments/evidence/replay-output.log" not in evidence_files:
+            raise SystemExit("FAILED: issue23 verification evidence did not register the historical replay proof transcript")
+        if "attachments/evidence/replay-runtime-output.log" in evidence_files or rendered_runtime.exists():
+            raise SystemExit("FAILED: issue23 renderer materialized or registered runtime replay output before runtime execution")
+        if "placeholder" in rendered_history.read_text(encoding="utf-8").lower():
+            raise SystemExit("FAILED: issue23 renderer preserved placeholder replay text as historical proof")
+
+        recorder = load_auto_record_bundle_module(plugin_root)
+        if not hasattr(recorder, "write_recording_runtime_replay_log"):
+            raise SystemExit("FAILED: auto recorder has no helper for writing role-separated runtime replay logs")
+        recording_bundle = temp_root / "recording-bundle"
+        recording_history = recording_bundle / "attachments/evidence/replay-output.log"
+        recording_history.parent.mkdir(parents=True, exist_ok=True)
+        recording_history.write_text(issue23_trusted_history_log(), encoding="utf-8")
+        recorder.write_recording_runtime_replay_log(recording_bundle, "runtime replay output\n")
+        if recording_history.read_text(encoding="utf-8") != issue23_trusted_history_log():
+            raise SystemExit("FAILED: auto recorder overwrote historical replay proof transcript")
+        if (recording_bundle / "attachments/evidence/replay-runtime-output.log").read_text(encoding="utf-8") != "runtime replay output\n":
+            raise SystemExit("FAILED: auto recorder did not write runtime replay output to the role-separated path")
+
+    print("ISSUE23 EVIDENCE INTEGRITY SELFTEST PASSED: log roles, fail-closed exits, declared evidence")
+
+
 def exercise_replay_transcript_corpus(root: Path) -> None:
     corpus_dir = root / "assets/fixtures/replay-transcript-corpus"
     manifest_path = corpus_dir / "manifest.json"
@@ -11885,6 +12224,7 @@ def selftest_installed_skill(skill_root: Path) -> None:
     exercise_build_confirmed_bundle_wrapper(skill_root)
     exercise_p8_closure_contracts(skill_root)
     exercise_replay_transcript_corpus(skill_root)
+    exercise_issue23_evidence_integrity(skill_root)
     exercise_p8_dogfood_metrics(skill_root)
     exercise_p8_real_historical_dogfood(skill_root)
     exercise_p9_protocol_chain_real_workspace_dogfood(skill_root)
@@ -12536,6 +12876,7 @@ def main() -> None:
     exercise_p7_wording_closure(plugin_root)
     exercise_p8_closure_contracts(plugin_root)
     exercise_replay_transcript_corpus(plugin_root)
+    exercise_issue23_evidence_integrity(plugin_root)
     exercise_p8_dogfood_metrics(plugin_root)
     exercise_p8_real_historical_dogfood(plugin_root)
     exercise_p9_protocol_chain_real_workspace_dogfood(plugin_root)
@@ -14706,6 +15047,19 @@ def main() -> None:
             "print('demo poc')\\n",
             encoding="utf-8",
         )
+        (repo_dir / "evidence").mkdir(parents=True, exist_ok=True)
+        (repo_dir / "evidence" / "replay-output.log").write_text(
+            "Zhulong reviewer replay log\n"
+            "Generated at: 2026-06-16T00:00:00Z\n"
+            "COMMAND: docker compose -f attachments/docker/docker-compose.attacker.yml exec attacker python3 /workspace/attachments/poc/path_traversal.py\n"
+            "stdout:\n"
+            "root:x:0:0:\n"
+            "stderr:\n"
+            "success marker verified with grep -Fq root:x:0:0:\n"
+            "exit status: 0\n"
+            "DIRECT_IMPACT_CONFIRMED\n",
+            encoding="utf-8",
+        )
         run([
             sys.executable,
             str(workspace / "bin/render-confirmed-vuln-docx.py"),
@@ -14759,6 +15113,20 @@ def main() -> None:
         standard_fixture_poc.write_text("print('forged token accepted')\n", encoding="utf-8")
         standard_fixture_evidence = repo_dir / "poc/forged-token-response.json"
         standard_fixture_evidence.write_text('{"ok":true,"user":{"id":1}}\n', encoding="utf-8")
+        standard_fixture_replay = repo_dir / "evidence/replay-output.log"
+        standard_fixture_replay.parent.mkdir(parents=True, exist_ok=True)
+        standard_fixture_replay.write_text(
+            "Zhulong reviewer replay log\n"
+            "Generated at: 2026-06-16T00:00:00Z\n"
+            "COMMAND: python3 attachments/poc/jwt-forge-poc.py\n"
+            "stdout:\n"
+            "认证绕过成功\n"
+            "stderr:\n"
+            "success marker verified with grep -Fq 认证绕过成功\n"
+            "exit status: 0\n"
+            "DIRECT_IMPACT_CONFIRMED\n",
+            encoding="utf-8",
+        )
         standard_fixture = workspace / "standard-vulnerability-name-finding.json"
         standard_fixture.write_text(json.dumps({
             "project_name": "gothinkster/node-express-realworld-example-app",
@@ -14828,7 +15196,7 @@ def main() -> None:
                 "docker_image": "selftest-realworld-api",
                 "docker_command": "docker compose up -d",
                 "poc_path": "poc/jwt-forge-poc.py",
-                "evidence_files": ["poc/forged-token-response.json"],
+                "evidence_files": ["poc/forged-token-response.json", "evidence/replay-output.log"],
                 "expected_observation": "预期结果：伪造 token 被服务端接受。",
                 "observed_observation": "实际结果：HTTP 200 返回用户资料。",
                 "oracle_token": "认证绕过成功",
@@ -14838,6 +15206,7 @@ def main() -> None:
             "attachments": [
                 {"path": "poc/jwt-forge-poc.py", "purpose": "JWT 伪造 PoC"},
                 {"path": "poc/forged-token-response.json", "purpose": "认证绕过响应证据"},
+                {"path": "evidence/replay-output.log", "purpose": "历史 reviewer proof transcript"},
             ],
             "bundle_root_artifacts": [
                 {
@@ -14937,8 +15306,8 @@ def main() -> None:
             "gothinkster/node-express-realworld-example-app",
             "default configuration",
             "REPLAY_LOG",
-            "REPLAY_LOG_REL=\"attachments/evidence/replay-output.log\"",
-            "replay-output.log",
+            "REPLAY_LOG_REL=\"attachments/evidence/replay-runtime-output.log\"",
+            "replay-runtime-output.log",
             "READY_WAIT_SECONDS=\"${ZHULONG_READY_WAIT_SECONDS:-1}\"",
             "READY_RETRY_COUNT=\"${ZHULONG_READY_RETRY_COUNT:-30}\"",
             "ready_sleep()",
@@ -14948,8 +15317,10 @@ def main() -> None:
             "DIRECT_IMPACT_MARKER",
             "DIRECT_IMPACT_CONFIRMED",
             "record_direct_impact_marker",
-            "> \"$command_output\" 2>&1",
-            "cat \"$command_output\" >> \"$REPLAY_LOG\"",
+            "> \"$command_stdout\" 2> \"$command_stderr\"",
+            "cat \"$command_stdout\" >> \"$REPLAY_LOG\"",
+            "cat \"$command_stderr\" >> \"$REPLAY_LOG\"",
+            "exit status: $status",
             "grep -Fq -- \"$marker\" \"$REPLAY_LOG\"",
             "show_evidence_summary",
             "代码上下文屏",
@@ -16248,7 +16619,7 @@ def main() -> None:
         missing_log_script = bad_missing_replay_log / "run-selftest-jwt-recording.sh"
         missing_log_script.write_text(
             missing_log_script.read_text(encoding="utf-8")
-            .replace('REPLAY_LOG="$EVIDENCE_DIR/replay-output.log"', 'REPLAY_TEXT="$EVIDENCE_DIR/replay-output.txt"')
+            .replace('REPLAY_LOG="$EVIDENCE_DIR/replay-runtime-output.log"', 'REPLAY_TEXT="$EVIDENCE_DIR/replay-runtime-output.txt"')
             .replace('> "$REPLAY_LOG"', '> "$REPLAY_TEXT"')
             .replace('>> "$REPLAY_LOG"', '>> "$REPLAY_TEXT"'),
             encoding="utf-8",
@@ -16321,8 +16692,9 @@ def main() -> None:
         log_without_raw_script = bad_log_without_raw_output / "run-selftest-jwt-recording.sh"
         log_without_raw_script.write_text(
             log_without_raw_script.read_text(encoding="utf-8")
-            .replace(' > "$command_output" 2>&1', ' >/dev/null 2>/dev/null')
-            .replace('        cat "$command_output" >> "$REPLAY_LOG"\n', ''),
+            .replace(' > "$command_stdout" 2> "$command_stderr"', ' >/dev/null 2>/dev/null')
+            .replace('    cat "$command_stdout" >> "$REPLAY_LOG" || true\n', '')
+            .replace('    cat "$command_stderr" >> "$REPLAY_LOG" || true\n', ''),
             encoding="utf-8",
         )
         run_expect_fail([
@@ -16909,7 +17281,7 @@ def main() -> None:
         bad_all_errors_script = bad_all_errors_bundle / "run-selftest-jwt-recording.sh"
         bad_all_errors_script.write_text(
             bad_all_errors_script.read_text(encoding="utf-8")
-            .replace('REPLAY_LOG="$EVIDENCE_DIR/replay-output.log"', 'REPLAY_LOG="$EVIDENCE_DIR/unregistered-output.log"')
+            .replace('REPLAY_LOG="$EVIDENCE_DIR/replay-runtime-output.log"', 'REPLAY_LOG="$EVIDENCE_DIR/unregistered-output.log"')
             .replace(
                 "    show_real_world_context\n",
                 "    show_real_world_context\n    run_logged_command 'python3 attachments/poc/jwt-forge-poc.py'\n",
