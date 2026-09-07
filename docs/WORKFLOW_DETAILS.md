@@ -395,6 +395,15 @@ stdout/stderr to `attachments/evidence/replay-runtime-output.log` instead; that
 runtime log is useful reviewer material, but it must not overwrite or replace
 the registered first-run proof transcript.
 
+`bundle-build-manifest.json` is build provenance. New manifests keep build-only
+inputs in `build_inputs[]` and staging/final locations in `promotion`, marked as
+workspace-relative metadata with `delivered=false`. `status.static_validation`
+and `status.promotion` describe only static bundle validation and promotion;
+target build, target startup, health checks, local replay, and clean-room replay
+are recorded as `not_executed` by the builder. This manifest does not verify
+runtime execution and rejects `passed` for these phases, even when an attached
+file has a matching digest. File integrity alone does not prove execution.
+
 The replay transcript corpus in `assets/fixtures/replay-transcript-corpus/`
 anchors this trust boundary with positive and negative static samples. The
 validator does not require a single rigid log format: different real transcript
@@ -467,6 +476,9 @@ The validator also checks for common contradiction patterns, including:
   be manually appended to make a thin log pass validation
 - copied or historical successful replay transcripts without portable
   provenance in `bundle-build-manifest.json` or reviewer-facing evidence
+- `bundle-build-manifest.json` claims that target build, target startup, health
+  checks, local replay, or clean-room replay passed; this build provenance
+  manifest cannot verify runtime execution
 - SSRF impact-tier drift, such as proving only callback/reachability while
   claiming response content, configuration leakage, credentials, or sensitive
   data exposure without an artifact-backed oracle

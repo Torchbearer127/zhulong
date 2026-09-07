@@ -953,8 +953,26 @@ COLLECTABLE_ISSUE_CODES = {
     "VALIDITY_VERDICT_NOT_PROMOTABLE",
     "SOURCE_BINDING_MISSING",
     "SOURCE_REF_MISMATCH",
+    "BUILD_MANIFEST_INVALID",
 }
 COPIED_REPLAY_SOURCE_KINDS = {"copied_successful_transcript", "historical_successful_transcript"}
+BUILD_MANIFEST_LEGACY_PATH_FIELDS = (
+    "contract_path",
+    "staging_path",
+    "final_path",
+    "renderer_input_path",
+)
+BUILD_MANIFEST_RUNTIME_PHASES = (
+    "target_build",
+    "target_startup",
+    "health_check",
+    "local_replay",
+    "clean_room_replay",
+)
+BUILD_MANIFEST_STATIC_STATUSES = {"pending", "passed", "failed"}
+BUILD_MANIFEST_PROMOTION_STATUSES = {"not_promoted", "promoted", "failed"}
+BUILD_MANIFEST_RUNTIME_STATUSES = {"not_executed", "passed", "failed", "not_applicable", "evidence_unverifiable"}
+SHA256_HEX_PATTERN = re.compile(r"[0-9a-f]{64}")
 ROOT_ARTIFACT_REFERENCE_PATTERNS = [
     re.compile(r"\bdocker\s+build\b[^\n;&|]*?(?:-f|--file)\s+(?P<path>[^\s'\";&|]+)", re.IGNORECASE),
     re.compile(r"\bdocker\s+compose\b[^\n;&|]*?-f\s+(?P<path>[^\s'\";&|]+)", re.IGNORECASE),
@@ -3964,18 +3982,315 @@ def classify_replay_transcript(text: str) -> dict[str, object]:
     return result
 
 
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def fail_build_manifest(message: str, path: str = "bundle-build-manifest.json") -> None:
+    fail(
+        message,
+        code="BUILD_MANIFEST_INVALID",
+        path=path,
+        fix=(
+            "Regenerate the bundle manifest so build-only paths are scoped as metadata "
+            "and replay artifacts have bundle-local evidence; this manifest cannot verify runtime execution."
+        ),
+    )
+
+
+def validate_manifest_no_absolute_paths(text: str) -> None:
+    for pattern in ABSOLUTE_PATH_PATTERNS:
+        if pattern.search(text):
+            fail_build_manifest(
+                "bundle-build-manifest.json contains an absolute/operator-local path reference",
+                "bundle-build-manifest.json",
+            )
+
+
+def manifest_workspace_relative_path(value: object, label: str, *, required: bool = True) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        if required:
+            fail_build_manifest(f"bundle-build-manifest.json {label} must not be empty", f"bundle-build-manifest.json.{label}")
+        return ""
+    if raw.startswith("file://") or "://" in raw:
+        fail_build_manifest(
+            f"bundle-build-manifest.json {label} must be workspace-relative metadata, not a URL",
+            f"bundle-build-manifest.json.{label}",
+        )
+    if re.match(r"^[A-Za-z]:[\\/]", raw):
+        fail_build_manifest(
+            f"bundle-build-manifest.json {label} must be workspace-relative metadata, not a Windows absolute path",
+            f"bundle-build-manifest.json.{label}",
+        )
+    normalized = raw.replace("\\", "/")
+    path = PurePosixPath(normalized)
+    if path.is_absolute() or raw.startswith("~"):
+        fail_build_manifest(
+            f"bundle-build-manifest.json {label} must be workspace-relative metadata, not an absolute path",
+            f"bundle-build-manifest.json.{label}",
+        )
+    if ".." in path.parts:
+        fail_build_manifest(
+            f"bundle-build-manifest.json {label} must not escape its workspace scope",
+            f"bundle-build-manifest.json.{label}",
+        )
+    return path.as_posix()
+
+
+def manifest_sha256(value: object, label: str, *, required: bool = True) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        if required:
+            fail_build_manifest(
+                f"bundle-build-manifest.json {label} must contain a sha256 digest",
+                f"bundle-build-manifest.json.{label}",
+            )
+        return ""
+    if not SHA256_HEX_PATTERN.fullmatch(raw):
+        fail_build_manifest(
+            f"bundle-build-manifest.json {label} must contain a lowercase sha256 digest",
+            f"bundle-build-manifest.json.{label}",
+        )
+    return raw
+
+
+def manifest_bundle_file_reference(
+    bundle_dir: Path,
+    value: object,
+    label: str,
+    *,
+    allowed_suffixes: set[str] | None = None,
+) -> tuple[str, Path]:
+    rel = manifest_workspace_relative_path(value, label)
+    resolved = (bundle_dir / rel).resolve()
+    try:
+        resolved.relative_to(bundle_dir.resolve())
+    except ValueError:
+        fail_build_manifest(
+            f"bundle-build-manifest.json {label} escapes the bundle root",
+            f"bundle-build-manifest.json.{label}",
+        )
+    if not resolved.exists():
+        fail_build_manifest(
+            f"bundle-build-manifest.json {label} does not exist inside bundle: {rel}",
+            f"bundle-build-manifest.json.{label}",
+        )
+        return rel, resolved
+    if not resolved.is_file():
+        fail_build_manifest(
+            f"bundle-build-manifest.json {label} must point to a file: {rel}",
+            f"bundle-build-manifest.json.{label}",
+        )
+        return rel, resolved
+    if allowed_suffixes is not None and resolved.suffix.lower() not in allowed_suffixes:
+        fail_build_manifest(
+            f"bundle-build-manifest.json {label} must reference one of {sorted(allowed_suffixes)}: {rel}",
+            f"bundle-build-manifest.json.{label}",
+        )
+    return rel, resolved
+
+
+def validate_build_manifest_build_inputs(data: dict[str, object]) -> None:
+    for field in BUILD_MANIFEST_LEGACY_PATH_FIELDS:
+        if field in data:
+            manifest_workspace_relative_path(data.get(field), field)
+
+    build_inputs = data.get("build_inputs")
+    if build_inputs is None:
+        return
+    if not isinstance(build_inputs, list):
+        fail_build_manifest("bundle-build-manifest.json build_inputs must be a list", "bundle-build-manifest.json.build_inputs")
+        return
+    seen_roles: set[str] = set()
+    for index, item in enumerate(build_inputs):
+        label = f"build_inputs[{index}]"
+        if not isinstance(item, dict):
+            fail_build_manifest(
+                f"bundle-build-manifest.json {label} must be an object",
+                f"bundle-build-manifest.json.{label}",
+            )
+            continue
+        role = str(item.get("role") or "").strip()
+        if not role:
+            fail_build_manifest(
+                f"bundle-build-manifest.json {label}.role must not be empty",
+                f"bundle-build-manifest.json.{label}.role",
+            )
+        if role in seen_roles:
+            fail_build_manifest(
+                f"bundle-build-manifest.json build_inputs role is duplicated: {role}",
+                f"bundle-build-manifest.json.{label}.role",
+            )
+        seen_roles.add(role)
+        manifest_workspace_relative_path(item.get("workspace_relative_path"), f"{label}.workspace_relative_path")
+        path_scope = str(item.get("path_scope") or "").strip()
+        if not path_scope:
+            fail_build_manifest(
+                f"bundle-build-manifest.json {label}.path_scope must not be empty",
+                f"bundle-build-manifest.json.{label}.path_scope",
+            )
+        if item.get("delivered") is not False:
+            fail_build_manifest(
+                f"bundle-build-manifest.json {label}.delivered must be false for build-only inputs",
+                f"bundle-build-manifest.json.{label}.delivered",
+            )
+        digest = manifest_sha256(item.get("sha256"), f"{label}.sha256")
+        if role == "bundle_contract" and digest != str(data.get("contract_sha256") or "").strip():
+            fail_build_manifest(
+                "bundle-build-manifest.json build_inputs bundle_contract sha256 does not match contract_sha256",
+                f"bundle-build-manifest.json.{label}.sha256",
+            )
+
+
+def validate_build_manifest_promotion(data: dict[str, object], bundle_dir: Path) -> None:
+    promotion = data.get("promotion")
+    if promotion is None:
+        return
+    if not isinstance(promotion, dict):
+        fail_build_manifest("bundle-build-manifest.json promotion must be an object", "bundle-build-manifest.json.promotion")
+        return
+    manifest_workspace_relative_path(promotion.get("staging_path"), "promotion.staging_path")
+    final_rel = manifest_workspace_relative_path(promotion.get("final_path"), "promotion.final_path")
+    final_parts = PurePosixPath(final_rel).parts
+    if len(final_parts) != 2 or final_parts[0] != "confirmed" or not final_parts[1]:
+        fail_build_manifest(
+            "bundle-build-manifest.json promotion.final_path must be confirmed/<bundle-slug>",
+            "bundle-build-manifest.json.promotion.final_path",
+        )
+    if promotion.get("delivered") is not False:
+        fail_build_manifest(
+            "bundle-build-manifest.json promotion.delivered must be false for build-location metadata",
+            "bundle-build-manifest.json.promotion.delivered",
+        )
+    path_scope = str(promotion.get("path_scope") or "").strip()
+    if path_scope != "workspace_relative_build_location":
+        fail_build_manifest(
+            "bundle-build-manifest.json promotion.path_scope must be workspace_relative_build_location",
+            "bundle-build-manifest.json.promotion.path_scope",
+        )
+
+
+def validate_build_manifest_status(data: dict[str, object], bundle_dir: Path) -> None:
+    validation_status = str(data.get("validation_status") or "").strip()
+    promote_status = str(data.get("promote_status") or "").strip()
+    if validation_status and validation_status not in BUILD_MANIFEST_STATIC_STATUSES:
+        fail_build_manifest(
+            f"bundle-build-manifest.json validation_status is invalid: {validation_status}",
+            "bundle-build-manifest.json.validation_status",
+        )
+    if promote_status and promote_status not in BUILD_MANIFEST_PROMOTION_STATUSES:
+        fail_build_manifest(
+            f"bundle-build-manifest.json promote_status is invalid: {promote_status}",
+            "bundle-build-manifest.json.promote_status",
+        )
+
+    status = data.get("status")
+    if status is None:
+        return
+    if not isinstance(status, dict):
+        fail_build_manifest("bundle-build-manifest.json status must be an object", "bundle-build-manifest.json.status")
+        return
+    static_status = str(status.get("static_validation") or "").strip()
+    if static_status not in BUILD_MANIFEST_STATIC_STATUSES:
+        fail_build_manifest(
+            f"bundle-build-manifest.json status.static_validation is invalid: {static_status or '<missing>'}",
+            "bundle-build-manifest.json.status.static_validation",
+        )
+    if validation_status and static_status != validation_status:
+        fail_build_manifest(
+            "bundle-build-manifest.json status.static_validation does not match validation_status",
+            "bundle-build-manifest.json.status.static_validation",
+        )
+    promotion_status = str(status.get("promotion") or "").strip()
+    if promotion_status not in BUILD_MANIFEST_PROMOTION_STATUSES:
+        fail_build_manifest(
+            f"bundle-build-manifest.json status.promotion is invalid: {promotion_status or '<missing>'}",
+            "bundle-build-manifest.json.status.promotion",
+        )
+    if promote_status and promotion_status != promote_status:
+        fail_build_manifest(
+            "bundle-build-manifest.json status.promotion does not match promote_status",
+            "bundle-build-manifest.json.status.promotion",
+        )
+    for phase in BUILD_MANIFEST_RUNTIME_PHASES:
+        phase_status = str(status.get(phase) or "").strip()
+        if phase_status not in BUILD_MANIFEST_RUNTIME_STATUSES:
+            fail_build_manifest(
+                f"bundle-build-manifest.json status.{phase} is invalid: {phase_status or '<missing>'}",
+                f"bundle-build-manifest.json.status.{phase}",
+            )
+        if phase_status == "passed":
+            fail_build_manifest(
+                f"bundle-build-manifest.json status.{phase} cannot be passed: "
+                "this build manifest does not verify runtime execution",
+                f"bundle-build-manifest.json.status.{phase}",
+            )
+
+
+def validate_build_manifest_replay_entry(
+    bundle_dir: Path,
+    entry: dict[str, object],
+    index: int,
+) -> tuple[str, dict[str, object]]:
+    rel, resolved = manifest_bundle_file_reference(
+        bundle_dir,
+        entry.get("path"),
+        f"replay_logs[{index}].path",
+        allowed_suffixes={".log"},
+    )
+    claimed_sha256 = manifest_sha256(entry.get("sha256"), f"replay_logs[{index}].sha256", required=False)
+    if not resolved.is_file():
+        return rel, entry
+    if claimed_sha256:
+        actual_sha256 = sha256_file(resolved)
+        if claimed_sha256 != actual_sha256:
+            fail_build_manifest(
+                f"bundle-build-manifest.json replay_logs[{index}].sha256 does not match bundled file: {rel}",
+                f"bundle-build-manifest.json.replay_logs[{index}].sha256",
+            )
+    text = resolved.read_text(encoding="utf-8", errors="ignore")
+    actual_classification = str(classify_replay_transcript(text).get("classification") or "")
+    claimed_classification = str(entry.get("trust_classification") or "").strip()
+    if claimed_classification and claimed_classification != actual_classification:
+        fail_build_manifest(
+            f"bundle-build-manifest.json replay_logs[{index}].trust_classification does not match bundled file: {rel}",
+            f"bundle-build-manifest.json.replay_logs[{index}].trust_classification",
+        )
+    source_path = entry.get("source_path")
+    if source_path is not None:
+        manifest_workspace_relative_path(source_path, f"replay_logs[{index}].source_path")
+    if entry.get("source_delivered") is True:
+        fail_build_manifest(
+            f"bundle-build-manifest.json replay_logs[{index}].source_delivered must be false for renderer-input provenance",
+            f"bundle-build-manifest.json.replay_logs[{index}].source_delivered",
+        )
+    return rel, entry
+
+
+def validate_build_manifest(data: dict[str, object], bundle_dir: Path) -> None:
+    validate_build_manifest_build_inputs(data)
+    validate_build_manifest_promotion(data, bundle_dir)
+    validate_build_manifest_status(data, bundle_dir)
+
+
 def build_manifest_replay_entries(bundle_dir: Path) -> dict[str, dict[str, object]]:
     path = bundle_dir / "bundle-build-manifest.json"
     if not path.exists():
         return {}
     raw_text = path.read_text(encoding="utf-8", errors="ignore")
-    validate_no_absolute_paths(raw_text)
+    validate_manifest_no_absolute_paths(raw_text)
     try:
         data = json.loads(raw_text)
     except json.JSONDecodeError as exc:
         fail(f"bundle-build-manifest.json is invalid JSON: {exc}")
     if not isinstance(data, dict):
         fail("bundle-build-manifest.json must contain a JSON object")
+    validate_build_manifest(data, bundle_dir)
     entries = data.get("replay_logs", [])
     if entries is None:
         return {}
@@ -3984,11 +4299,12 @@ def build_manifest_replay_entries(bundle_dir: Path) -> dict[str, dict[str, objec
     mapped: dict[str, dict[str, object]] = {}
     for index, entry in enumerate(entries):
         if not isinstance(entry, dict):
-            fail(f"bundle-build-manifest.json replay_logs[{index}] must be an object")
-        rel = str(entry.get("path") or "").strip()
-        if not rel:
-            fail(f"bundle-build-manifest.json replay_logs[{index}].path must not be empty")
-        validate_reviewer_index_artifact_path(bundle_dir, rel, f"replay_logs[{index}].path")
+            fail_build_manifest(
+                f"bundle-build-manifest.json replay_logs[{index}] must be an object",
+                f"bundle-build-manifest.json.replay_logs[{index}]",
+            )
+            continue
+        rel, entry = validate_build_manifest_replay_entry(bundle_dir, entry, index)
         mapped[Path(rel).as_posix()] = entry
     return mapped
 

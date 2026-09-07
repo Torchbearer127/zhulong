@@ -15,6 +15,17 @@ vulnerability and does not replace Docker evidence, `validate_report_bundle.py`,
 Confirmed status still requires Docker evidence plus final confirmed-bundle
 validation.
 
+`bundle-build-manifest.json` is build provenance, not a Bundle Contract schema
+extension. New manifests record build-only source paths under `build_inputs[]`
+and promotion paths under `promotion`, with `delivered=false`; they do not expose
+top-level `contract_path`, `renderer_input_path`, `staging_path`, or
+`final_path` as if those were package-readable evidence files. The manifest's
+`status.static_validation` and `status.promotion` fields describe only final
+bundle validation and promotion. Target build, target startup, health checks,
+local replay, and clean-room replay are recorded as `not_executed` by the builder.
+This manifest does not verify runtime execution and rejects `passed` for those
+phases; attaching a file with a matching digest does not establish execution.
+
 ## Severity And Bug Class Policy
 
 `finding.severity` uses a stable enum in the bundle contract:
@@ -37,7 +48,7 @@ confirmation.
 
 | Contract field | Readiness meaning | Renderer / builder output | Final validator or batch gate | Evidence artifact | Notes / non-claims |
 | --- | --- | --- | --- | --- | --- |
-| `schema_version` | Uses Bundle Contract R1. | Builder records the contract path and schema-aligned manifest metadata. | `validate_bundle_contract.py` checks version; final gate is unchanged. | `confirmed/.contracts/<slug>.bundle-contract.json`, `bundle-build-manifest.json` | Versioning is compatibility metadata, not finding evidence. |
+| `schema_version` | Uses Bundle Contract R1. | Builder records schema-aligned build provenance in `build_inputs[]`, `promotion`, and `status`. | `validate_bundle_contract.py` checks version; final gate is unchanged. | `confirmed/.contracts/<slug>.bundle-contract.json`, `bundle-build-manifest.json` | Versioning is compatibility metadata, not finding evidence. |
 | `bundle` | Names one final confirmed bundle target. | Builder derives staging/final locations from this object. | `validate_report_bundle.py` validates rendered bundle layout; `validate_all_report_bundles.py` validates the batch after promote. | `confirmed/.staging/<slug>/`, `confirmed/<slug>/` | Container object; child fields carry the concrete rules. |
 | `bundle.slug` | Selects one stable bundle directory name. | Builder requires renderer output directory to match the slug before staging. | Final validator checks one bundle directory and stable output filenames. | `confirmed/<slug>/` | Must not be used to group multiple vulnerabilities. |
 | `bundle.language` | Selects reviewer-facing report language. | Renderer writes localized DOCX, supplement, and attachment index. | Final validator checks language-specific headings and untranslated-text drift. | DOCX report, reproduction supplement, attachment index | Language is presentation scope, not severity or impact evidence. |
@@ -75,7 +86,6 @@ confirmation.
 | `replay.root_script.path` | Names the expected root helper path. | Renderer emits or copies that script into the final bundle. | Final validator validates executable root scripts and references from reviewer materials. | Root replay helper, attachment note | Must be bundle-local and non-recursive. |
 | `replay.log` | Declares proof-transcript registration readiness. | Builder records copied transcript provenance in `bundle-build-manifest.json` when present. | Final validator classifies registered proof logs and rejects placeholder, marker-only, thin, untrusted, or unregistered logs. | `attachments/evidence/replay-output.log`, `bundle-build-manifest.json` | The builder does not execute replay by default. |
 | `replay.log.path` | Names the historical reviewer proof transcript path. | Renderer bundles the log if supplied by source finding attachments and fails closed when a generated helper has no proof transcript. | Final validator checks bundle-local existence and transcript quality. | `attachments/evidence/replay-output.log` or equivalent registered proof log | Path registration is not transcript trust; runtime helper output belongs in `attachments/evidence/replay-runtime-output.log`. |
-| `replay.runtime_log.path` | Names the generated helper or recorder runtime output path. | Generated helpers and recording automation write fresh stdout/stderr replay output here. | Final validator checks that root helpers capture raw stdout/stderr to a bundle-local `.log`; this runtime path does not replace registered proof evidence. | `attachments/evidence/replay-runtime-output.log` | Runtime output is diagnostic/replay material and must not overwrite first-run proof transcripts. |
 | `replay.log.registration_targets` | States where the log must be registered. | Renderer/build inputs place log references into evidence files or reviewer index. | Contract preflight checks intended registration; final validator checks actual registration and content. | `verification-evidence.json`, `attachments/reviewer-evidence-index.json` | Registration prevents orphan evidence. |
 | `direct_impact` | Declares marker synchronization readiness. | Renderer writes the marker across reviewer-facing materials. | Final validator checks marker drift and direct-impact evidence. | Replay helper, replay log, `verification-evidence.json`, reviewer index, DOCX/supplement | Container object; synchronized marker still needs substantive proof. |
 | `direct_impact.marker` | Names the canonical direct-impact marker. | Renderer writes the marker into evidence JSON and helper output. | Final validator checks marker presence and mismatch across registered materials. | Replay log, root replay helper, `verification-evidence.json`, reviewer materials | Marker must correspond to actual observed impact. |
@@ -136,3 +146,9 @@ bundle evidence artifact, do not add it to the contract.
 When editing this file, preserve the boundary language: contract preflight is
 `ready to render` / generation readiness only, while Docker evidence and final
 confirmed-bundle validation remain required for confirmed status.
+
+Runtime helper output is not a Bundle Contract field. Generated helpers and
+recording automation may write fresh stdout/stderr to the conventional
+bundle-local artifact `attachments/evidence/replay-runtime-output.log`. That
+runtime log is useful diagnostic and review material, but it must not overwrite
+or replace the registered proof transcript declared through `replay.log.path`.

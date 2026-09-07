@@ -353,11 +353,35 @@ def replay_log_manifest_entries(
                 "trust_classification": classification.get("classification", "unknown"),
                 "sha256": sha256_file(path),
                 "source_path": rel(renderer_input_path, workspace_dir),
+                "source_path_scope": "workspace_relative_generated_renderer_input",
+                "source_delivered": False,
                 "provenance": "Copied into the staged bundle from the selected renderer input evidence.",
                 "notes": "Wrapper did not execute replay; transcript was validated from bundled evidence.",
             }
         )
     return entries
+
+
+def build_input_descriptor(role: str, path: Path, workspace_dir: Path, *, path_scope: str) -> dict[str, Any]:
+    return {
+        "role": role,
+        "workspace_relative_path": rel(path, workspace_dir),
+        "path_scope": path_scope,
+        "delivered": False,
+        "sha256": sha256_file(path),
+    }
+
+
+def build_phase_status(validation_status: str, promote_status: str) -> dict[str, str]:
+    return {
+        "static_validation": validation_status,
+        "promotion": promote_status,
+        "target_build": "not_executed",
+        "target_startup": "not_executed",
+        "health_check": "not_executed",
+        "local_replay": "not_executed",
+        "clean_room_replay": "not_executed",
+    }
 
 
 def owned_failed_staging(path: Path, final_path: Path, workspace_dir: Path) -> bool:
@@ -368,10 +392,14 @@ def owned_failed_staging(path: Path, final_path: Path, workspace_dir: Path) -> b
         data = json.loads(manifest.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
         return False
+    promotion = data.get("promotion") if isinstance(data.get("promotion"), dict) else {}
+    status = data.get("status") if isinstance(data.get("status"), dict) else {}
+    manifest_final_path = str(promotion.get("final_path") or data.get("final_path") or "")
+    manifest_promote_status = str(status.get("promotion") or data.get("promote_status") or "")
     return (
         data.get("schema_version") == 1
-        and str(data.get("final_path") or "") == rel(final_path, workspace_dir)
-        and data.get("promote_status") != "promoted"
+        and manifest_final_path == rel(final_path, workspace_dir)
+        and manifest_promote_status != "promoted"
     )
 
 
@@ -396,37 +424,60 @@ def prepare_staging_target(
 
 
 def write_manifest(
-    staging_path: Path,
+    manifest_dir: Path,
     *,
     contract_path: Path,
     workspace_dir: Path,
     renderer_input_path: Path,
+    staging_path: Path,
     final_path: Path,
     validation_status: str,
     promote_status: str,
     contract: dict[str, Any],
 ) -> None:
     source_binding = contract.get("source_binding") if isinstance(contract.get("source_binding"), dict) else {}
+    contract_sha256 = sha256_file(contract_path)
     payload = {
         "schema_version": 1,
-        "contract_path": rel(contract_path, workspace_dir),
-        "staging_path": rel(staging_path, workspace_dir),
-        "final_path": rel(final_path, workspace_dir),
-        "renderer_input_path": rel(renderer_input_path, workspace_dir),
+        "build_inputs": [
+            build_input_descriptor(
+                "bundle_contract",
+                contract_path,
+                workspace_dir,
+                path_scope="workspace_relative_build_input",
+            ),
+            build_input_descriptor(
+                "renderer_input",
+                renderer_input_path,
+                workspace_dir,
+                path_scope="workspace_relative_generated_input",
+            ),
+        ],
+        "promotion": {
+            "staging_path": rel(staging_path, workspace_dir),
+            "final_path": rel(final_path, workspace_dir),
+            "path_scope": "workspace_relative_build_location",
+            "delivered": False,
+        },
+        "status": build_phase_status(validation_status, promote_status),
         "validation_status": validation_status,
         "promote_status": promote_status,
-        "contract_sha256": sha256_file(contract_path),
+        "contract_sha256": contract_sha256,
         "tested_ref": str(source_binding.get("tested_ref") or ""),
         "source_binding_sha256": canonical_json_sha256(source_binding),
         "docker_replay_note": "The staging build wrapper did not execute Docker, replay scripts, PoCs, scanners, network calls, or package managers.",
+        "runtime_status_note": (
+            "Static validation and promotion do not prove target build, target startup, "
+            "health checks, local replay, or clean-room replay."
+        ),
         "replay_logs": replay_log_manifest_entries(
-            staging_path,
+            manifest_dir,
             workspace_dir=workspace_dir,
             renderer_input_path=renderer_input_path,
         ),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
-    (staging_path / "bundle-build-manifest.json").write_text(
+    (manifest_dir / "bundle-build-manifest.json").write_text(
         json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
@@ -538,6 +589,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
             contract_path=contract_path,
             workspace_dir=workspace_dir,
             renderer_input_path=renderer_input_path,
+            staging_path=staging_path,
             final_path=final_path,
             validation_status="pending",
             promote_status="not_promoted",
@@ -559,6 +611,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
             contract_path=contract_path,
             workspace_dir=workspace_dir,
             renderer_input_path=renderer_input_path,
+            staging_path=staging_path,
             final_path=final_path,
             validation_status="passed",
             promote_status="not_promoted",
@@ -592,6 +645,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
             contract_path=contract_path,
             workspace_dir=workspace_dir,
             renderer_input_path=renderer_input_path,
+            staging_path=staging_path,
             final_path=final_path,
             validation_status="passed",
             promote_status="promoted",
@@ -635,6 +689,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
                     contract_path=contract_path,
                     workspace_dir=workspace_dir,
                     renderer_input_path=renderer_input_path,
+                    staging_path=staging_path,
                     final_path=final_path,
                     validation_status="failed",
                     promote_status="failed",

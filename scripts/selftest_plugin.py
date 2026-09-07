@@ -14,7 +14,7 @@ import sys
 import tempfile
 import time
 import zipfile
-from pathlib import Path
+from pathlib import Path, PurePath
 from unittest import mock
 from xml.etree import ElementTree as ET
 
@@ -4326,7 +4326,57 @@ def new_build_wrapper_workspace(root: Path, name: str) -> tuple[Path, Path]:
     return repo_dir, workspace
 
 
+def exercise_build_manifest_runtime_claims(plugin_root: Path) -> None:
+    validator = load_validate_report_bundle_module(plugin_root)
+    phases = ("target_build", "target_startup", "health_check", "local_replay", "clean_room_replay")
+    baseline = {
+        "validation_status": "passed",
+        "promote_status": "promoted",
+        "status": {
+            "static_validation": "passed",
+            "promotion": "promoted",
+            **{phase: "not_executed" for phase in phases},
+        },
+    }
+    payloads = (
+        ("empty.log", b""),
+        ("failure.log", b"process exit 7; startup failed; health check failed\n"),
+        ("success.txt", b"startup succeeded; health ok; exit 0\n"),
+        ("unrelated.json", b'{"description": "unrelated static metadata"}\n'),
+        ("self-report.json", b'{"verified": true, "verifier_result": "passed"}\n'),
+        ("missing", None),
+    )
+    with tempfile.TemporaryDirectory(prefix="zhulong-manifest-runtime-claims-") as tempdir:
+        bundle = Path(tempdir)
+        validator.validate_build_manifest_status(baseline, bundle)
+        legacy = {key: value for key, value in baseline.items() if key != "status"}
+        validator.validate_build_manifest_status(legacy, bundle)
+        for nonpassing in ("failed", "not_applicable", "evidence_unverifiable"):
+            data = json.loads(json.dumps(baseline))
+            for phase in phases:
+                data["status"][phase] = nonpassing
+            validator.validate_build_manifest_status(data, bundle)
+        for phase in phases:
+            for name, payload in payloads:
+                data = json.loads(json.dumps(baseline))
+                data["status"][phase] = "passed"
+                if payload is not None:
+                    (bundle / name).write_bytes(payload)
+                    data["runtime_evidence"] = {
+                        phase: {"path": name, "sha256": hashlib.sha256(payload).hexdigest()},
+                    }
+                try:
+                    validator.validate_build_manifest_status(data, bundle)
+                except SystemExit as exc:
+                    if f"status.{phase}" not in str(exc):
+                        raise SystemExit(f"FAILED: runtime claim {phase}/{name} rejected by an unrelated check: {exc}")
+                else:
+                    raise SystemExit(f"FAILED: runtime claim {phase}/{name} accepted without production verification")
+    print("BUILD MANIFEST RUNTIME CLAIM SELFTEST PASSED: 30 rejected claims, 5 compatible controls")
+
+
 def exercise_build_confirmed_bundle_wrapper(plugin_root: Path) -> None:
+    exercise_build_manifest_runtime_claims(plugin_root)
     wrapper = plugin_root / "scripts/build_confirmed_bundle.py"
     renderer = plugin_root / "scripts/render_confirmed_vuln_docx.py"
     with tempfile.TemporaryDirectory() as tempdir:
@@ -4357,6 +4407,57 @@ def exercise_build_confirmed_bundle_wrapper(plugin_root: Path) -> None:
         for key in ("contract_sha256", "tested_ref", "source_binding_sha256"):
             if not str(manifest.get(key) or "").strip():
                 raise SystemExit(f"FAILED: source-bound build manifest missing {key}")
+        for key in ("contract_path", "renderer_input_path", "staging_path", "final_path"):
+            if key in manifest:
+                raise SystemExit(
+                    f"FAILED: build manifest exposes {key} as a delivered bundle path "
+                    "instead of build-source metadata"
+                )
+        build_inputs = manifest.get("build_inputs")
+        if not isinstance(build_inputs, list) or len(build_inputs) < 2:
+            raise SystemExit("FAILED: build manifest must record build_inputs[] provenance")
+        build_inputs_by_role = {
+            str(item.get("role") or ""): item
+            for item in build_inputs
+            if isinstance(item, dict)
+        }
+        for role in ("bundle_contract", "renderer_input"):
+            item = build_inputs_by_role.get(role)
+            if not isinstance(item, dict):
+                raise SystemExit(f"FAILED: build manifest build_inputs missing role {role}")
+            if item.get("delivered") is not False:
+                raise SystemExit(f"FAILED: build manifest build input {role} must be marked not delivered")
+            workspace_relative_path = str(item.get("workspace_relative_path") or "").strip()
+            if (
+                not workspace_relative_path
+                or workspace_relative_path.startswith("/")
+                or workspace_relative_path.startswith("~")
+                or ".." in PurePath(workspace_relative_path).parts
+            ):
+                raise SystemExit(f"FAILED: build manifest build input {role} path is not workspace-relative")
+            if not re.fullmatch(r"[0-9a-f]{64}", str(item.get("sha256") or "")):
+                raise SystemExit(f"FAILED: build manifest build input {role} missing sha256")
+        if build_inputs_by_role["bundle_contract"].get("sha256") != manifest.get("contract_sha256"):
+            raise SystemExit("FAILED: build manifest contract digest is inconsistent")
+        promotion = manifest.get("promotion")
+        if not isinstance(promotion, dict):
+            raise SystemExit("FAILED: build manifest must record promotion metadata")
+        if promotion.get("delivered") is not False:
+            raise SystemExit("FAILED: build manifest promotion paths must be marked not delivered")
+        if promotion.get("final_path") != f"confirmed/{slug}":
+            raise SystemExit("FAILED: build manifest promotion final path mismatch")
+        if promotion.get("staging_path") != f"confirmed/.staging/{slug}":
+            raise SystemExit("FAILED: build manifest promotion staging path mismatch")
+        if promotion.get("path_scope") != "workspace_relative_build_location":
+            raise SystemExit("FAILED: build manifest promotion path scope mismatch")
+        status = manifest.get("status")
+        if not isinstance(status, dict):
+            raise SystemExit("FAILED: build manifest must record phase status metadata")
+        if status.get("static_validation") != "passed" or status.get("promotion") != "promoted":
+            raise SystemExit("FAILED: build manifest static/promote statuses mismatch")
+        for phase in ("target_build", "target_startup", "health_check", "local_replay", "clean_room_replay"):
+            if status.get(phase) != "not_executed":
+                raise SystemExit(f"FAILED: build manifest must mark {phase} as not_executed")
         for required_name in ("findings.json", "validity-review.json", "verification-evidence.json"):
             if not (final_bundle / required_name).is_file():
                 raise SystemExit(f"FAILED: promoted source-bound bundle is missing {required_name}")
@@ -4371,6 +4472,8 @@ def exercise_build_confirmed_bundle_wrapper(plugin_root: Path) -> None:
         for key in ("path", "source_kind", "trust_classification", "sha256", "source_path", "provenance"):
             if not str(replay_entry.get(key) or "").strip():
                 raise SystemExit(f"FAILED: replay log manifest entry missing {key}")
+        if replay_entry.get("source_path_scope") != "workspace_relative_generated_renderer_input":
+            raise SystemExit("FAILED: replay log manifest source_path scope mismatch")
         if replay_entry.get("path") != "attachments/evidence/replay-output.log":
             raise SystemExit("FAILED: replay log manifest path mismatch")
         if replay_entry.get("source_kind") != "copied_successful_transcript":
@@ -4382,6 +4485,160 @@ def exercise_build_confirmed_bundle_wrapper(plugin_root: Path) -> None:
                 raise SystemExit("FAILED: replay log manifest contains a local absolute path")
         if (workspace / "confirmed/.staging" / slug).exists():
             raise SystemExit("FAILED: staging bundle remained visible after promote")
+
+        legacy_manifest_workspace = root / "legacy-manifest-workspace"
+        legacy_manifest_workspace.mkdir()
+        write_json_fixture(
+            legacy_manifest_workspace / "asr-config.json",
+            {
+                "workspace_root": legacy_manifest_workspace.name,
+                "workspace_created_at": "2026-01-01T00:00:00Z",
+                "confirmed_output_dir": f"{legacy_manifest_workspace.name}/confirmed",
+            },
+        )
+        legacy_manifest_bundle = legacy_manifest_workspace / "confirmed" / slug
+        shutil.copytree(final_bundle, legacy_manifest_bundle)
+        legacy_manifest_path = legacy_manifest_bundle / "bundle-build-manifest.json"
+        legacy_manifest = json.loads(legacy_manifest_path.read_text(encoding="utf-8"))
+        legacy_manifest.pop("build_inputs", None)
+        legacy_manifest.pop("promotion", None)
+        legacy_manifest.pop("status", None)
+        legacy_manifest.pop("runtime_status_note", None)
+        legacy_manifest.update(
+            {
+                "contract_path": f"confirmed/.contracts/{slug}.bundle-contract.json",
+                "staging_path": f"confirmed/.staging/{slug}",
+                "final_path": f"confirmed/{slug}",
+                "renderer_input_path": f"confirmed/.staging/.inputs/{slug}.renderer-input.json",
+            }
+        )
+        legacy_manifest_path.write_text(
+            json.dumps(legacy_manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        run(
+            [
+                sys.executable,
+                str(plugin_root / "scripts/validate_report_bundle.py"),
+                "--bundle-dir",
+                str(legacy_manifest_bundle),
+                "--language",
+                "zh-CN",
+            ],
+            plugin_root,
+        )
+
+        digest_drift_workspace = root / "digest-drift-workspace"
+        digest_drift_workspace.mkdir()
+        write_json_fixture(
+            digest_drift_workspace / "asr-config.json",
+            {
+                "workspace_root": digest_drift_workspace.name,
+                "workspace_created_at": "2026-01-01T00:00:00Z",
+                "confirmed_output_dir": f"{digest_drift_workspace.name}/confirmed",
+            },
+        )
+        digest_drift_bundle = digest_drift_workspace / "confirmed" / slug
+        shutil.copytree(final_bundle, digest_drift_bundle)
+        digest_drift_manifest_path = digest_drift_bundle / "bundle-build-manifest.json"
+        digest_drift_manifest = json.loads(digest_drift_manifest_path.read_text(encoding="utf-8"))
+        digest_drift_manifest["replay_logs"][0]["sha256"] = "f" * 64
+        digest_drift_manifest_path.write_text(
+            json.dumps(digest_drift_manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        run_expect_fail(
+            [
+                sys.executable,
+                str(plugin_root / "scripts/validate_report_bundle.py"),
+                "--bundle-dir",
+                str(digest_drift_bundle),
+                "--language",
+                "zh-CN",
+            ],
+            plugin_root,
+            "replay_logs[0].sha256 does not match bundled file",
+        )
+
+        runtime_claim_workspace = root / "runtime-claim-workspace"
+        runtime_claim_workspace.mkdir()
+        write_json_fixture(
+            runtime_claim_workspace / "asr-config.json",
+            {
+                "workspace_root": runtime_claim_workspace.name,
+                "workspace_created_at": "2026-01-01T00:00:00Z",
+                "confirmed_output_dir": f"{runtime_claim_workspace.name}/confirmed",
+            },
+        )
+        runtime_claim_bundle = runtime_claim_workspace / "confirmed" / slug
+        shutil.copytree(final_bundle, runtime_claim_bundle)
+        runtime_claim_manifest_path = runtime_claim_bundle / "bundle-build-manifest.json"
+        runtime_claim_manifest = json.loads(runtime_claim_manifest_path.read_text(encoding="utf-8"))
+        runtime_claim_manifest["status"]["target_startup"] = "passed"
+        runtime_claim_evidence = runtime_claim_bundle / "attachments/evidence/runtime-claim.txt"
+        runtime_claim_evidence.write_bytes(b"")
+        runtime_claim_manifest["runtime_evidence"] = {
+            "target_startup": {
+                "path": "attachments/evidence/runtime-claim.txt",
+                "sha256": hashlib.sha256(b"").hexdigest(),
+            },
+        }
+        runtime_claim_manifest_path.write_text(
+            json.dumps(runtime_claim_manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        run_expect_fail(
+            [
+                sys.executable,
+                str(plugin_root / "scripts/validate_report_bundle.py"),
+                "--bundle-dir",
+                str(runtime_claim_bundle),
+                "--language",
+                "zh-CN",
+            ],
+            plugin_root,
+            "status.target_startup cannot be passed: this build manifest does not verify runtime execution",
+        )
+
+        local_path_leak_bundle = root / "local-path-leak-workspace" / "confirmed" / slug
+        local_path_leak_workspace = local_path_leak_bundle.parent.parent
+        local_path_leak_workspace.mkdir()
+        write_json_fixture(
+            local_path_leak_workspace / "asr-config.json",
+            {
+                "workspace_root": local_path_leak_workspace.name,
+                "workspace_created_at": "2026-01-01T00:00:00Z",
+                "confirmed_output_dir": f"{local_path_leak_workspace.name}/confirmed",
+            },
+        )
+        shutil.copytree(final_bundle, local_path_leak_bundle)
+        local_path_leak_manifest_path = local_path_leak_bundle / "bundle-build-manifest.json"
+        local_path_leak_manifest = json.loads(local_path_leak_manifest_path.read_text(encoding="utf-8"))
+        local_path_leak_manifest["replay_logs"][0]["source_path"] = "/Users/private/source/renderer-input.json"
+        local_path_leak_manifest_path.write_text(
+            json.dumps(local_path_leak_manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        leak_proc = subprocess.run(
+            [
+                sys.executable,
+                str(plugin_root / "scripts/validate_report_bundle.py"),
+                "--bundle-dir",
+                str(local_path_leak_bundle),
+                "--language",
+                "zh-CN",
+            ],
+            cwd=plugin_root,
+            capture_output=True,
+            text=True,
+        )
+        leak_output = ((leak_proc.stdout or "") + (leak_proc.stderr or "")).strip()
+        if leak_proc.returncode == 0:
+            raise SystemExit("FAILED: manifest local-path leak unexpectedly passed validation")
+        if "absolute/operator-local path reference" not in leak_output:
+            raise SystemExit(f"FAILED: manifest local-path leak did not produce sanitized path diagnostic:\n{leak_output}")
+        if "/Users/private" in leak_output:
+            raise SystemExit(f"FAILED: manifest local-path diagnostic echoed a sensitive raw path:\n{leak_output}")
 
         docx_path = next(final_bundle.glob("*.docx"))
         original_docx = docx_path.read_bytes()
@@ -4520,6 +4777,41 @@ def exercise_build_confirmed_bundle_wrapper(plugin_root: Path) -> None:
             raise SystemExit("FAILED: staging validation failure promoted a final bundle")
         if not (validation_workspace / "confirmed/.staging" / validation_slug).is_dir():
             raise SystemExit("FAILED: --keep-failed-staging did not preserve failed staging")
+        failed_staging_manifest = json.loads(
+            (validation_workspace / "confirmed/.staging" / validation_slug / "bundle-build-manifest.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        if "final_path" in failed_staging_manifest:
+            raise SystemExit("FAILED: failed staging manifest still exposes legacy final_path")
+        failed_staging_promotion = failed_staging_manifest.get("promotion")
+        if not isinstance(failed_staging_promotion, dict) or failed_staging_promotion.get("final_path") != f"confirmed/{validation_slug}":
+            raise SystemExit("FAILED: failed staging manifest does not record promotion final path")
+        run_expect_fail(
+            [
+                sys.executable,
+                str(wrapper),
+                "--workspace-dir",
+                str(validation_workspace),
+                "--repo-root",
+                str(validation_repo),
+                "--contract",
+                str(validation_contract),
+                "--language",
+                "zh-CN",
+                "--keep-failed-staging",
+                "--replace-failed-staging",
+            ],
+            plugin_root,
+            "validate_report_bundle.py",
+        )
+        failed_staging_trash_entries = sorted(
+            (validation_workspace / "confirmed/.staging/.trash").glob(f"{validation_slug}-failed-staging-*")
+        )
+        if not failed_staging_trash_entries:
+            raise SystemExit("FAILED: --replace-failed-staging did not archive the owned failed staging directory")
+        if not (validation_workspace / "confirmed/.staging" / validation_slug).is_dir():
+            raise SystemExit("FAILED: --replace-failed-staging did not preserve the replacement failed staging")
 
         run_expect_fail([
             sys.executable,
@@ -15362,6 +15654,7 @@ def main() -> None:
             return copied
 
         def write_replay_manifest(bundle: Path, *, with_provenance: bool = True, source_kind: str = "copied_successful_transcript") -> None:
+            replay_log_digest = hashlib.sha256((bundle / "attachments/evidence/replay-output.log").read_bytes()).hexdigest()
             payload = {
                 "schema_version": 1,
                 "validation_status": "passed",
@@ -15371,7 +15664,7 @@ def main() -> None:
                         "path": "attachments/evidence/replay-output.log",
                         "source_kind": source_kind,
                         "trust_classification": "trusted_transcript",
-                        "sha256": "0" * 64,
+                        "sha256": replay_log_digest,
                         "notes": "Wrapper did not execute replay; transcript was validated from bundled evidence.",
                     }
                 ],

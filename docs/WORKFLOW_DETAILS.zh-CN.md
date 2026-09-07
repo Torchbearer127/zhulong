@@ -299,10 +299,18 @@ bash <audit-workspace>/bin/check_omc_runtime.sh --json
 复现日志必须包含真实的命令、输出和成功判据。仅含标记的复现日志，或手工追加直接
 影响标记的日志都无效。复制已有成功记录时必须提供可移植的来源信息，例如
 `bundle-build-manifest.json` 或面向审核员的证据记录。
-`attachments/evidence/replay-output.log` 承担历史证明 transcript 角色。生成的 replay
-helper 与录屏自动化把新的 stdout/stderr 运行输出写入
-`attachments/evidence/replay-runtime-output.log`；该 runtime 日志是审核材料，但不能覆盖
-或替代已登记的首次证明记录。
+`attachments/evidence/replay-output.log` 承担历史证明记录角色。生成的复现辅助脚本与
+录屏自动化会把新的标准输出/标准错误运行日志写入
+`attachments/evidence/replay-runtime-output.log`；这份运行日志是审核材料，但不能覆盖或
+替代已登记的首次证明记录。
+
+`bundle-build-manifest.json` 是构建来源记录。新的构建清单会把仅用于构建的输入放在
+`build_inputs[]`，把暂存/最终位置放在 `promotion`，并标记为
+`delivered=false` 的工作区相对元数据。`status.static_validation` 与
+`status.promotion` 只说明静态漏洞包校验和提升状态；目标构建、目标启动、健康检查、
+本地复现、干净环境复现都由构建器记录为 `not_executed`。这份清单不验证实际执行，
+因此不接受这些阶段的 `passed` 声明，即使附件的 SHA-256 摘要匹配也不例外。
+文件完整不等于程序已经成功运行。
 
 `assets/fixtures/replay-transcript-corpus/` 中的复现记录样本集通过静态正反例固定这条
 信任边界。校验器不要求唯一且僵化的日志格式：只要真实记录包含命令、原始输出、成功
@@ -341,21 +349,22 @@ helper 与录屏自动化把新的 stdout/stderr 运行输出写入
 - 复现脚本只展示 PoC/Docker 命令却没有实际执行路径。
 - 复现脚本没有把 `测试软件名称` 与 `测试版本/分支` 作为独立开场字段展示，或缺少开场身份屏/最终证据汇总屏停顿。
 - 复现脚本缺少可覆盖的 `REVIEWER_PAUSE_SHORT` / `REVIEWER_PAUSE_LONG`，
-  在 quick 模式中改用固定短暂停顿，或缺少代码上下文、代码级分析、影响边界、
-  proof 命令/输出、最终证据汇总之后的审核停顿。
-- 复现脚本把 reviewer pause 变量复用于服务 readiness、health polling、启动重试或
-  backoff；reviewer pause 只用于录屏视觉停留，功能性等待必须使用独立的
-  readiness/backoff 变量。
+  在 `quick` 模式中改用固定短暂停顿，或缺少代码上下文、代码级分析、影响边界、
+  证明命令/输出、最终证据汇总之后的审核停顿。
+- 复现脚本把审核暂停变量复用于服务就绪、健康轮询、启动重试或退避；审核暂停只用于
+  录屏视觉停留，功能性等待必须使用独立的就绪/退避变量。
 - 补充复现说明或证据索引引用了漏洞包中不存在的本地辅助脚本。
 - 缺少直接影响复现证据，例如 `DIRECT_IMPACT_CONFIRMED`、`DIRECT_AVAILABILITY_IMPACT_CONFIRMED` 或等价的程序化危害判据。
-- DOCX 面向审核人的正文中泄漏 Python/JSON 风格的 dict/list/object 中间结构，而不是正常报告 prose。
-- 运行时/版本身份只使用 `latest`、浮动镜像 tag、`main`、`master` 或含糊的“current version/当前版本”，且没有稳定版本号、commit、digest 或测试日期。
+- DOCX 面向审核人的正文中泄漏 Python/JSON 风格的字典、列表或对象中间结构，而不是正常报告文字。
+- 运行时/版本身份只使用 `latest`、浮动镜像标签、`main`、`master` 或含糊的“current version/当前版本”，且没有稳定版本号、提交哈希、镜像摘要或测试日期。
 - DOCX、补充说明、复现辅助脚本、`verification-evidence.json`、审核证据索引与已登记的
   复现日志之间，直接影响标记不一致。
 - 已登记的复现日志为空、仅含占位符或标记，或缺少命令、原始输出、成功判据等真实
   运行信号；不得通过手工追加直接影响标记让内容过薄的日志通过校验。
 - 复制或沿用的历史成功复现记录缺少 `bundle-build-manifest.json` 或审核材料中的可移植
   来源说明。
+- `bundle-build-manifest.json` 声称目标构建、目标启动、健康检查、本地复现或干净环境
+  复现已经通过；这份构建来源清单不能验证实际执行。
 - SSRF 影响层级漂移，例如实际只证明回连或请求可达，却在没有产物级成功判据的情况
   下声称响应内容、配置、凭据或敏感数据泄露。
 - 根复现辅助脚本的就绪或健康检查指向与 PoC 证明命令无关的主机或路径。
@@ -436,7 +445,10 @@ python3 scripts/validate_report_bundle.py --workspace-dir <audit-workspace> --va
 面向审核与录屏的根脚本应从脚本自身位置推导漏洞包根目录，使用相对该目录的
 `attachments/`；脚本要么从漏洞包内附件自举 Docker 环境，要么在最前面明确失败并
 告诉审核员应先运行哪条漏洞包内命令。
-脚本在 `docker exec` 前应检查目标容器是否存在且运行；触发漏洞前应尽量做健康/就绪检查；关键 Docker、curl 或 token 生成命令失败时应输出捕获到的错误上下文，而不是裸用 `2>/dev/null` 吞掉原因。
+脚本在 `docker exec` 前应检查目标容器是否存在且运行；触发漏洞前应尽量做健康/就绪检查。
+这些检查只能证明脚本当次看到的容器状态，不能替代构建清单中显式的目标启动
+或健康检查通过证据。关键 Docker、curl 或令牌生成命令失败时应输出捕获到的错误
+上下文，而不是裸用 `2>/dev/null` 吞掉原因。
 嵌套附件目录内的无害 `../` 可以存在，但最终路径必须仍位于单个漏洞包内；脚本不能
 依赖提交者完整的本机仓库布局。
 
