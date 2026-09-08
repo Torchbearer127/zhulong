@@ -533,3 +533,38 @@ Operational note for Docker-based verification:
 - Use one foreground build command with readable logs when preparing the verification environment.
 - Avoid launching duplicate background `docker build` or `docker pull` commands for the same artifact, because that can create misleading “hung task” symptoms and waste disk through repeated cache growth.
 - In environment notes or reproduction prerequisites, prefer recording the active runtime context when it matters, for example `docker context show -> orbstack`, so another reviewer can tell which backend was used.
+
+### Source quotations and generated prose
+
+Do not use a recursive placeholder grep over the entire bundle as a substitute
+for `validate_report_bundle.py`. Ordinary copied source attachments are not
+inputs to the report placeholder or untranslated-prose rules. Generated report
+narrative, attachment purposes, and reproduction instructions remain subject to
+those rules. Shell and Compose attachments retain their existing syntax,
+portability, path, and oracle checks regardless of directory or declared role.
+
+To quote upstream comments without treating them as unfinished report prose:
+
+- Include the original source file in `attachments` and use a project-relative
+  `code_context.location`, such as `src/importer.py:1-7`.
+- Bind that same path and exact range in `source_binding.source_references`.
+  Contract preflight checks the file against the tested Git blob, range, digest,
+  and exact token. Keep `code_context.snippet` identical to those source lines.
+- The renderer records a bundle-relative `source_attachment` locator, preserves
+  repository paths in `source_binding`, and does not rewrite quoted path strings.
+  The locator is not a trust flag: validation safely rereads the attached file
+  (up to 2 MiB), checks the range and bound digest, then matches the quote's exact
+  text and position within the DOCX code-context section. Missing or inconsistent
+  material is rejected with `SOURCE_QUOTE_MISMATCH`.
+
+Only the matched quote paragraphs are excluded from placeholder, abbreviated-code,
+and untranslated-prose checks. Summaries, explanations, and identical text outside
+the quote remain checked. Paths, portability, evidence, and confirmation checks
+still receive the complete document. Unbound legacy snippets keep the existing
+checks; directory names, source roles, monospace styling, and self-reported hashes
+alone grant no exemption. Do not edit upstream comments or logs to pass validation.
+
+Portable validation establishes consistency with the source binding produced by
+contract preflight; it does not authenticate a repository from bundle metadata
+alone or establish runtime success. Source examples of success remain source
+material, never execution evidence.

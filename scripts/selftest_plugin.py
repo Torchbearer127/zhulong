@@ -4375,8 +4375,293 @@ def exercise_build_manifest_runtime_claims(plugin_root: Path) -> None:
     print("BUILD MANIFEST RUNTIME CLAIM SELFTEST PASSED: 30 rejected claims, 5 compatible controls")
 
 
+def exercise_source_text_scope(plugin_root: Path) -> None:
+    """Bind quoted source without exempting generated prose or execution evidence."""
+    from docx import Document
+
+    with tempfile.TemporaryDirectory(prefix="zhulong-source-text-scope-") as tempdir:
+        root = Path(tempdir)
+        repo, workspace = new_build_wrapper_workspace(root, "scope")
+        slug = build_wrapper_source_finding(plugin_root, repo, workspace)
+        contract_path = build_wrapper_contract(workspace, slug)
+        source = repo / "src/importer.py"
+        source_text = source.read_text(encoding="utf-8") + (
+            "# TODO: review this example later\n"
+            "# 示例界面文字：最终判定待补充\n"
+            "# DIRECT_IMPACT_CONFIRMED is only an example token in src/importer.py\n"
+            "# The application should check the input because the user could change the request and the response should show the security impact for this endpoint.\n"
+        )
+        source.write_text(source_text, encoding="utf-8")
+        run(["git", "add", "src/importer.py"], repo)
+        run(["git", "-c", "user.name=Zhulong Selftest", "-c",
+             "user.email=selftest@example.invalid", "commit", "-qm", "harmless source comments"], repo)
+        contract = json.loads(contract_path.read_text(encoding="utf-8"))
+        old_ref = contract["source_binding"]["tested_ref"]
+        tested_ref = run_capture(["git", "rev-parse", "HEAD"], repo).strip()
+        for path in workspace.rglob("*"):
+            if path.is_file():
+                path.write_text(path.read_text(encoding="utf-8").replace(old_ref, tested_ref), encoding="utf-8")
+        contract = json.loads(contract_path.read_text(encoding="utf-8"))
+        reference = contract["source_binding"]["source_references"][2]
+        reference["end_line"] = 6
+        reference["sha256"] = hashlib.sha256(
+            "".join(source_text.splitlines(keepends=True)[2:6]).encode("utf-8")
+        ).hexdigest()
+        contract["source_binding"]["source_references"].append({
+            **reference, "id": "quoted-source", "start_line": 1, "end_line": 7,
+            "sha256": hashlib.sha256(source_text.encode("utf-8")).hexdigest(),
+        })
+        write_json_fixture(contract_path, contract)
+        # A byte-identical delivery copy avoids the separate existing issue in
+        # renderer path rewriting of source_binding paths for direct attachments.
+        delivery = repo / "source-copy/importer.py"
+        delivery.parent.mkdir()
+        delivery.write_bytes(source.read_bytes())
+        findings_path = workspace / "confirmed/findings.json"
+        findings = json.loads(findings_path.read_text(encoding="utf-8"))
+        finding = findings["findings"][0]
+        finding["attachments"].append({
+            "path": "source-copy/importer.py", "purpose": "源代码原文，保留行号和字节。",
+        })
+        write_json_fixture(findings_path, findings)
+        builder_command = [sys.executable, str(plugin_root / "scripts/build_confirmed_bundle.py"),
+                           "--repo-root", str(repo), "--workspace-dir", str(workspace),
+                           "--contract", str(contract_path), "--language", "zh-CN"]
+        run(builder_command, plugin_root)
+        bundle = workspace / "confirmed" / slug
+        delivered = bundle / "attachments/importer.py"
+        if source.read_bytes() != delivered.read_bytes():
+            raise SystemExit("FAILED: source attachment bytes changed during rendering")
+        validator_command = [sys.executable, str(plugin_root / "scripts/validate_report_bundle.py"),
+                             "--bundle-dir", str(bundle), "--language", "zh-CN"]
+        run(validator_command, plugin_root)
+        pristine = root / "pristine"
+        shutil.copytree(bundle, pristine)
+
+        def restore() -> None:
+            shutil.rmtree(bundle)
+            shutil.copytree(pristine, bundle)
+
+        def rejected(diagnostic: str) -> None:
+            proc = subprocess.run(validator_command, cwd=plugin_root, capture_output=True, text=True)
+            output = proc.stdout + proc.stderr
+            if proc.returncode == 0 or diagnostic not in output:
+                raise SystemExit(f"FAILED: source text scope expected {diagnostic!r}: {output}")
+
+        # Generated prose remains checked even if given a source role/path.
+        note = next(path for path in bundle.glob("*.md") if "附件" in path.name)
+        note_relative = note.relative_to(bundle)
+        for role in (False, True):
+            restore()
+            note = bundle / note_relative
+            note.write_text(note.read_text(encoding="utf-8") + "\n最终判定待补充\n", encoding="utf-8")
+            if role:
+                metadata = bundle / "findings.json"
+                payload = json.loads(metadata.read_text(encoding="utf-8"))
+                payload["role"] = "source"
+                write_json_fixture(metadata, payload)
+                (bundle / "attachments/source-copy").mkdir(exist_ok=True)
+                shutil.copyfile(note, bundle / "attachments/source-copy/generated.md")
+            rejected("attachment note contains placeholder text")
+        restore()
+        docx_path = next(bundle.glob("*.docx"))
+        doc = Document(docx_path)
+        doc.add_paragraph("The application should check the input because the user could change the request and the response should show the security impact for this endpoint.")
+        doc.save(docx_path)
+        rejected("long English natural-language paragraph")
+
+        # Source directories do not exempt executable helper safety checks.
+        restore()
+        helper = bundle / "attachments/source-copy/helper.sh"
+        helper.parent.mkdir(exist_ok=True)
+        helper.write_text("#!/bin/sh\nif then\n", encoding="utf-8")
+        rejected("syntax")
+        restore()
+        helper.parent.mkdir(exist_ok=True)
+        helper.write_text("#!/bin/sh\ncat /Users/example/private.txt\n", encoding="utf-8")
+        rejected("absolute")
+        # Success-looking source text cannot replace missing or empty proof.
+        for missing in (True, False):
+            restore()
+            proof = bundle / "attachments/evidence/replay-output.log"
+            if missing:
+                proof.unlink()
+            else:
+                proof.write_text("", encoding="utf-8")
+            proc = subprocess.run(validator_command, cwd=plugin_root, capture_output=True, text=True)
+            if proc.returncode == 0 or "replay" not in (proc.stdout + proc.stderr).lower():
+                raise SystemExit("FAILED: example source token replaced required replay evidence")
+        restore()
+
+        # The actual source attachment, bound range and quoted bytes must agree.
+        shutil.rmtree(bundle)
+        item = dict(finding["code_context"][0])
+        item.update(location="src/importer.py:1-7", snippet=source_text.rstrip("\n"))
+        finding["code_context"].append(item)
+        finding["attachments"][-1]["path"] = "src/importer.py"
+        write_json_fixture(findings_path, findings)
+        run(builder_command, plugin_root)
+        run(validator_command, plugin_root)
+        if source.read_bytes() != delivery.read_bytes():
+            raise SystemExit("FAILED: source bytes changed during quoted build")
+        if delivered.read_bytes() != source.read_bytes():
+            raise SystemExit("FAILED: quoted source attachment changed")
+        docx_path = next(bundle.glob("*.docx"))
+        texts = [paragraph.text for paragraph in Document(docx_path).paragraphs]
+        if any(line not in texts for line in source_text.splitlines()):
+            raise SystemExit("FAILED: DOCX quote is not the exact source lines")
+        shutil.rmtree(pristine)
+        shutil.copytree(bundle, pristine)
+
+        for field, value in (("source_attachment", "attachments/missing.py"),
+                             ("source_attachment", "../outside.py"),
+                             ("source_attachment", str(source)),
+                             ("location", "src/other.py:1-7"),
+                             ("location", "src/importer.py:2-7"),
+                             ("snippet", source_text + "# invented\n")):
+            restore()
+            metadata = bundle / "findings.json"
+            payload = json.loads(metadata.read_text(encoding="utf-8"))
+            payload["findings"][0]["code_context"][-1][field] = value
+            write_json_fixture(metadata, payload)
+            rejected("source quote does not match")
+
+        # A claimed path, role, or digest without the source bytes is insufficient.
+        for kind in ("deleted", "changed", "symlink", "hardlink", "directory", "fifo", "ancestor"):
+            restore()
+            if kind == "ancestor":
+                moved = root / "moved-attachments"
+                (bundle / "attachments").rename(moved)
+                (bundle / "attachments").symlink_to(moved, target_is_directory=True)
+            else:
+                delivered.unlink()
+                if kind == "changed":
+                    delivered.write_text(source_text.replace("TODO", "DONE"), encoding="utf-8")
+                elif kind == "symlink":
+                    delivered.symlink_to(source)
+                elif kind == "hardlink":
+                    os.link(source, delivered)
+                elif kind == "directory":
+                    delivered.mkdir()
+                elif kind == "fifo":
+                    os.mkfifo(delivered)
+            rejected("source quote does not match")
+
+        restore()
+        metadata = bundle / "findings.json"
+        payload = json.loads(metadata.read_text(encoding="utf-8"))
+        payload["findings"][0]["code_context"][-1].pop("source_attachment")
+        write_json_fixture(metadata, payload)
+        rejected("contains placeholder-only code context")
+
+        for field, value in (("sha256", "0" * 64), ("exact_token", "absent-token"),
+                             ("start_line", True), ("hash_kind", "claimed"), ("hash_kind", [])):
+            restore()
+            payload = json.loads(metadata.read_text(encoding="utf-8"))
+            payload["findings"][0]["source_binding"]["source_references"][-1][field] = value
+            write_json_fixture(metadata, payload)
+            rejected("source quote does not match")
+        proc = subprocess.run(validator_command + ["--all-errors", "--json"], cwd=plugin_root,
+                              capture_output=True, text=True)
+        if proc.returncode == 0 or "SOURCE_QUOTE_MISMATCH" not in proc.stdout + proc.stderr or "Traceback" in proc.stderr:
+            raise SystemExit("FAILED: diagnostic collection accepted a malformed source quote")
+
+        for mutation in ("quote", "indent", "duplicate", "outside-english", "outside-placeholder", "summary"):
+            restore()
+            doc = Document(docx_path)
+            if mutation in {"quote", "indent"}:
+                paragraph = next(p for p in doc.paragraphs if p.text.startswith("# TODO:"))
+                paragraph.runs[0].text = (" " if mutation == "indent" else "changed ") + paragraph.runs[0].text
+            elif mutation == "duplicate":
+                from copy import deepcopy
+                paragraph = next(p for p in doc.paragraphs if p.text.startswith("# TODO:"))
+                paragraph._p.addnext(deepcopy(paragraph._p))
+            elif mutation.startswith("outside"):
+                doc.add_paragraph(source_text.splitlines()[-1 if mutation == "outside-english" else 4])
+            else:
+                metadata = bundle / "findings.json"
+                payload = json.loads(metadata.read_text(encoding="utf-8"))
+                item = payload["findings"][0]["code_context"][-1]
+                old_summary = item["summary"]
+                item["summary"] = "最终判定待补充"
+                write_json_fixture(metadata, payload)
+                matches = [p for p in doc.paragraphs if p.text == old_summary]
+                matches[-1].text = item["summary"]
+            doc.save(docx_path)
+            diagnostic = ("long English natural-language paragraph" if mutation == "outside-english"
+                          else "placeholder" if mutation in {"outside-placeholder", "summary"}
+                          else "source quote does not match")
+            rejected(diagnostic)
+
+        # The read-only validator is portable and does not need the source checkout.
+        restore()
+        moved_workspace = root / "portable" / workspace.name
+        moved_bundle = moved_workspace / "confirmed" / bundle.name
+        moved_bundle.parent.mkdir(parents=True)
+        shutil.copyfile(workspace / "asr-config.json", moved_workspace / "asr-config.json")
+        bundle.rename(moved_bundle)
+        shutil.rmtree(repo)
+        run([sys.executable, str(plugin_root / "scripts/validate_report_bundle.py"),
+             "--bundle-dir", str(moved_bundle), "--language", "zh-CN"], root)
+        runtime = root / "workspace-bin"
+        shutil.copytree(plugin_root / "scripts", runtime)
+        (runtime / "validate_report_bundle.py").rename(runtime / "validate-report-bundle.py")
+        (runtime / "render_confirmed_vuln_docx.py").rename(runtime / "render-confirmed-vuln-docx.py")
+        run([sys.executable, str(runtime / "validate-report-bundle.py"),
+             "--bundle-dir", str(moved_bundle), "--language", "zh-CN"], root)
+
+        # File and snippet digests differ for a subrange; both supported hash
+        # kinds must select exact DOCX positions without weakening path checks.
+        validator = load_validate_report_bundle_module(plugin_root)
+        scope_root = root / "quote-unit"
+        (scope_root / "attachments").mkdir(parents=True)
+        raw = b"before\n  value = 1\n# TODO: upstream comment\nafter\n"
+        selected = b"  value = 1\n# TODO: upstream comment\n"
+        (scope_root / "attachments/source.py").write_bytes(raw)
+        for language in ("zh-CN", "en-US"):
+            for hash_kind in ("file", "snippet"):
+                item = {"location": "src/source.py:2-3", "snippet": selected.decode().rstrip("\n"),
+                        "source_attachment": "attachments/source.py"}
+                reference = {"path": "src/source.py", "start_line": 2, "end_line": 3,
+                             "hash_kind": hash_kind, "exact_token": "value = 1",
+                             "sha256": hashlib.sha256(raw if hash_kind == "file" else selected).hexdigest()}
+                finding = {"code_context": [item], "source_binding": {"source_references": [reference]}}
+                doc = Document()
+                heading, stops = validator.code_context_headings(language)
+                doc.add_heading(heading)
+                doc.add_paragraph("1. src/source.py:2-3")
+                for line in item["snippet"].splitlines():
+                    doc.add_paragraph(line)
+                doc.add_heading(sorted(stops)[0])
+                unit_docx = scope_root / "quote.docx"
+                doc.save(unit_docx)
+                lines = validator.docx_text(unit_docx)
+                indexes = validator.verified_source_quote_paragraphs(scope_root, unit_docx, lines, finding, language)
+                if indexes != {2, 3}:
+                    raise SystemExit("FAILED: exact quote range/hash-kind/language classification")
+        raw = raw.replace(b"upstream comment", b"/Users/example/private.txt")
+        selected = raw.splitlines(keepends=True)[1] + raw.splitlines(keepends=True)[2]
+        (scope_root / "attachments/source.py").write_bytes(raw)
+        item["snippet"] = selected.decode().rstrip("\n")
+        reference["sha256"] = hashlib.sha256(selected).hexdigest()
+        for paragraph, line in zip(doc.paragraphs[2:4], item["snippet"].splitlines()):
+            paragraph.text = line
+        doc.save(unit_docx)
+        lines = validator.docx_text(unit_docx)
+        if validator.verified_source_quote_paragraphs(scope_root, unit_docx, lines, finding, language) != {2, 3}:
+            raise SystemExit("FAILED: safety control did not reach the verified-quote boundary")
+        try:
+            validator.validate_no_absolute_paths("\n".join(lines))
+        except SystemExit:
+            pass
+        else:
+            raise SystemExit("FAILED: verified quotation exempted path safety")
+    print("SOURCE TEXT SCOPE SELFTEST PASSED: bound quotes accepted; generated prose/safety gates retained")
+
+
 def exercise_build_confirmed_bundle_wrapper(plugin_root: Path) -> None:
     exercise_build_manifest_runtime_claims(plugin_root)
+    exercise_source_text_scope(plugin_root)
     wrapper = plugin_root / "scripts/build_confirmed_bundle.py"
     renderer = plugin_root / "scripts/render_confirmed_vuln_docx.py"
     with tempfile.TemporaryDirectory() as tempdir:

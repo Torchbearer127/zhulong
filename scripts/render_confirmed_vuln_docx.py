@@ -2218,6 +2218,26 @@ def prepare_finding_for_bundle(
 ) -> dict[str, Any]:
     rewritten = rewrite_value(finding, path_map, project_root)
     if isinstance(rewritten, dict):
+        # Repository identities and quoted bytes are not delivery-path prose.
+        if "source_binding" in finding:
+            rewritten["source_binding"] = finding["source_binding"]
+        originals = finding.get("code_context")
+        rewritten_items = rewritten.get("code_context")
+        pairs = zip(originals, rewritten_items) if isinstance(originals, list) and isinstance(rewritten_items, list) else []
+        for original, item in pairs:
+            if not isinstance(original, dict) or not isinstance(item, dict):
+                continue
+            item["snippet"] = original.get("snippet", "")
+            item.pop("source_attachment", None)
+            location = re.fullmatch(r"(.+):([1-9][0-9]*)(?:-([1-9][0-9]*))?", str(item.get("location", "")))
+            refs = ensure_mapping(finding.get("source_binding")).get("source_references", [])
+            bound = location and isinstance(refs, list) and any(
+                isinstance(ref, dict) and ref.get("path") == location.group(1)
+                and ref.get("start_line") == int(location.group(2))
+                and ref.get("end_line") == int(location.group(3) or location.group(2)) for ref in refs
+            )
+            if bound and location.group(1) in path_map:
+                item["source_attachment"] = path_map[location.group(1)]
         return rewritten
     return dict(finding)
 
@@ -2288,7 +2308,7 @@ def render_code_context(doc: Document, finding: dict[str, Any], language: str) -
     for idx, item in enumerate(renderable_items, start=1):
         location = ensure_relpath(item.get("location"))
         summary = localized_string(item, "summary", language)
-        snippet = str(item.get("snippet", "")).strip()
+        snippet = str(item.get("snippet", "")).rstrip("\r\n")
         explanation = localized_string(item, "explanation", language)
         if location:
             doc.add_paragraph(f"{idx}. {location}", style="List Bullet")

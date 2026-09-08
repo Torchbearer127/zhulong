@@ -2016,14 +2016,109 @@ def missing_code_context_explanation_kinds(text: str, language: str) -> list[str
     return missing
 
 
-def validate_code_context_section(lines: list[str], language: str) -> None:
+def verified_source_quote_paragraphs(
+    bundle_dir: Path, docx_path: Path, lines: list[str], finding: dict[str, object] | None, language: str,
+) -> set[int]:
+    """Classify exact quote positions, never text occurrences or source-role claims."""
+    if not isinstance(finding, dict) or not isinstance(finding.get("code_context"), list):
+        return set()
+    items = [item for item in finding["code_context"] if isinstance(item, dict)]
+    if not any("source_attachment" in item for item in items):
+        return set()
+
+    def invalid() -> set[int]:
+        fail("source quote does not match its bundled source, bound range, or DOCX position",
+             code="SOURCE_QUOTE_MISMATCH", path="findings.json.code_context")
+        return set()
+
+    from evidence_io import SafeEvidenceError, safe_read_bytes
+    import importlib.util
+
+    # Generated workspaces keep the same renderer under a hyphenated CLI name.
+    renderer_path = Path(__file__).with_name("render_confirmed_vuln_docx.py")
+    if not renderer_path.is_file():
+        renderer_path = renderer_path.with_name("render-confirmed-vuln-docx.py")
+    spec = importlib.util.spec_from_file_location("zhulong_quote_renderer", renderer_path)
+    if spec is None or spec.loader is None or not renderer_path.is_file():
+        return invalid()
+    renderer = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(renderer)
+    localized_string = renderer.localized_string
+
+    binding = finding.get("source_binding")
+    if not isinstance(binding, dict) or not isinstance(binding.get("source_references"), list):
+        return invalid()
+    expected: list[str] = []
+    quote_offsets: dict[int, str] = {}
+    for number, item in enumerate(items, 1):
+        location = str(item.get("location") or "").strip()
+        snippet = str(item.get("snippet", "")).rstrip("\r\n")
+        bound = "source_attachment" in item
+        if bound:
+            match = re.fullmatch(r"([^:\\]+):([1-9][0-9]*)(?:-([1-9][0-9]*))?", location)
+            rel = item["source_attachment"]
+            if (not match or not isinstance(rel, str) or not rel.startswith("attachments/")
+                    or any(part in {"", ".", ".."} for part in rel.split("/")) or "\\" in rel):
+                return invalid()
+            source_path, start, end = match.group(1), int(match.group(2)), int(match.group(3) or match.group(2))
+            if source_path.startswith(("/", "~")) or ".." in source_path.split("/"):
+                return invalid()
+            try:
+                raw = safe_read_bytes(bundle_dir, bundle_dir / rel)
+                source_lines = raw.decode("utf-8").splitlines(keepends=True)
+            except (SafeEvidenceError, UnicodeError, OSError):
+                return invalid()
+            if not 1 <= start <= end <= len(source_lines):
+                return invalid()
+            selected = "".join(source_lines[start - 1:end])
+            if snippet != selected.rstrip("\r\n"):
+                return invalid()
+            references = [ref for ref in binding["source_references"] if isinstance(ref, dict)
+                          and ref.get("path") == source_path
+                          and type(ref.get("start_line")) is int and ref["start_line"] == start
+                          and type(ref.get("end_line")) is int and ref["end_line"] == end]
+            if not any(ref.get("hash_kind") in ("file", "snippet")
+                       and ref.get("sha256") == hashlib.sha256(raw if ref["hash_kind"] == "file" else selected.encode("utf-8")).hexdigest()
+                       and isinstance(ref.get("exact_token"), str) and ref["exact_token"]
+                       and ref["exact_token"] in selected for ref in references):
+                return invalid()
+        if location:
+            expected.append(f"{number}. {location}")
+        summary = localized_string(item, "summary", language)
+        if summary:
+            expected.append(summary)
+        for line in snippet.splitlines():
+            if line.strip():
+                if bound:
+                    quote_offsets[len(expected)] = line
+                expected.append(line.strip())
+        explanation = localized_string(item, "explanation", language)
+        if explanation:
+            expected.append(explanation)
+    heading, stops = code_context_headings(language)
+    if lines.count(heading) != 1:
+        return invalid()
+    start = lines.index(heading) + 1
+    end = next((index for index in range(start, len(lines)) if lines[index] in stops), len(lines))
+    if lines[start:end] != expected:
+        return invalid()
+    raw_paragraphs = [p.text for p in Document(docx_path).paragraphs if p.text.strip()]
+    if any(raw_paragraphs[start + offset] != text for offset, text in quote_offsets.items()):
+        return invalid()
+    return {start + offset for offset in quote_offsets}
+
+
+def validate_code_context_section(lines: list[str], language: str, quoted_paragraphs: set[int] | None = None) -> None:
     heading, stop_headings = code_context_headings(language)
     section = section_text(lines, heading, stop_headings)
     if not section:
         fail(f"report {heading} section is missing or empty; include source path, line metadata, snippet, and code-level explanation")
 
     abbreviated_lines = 0
-    for raw_line in section.splitlines():
+    prose_section = section_text(
+        [line for index, line in enumerate(lines) if index not in (quoted_paragraphs or set())], heading, stop_headings,
+    )
+    for raw_line in prose_section.splitlines():
         stripped = raw_line.strip()
         if any(pattern.search(stripped) for pattern in CODE_CONTEXT_PLACEHOLDER_PATTERNS):
             fail(f"report {heading} section contains placeholder-only code context; replace it with real source snippets")
@@ -6089,10 +6184,14 @@ def looks_like_long_english_prose(text: str) -> bool:
     return hits >= 4
 
 
-def validate_no_untranslated_english_text(lines: list[str], markdown_texts: list[tuple[str, str]], language: str) -> None:
+def validate_no_untranslated_english_text(
+    lines: list[str], markdown_texts: list[tuple[str, str]], language: str, quoted_paragraphs: set[int] | None = None,
+) -> None:
     if language != "zh-CN":
         return
     for index, line in enumerate(lines, start=1):
+        if index - 1 in (quoted_paragraphs or set()):
+            continue
         if looks_like_long_english_prose(line):
             fail(
                 "zh-CN report contains a long English natural-language paragraph in DOCX "
@@ -6467,15 +6566,17 @@ def main() -> None:
         supplement_text = validate_reproduction_supplement(supplement_path, language)
         exploitability_text = validate_real_world_exploitability(lines, supplement_text, language)
         validate_report_depth(lines, language)
-        validate_code_context_section(lines, language)
-        validate_docx_code_context_style(docx_path, language)
-        validate_bundle_identity(bundle_dir, lines, workspace_dir)
         findings_path = resolve_findings_path(bundle_dir)
         project_name = ""
         title_tokens: list[str] = []
         selected_finding: dict[str, object] | None = None
         if findings_path is not None and findings_path.exists():
             defaults, selected_finding = load_selected_finding(findings_path, bundle_dir.name, workspace_dir)
+        quoted_paragraphs = verified_source_quote_paragraphs(bundle_dir, docx_path, lines, selected_finding, language)
+        validate_code_context_section(lines, language, quoted_paragraphs)
+        validate_docx_code_context_style(docx_path, language)
+        validate_bundle_identity(bundle_dir, lines, workspace_dir)
+        if findings_path is not None and findings_path.exists():
             project_name, title_tokens, selected_finding = load_bundle_identity(findings_path, bundle_dir.name, workspace_dir)
             validate_finding_vulnerability_name(selected_finding)
             validate_severity_consistency(bundle_dir, docx_path, selected_finding, language)
@@ -6485,12 +6586,13 @@ def main() -> None:
         if selected_finding is not None:
             validate_runtime_scope(defaults, selected_finding, verification_evidence, workspace_dir)
 
+        prose_text = "\n".join(line for index, line in enumerate(lines) if index not in quoted_paragraphs)
         combined_text = "\n".join(lines)
         if "CVSS 2.0" in combined_text:
             fail("CVSS 2.0 is not allowed; use CVSS 4.0 by default or CVSS 3.1 when required")
         validate_no_absolute_paths(combined_text)
         validate_no_non_standalone_paths(combined_text, "report docx")
-        validate_no_placeholder_text(combined_text, language, "report docx")
+        validate_no_placeholder_text(prose_text, language, "report docx")
         validate_no_raw_structured_objects(combined_text, "report docx")
         validate_mutable_runtime_identity(combined_text, "report docx")
         validate_relative_attachment_refs(combined_text, bundle_dir)
@@ -6507,6 +6609,7 @@ def main() -> None:
             lines,
             [(path.name, path.read_text(encoding="utf-8")) for path in markdown_paths],
             language,
+            quoted_paragraphs,
         )
         validate_no_placeholder_text(note_text, language, "attachment note")
         validate_no_placeholder_text(supplement_text, language, "reproduction supplement")
