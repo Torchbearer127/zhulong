@@ -9,6 +9,7 @@ import os
 import re
 import shlex
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -5262,6 +5263,134 @@ def validate_root_script_static_artifact_paths(script_path: Path, bundle_dir: Pa
             continue
         for label, raw_path in static_artifact_paths_from_shell_line(line):
             validate_static_artifact_reference(script_path, bundle_dir, raw_path, label)
+        for tokens in replay_compose_commands(line):
+            validate_replay_compose_inputs(bundle_dir, tokens)
+
+
+def replay_compose_commands(line: str) -> list[list[str]]:
+    try:
+        tokens = shlex.split(line, comments=True)
+    except ValueError:
+        return []
+    if tokens and tokens[0] == "run_logged_command" and len(tokens) == 2:
+        return replay_compose_commands(tokens[1])
+    if tokens[:2] == ["docker", "compose"]:
+        return [tokens[2:]]
+    if tokens[:1] == ["docker-compose"]:
+        return [tokens[1:]]
+    return []
+
+
+def replay_input_path(bundle_dir: Path, base: Path, value: str, *, directory: bool = False) -> Path:
+    if not value or "$" in value or is_absolute_host_path(value):
+        fail("REPLAY_INPUT_UNSAFE: replay inputs must use static bundle-local paths", code="REPLAY_INPUT_UNSAFE")
+    candidate = base / value
+    try:
+        relative = candidate.relative_to(bundle_dir)
+        if ".." in relative.parts:
+            # Check containment, then reject symlink components before use.
+            candidate.resolve().relative_to(bundle_dir.resolve())
+        current = bundle_dir
+        for part in relative.parts:
+            current = current / part
+            if stat.S_ISLNK(current.lstat().st_mode):
+                fail("REPLAY_INPUT_UNSAFE: symlink in replay input", code="REPLAY_INPUT_UNSAFE")
+        info = candidate.stat()
+    except ValueError:
+        fail("REPLAY_INPUT_UNSAFE: replay input escapes the bundle", code="REPLAY_INPUT_UNSAFE")
+        return candidate
+    except OSError:
+        fail("REPLAY_INPUT_MISSING: required replay input is unavailable", code="REPLAY_INPUT_MISSING")
+        return candidate
+    valid = stat.S_ISDIR(info.st_mode) if directory else stat.S_ISREG(info.st_mode) and info.st_nlink == 1
+    if not valid:
+        fail("REPLAY_INPUT_UNSAFE: replay input has the wrong file type", code="REPLAY_INPUT_UNSAFE")
+    return candidate
+
+
+def load_replay_compose(compose_file: Path) -> dict:
+    try:
+        import yaml
+        data = yaml.safe_load(compose_file.read_text(encoding="utf-8"))
+    except (ImportError, OSError, ValueError):
+        fail("REPLAY_INPUT_INVALID: cannot parse Compose input (PyYAML is required)", code="REPLAY_INPUT_INVALID")
+        return {}
+    except yaml.YAMLError:
+        fail("REPLAY_INPUT_INVALID: invalid Compose YAML", code="REPLAY_INPUT_INVALID")
+        return {}
+    if not isinstance(data, dict) or not isinstance(data.get("services"), dict):
+        fail("REPLAY_INPUT_INVALID: Compose services must be a mapping", code="REPLAY_INPUT_INVALID")
+        return {}
+    return data
+
+
+def validate_replay_compose_inputs(bundle_dir: Path, tokens: list[str]) -> None:
+    if tokens[:1] and tokens[0] in {"version", "help", "ls", "--help", "--version", "-h"}:
+        return
+    files = []
+    index = 0
+    while index < len(tokens) and tokens[index].startswith("-"):
+        option = tokens[index]
+        if option in {"-f", "--file", "-p", "--project-name"} and index + 1 < len(tokens):
+            if option in {"-f", "--file"}:
+                files.append(tokens[index + 1])
+            index += 2
+        elif option.startswith("--file="):
+            files.append(option.split("=", 1)[1])
+            index += 1
+        else:
+            fail("REPLAY_INPUT_UNSAFE: unsupported Compose context option; use explicit bundle-local -f files", code="REPLAY_INPUT_UNSAFE")
+            return
+    if not tokens[index:]:
+        return
+    if not files:
+        files = [name for name in ("compose.yaml", "compose.yml", "docker-compose.yml", "docker-compose.yaml")
+                 if (bundle_dir / name).exists()][:1]
+        if not files:
+            fail("REPLAY_INPUT_MISSING: default Compose input is not delivered at the bundle root", code="REPLAY_INPUT_MISSING")
+            return
+    services = {}
+    compose_paths = []
+    for name in files:
+        compose = replay_input_path(bundle_dir, bundle_dir, name)
+        compose_paths.append(compose)
+        for service, config in load_replay_compose(compose).get("services", {}).items():
+            if not isinstance(config, dict):
+                fail("REPLAY_INPUT_INVALID: invalid Compose service", code="REPLAY_INPUT_INVALID")
+                continue
+            previous = services.get(service, {})
+            merged = {**previous, **config}
+            for field in ("build", "healthcheck"):
+                before, after = previous.get(field), config.get(field)
+                if field == "build":
+                    before = {"context": before} if isinstance(before, str) else before
+                    after = {"context": after} if isinstance(after, str) else after
+                if isinstance(before, dict) and isinstance(after, dict):
+                    merged[field] = {**before, **after}
+            services[service] = merged
+    # Compose resolves paths in every -f file against the first file's directory.
+    for compose in compose_paths:
+        validate_compose_static_paths(compose, bundle_dir, project_dir=compose_paths[0].parent,
+                                      services=services)
+    args = tokens[index + 1:]
+    if tokens[index] == "up" and "--wait" in args:
+        selected = []
+        cursor = 0
+        while cursor < len(args):
+            token = args[cursor]
+            if token == "--wait-timeout":
+                cursor += 2
+                continue
+            if not token.startswith("-"):
+                selected.append(token)
+            cursor += 1
+        for service in selected or list(services):
+            health = services.get(service, {}).get("healthcheck", {})
+            test = health.get("test") if isinstance(health, dict) else None
+            valid_test = ((isinstance(test, str) and test.strip() not in {"", "NONE"}) or
+                          (isinstance(test, list) and len(test) >= 2 and test[0] in {"CMD", "CMD-SHELL"}))
+            if not valid_test or health.get("disable"):
+                fail("REPLAY_HEALTHCHECK_MISSING: started services require an explicit healthcheck", code="REPLAY_HEALTHCHECK_MISSING")
 
 
 def validate_root_script_target_identity(script_path: Path, bundle_dir: Path, text: str) -> None:
@@ -6040,7 +6169,8 @@ def short_volume_source(spec: str) -> str:
     return text.split(":", 1)[0] if ":" in text else ""
 
 
-def validate_compose_local_path(compose_file: Path, bundle_dir: Path, value: str, label: str, *, must_be_file: bool = False) -> None:
+def validate_compose_local_path(compose_file: Path, bundle_dir: Path, value: str, label: str, *, must_be_file: bool = False,
+                                project_dir: Path | None = None) -> None:
     token = unquote_yaml_scalar(value)
     if not token:
         return
@@ -6048,7 +6178,7 @@ def validate_compose_local_path(compose_file: Path, bundle_dir: Path, value: str
         fail(f"{compose_file.name} {label} must use a static bundle-local path, got variable reference: {token}")
     if is_absolute_host_path(token):
         fail(f"{compose_file.name} {label} must not use an absolute host path: {token}")
-    resolved = (compose_file.parent / token).resolve()
+    resolved = ((project_dir or compose_file.parent) / token).resolve()
     try:
         resolved.relative_to(bundle_dir.resolve())
     except ValueError:
@@ -6059,11 +6189,34 @@ def validate_compose_local_path(compose_file: Path, bundle_dir: Path, value: str
         fail(f"{compose_file.name} {label} must point to a file: {token}")
 
 
-def validate_compose_static_paths(compose_file: Path, bundle_dir: Path) -> None:
+def validate_compose_static_paths(compose_file: Path, bundle_dir: Path, *, project_dir: Path | None = None,
+                                  services: dict | None = None) -> None:
+    replay_input_path(bundle_dir, compose_file.parent, compose_file.name)
+    data = load_replay_compose(compose_file)
+    for service in (services if services is not None else data.get("services", {})).values():
+        if not isinstance(service, dict) or "build" not in service:
+            continue
+        build = service["build"]
+        if isinstance(build, str):
+            context, dockerfile = build, "Dockerfile"
+        elif isinstance(build, dict):
+            context, dockerfile = build.get("context", "."), build.get("dockerfile", "Dockerfile")
+            if "dockerfile_inline" in build:
+                dockerfile = None
+        else:
+            fail("REPLAY_INPUT_INVALID: invalid Compose build definition", code="REPLAY_INPUT_INVALID")
+            continue
+        if not isinstance(context, str) or (dockerfile is not None and not isinstance(dockerfile, str)):
+            fail("REPLAY_INPUT_INVALID: build paths must be strings", code="REPLAY_INPUT_INVALID")
+            continue
+        directory = replay_input_path(bundle_dir, project_dir or compose_file.parent, context, directory=True)
+        if dockerfile is not None:
+            replay_input_path(bundle_dir, directory, dockerfile)
     lines = compose_file.read_text(encoding="utf-8", errors="ignore").splitlines()
     env_entries = collect_env_file_entries(lines)
     for line_number, env_path in env_entries:
-        validate_compose_local_path(compose_file, bundle_dir, env_path, f"env_file on line {line_number}", must_be_file=True)
+        validate_compose_local_path(compose_file, bundle_dir, env_path, f"env_file on line {line_number}",
+                                    must_be_file=True, project_dir=project_dir)
 
     for line_number, kind, value in collect_volume_entries(lines):
         source = short_volume_source(value) if kind == "short" else value
@@ -6073,7 +6226,8 @@ def validate_compose_static_paths(compose_file: Path, bundle_dir: Path) -> None:
             continue
         if kind not in {"short", "bind"} and not is_pathish_volume_source(source, kind):
             continue
-        validate_compose_local_path(compose_file, bundle_dir, source, f"volume source on line {line_number}")
+        validate_compose_local_path(compose_file, bundle_dir, source, f"volume source on line {line_number}",
+                                    project_dir=project_dir)
 
 
 def docker_compose_available() -> bool:

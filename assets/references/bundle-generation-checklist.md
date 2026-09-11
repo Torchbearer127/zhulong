@@ -24,6 +24,10 @@ Before creating a final `confirmed/<slug>/` bundle:
 - Run `python3 scripts/build_confirmed_bundle.py --repo-root <target-repository> --workspace-dir <audit-workspace> --contract <contract> --language <zh-CN|en-US>`.
 - Confirm the staged/final bundle contains synchronized `validity-review.json`, bundle-local `findings.json`, `verification-evidence.json`, reviewer index fields, a DOCX validity section, and manifest contract/tested-ref/source-binding hashes.
 - Let the wrapper render into `confirmed/.staging/<slug>`, validate the staging bundle, promote only after validation passes, and run batch validation.
+- Match `replay.root_script.path` and every `files` declaration to actual staging files. Supply them through the renderer's inputs; declarations alone do not copy files. Missing, linked, or non-regular declared files block promotion.
+- Deliver the Compose files, local build contexts, and Dockerfiles used by direct root-script commands. Default Compose discovery starts at the bundle root; multiple `-f` inputs use the first file's directory for relative paths. Static YAML validation requires PyYAML.
+- For generated detached Compose startup, provide enabled service healthchecks and a Compose version supporting `up --wait --wait-timeout`. Set `ZHULONG_READY_TIMEOUT_SECONDS` independently of visual pauses (1–600 seconds, default 30); wait failure must stop later proof commands.
+- Review handwritten shell wrappers separately; static Compose input checks do not interpret arbitrary shell syntax. Packaging success does not prove a build, healthy startup, or replay succeeded, and the builder's runtime stages remain `not_executed`.
 - Failed builds stay under `confirmed/.staging/` and must not be called confirmed deliverables.
 - Do not create marker-only replay logs. Registered proof replay logs must come
   from real reviewer/helper transcript evidence and be registered in evidence.

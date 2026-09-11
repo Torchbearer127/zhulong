@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import json
 import shutil
+import stat
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -17,6 +18,37 @@ from validate_report_bundle import classify_replay_transcript
 
 class BuildError(Exception):
     pass
+
+
+def validate_replay_contract_outputs(contract: dict[str, Any], bundle_dir: Path) -> None:
+    """Check the contract's complete delivery list against rendered staging bytes."""
+    replay = contract.get("replay", {})
+    files = contract.get("files", {})
+    root_script = replay.get("root_script", {}).get("path")
+    if (not isinstance(root_script, str) or not root_script.endswith(".sh") or
+            PurePosixPath(root_script).name != root_script):
+        raise BuildError("REPLAY_DECLARED_FILE_UNSAFE: replay entrypoint must be a bundle-root shell script")
+    paths = [root_script,
+             files.get("verification_evidence"), files.get("reviewer_evidence_index")]
+    paths.extend(files.get("evidence_files", []))
+    paths.extend(files.get("attachments", []))
+    for raw in paths:
+        if not isinstance(raw, str) or not raw or "\\" in raw:
+            raise BuildError("REPLAY_DECLARED_FILE_UNSAFE: invalid declared delivery path")
+        relative = PurePosixPath(raw)
+        if relative.is_absolute() or any(part in {"..", "~"} for part in relative.parts):
+            raise BuildError("REPLAY_DECLARED_FILE_UNSAFE: delivery path must stay within the bundle")
+        current = bundle_dir
+        try:
+            for part in relative.parts:
+                current = current / part
+                if stat.S_ISLNK(current.lstat().st_mode):
+                    raise BuildError("REPLAY_DECLARED_FILE_UNSAFE: symlink in declared delivery path")
+            info = current.lstat()
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                raise BuildError("REPLAY_DECLARED_FILE_UNSAFE: declared delivery input must be a regular file")
+        except (OSError, ValueError) as exc:
+            raise BuildError(f"REPLAY_DECLARED_FILE_MISSING: declared delivery input is unavailable: {raw}") from exc
 
 
 def parse_args() -> argparse.Namespace:
@@ -584,6 +616,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
             raise BuildError(f"renderer output slug mismatch: expected {slug}, got {rendered.name}")
         staging_dir.mkdir(parents=True, exist_ok=True)
         shutil.move(str(rendered), str(staging_path))
+        validate_replay_contract_outputs(contract, staging_path)
         write_manifest(
             staging_path,
             contract_path=contract_path,

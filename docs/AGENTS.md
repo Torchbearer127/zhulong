@@ -190,6 +190,40 @@ Before a release, run through:
 - `../CONTRIBUTING.md`
 - [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md)
 
+## Chinese Documentation And Terminology
+
+These rules apply to Chinese README, usage/workflow documentation, reference
+prose, and generated Chinese reviewer text. They are maintenance requirements,
+not optional style suggestions.
+
+- Keep corresponding Chinese and English instructions semantically aligned:
+  conditions, defaults, failure behavior, supported scope, and limitations must
+  agree. Prefer natural Chinese sentences over literal translations.
+- Before editing, read the surrounding section and search the other Chinese
+  documents for each affected term. Use the same name for the same concept;
+  do not alternate English and Chinese translations for stylistic variety.
+- Retain English only for necessary tool/product names, established technical
+  abbreviations, `skill`, and exact commands, options, fields, paths, statuses,
+  or quoted output. Use Chinese for ordinary actions and explanations. Do not
+  repeatedly add English glosses to established Chinese terms.
+- Use the terminology table in
+  `../assets/references/output-language-and-path-contract.md` as the canonical
+  vocabulary. If an existing document conflicts, correct the affected prose;
+  do not infer a new spelling from an isolated older occurrence. New recurring
+  terms must be recorded there before introducing competing translations.
+- Do not conflate concepts to achieve surface consistency: the Docker tool,
+  a container instance, and an image are different objects. Preserve actor,
+  object, and action when rewriting. Exact executable names, API values, quoted
+  output, code, and source excerpts must not be translated or case-normalized.
+- Use a Chinese de-AI/style skill when available for changed Chinese prose,
+  with a light technical-document edit. Otherwise apply these same rules
+  manually. Style cleanup must preserve technical meaning and all constraints.
+- Before finishing, compare the changed Chinese and English sections, search
+  for alternate translations/casing in the affected Chinese documents, and
+  inspect new English fragments individually. Record any unresolved mismatch;
+  a keyword scan alone is not semantic verification. Do not rewrite historical
+  reports or test evidence to enforce current prose style.
+
 ## Common Change Areas
 
 When fixing a product bug, patch the canonical source area:

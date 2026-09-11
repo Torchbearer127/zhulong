@@ -22,6 +22,10 @@
 1. Keep the plugin self-contained.
 2. Avoid introducing machine-specific paths.
 3. Update the reference docs if workflow behavior changes.
+   For Chinese prose, follow the terminology and bilingual review requirements
+   in `docs/AGENTS.md` and `assets/references/output-language-and-path-contract.md`.
+   Preserve commands and technical distinctions; do not mix translations for
+   the same concept or omit limitations from either language.
 4. For Codex layout or sync changes, update
    `docs/CODEX_SKILL_ADAPTATION.md` first and keep installed copies out of
    source control.

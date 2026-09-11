@@ -5,7 +5,7 @@
 <h1>烛龙（Zhulong）</h1>
 
 <p><strong>面向本地 Agent 的模块化安全导向代码审计工作流：<br>
-先在 Docker 中复现，再确认报告。</strong></p>
+先在 docker 中复现，再确认报告。</strong></p>
 
 <p><em>是烛九阴，是谓烛龙。</em><br>
 <em>That which illumines the nether gloom — the Torch Dragon.</em></p>
@@ -31,9 +31,9 @@
 
 ## ⚡ 核心特性速览
 
-- 🛡️ **Docker 优先验证：** 只有 Docker 或 Docker Compose 证据支持的问题，才会进入已确认报告。
+- 🛡️ **docker 优先验证：** 只有 docker 或 docker compose 证据支持的问题，才会进入已确认报告。
 - 🎯 **仅交付已确认结果：** 扫描器告警、依赖提示、静态分析结果和 LLM 推测会先隔离为候选项，不会直接混入已确认漏洞。
-- 🌱 **同类漏洞扩展：** 用已确认漏洞提示同一仓库里可能存在的同类漏洞，但这些线索必须单独 Docker 复现后才算漏洞。
+- 🌱 **同类漏洞扩展：** 用已确认漏洞提示同一仓库里可能存在的同类漏洞，但这些线索必须单独 docker 复现后才算漏洞。
 - 🔌 **轻量模块化：** 不强制依赖后端服务、数据看板、数据库、向量存储或 RAG 平台；通过本地 Agent 模块和脚本即可运行。
 - 🤝 **人机协同易读：** 工作区、交接摘要和机器可读判断记录同时面向 AI 编程 Agent 与人工审核员设计。
 
@@ -45,8 +45,8 @@
 | :--- | :--- |
 | [项目概述](#-项目概述) | 说明烛龙的定位、紧凑工作流和“先复现再确认”的核心原则。 |
 | [为什么选择烛龙？](#-为什么选择烛龙) | 对照传统审计痛点，解释烛龙的轻量化、低误报和证据导向优势。 |
-| [系统架构](#-系统架构) | 展示本地模块化流水线，以及 Agent、脚本、Docker 和产物之间的关系。 |
-| [快速开始](#-快速开始) | 给出平台支持、Skill同步、本地 Agent 提示词和手动脚本启动方式。 |
+| [系统架构](#-系统架构) | 展示本地模块化流水线，以及 Agent、脚本、docker 和产物之间的关系。 |
+| [快速开始](#-快速开始) | 给出平台支持、skill 同步、本地 Agent 提示词和手动脚本启动方式。 |
 | [烛龙会产出什么？](#-烛龙会产出什么) | 说明审计工作区结构和已确认漏洞证据包内容。 |
 | [审计工作流](#-审计工作流) | 拆解从项目导入到完成交接的主要阶段。 |
 | [依赖项与可选集成](#%EF%B8%8F-依赖项与可选集成) | 列出必选运行依赖和可选安全工具族。 |
@@ -61,11 +61,11 @@
 
 ## 🔭 项目概述
 
-烛龙是一个面向授权审计的模块化、适合 Agent 操作的安全代码审计工作流。它不是单纯的漏洞扫描器，也不是需要部署的重型审计平台，而是给本地 AI 编程 Agent 一条从理解仓库到 Docker 验证、再到可复核交付的严谨路径。
+烛龙是一个面向授权审计的模块化、适合 Agent 操作的安全代码审计工作流。它不是单纯的漏洞扫描器，也不是需要部署的重型审计平台，而是给本地 AI 编程 Agent 一条从理解仓库到 docker 验证、再到可复核交付的严谨路径。
 
 工作流刻意保持紧凑：
 
-> `导入项目` → `建模攻击面` → `生成候选项` → `Docker 复现` →
+> `导入项目` → `建模攻击面` → `生成候选项` → `docker 复现` →
 > `打包证据` → `交接结果`
 
 烛龙主要解决代码安全审计中的四类痛点：
@@ -75,7 +75,7 @@
 - **证据碎片化：** 证据、脚本、报告和漏洞研判记录经常彼此脱节。
 - **交接脆弱：** 长对话上下文很难让另一个 Agent 或人工审核员可靠接续。
 
-> **💡 核心理念：** 烛龙只有在适用的 Docker 或 Docker Compose 复现、源码绑定的
+> **💡 核心理念：** 烛龙只有在适用的 docker 或 docker compose 复现、源码绑定的
 > 有效性与严重性检查，以及最终报告证据包校验全部通过后，才会把漏洞标记为“已确认”。
 > 其他结果会保留为候选项、误报、未验证线索或阻塞项。
 
@@ -89,10 +89,10 @@
 | :--- | :--- |
 | **扫描器或 LLM 输出噪声高** | 烛龙用机器可读的判断记录 `audit-disposition.json` 管理每条线索，避免未验证内容悄悄混入已确认报告。 |
 | **人工复核要反复重建证据链** | 每个已确认漏洞都会打包报告、复现说明、附件索引、证据 JSON、日志、截图和一个根目录运行脚本。 |
-| **源码层面的结论难以信任** | 如果问题可以在运行时验证，烛龙会要求 Agent 先在 Docker 或 Docker Compose 中复现，再把它报告为已确认。 |
+| **源码层面的结论难以信任** | 如果问题可以在运行时验证，烛龙会要求 Agent 先在 docker 或 docker compose 中复现，再把它报告为已确认。 |
 | **重型平台部署和维护成本高** | 烛龙以本地 Agent 模块和脚本运行，不要求后端服务、数据看板、数据库、向量存储或 RAG 平台。 |
-| **完成状态容易只靠文字描述** | 自动检查会验证报告文件、证据文件、判断记录和 Docker 清理状态，再允许审计标记为完成。 |
-| **Docker 残留和环境漂移会隐藏风险** | 烛龙记录 Docker 初始状态，检查新产生的容器、镜像、网络和卷，并拒绝可能误删用户资源的粗暴清理。 |
+| **完成状态容易只靠文字描述** | 自动检查会验证报告文件、证据文件、判断记录和 docker 清理状态，再允许审计标记为完成。 |
+| **docker 残留和环境漂移会隐藏风险** | 烛龙记录 docker 初始状态，检查新产生的容器、镜像、网络和卷，并拒绝可能误删用户资源的粗暴清理。 |
 | **Agent 工作难以被人工接手** | 工作区文件、交接摘要和确定性输出同时面向 AI 编程 Agent 与人工审核员设计。 |
 
 ---
@@ -101,32 +101,32 @@
 
 ### 整体架构图
 
-烛龙采用本地模块化工作流，核心路径由 Agent 运行时、本地脚本、自动检查、参考文档、Docker 安全门禁和工作区产物驱动。
+烛龙采用本地模块化工作流，核心路径由 Agent 运行时、本地脚本、自动检查、参考文档、docker 安全门禁和工作区产物驱动。
 
 <div align="center">
   <img src="assets/branding/zhulong-pipeline.png" alt="烛龙流水线图" width="92%" />
   <p><em>烛龙流水线：把源码转化为可复核证据包。</em></p>
 </div>
 
-上面的流水线图就是烛龙的核心心智模型：用小而稳定的本地模块，把仓库、Docker 运行时环境和项目安全策略转化为隔离的候选项，或通过验证的证据包。持久规则沉淀在脚本、自动检查、参考文档和工作区产物里，因此工作流不会变成只存在于长对话里的隐形流程，也更容易迁移到不同的本地 Agent 环境。
+上面的流水线图就是烛龙的核心心智模型：用小而稳定的本地模块，把仓库、docker 运行时环境和项目安全策略转化为隔离的候选项，或通过验证的证据包。持久规则沉淀在脚本、自动检查、参考文档和工作区产物里，因此工作流不会变成只存在于长对话里的隐形流程，也更容易迁移到不同的本地 Agent 环境。
 
 ---
 
 ## 🚀 快速开始
 
-烛龙会通过本地 Agent、Docker、仓库内脚本和可选安全工具协同运行。完整依赖清单见后文“依赖项与可选集成”部分；完整启动提示词、手动启动方式和 `zhulong_audit.sh` 参数见 [`docs/USAGE.zh-CN.md`](docs/USAGE.zh-CN.md)。
+烛龙会通过本地 Agent、docker、仓库内脚本和可选安全工具协同运行。完整依赖清单见后文“依赖项与可选集成”部分；完整启动提示词、手动启动方式和 `zhulong_audit.sh` 参数见 [`docs/USAGE.zh-CN.md`](docs/USAGE.zh-CN.md)。
 
 ### 平台支持
 
-下面的命令默认使用类 Unix shell，因为烛龙的运行时辅助脚本主要是 Bash/Python 脚本，验证路径也以 Docker 中复现为核心。
+下面的命令默认使用类 Unix shell，因为烛龙的运行时辅助脚本主要是 Bash/Python 脚本，验证路径也以 docker 中复现为核心。
 
 | 平台 | 推荐路径 | 说明 |
 | :--- | :--- | :--- |
-| **macOS** | ✅ 已支持并完成发布候选测试 | 使用 Docker Desktop 或其他 Docker Engine、Python 3.11+、Bash 和本地 Agent Skill 同步路径。 |
-| **Linux** | ✅ 支持路径 | 使用 Docker Engine、Docker Compose、Python 3.11+、Bash，并使用下方同一组命令。如果你的 Agent 使用非默认 Skill 目录，可覆盖 `CLAUDE_SKILLS_DIR`。 |
-| **Windows** | ⚠️ 推荐使用 WSL2 | 在 WSL2 内运行烛龙，尽量把 audit workspace 放在 WSL 文件系统中，并启用 Docker Desktop WSL integration。原生 PowerShell/CMD 执行目前还不是一等支持路径。 |
+| **macOS** | ✅ 已支持并完成发布候选测试 | 使用 Docker Desktop 或其他 Docker Engine、Python 3.11+、Bash 和本地 Agent skill 同步路径。 |
+| **Linux** | ✅ 支持路径 | 使用 Docker Engine、docker compose、Python 3.11+、Bash，并使用下方同一组命令。如果你的 Agent 使用非默认 skill 目录，可覆盖 `CLAUDE_SKILLS_DIR`。 |
+| **Windows** | ⚠️ 推荐使用 WSL2 | 在 WSL2 内运行烛龙，尽量把审计工作区放在 WSL 文件系统中，并启用 Docker Desktop 的 WSL 集成。原生 PowerShell/CMD 执行目前尚未优先支持。 |
 
-### 方式一：本地 Agent Skill 同步（推荐）
+### 方式一：本地 Agent skill 同步（推荐）
 
 从插件包根目录先运行一次自检：
 
@@ -156,7 +156,7 @@ bash scripts/sync_to_codex_skill.sh
 python3 ~/.agents/skills/zhulong/scripts/selftest_plugin.py
 ```
 
-Codex 用户级 Skill 安装目录是：
+Codex 用户级 skill 安装目录是：
 
 ```text
 ~/.agents/skills/zhulong/
@@ -181,7 +181,7 @@ Codex 时，也可以显式输入 `$zhulong` 调用烛龙。
 
 ### 方式二：手动脚本启动
 
-如果你希望不依赖 Agent Skill 发现机制，直接从终端启动：
+如果你希望不依赖 Agent skill 发现机制，直接从终端启动：
 
 ```bash
 # 远程仓库
@@ -207,11 +207,11 @@ bash scripts/zhulong_audit.sh --repo-root /path/to/repo
 ├── 🗺️ attack-surface.md          # 仓库特定攻击面笔记
 ├── 🔍 candidate-findings.md      # 仍在复核的候选问题
 ├── ❌ false-positives.md         # 已复核并排除的问题
-├── ❓ unverified-leads.md        # 有价值但未 Docker 确认的线索
+├── ❓ unverified-leads.md        # 有价值但未 docker 确认的线索
 ├── 📝 handoff-summary.md         # 面向人工和 Agent 的接续说明
 ├── 🏁 SUMMARY.md                 # 工作区最终摘要
 ├── 🧭 runtime/                   # 运行时状态
-├── 🐳 docker/                    # Docker 初始基线与清理状态
+├── 🐳 docker/                    # docker 初始基线与清理状态
 ├── 🔎 evidence/                  # 支撑证据
 │   └── variant-analysis/         # 确认漏洞审计中的种子卡与同类候选
 └── 🎯 confirmed/                 # 已确认漏洞证据包，如存在
@@ -229,9 +229,9 @@ confirmed/<vulnerability-slug>/
 └── 📂 attachments/
 ```
 
-只有当适用的 Docker 或 Docker Compose 运行时证据、源码绑定的有效性与严重性检查，
+只有当适用的 docker 或 docker compose 运行时证据、源码绑定的有效性与严重性检查，
 以及最终漏洞包自动校验全部通过后，一个发现才算已确认交付物。同类漏洞扩展只生成
-候选项，每条候选仍需独立完成 Docker 复现。
+候选项，每条候选仍需独立完成 docker 复现。
 
 人机协同细节、报告质量门禁、验证命令、示例审计发现形态、同类扩展复审规则和限制请阅读 [`docs/WORKFLOW_DETAILS.zh-CN.md`](docs/WORKFLOW_DETAILS.zh-CN.md)。
 
@@ -241,27 +241,27 @@ confirmed/<vulnerability-slug>/
 
 | 步骤 | 阶段 | 负责模块 | 主要动作 |
 | :---: | :--- | :--- | :--- |
-| 1 | 项目导入 | 本地 Agent + 启动脚本 | 接收目标仓库，创建时间戳工作区，记录 Docker 初始状态，加载参考规则。 |
+| 1 | 项目导入 | 本地 Agent + 启动脚本 | 接收目标仓库，创建时间戳工作区，记录 docker 初始状态，加载参考规则。 |
 | 2 | 信息收集与建模 | Agent + 审计手册 (Playbook) | 识别仓库技术栈、入口、信任边界、污染汇聚点 (Sink)、部署假设和项目安全策略。 |
 | 3 | 候选发现 | Agent + 本地工具 | 把扫描器、审计手册、依赖提示、静态推理、LLM 推理和可选的已确认种子漏洞同类扩展作为候选生成器，而不是确认来源。 |
-| 4 | Docker 验证 | 安全前置检查 + 验证脚本 | 拒绝危险验证容器，在 Docker 或 Compose 中复现候选项，并收集具体证据。 |
+| 4 | docker 验证 | 安全前置检查 + 验证脚本 | 拒绝危险验证容器，在 docker 或 docker compose 中复现候选项，并收集具体证据。 |
 | 5 | 判断与打包 | 判断记录 + 证据包检查 | 把每条线索归类为已确认、误报、未验证、阻塞或仍为候选，并为已确认漏洞生成可复核证据包。 |
-| 6 | 完成检查与交接 | 完成检查 + 完整性脚本 | 重新检查 Docker 清理状态，校验判断记录和证据包，然后写入最终摘要与交接文件。 |
+| 6 | 完成检查与交接 | 完成检查 + 完整性脚本 | 重新检查 docker 清理状态，校验判断记录和证据包，然后写入最终摘要与交接文件。 |
 
 ---
 
 ## 🖥️ 依赖项与可选集成
 
-烛龙刻意保持轻量：核心工作流由本地 Agent 入口、仓库内脚本和自动检查组成。需要在运行时复现漏洞时，Docker 是必选项；大多数安全工具只是用于发现线索的可选组件。
+烛龙刻意保持轻量：核心工作流由本地 Agent 入口、仓库内脚本和自动检查组成。需要在运行时复现漏洞时，docker 是必选项；大多数安全工具只是用于发现线索的可选组件。
 
 | 依赖项 / 集成 | 是否必选 | 在烛龙中的作用 | 链接 |
 | :--- | :---: | :--- | :--- |
-| **本地 AI 编程 Agent 运行时** | 预期工作流必选 | 读取烛龙 Skill 和文档，协调仓库审计，并运行本地脚本。Claude Code 和 Codex 用户级 Skill 同步路径均已通过测试；也保留脚本方式的手动启动。 | [Claude Code docs](https://docs.anthropic.com/en/docs/claude-code/overview), [Codex Agent Skills docs](https://developers.openai.com/codex/skills) |
+| **本地 AI 编程 Agent 运行时** | 预期工作流必选 | 读取烛龙 skill 和文档，协调仓库审计，并运行本地脚本。Claude Code 和 Codex 用户级 skill 同步路径均已通过测试；也保留脚本方式的手动启动。 | [Claude Code docs](https://docs.anthropic.com/en/docs/claude-code/overview), [Codex Agent Skills docs](https://developers.openai.com/codex/skills) |
 | **Python 3.11+** | 必选 | 运行自动检查、完成检查、自检、报告渲染辅助脚本和工作区完整性检查。 | [python.org](https://www.python.org/) |
-| **Docker Engine / Docker Desktop** | 已确认漏洞必选 | 提供隔离复现运行时。Docker 不可用时，烛龙会暂停或记录验证受阻，不回退到宿主机执行。 | [Docker docs](https://docs.docker.com/engine/) |
-| **Docker Compose** | 目标验证使用 Compose 时必选 | 使用项目原生或生成的 Compose 文件启动目标应用和验证栈。 | [Docker Compose docs](https://docs.docker.com/compose/) |
+| **Docker Engine / Docker Desktop** | 已确认漏洞必选 | 提供隔离复现运行时。docker 不可用时，烛龙会暂停或记录验证受阻，不回退到宿主机执行。 | [docker docs](https://docs.docker.com/engine/) |
+| **docker compose** | 目标验证使用 docker compose 时必选 | 使用项目原生或生成的 docker compose 文件启动目标应用和验证栈。 | [docker compose docs](https://docs.docker.com/compose/) |
 | **Git** | 远程目标必选 | 克隆目标仓库并保留源码上下文。 | [git-scm.com](https://git-scm.com/) |
-| **POSIX shell / Bash** | 必选 | 运行 Workspace 辅助脚本、Docker 环境卫生检查、初始探测任务和复现脚本。 | [GNU Bash](https://www.gnu.org/software/bash/) |
+| **POSIX shell / Bash** | 必选 | 运行 工作区 辅助脚本、docker 环境卫生检查、初始探测任务和复现脚本。 | [GNU Bash](https://www.gnu.org/software/bash/) |
 | **GitHub CLI (`gh`)** | 可选 | 可用于 GitHub clone/auth 流程和仓库元数据查询。 | [GitHub CLI](https://cli.github.com/) |
 | **oh-my-claudecode (OMC)** | 可选多 Agent 增强 | 只有在你主动使用 OMC `/team`、`/ultrawork` 等多 Agent 模式时才需要。正常审计不依赖 OMC；烛龙对 OMC 多 Agent 工作进程 PID 始终只读复核。 | [OMC GitHub](https://github.com/Yeachan-Heo/oh-my-claudecode) |
 
@@ -273,11 +273,11 @@ confirmed/<vulnerability-slug>/
 
 | 可选工具族 | 示例 | 作用 | 确认规则 |
 | :--- | :--- | :--- | :--- |
-| **SAST / 模式匹配扫描** | [Semgrep](https://github.com/semgrep/semgrep), [CodeQL](https://codeql.github.com/) | 广泛代码模式发现和自定义规则探索。 | 结果必须先作为候选，不能绕过 Docker 证据和报告证据包检查。 |
+| **SAST / 模式匹配扫描** | [Semgrep](https://github.com/semgrep/semgrep), [CodeQL](https://codeql.github.com/) | 广泛代码模式发现和自定义规则探索。 | 结果必须先作为候选，不能绕过 docker 证据和报告证据包检查。 |
 | **依赖与 OSV 扫描** | [OSV-Scanner](https://github.com/google/osv-scanner), [`npm audit`](https://docs.npmjs.com/cli/commands/npm-audit), [pip-audit](https://github.com/pypa/pip-audit), [govulncheck](https://go.dev/doc/security/vuln/) | 依赖公告发现和语言生态漏洞提示。 | 仅有依赖扫描结果不能被报告为已确认漏洞。 |
-| **SBOM 与镜像分析** | [Syft](https://github.com/anchore/syft), [Grype](https://github.com/anchore/grype), [Trivy](https://github.com/aquasecurity/trivy) | 生成 SBOM，扫描 filesystem/image，提供容器漏洞线索。 | 扫描器输出只是线索证据，仍需复核和复现。 |
+| **SBOM 与镜像分析** | [Syft](https://github.com/anchore/syft), [Grype](https://github.com/anchore/grype), [Trivy](https://github.com/aquasecurity/trivy) | 生成 SBOM，扫描 文件系统或镜像，提供容器漏洞线索。 | 扫描器输出只是线索证据，仍需复核和复现。 |
 | **敏感信息泄露扫描** | [Gitleaks](https://github.com/gitleaks/gitleaks), [TruffleHog](https://github.com/trufflesecurity/trufflehog) | 发现疑似敏感信息泄露，生成脱敏摘要并保留本地原始日志。 | 凭据发现披露前仍需人工漏洞研判和范围确认。 |
-| **聚焦 DAST 辅助工具** | [Nuclei](https://github.com/projectdiscovery/nuclei), [ffuf](https://github.com/ffuf/ffuf), [sqlmap](https://github.com/sqlmapproject/sqlmap), [OWASP ZAP](https://www.zaproxy.org/) | 仅对授权的本地 Docker 目标做聚焦动态检查。 | 未明确授权时不得进行激进或外部测试。 |
+| **聚焦 DAST 辅助工具** | [Nuclei](https://github.com/projectdiscovery/nuclei), [ffuf](https://github.com/ffuf/ffuf), [sqlmap](https://github.com/sqlmapproject/sqlmap), [OWASP ZAP](https://www.zaproxy.org/) | 仅对授权的本地 docker 目标做聚焦动态检查。 | 未明确授权时不得进行激进或外部测试。 |
 | **语言专用分析器** | [gosec](https://github.com/securego/gosec), [SpotBugs](https://spotbugs.github.io/), [FindSecBugs](https://find-sec-bugs.github.io/), Maven, Gradle | 为 Java、Go 等生态提供静态或依赖上下文。 | 结果用于漏洞研判，不能单独成为已确认漏洞。 |
 | **文档 QA 辅助** | [LibreOffice](https://www.libreoffice.org/), [MarkItDown](https://github.com/microsoft/markitdown) | 可选 DOCX 转换和可读性冒烟测试。 | 不影响漏洞确认。 |
 
@@ -293,16 +293,16 @@ confirmed/<vulnerability-slug>/
 zhulong/
 ├── .claude-plugin/plugin.json          # Claude plugin-style 发现元数据
 ├── .codex-plugin/plugin.json           # 跨本地 Agent / Codex 元数据
-├── skills/zhulong/SKILL.md             # Agent Skill 入口
-├── templates/claude-skill/SKILL.md     # 已安装 Skill 模板
+├── skills/zhulong/SKILL.md             # Agent skill 入口
+├── templates/claude-skill/SKILL.md     # 已安装 skill 模板
 ├── scripts/                            # 运行时辅助脚本和自动检查
 │   ├── zhulong_audit.sh                # 平台无关启动入口
-│   ├── resolve_skill_root.sh           # 源码/安装 Skill 根目录解析器
+│   ├── resolve_skill_root.sh           # 源码/安装 skill 根目录解析器
 │   ├── asr_start.sh                    # 创建或复用审计工作区
-│   ├── manage_docker_resources.py      # Docker 初始基线、精确清理、严格环境卫生检查
+│   ├── manage_docker_resources.py      # docker 初始基线、精确清理、严格环境卫生检查
 │   ├── check_sandbox_preflight.py      # 危险验证容器前置拒绝
-│   ├── docker_case_lifecycle.py        # 单个验证 case 的 Docker 身份、资源策略与精确清理
-│   ├── run_verification_case.sh        # 仅在 Docker 中执行验证 case 并采集证据
+│   ├── docker_case_lifecycle.py        # 单个验证案例 的 docker 身份、资源策略与精确清理
+│   ├── run_verification_case.sh        # 仅在 docker 中执行验证案例 并采集证据
 │   ├── audit_disposition.py            # 工作区级线索判断记录
 │   ├── finalize_audit_workspace.py     # 交接前完成检查
 │   ├── assert_finalized_workspace.py   # 已完成工作区完整性检查
@@ -315,7 +315,7 @@ zhulong/
 │   └── selftest_plugin.py              # 发布 / 打包自检
 ├── assets/
 │   ├── branding/                       # README 视觉与 logo 资源
-│   ├── attacker-container/             # 可选本地 attacker container 模板
+│   ├── attacker-container/             # 可选本地 攻击者容器 模板
 │   ├── references/                     # 审计手册、安全契约、输出模板
 │   ├── schemas/                        # 同类漏洞种子卡等结构化 schema
 │   └── examples/                       # 示例结构化输入
@@ -353,7 +353,7 @@ zhulong/
 ### 环境要求
 
 - Python 3.11+
-- Docker 和 Docker Compose
+- docker 和 docker compose
 - 可加载 `skills/zhulong` 入口的本地 Agent 运行时
 - `assets/tool-registry.json` 中列出的可选安全工具
 
@@ -367,8 +367,8 @@ Codex 支持说明见
 ```text
 Read docs/AGENTS.md, CONTRIBUTING.md, and docs/RELEASE_CHECKLIST.md before editing.
 Keep the change narrow.
-不要削弱以下规则：未验证问题不能进入已确认报告；适用时必须在 Docker 中复现；确认
-结论必须绑定真实源码；Docker 清理必须安全；OMC 多 Agent 工作进程只允许人工复核；
+不要削弱以下规则：未验证问题不能进入已确认报告；适用时必须在 docker 中复现；确认
+结论必须绑定真实源码；docker 清理必须安全；OMC 多 Agent 工作进程只允许人工复核；
 危险验证容器必须提前拒绝；已确认漏洞证据包必须先在暂存区通过检查再提升。
 ```
 
@@ -376,7 +376,7 @@ Keep the change narrow.
 # 1. 运行源码目录自检
 python3 scripts/selftest_plugin.py
 
-# 2. 如果修改了面向 Skill 的文件，同步并测试安装目录
+# 2. 如果修改了面向 skill 的文件，同步并测试安装目录
 bash scripts/sync_to_claude_skill.sh
 python3 ~/.claude/skills/zhulong/scripts/selftest_plugin.py
 
@@ -387,11 +387,11 @@ python3 scripts/validate_all_report_bundles.py --confirmed-dir <confirmed-dir>
 
 ### 维护规则摘要
 
-- PoC 和验证必须在 Docker 或 Docker Compose 中执行，不新增宿主机执行作为验证替代路径。
-- 扫描器、依赖、静态分析和 LLM 输出必须先作为候选，不能绕过 Docker 证据和报告证据包检查。
+- PoC 和验证必须在 docker 或 docker compose 中执行，不新增宿主机执行作为验证替代路径。
+- 扫描器、依赖、静态分析和 LLM 输出必须先作为候选，不能绕过 docker 证据和报告证据包检查。
 - 修改报告输出时，报告生成逻辑和自动检查要一起更新。
-- Docker 残留资源和 OMC/运行时残留必须保持分离。
-- 不新增大范围的 Docker prune 清理、广泛进程清理、PID 信号发送、通配符接管或机器本地绝对路径。
+- docker 残留资源和 OMC/运行时残留必须保持分离。
+- 不新增大范围的 docker prune 清理、广泛进程清理、PID 信号发送、通配符接管或机器本地绝对路径。
 - 可选工具必须保持可选；不要把第三方服务、MCP server、RAG 平台、数据看板或数据库变成必需运行依赖。
 - 工作流行为变化时，需要同步更新脚本、参考文档、自检和发布检查。
 
@@ -413,7 +413,7 @@ python3 scripts/validate_all_report_bundles.py --confirmed-dir <confirmed-dir>
 
 ## 🫶 贡献与社区
 
-欢迎贡献，尤其欢迎小而清晰、不会破坏烛龙轻量化、本地 Agent 设计、已确认报告纪律和 Docker 复现模型的改动。Issue、PR、文档完善、测试用例、自动检查补强和真实项目发布候选测试报告都很有价值。
+欢迎贡献，尤其欢迎小而清晰、不会破坏烛龙轻量化、本地 Agent 设计、已确认报告纪律和 docker 复现模型的改动。Issue、PR、文档完善、测试用例、自动检查补强和真实项目发布候选测试报告都很有价值。
 
 提交 PR 前请先阅读 [`CONTRIBUTING.md`](CONTRIBUTING.md)。如果你使用 AI 编程 Agent 维护烛龙，请先让它阅读 [`docs/AGENTS.md`](docs/AGENTS.md)。
 
@@ -444,15 +444,15 @@ python3 scripts/validate_all_report_bundles.py --confirmed-dir <confirmed-dir>
 
 已完成：
 
-- [x] 本地 Agent Skill 打包，并保留脚本方式的手动启动。
-- [x] 已确认漏洞报告前，先在 Docker 或 Docker Compose 中复现。
+- [x] 本地 Agent skill 打包，并保留脚本方式的手动启动。
+- [x] 已确认漏洞报告前，先在 docker 或 docker compose 中复现。
 - [x] 已确认漏洞证据包，包含报告、复现说明、证据 JSON、日志/截图和运行脚本。
 - [x] 机器可读的线索判断记录，以及便于人机协同接续的交接摘要。
-- [x] 针对危险验证容器、Docker 残留和 OMC 多 Agent 工作进程的安全检查与只读复核边界。
-- [x] 基于已确认漏洞提示同仓库里的同类漏洞线索，并要求每条线索独立完成 Docker 复现。
+- [x] 针对危险验证容器、docker 残留和 OMC 多 Agent 工作进程的安全检查与只读复核边界。
+- [x] 基于已确认漏洞提示同仓库里的同类漏洞线索，并要求每条线索独立完成 docker 复现。
 - [x] 面向审核录屏的复现脚本会展示代码上下文、漏洞分析、实际危害边界和最终证据汇总。
 - [x] 源码绑定的生成合同、暂存区校验提升，以及可选最终录屏证据门禁。
-- [x] Codex 用户级 Skill 支持、安装目录自检、平台无关启动入口和仓库根目录 AGENTS.md 引导文件。
+- [x] Codex 用户级 skill 支持、安装目录自检、平台无关启动入口和仓库根目录 AGENTS.md 引导文件。
 - [x] 文件式可恢复审计状态：追加只读的权威事件日志与派生工作区状态。
 - [x] 结构化交接、不可变检查点和机器可读的下一步动作，支持全新上下文接力。
 - [x] 离线静态审计时间线（JSON 与 HTML），内置安全脱敏，便于离线复核。
@@ -470,7 +470,7 @@ python3 scripts/validate_all_report_bundles.py --confirmed-dir <confirmed-dir>
 
 烛龙建立在本地 Agent 和开源安全工具社区之上。特别感谢：
 
-- Docker 与 Docker Compose，让本地可复现验证变得可行。
+- docker 与 docker compose，让本地可复现验证变得可行。
 - Claude Code 以及更广泛的本地 AI 编程 Agent 生态，为烛龙提供可维护的 Agent 工作流表达面。
 - OMC 社区带来的多 Agent 工作流启发，也促使烛龙明确强化滞留的多 Agent worker 进程和运行时状态边界。
 - Semgrep、OSV-Scanner、Syft、Grype、Trivy、Gitleaks、TruffleHog、Nuclei、ffuf、sqlmap、OWASP ZAP、各语言生态安全工具、DeepAudit 以及其他安全审计工具带来的能力启发。
@@ -482,9 +482,9 @@ python3 scripts/validate_all_report_bundles.py --confirmed-dir <confirmed-dir>
 
 | 文档 | 面向读者 | 主要内容 |
 | --- | --- | --- |
-| [`docs/INSTALL.md`](docs/INSTALL.md) | 新用户 | 安装路径、本地 Skill 同步和环境准备说明。 |
+| [`docs/INSTALL.md`](docs/INSTALL.md) | 新用户 | 安装路径、本地 skill 同步和环境准备说明。 |
 | [`docs/USAGE.zh-CN.md`](docs/USAGE.zh-CN.md) | 运行者 | 启动提示词、试运行提示词、手动启动命令和 `zhulong_audit.sh` 参数。 |
-| [`docs/CODEX_SKILL_ADAPTATION.md`](docs/CODEX_SKILL_ADAPTATION.md) | 维护者 | 源码、Claude 安装目录和 Codex 安装目录的 Skill 布局契约。 |
+| [`docs/CODEX_SKILL_ADAPTATION.md`](docs/CODEX_SKILL_ADAPTATION.md) | 维护者 | 源码、Claude 安装目录和 Codex 安装目录的 skill 布局契约。 |
 | [`docs/AGENTS.md`](docs/AGENTS.md) | AI 编程 Agent 与维护者 | 开发规则、不可破坏的工作流契约和安全补丁边界。 |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | 贡献者 | 贡献预期、测试纪律和范围控制。 |
 | [`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md) | 维护者 | 发布前打包、安全、文档和回归检查。 |
@@ -492,7 +492,7 @@ python3 scripts/validate_all_report_bundles.py --confirmed-dir <confirmed-dir>
 | [`DISCLAIMER.md`](DISCLAIMER.md) | 所有用户 | 授权使用边界、禁止用途、Agent / 模型提供方政策遵从和责任限制。 |
 | [`CHANGELOG.md`](CHANGELOG.md) | 版本读者 | 版本历史和重要行为变化。 |
 | [`docs/WORKFLOW_DETAILS.zh-CN.md`](docs/WORKFLOW_DETAILS.zh-CN.md) | 运行者与人工审核员 | 人机协同、报告质量门禁、验证命令、示例审计发现形态和限制。 |
-| [`assets/references/docker-resource-hygiene.md`](assets/references/docker-resource-hygiene.md) | 运行者与维护者 | Docker 初始基线、精确清理、残留资源处置和禁止大范围 Docker prune 清理规则。 |
+| [`assets/references/docker-resource-hygiene.md`](assets/references/docker-resource-hygiene.md) | 运行者与维护者 | docker 初始基线、精确清理、残留资源处置和禁止大范围 docker prune 清理规则。 |
 | [`assets/references/omc-runtime-stability.md`](assets/references/omc-runtime-stability.md) | 多 Agent 用户 | OMC 运行状态、滞留套接字和只供人工复核的多 Agent 工作进程处理。 |
 | [`assets/references/confirmed-vuln-docx-format.md`](assets/references/confirmed-vuln-docx-format.md) | 报告作者与维护者 | 已确认漏洞报告格式、DOCX 要求和附件说明。 |
 

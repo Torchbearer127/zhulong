@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shlex
 import shutil
 import sys
 import zipfile
@@ -878,6 +879,32 @@ def rewrite_command_for_bundle(command: str, path_map: dict[str, str]) -> str:
     return result
 
 
+def replay_startup_command(command: str) -> str:
+    """Use Compose's bounded readiness wait for generated detached startup."""
+    # Only rewrite a direct command, never a compound shell expression.
+    if not re.match(r"^\s*docker(?:\s+compose|-compose)\s", command):
+        return command
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        raise SystemExit("REPLAY_STARTUP_INVALID: malformed Compose command") from None
+    index = 2 if tokens[:2] == ["docker", "compose"] else 1
+    while index < len(tokens) and tokens[index].startswith("-"):
+        index += 2 if tokens[index] in {"-f", "--file", "-p", "--project-name"} else 1
+    if index >= len(tokens) or tokens[index] != "up":
+        return command
+    if not any(token in {"-d", "--detach", "--wait"} for token in tokens[index + 1:]):
+        return command
+    if re.search(r"[;&|`\n]", command) or "$" in command:
+        raise SystemExit("REPLAY_STARTUP_INVALID: use a separate direct Compose startup command")
+    args = tokens[index + 1:]
+    if any(token.startswith("--wait-timeout") for token in args):
+        raise SystemExit("REPLAY_STARTUP_INVALID: readiness timeout is controlled by ZHULONG_READY_TIMEOUT_SECONDS")
+    args = [token for token in args if token != "--wait"]
+    return (shlex.join(tokens[:index + 1] + ["--wait"]) +
+            ' --wait-timeout "$READY_TIMEOUT_SECONDS" ' + shlex.join(args))
+
+
 def generator_modes_for_artifact(item: dict[str, Any]) -> list[str]:
     options = ensure_mapping(item.get("generator_options"))
     requested = ensure_list(options.get("modes"))
@@ -1282,6 +1309,7 @@ def build_generated_recording_shell(
         'PAUSE_LONG="$REVIEWER_PAUSE_LONG"',
         'READY_WAIT_SECONDS="${ZHULONG_READY_WAIT_SECONDS:-1}"',
         'READY_RETRY_COUNT="${ZHULONG_READY_RETRY_COUNT:-30}"',
+        'READY_TIMEOUT_SECONDS="${ZHULONG_READY_TIMEOUT_SECONDS:-30}"',
         'ZHULONG_RECORDING_ROOT="${ZHULONG_RECORDING_ROOT:-}"',
         'ZHULONG_RECORDING_STAGE_DIR="${ZHULONG_RECORDING_STAGE_DIR:-}"',
         'ZHULONG_RECORDING_STAGE_ACK_DIR="${ZHULONG_RECORDING_STAGE_ACK_DIR:-}"',
@@ -1297,6 +1325,9 @@ def build_generated_recording_shell(
         f"SUCCESS_MARKER={shell_quote(success_marker)}",
         f"DIRECT_IMPACT_MARKER={shell_quote(direct_impact_marker)}",
         'cd "$SCRIPT_DIR"',
+        'case "$READY_TIMEOUT_SECONDS" in ""|*[!0-9]*) echo "REPLAY_STARTUP_INVALID" >&2; exit 1 ;; esac',
+        '[ "$READY_TIMEOUT_SECONDS" -ge 1 ] && [ "$READY_TIMEOUT_SECONDS" -le 600 ] || { echo "REPLAY_STARTUP_INVALID" >&2; exit 1; }',
+        'export READY_TIMEOUT_SECONDS',
         "",
         "if [ -t 1 ]; then",
         "    C_RESET=\"$(printf '\\033[0m')\"",
@@ -1724,6 +1755,7 @@ def build_generated_recording_shell(
         if step_details:
             script_lines.append("    pause_step \"$PAUSE_SHORT\"")
         for command in commands:
+            command = replay_startup_command(command)
             script_lines.append("    pause_step \"$PAUSE_SHORT\"")
             script_lines.append(f"    run_logged_command {shell_quote(command)}")
             script_lines.append("    pause_step \"$PAUSE_SHORT\"")

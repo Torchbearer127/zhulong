@@ -98,17 +98,18 @@ False-positive boundary: quick mode may shorten pauses, and reviewers may set
 `REVIEWER_PAUSE_SHORT=0 REVIEWER_PAUSE_LONG=0`, but the helper must still expose
 overrideable pause variables and keep pause calls around reviewer-relevant
 checkpoints. Functional waits may be shortened only through independent
-readiness/backoff variables such as `READY_WAIT_SECONDS` or
-`READY_RETRY_COUNT`.
+readiness/backoff variables. Generated detached Compose startup uses
+`READY_TIMEOUT_SECONDS`, configured through `ZHULONG_READY_TIMEOUT_SECONDS`
+(1–600 seconds, default 30); quick mode does not disable this wait.
 
 Accepted example: the root helper defines `REVIEWER_PAUSE_SHORT` and
 `REVIEWER_PAUSE_LONG`, derives `PAUSE_SHORT` and `PAUSE_LONG` from those
 overrides, and calls `pause_step "$PAUSE_SHORT"` or `pause_step "$PAUSE_LONG"`
 after the identity screen, code context, vulnerability analysis, impact-boundary
 screen, proof command/output transitions, and final evidence summary. The same
-helper defines independent readiness variables, for example
-`READY_WAIT_SECONDS="${ZHULONG_READY_WAIT_SECONDS:-1}"`, and prints
-`attachments/evidence/replay-output.log` instead of an absolute `$REPLAY_LOG`
+helper defines an independent timeout,
+`READY_TIMEOUT_SECONDS="${ZHULONG_READY_TIMEOUT_SECONDS:-30}"`, and prints
+`attachments/evidence/replay-runtime-output.log` instead of an absolute `$REPLAY_LOG`
 path in reviewer-facing messages.
 
 Rejected example: fixed `sleep 0`, hardcoded `pause_step 1`, quick mode that
@@ -126,6 +127,30 @@ reviewer-facing evidence path messages that should be bundle-relative.
 Why it does not weaken confirmed-bundle gates: it only rejects unreadable
 reviewer replay helpers. It does not execute replay, manufacture evidence, or
 relax proof-oracle requirements.
+
+## Replay Inputs And Health Wait
+
+The staging builder checks declared delivery paths and the root replay script
+before promotion. The bundle validator checks recognized direct Compose calls
+for delivered configuration, local build contexts, and Dockerfiles. These
+checks require actual files, not just contract declarations.
+
+Generated detached Compose startup uses native `up --wait --wait-timeout`;
+started services must have enabled healthchecks. Missing healthchecks are
+rejected, and a failed startup or wait stops subsequent proof commands. Legal
+delivered inputs and enabled healthchecks remain accepted by static validation;
+that acceptance is not a runtime health observation.
+
+Stable issue codes include `REPLAY_DECLARED_FILE_MISSING`,
+`REPLAY_DECLARED_FILE_UNSAFE`, `REPLAY_INPUT_MISSING`, `REPLAY_INPUT_UNSAFE`,
+`REPLAY_INPUT_INVALID`, `REPLAY_HEALTHCHECK_MISSING`, and
+`REPLAY_STARTUP_INVALID` for invalid generated startup settings.
+
+The parser is not a general shell interpreter. In particular, an unquoted
+`run_logged_command docker compose ...` is not recognized; generated helpers
+pass the whole command as one quoted argument. Handwritten scripts need
+separate review. Neither static acceptance nor a matching file digest proves
+successful target execution or authorizes runtime `passed` claims.
 
 ## Replay Transcript Trust Boundary
 

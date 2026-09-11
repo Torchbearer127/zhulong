@@ -16,7 +16,7 @@
 ## 审计状态协议 R2
 
 R2 把 `audit-events.jsonl` 定义为权威的追加事件日志，把 `stage-status.json` 定义为
-由日志派生的当前状态视图。记录即使通过结构校验，也不能证明漏洞有效、Docker 已确认、
+由日志派生的当前状态视图。记录即使通过结构校验，也不能证明漏洞有效、docker 已确认、
 漏洞包有效或工作区已完成。新的 R2 写入由带锁的写入器完成，必须明确 CAS/当前 `revision`
 意图和转换意图。
 
@@ -33,7 +33,7 @@ R2 把 `audit-events.jsonl` 定义为权威的追加事件日志，把 `stage-st
 提供两个 `state-CAS` 意图，恢复 CLI 会在取得锁之前以 JSON 返回
 `STATE_CAS_INTENT_CONFLICT`。LF 和 CRLF 日志都能读取，但它们代表不同的精确字节，恢复流程
 不会规范化行尾。历史锚定的 `plugin_version` 会明确标为前缀来源，而不是默认当作最后事件
-使用的版本。离线协议夹具会验证这些规则，但不会执行 Docker、PoC、复现、网络或包管理器。
+使用的版本。离线协议夹具会验证这些规则，但不会执行 docker、PoC、复现、网络或包管理器。
 
 ## 侦察覆盖结果契约
 
@@ -49,7 +49,7 @@ R2 把 `audit-events.jsonl` 定义为权威的追加事件日志，把 `stage-st
 R2 候选项契约新增确定性身份、结构化来源信息和仅限候选项的重复关系。升级或去重前应阅读
 [`candidate-identity-dedupe-r1.md`](runner-contracts/candidate-identity-dedupe-r1.md)。R1 继续以
 `legacy_r1` 可读；升级必须显式写入新文件。相同 `fingerprint` 和建议性去重计划，都不能替代
-独立核验器、处置记录、Docker 证据、确认漏洞包校验或工作区收尾。
+独立核验器、处置记录、docker 证据、确认漏洞包校验或工作区收尾。
 
 结果必须绑定本次实际读取的 `zhulong-target.yaml` 精确摘要、`tested_ref`，以及工作区根目录
 `attack-surface.md` 的精确摘要。结构化观察使用稳定 ID；源码引用必须是仓库相对路径，
@@ -67,7 +67,7 @@ python3 scripts/validate_recon_result.py \
   --json
 ```
 
-该校验器离线运行，不写入仓库、工作区、审计状态或证据，也不执行 Docker、网络、PoC、
+该校验器离线运行，不写入仓库、工作区、审计状态或证据，也不执行 docker、网络、PoC、
 复现、包管理器或 LLM。侦察结果只能通过稳定的 `focus_refs` 为后续复核规划提供入口，不能
 创建候选项、核验结论、处置记录、漏洞包或收尾状态。侦察阶段终结登记由后续的独立阶段终结
 入口负责；本校验器不会写入该登记。
@@ -80,17 +80,17 @@ python3 scripts/validate_recon_result.py \
 
 注册表只约束烛龙自身，无法拦截人工或其他 Agent 的原生工具调用。注册表校验成功只表示元数据
 一致，绝不创建候选项、核验结论、处置记录或确认结论。首次扫描输出始终只是候选项材料；初始
-探测封装脚本会在规范的 `recon` 阶段登记开始事件。原始 Docker CLI、未受控 DAST 或实时目标
-工具不会得到规划器的直连命令提示。只有固定的 Docker 验证封装脚本可以生成 Docker 判定依据
+探测封装脚本会在规范的 `recon` 阶段登记开始事件。原始 docker CLI、未受控 DAST 或实时目标
+工具不会得到规划器的直连命令提示。只有固定的 docker 验证封装脚本可以生成 docker 判定依据
 材料，而这些材料仍必须通过现有独立核验结论、处置记录和确认漏洞包门禁。
 
 工具注册表结构定义中的生命周期阶段枚举必须与 `audit_transition_policy.STAGES` 精确一致；
 单独删除、改名、重排、新增阶段或把枚举改成错误类型，生产环境的注册表校验器都会从严拒绝。
 
-在 R2 工作区中，验证封装脚本会在每次 Docker CLI 调用前校验权威事件日志和状态视图，并且只
+在 R2 工作区中，验证封装脚本会在每次 docker CLI 调用前校验权威事件日志和状态视图，并且只
 接受 `verification/running`，或从 `verification/blocked` 发起的显式重试。它不会自动推进分诊，
-也不会为了让结果事件通过而改写工作流状态。Docker 后台服务和镜像检查属于非 PoC 前置条件；
-实际 PoC 容器命令只有在带 `revision` 绑定的同阶段 `start` 事件提交成功后才会启动。即使 Docker
+也不会为了让结果事件通过而改写工作流状态。docker 后台服务和镜像检查属于非 PoC 前置条件；
+实际 PoC 容器命令只有在带 `revision` 绑定的同阶段 `start` 事件提交成功后才会启动。即使 docker
 证据已经存在，结果事件提交失败也会令封装脚本以非零状态退出。R1 继续兼容旧格式；没有状态
 文件的工作区不会被静默升级为 R2。
 
@@ -105,12 +105,12 @@ python3 scripts/validate_recon_result.py \
 `candidate_generation`、`triage`、`verification`、`severity_escalation`、`variant_discovery`、
 `packaging`、`finalization` 和 `recording`。`triage` 与 `recording` 可以直接规划，并选择各自
 稳定的阶段参考文档。生产环境的元一致性检查会将该元组与事件/状态结构定义、两份上下文结构定义、
-目录映射、规划器选择以及 Skill 的命令/阶段声明逐项比较；任何差异都会从严拒绝。
+目录映射、规划器选择以及 skill 的命令/阶段声明逐项比较；任何差异都会从严拒绝。
 
 `mandatory` 只表示计划中的阶段基线阅读建议，不是安全门禁；`optional` 记录精确匹配的选择器
 事实，`deferred` 表示与阶段相关但没有匹配选择器的模块。该计划仅供建议：它不证明 Agent 已阅读、
 理解或使用模块，不执行工具或参考文档，不创建证据，不确认发现，也不替代既有校验器、门禁或根
-Skill 约束。详见 [`context-planning-r1.md`](runner-contracts/context-planning-r1.md)。
+skill 约束。详见 [`context-planning-r1.md`](runner-contracts/context-planning-r1.md)。
 
 ## 交接与状态的机械一致性
 
@@ -123,14 +123,14 @@ Skill 约束。详见 [`context-planning-r1.md`](runner-contracts/context-planni
 - `validated_confirmed_bundle_count` 只统计通过
   `validate_all_report_bundles.py` 最终校验的确认漏洞包目录。
 - `invalid_or_partial_confirmed_bundle_count` 统计被校验器判定为不完整或校验失败的疑似漏洞包目录。
-- `docker_evidence_only_count` 统计工作区证据目录下的 Docker 或核验证据；这些证据尚未组成通过
+- `docker_evidence_only_count` 统计工作区证据目录下的 docker 或核验证据；这些证据尚未组成通过
   校验的确认漏洞包。
 - `formal_variant_analysis_status` 只有在至少存在一个通过校验的确认漏洞包，且
   `evidence/variant-analysis/seeds.jsonl` 与 `variant-candidates.jsonl` 都通过各自校验器时才是
   `completed`。
 
-没有通过校验的确认漏洞包时，交接摘要必须写 `Confirmed bundles: 0`。如果存在 Docker 证据但没有
-通过校验的漏洞包，保守状态是 `docker_evidence_collected_but_no_bundle`。此时 Docker 证据可以
+没有通过校验的确认漏洞包时，交接摘要必须写 `Confirmed bundles: 0`。如果存在 docker 证据但没有
+通过校验的漏洞包，保守状态是 `docker_evidence_collected_but_no_bundle`。此时 docker 证据可以
 作为有用的核验材料，但不是确认交付物，不能表示漏洞包已经就绪，也不能表示正式同类漏洞扩展已
 完成或就绪。
 
@@ -142,9 +142,9 @@ Skill 约束。详见 [`context-planning-r1.md`](runner-contracts/context-planni
 ### 结构化交接与检查点
 
 `handoff-state.json` 是机器可读的继续工作索引，由 `scripts/workspace_state.py` 根据已提交的
-事件日志/状态视图，以及现有候选项、独立核验器、处置记录、漏洞包、Docker、运行时、录制和收尾
+事件日志/状态视图，以及现有候选项、独立核验器、处置记录、漏洞包、docker、运行时、录制和收尾
 校验结果派生。它记录 `revision`/摘要、`tested_ref` 是否可验证、稳定 ID 与数量、正式同类漏洞
-扩展状态、阻塞/恢复上下文和相对路径产物摘要；它不会回写任何权威产物，也不会把 Docker 证据、
+扩展状态、阻塞/恢复上下文和相对路径产物摘要；它不会回写任何权威产物，也不会把 docker 证据、
 录制清单或备注变成已确认漏洞。
 
 侦察和分诊的聚合会使用各生产校验器声明的输入契约。尤其是分诊只接收其工作区相对的
@@ -174,12 +174,12 @@ Skill 约束。详见 [`context-planning-r1.md`](runner-contracts/context-planni
 
 运行 `render_audit_timeline.py --workspace-dir <audit-workspace> --repo-root <repo-root>` 会生成确定性的
 离线派生视图 `audit-timeline.json` 和 `audit-timeline.html`。JSON 通过规范的事件日志/状态视图读取器，
-以及既有目标、候选项、核验结论、处置记录、Docker、漏洞包、交接状态、后续建议和收尾校验器取得
+以及既有目标、候选项、核验结论、处置记录、docker、漏洞包、交接状态、后续建议和收尾校验器取得
 事实；HTML 只从通过校验的 JSON 渲染。离线打开前，先运行
 `validate_audit_timeline.py --timeline <audit-workspace>/audit-timeline.json --html <audit-workspace>/audit-timeline.html --workspace-dir <audit-workspace> --repo-root <repo-root>`。
 
-静态审计时间线不会运行审计、Docker、PoC、复现、扫描器、网络请求、模型或 Agent，也不包含隐藏推理
-或聊天内容。它不具备确认、处置、生成漏洞包、执行或收尾权限；`confirmed` 关系仍须由既有 Docker 证据、
+静态审计时间线不会运行审计、docker、PoC、复现、扫描器、网络请求、模型或 Agent，也不包含隐藏推理
+或聊天内容。它不具备确认、处置、生成漏洞包、执行或收尾权限；`confirmed` 关系仍须由既有 docker 证据、
 独立核验结论、处置记录和确认漏洞包校验器共同证明。项目采用静态文件而不是服务端仪表板，是为了
 不增加服务、数据库、后台服务、遥测、网络依赖或新的权限面。
 
@@ -195,15 +195,15 @@ Skill 约束。详见 [`context-planning-r1.md`](runner-contracts/context-planni
 
 ## 运行时残留与清理机制
 
-烛龙会把 Docker 残留资源和 OMC/PID 运行时残留分开处理。二者都会出现在工作区产物和交接摘要中，但安全策略不同：
+烛龙会把 docker 残留资源和 OMC/PID 运行时残留分开处理。二者都会出现在工作区产物和交接摘要中，但安全策略不同：
 
 | 类型 | 记录位置 | 默认行为 | 用户或 Agent 可做什么 |
 | --- | --- | --- | --- |
-| Docker 容器、镜像、网络、卷、BuildKit cache | `docker/docker-cleanup-plan.json`、`docker/docker-cleanliness-status.json`、`handoff-summary.md` | 先生成清理计划；默认试运行；只自动处理能证明属于当前审计的资源。 | 人工审核计划后，可授权 Agent 使用精确参数和 `--apply` 清理。 |
+| docker 容器、镜像、网络、卷、BuildKit cache | `docker/docker-cleanup-plan.json`、`docker/docker-cleanliness-status.json`、`handoff-summary.md` | 先生成清理计划；默认试运行；只自动处理能证明属于当前审计的资源。 | 人工审核计划后，可授权 Agent 使用精确参数和 `--apply` 清理。 |
 | OMC 滞留 Socket | `runtime/runtime-hygiene-status.json`、`handoff-summary.md` | 只清理确认为滞留且无活跃 swarm Socket 的 `claude-swarm-*` Socket。 | 可以运行 `--cleanup-stale` 后重新检查。 |
 | 可疑 `claude --teammate-mode tmux` PID | `runtime/runtime-hygiene-status.json`、`handoff-summary.md` | 只读复核；烛龙不会发送终止信号或强制结束命令。 | 用户可根据 `pid/ppid/pgid/sess/tty/stat/command` 等信息自行判断；如确认过期，应在烛龙之外手动处理。 |
 
-Docker 清理推荐流程是先查看计划，再决定是否授权清理：
+docker 清理推荐流程是先查看计划，再决定是否授权清理：
 
 ```bash
 python3 <audit-workspace>/bin/manage-docker-resources.py \
@@ -231,7 +231,7 @@ python3 <audit-workspace>/bin/manage-docker-resources.py \
   --strict
 ```
 
-如果 `clean=false`，工作区应保持阻塞状态，并在摘要中写明残留资源和安全续跑步骤。烛龙不会通过重写 Docker 初始基线来隐藏残留，也不会信任过期的 `docker-cleanliness-status.json` 作为完成依据。
+如果 `clean=false`，工作区应保持阻塞状态，并在摘要中写明残留资源和安全续跑步骤。烛龙不会通过重写 docker 初始基线来隐藏残留，也不会信任过期的 `docker-cleanliness-status.json` 作为完成依据。
 
 OMC/PID 复核流程只用于判断多 Agent 模式是否安全：
 
@@ -246,7 +246,7 @@ bash <audit-workspace>/bin/check_omc_runtime.sh --cleanup-stale --json
 bash <audit-workspace>/bin/check_omc_runtime.sh --json
 ```
 
-如果报告可疑 teammate PID，烛龙只会展示复核信息，不会杀进程。即使启用 PID 复核或清理相关选项，当前烛龙也不会对 teammate PID 发送信号。用户如果确认某个 PID 确实过期，应在烛龙之外手动处理，或在明确了解风险后授权 Agent 使用系统级进程工具处理；不要把 PID 清理并入 Docker 清理，也不要使用大范围进程清理。
+如果报告可疑 协作进程 PID，烛龙只会展示复核信息，不会杀进程。即使启用 PID 复核或清理相关选项，当前烛龙也不会对 协作进程 PID 发送信号。用户如果确认某个 PID 确实过期，应在烛龙之外手动处理，或在明确了解风险后授权 Agent 使用系统级进程工具处理；不要把 PID 清理并入 docker 清理，也不要使用大范围进程清理。
 
 更多细节见 [`../assets/references/docker-resource-hygiene.md`](../assets/references/docker-resource-hygiene.md) 和 [`../assets/references/omc-runtime-stability.md`](../assets/references/omc-runtime-stability.md)。
 
@@ -264,8 +264,8 @@ bash <audit-workspace>/bin/check_omc_runtime.sh --json
 -> 审计收尾
 ```
 
-生成合同预检只检查被选中的单个漏洞是否具备可移植、已通过 Docker 确认、且足以
-生成审核材料的最低输入。它只是生成前门禁，不能证明漏洞成立，也不能替代 Docker
+生成合同预检只检查被选中的单个漏洞是否具备可移植、已通过 docker 确认、且足以
+生成审核材料的最低输入。它只是生成前门禁，不能证明漏洞成立，也不能替代 docker
 证据。
 
 源码绑定确认比结构完整性更严格。预检必须接收真实目标仓库的 `--repo-root`，核验
@@ -312,6 +312,24 @@ bash <audit-workspace>/bin/check_omc_runtime.sh --json
 因此不接受这些阶段的 `passed` 声明，即使附件的 SHA-256 摘要匹配也不例外。
 文件完整不等于程序已经成功运行。
 
+构建器将漏洞包移入正式目录前，会检查合同声明的根目录复现脚本和 `files` 中的
+每个文件是否已在暂存区内。只填写路径不会自动补齐文件。脚本直接调用 docker compose 时，
+包内必须带上编排文件，以及配置中引用的本地构建目录和 Dockerfile。传入多个 `-f`
+文件时，相对路径以第一个文件所在的目录为准。读取编排文件需要校验器所在的 Python
+环境已安装 PyYAML。
+
+生成脚本中的 docker compose 后台启动命令会加上 `up --wait --wait-timeout`，等待服务的
+健康检查通过，因此相关服务必须启用健康检查。等待上限由
+`ZHULONG_READY_TIMEOUT_SECONDS` 设置，默认 30 秒，可设为 1–600 秒；展示停顿和
+快速模式不会改变这个上限。启动或等待失败，脚本就会停止，不再执行后续复现命令。
+docker compose 版本不支持这些等待参数时，脚本同样报错停止，不会跳过等待。
+
+静态校验不会运行构建或复现命令，也不能检查 Dockerfile 的全部依赖或任意写法的
+脚本封装。手写脚本仍需人工核对。例如，当前编排输入检查无法识别未加引号的
+`run_logged_command docker compose ...` 调用；生成的脚本会为完整命令加上引号。
+具体交付要求见
+[漏洞包格式说明](../assets/references/confirmed-vuln-docx-format.md)。
+
 `assets/fixtures/replay-transcript-corpus/` 中的复现记录样本集通过静态正反例固定这条
 信任边界。校验器不要求唯一且僵化的日志格式：只要真实记录包含命令、原始输出、成功
 判据、退出或通过状态，以及直接影响证据，不同格式都可以接受；仅含标记、仅含占位符、
@@ -339,14 +357,14 @@ bash <audit-workspace>/bin/check_omc_runtime.sh --json
   `docker logs ... | grep ... || echo ...` 这类 fail-open 成功判据。
 - 复现录屏脚本的步骤标签过期或格式异常。
 - 漏洞包根录制脚本的 shell 静态语法和可执行位。
-- 附件 Docker Compose 的静态自洽性，包括缺失相对 `env_file`、缺失相对 bind mount 源文件，以及最终包中不允许出现的绝对宿主机路径。
+- 附件 docker compose 的静态自洽性，包括缺失相对 `env_file`、缺失相对 绑定挂载 源文件，以及最终包中不允许出现的绝对宿主机路径。
 - 中文 (zh-CN) 报告中无故出现大段英文自然语言。
 - 在存在结构化证据字段时，校验目标与命令一致性。
 - 根脚本或附件脚本通过深层 `../../..` 逃出下载后的漏洞包，或挂载提交者本机父级仓库。
 - 报告、补充说明、证据 JSON 与根录屏脚本之间的 PoC 标签漂移。
 - 录屏视频早于当前报告、补充说明、证据 JSON 或根复现脚本。
 - 最短审核复现路径中可能触发生命周期脚本或联网噪音的 `npm install` / `yarn install` / `pnpm install`。
-- 复现脚本只展示 PoC/Docker 命令却没有实际执行路径。
+- 复现脚本只展示 PoC/docker 命令却没有实际执行路径。
 - 复现脚本没有把 `测试软件名称` 与 `测试版本/分支` 作为独立开场字段展示，或缺少开场身份屏/最终证据汇总屏停顿。
 - 复现脚本缺少可覆盖的 `REVIEWER_PAUSE_SHORT` / `REVIEWER_PAUSE_LONG`，
   在 `quick` 模式中改用固定短暂停顿，或缺少代码上下文、代码级分析、影响边界、
@@ -384,7 +402,7 @@ SSRF 影响过度声明、代码上下文最低质量、复现辅助脚本暂停
 说明见
 [`../assets/references/reviewer-readiness-validator-gates.md`](../assets/references/reviewer-readiness-validator-gates.md)。
 该参考文件记录每类门禁的目的、误报边界、接受与拒绝示例、适用的稳定问题代码，
-并明确这些门禁只会拒绝薄弱审核材料，不能证明漏洞成立，也不能替代 Docker 证据。
+并明确这些门禁只会拒绝薄弱审核材料，不能证明漏洞成立，也不能替代 docker 证据。
 
 `code_level_reproduced`、`entrypoint_reproduced`、
 `blocked_entrypoint_verification` 与 `confirmed_in_docker` 等证据等级定义见
@@ -395,15 +413,15 @@ SSRF 影响过度声明、代码上下文最低质量、复现辅助脚本暂停
 ## 基于已确认种子漏洞的同类漏洞扩展
 
 当一份漏洞产出合格的确认漏洞包后，烛龙可将其作为**种子漏洞**，提取根因、攻击者
-可控输入、传播路径、危险汇聚点、缺失约束与 Docker 成功判据，再依据这些特征在同一
-目标仓库中检索相似候选漏洞。该机制只用于安排后续人工复核和 Docker 验证的优先级，
+可控输入、传播路径、危险汇聚点、缺失约束与 docker 成功判据，再依据这些特征在同一
+目标仓库中检索相似候选漏洞。该机制只用于安排后续人工复核和 docker 验证的优先级，
 不会把相似度本身当作漏洞成立的证据。
 
 同类漏洞扩展流程分为两个离线执行步骤：
 
 1. 执行 `scripts/extract_variant_seed.py`，从已有的确认漏洞包中提取同类漏洞种子卡。
    种子卡记录确认漏洞包路径、漏洞类型、根因、输入与汇聚点匹配模式、触发条件、
-   Docker 成功判据、检索范围以及排除规则。
+   docker 成功判据、检索范围以及排除规则。
 2. 执行 `scripts/find_variant_candidates.py`，读取种子卡，在同一目标仓库内扫描本地
    源码并输出按优先级排序的同类候选漏洞。候选结果默认写入
    `<audit-workspace>/evidence/variant-analysis/variant-candidates.jsonl`；每条记录必须
@@ -413,16 +431,16 @@ SSRF 影响过度声明、代码上下文最低质量、复现辅助脚本暂停
 
 - 最终种子卡只有在 `confirmed_bundle_path` 指向当前审计工作区内真实的
   `confirmed/<bundle>/` 目录，且该漏洞包通过 `validate_report_bundle.py` 时才会被
-  接受。候选编号、Markdown 表格行、临时备注、Docker 证据目录、不完整漏洞包或校验
+  接受。候选编号、Markdown 表格行、临时备注、docker 证据目录、不完整漏洞包或校验
   失败的漏洞包都不能作为正式种子；人工同类备注必须留在正式
   `evidence/variant-analysis/seeds.jsonl` 之外。
 - 候选检索工具只读取最终种子卡，并在同一仓库内进行本地、可重复的优先级排序。它
-  不调用扫描器、`rg`、`grep`、`git`、网络接口、LLM、Docker、PoC、DOCX 渲染或确认
+  不调用扫描器、`rg`、`grep`、`git`、网络接口、LLM、docker、PoC、DOCX 渲染或确认
   漏洞包生成。
 - 种子卡与候选列表仅作为辅助研判资料，无法替代 `verification-evidence.json`、
-  `findings.json`、DOCX 报告、补充复现说明、附件索引、复现日志、Docker 核验材料
+  `findings.json`、DOCX 报告、补充复现说明、附件索引、复现日志、docker 核验材料
   以及确认漏洞包的校验结果。
-- 同类候选漏洞禁止在补充说明、确认漏洞包、审阅备注、最终摘要里标注为已确认漏洞。候选漏洞只有完成独立 Docker 或 Docker Compose 环境复现，且通过确认漏洞包校验流程后，才可升级判定为已确认同类漏洞。
+- 同类候选漏洞禁止在补充说明、确认漏洞包、审阅备注、最终摘要里标注为已确认漏洞。候选漏洞只有完成独立 docker 或 docker compose 环境复现，且通过确认漏洞包校验流程后，才可升级判定为已确认同类漏洞。
 - 候选检索工具仅支持在单一目标仓库内运行。若种子卡配置的检索范围不属于当前仓库、
   工作区路径匹配异常，或确认漏洞包路径无法解析至当前工作区的 `confirmed/` 目录，
   工具必须直接报错终止运行。
@@ -430,7 +448,7 @@ SSRF 影响过度声明、代码上下文最低质量、复现辅助脚本暂停
 - 对于以 `completed_with_confirmed_bundles` 收尾的新审计，完成门禁会要求 `evidence/variant-analysis/seeds.jsonl` 与 `evidence/variant-analysis/variant-candidates.jsonl` 已存在并通过校验。也就是说，同类扩展不再是审计结束后的人工提醒，而是确认漏洞包流程里的必做收尾步骤。
 
 推荐复核顺序：先校验种子卡是否准确描述已确认漏洞可稳定复现的根因，再核查候选列表
-中的所有条目是否都保持候选状态，最后针对有跟进价值的候选漏洞单独搭建 Docker 环境
+中的所有条目是否都保持候选状态，最后针对有跟进价值的候选漏洞单独搭建 docker 环境
 完成复现验证。配套校验命令如下：
 
 ```bash
@@ -439,15 +457,15 @@ python3 scripts/validate_report_bundle.py --workspace-dir <audit-workspace> --va
 ```
 
 若某一条同类候选漏洞最终核验确认成立，它仍需和常规已确认漏洞保持一致标准：具备
-独立 Docker 复现流程、复现与直接影响佐证文件、`verification-evidence.json`，以及
+独立 docker 复现流程、复现与直接影响佐证文件、`verification-evidence.json`，以及
 校验合格的确认漏洞包。
 
 面向审核与录屏的根脚本应从脚本自身位置推导漏洞包根目录，使用相对该目录的
-`attachments/`；脚本要么从漏洞包内附件自举 Docker 环境，要么在最前面明确失败并
+`attachments/`；脚本要么从漏洞包内附件自举 docker 环境，要么在最前面明确失败并
 告诉审核员应先运行哪条漏洞包内命令。
 脚本在 `docker exec` 前应检查目标容器是否存在且运行；触发漏洞前应尽量做健康/就绪检查。
-这些检查只能证明脚本当次看到的容器状态，不能替代构建清单中显式的目标启动
-或健康检查通过证据。关键 Docker、curl 或令牌生成命令失败时应输出捕获到的错误
+这些检查只反映脚本当次看到的容器状态；构建清单不验证实际执行，仍将目标启动和
+健康检查记录为 `not_executed`。关键 docker、curl 或令牌生成命令失败时应输出捕获到的错误
 上下文，而不是裸用 `2>/dev/null` 吞掉原因。
 嵌套附件目录内的无害 `../` 可以存在，但最终路径必须仍位于单个漏洞包内；脚本不能
 依赖提交者完整的本机仓库布局。
@@ -458,11 +476,11 @@ python3 scripts/validate_report_bundle.py --workspace-dir <audit-workspace> --va
 状态：已确认
 标题：文件导入 URL 获取导致服务端请求伪造（SSRF）
 严重性：高
-证据：Docker 复现中观察到受攻击者控制的回连请求
+证据：docker 复现中观察到受攻击者控制的回连请求
 攻击者条件：具备导入权限的低权限认证用户
 服务端条件：默认导入接口启用，且服务端可访问内网/外网
 安全影响：机密性风险，可探测内网服务或访问元数据
-实际场景中的危害与利用方式：真实部署中导入功能会处理用户提交的 URL；具备导入权限的攻击者控制该 URL；请求链路到达服务端 URL 获取逻辑；直接危害由回连请求或存储响应内容证明；Docker 证据验证 SSRF 可达性，但不声称代码执行。
+实际场景中的危害与利用方式：真实部署中导入功能会处理用户提交的 URL；具备导入权限的攻击者控制该 URL；请求链路到达服务端 URL 获取逻辑；直接危害由回连请求或存储响应内容证明；docker 证据验证 SSRF 可达性，但不声称代码执行。
 漏洞包路径：confirmed/<vulnerability-slug>/
 ```
 
@@ -483,9 +501,9 @@ bash scripts/sync_to_claude_skill.sh
 python3 ~/.claude/skills/zhulong/scripts/selftest_plugin.py
 ```
 
-Codex 用户级 Skill 也已支持。它使用同一套布局契约、安装目录自检、平台无关启动入口和仓库根目录 `AGENTS.md` 引导文件；详见
+Codex 用户级 skill 也已支持。它使用同一套布局契约、安装目录自检、平台无关启动入口和仓库根目录 `AGENTS.md` 引导文件；详见
 [`CODEX_SKILL_ADAPTATION.md`](CODEX_SKILL_ADAPTATION.md)。同步后，
-`~/.agents/skills/zhulong/` 是受支持的 Codex 安装 Skill 副本：
+`~/.agents/skills/zhulong/` 是受支持的 Codex 安装 skill 副本：
 
 ```bash
 bash scripts/sync_to_codex_skill.sh
@@ -525,7 +543,7 @@ python3 scripts/validate_bundle_contract.py \
   --all-errors
 ```
 
-如果预检失败，应修正生成合同或上游 Docker 证据，不要通过创建仅含标记的复现日志，
+如果预检失败，应修正生成合同或上游 docker 证据，不要通过创建仅含标记的复现日志，
 或临时修改直接影响标记来绕过。预检只负责生成前门禁，最终仍必须运行确认漏洞包校验。
 
 随后通过暂存区构建脚本生成漏洞包：
@@ -561,13 +579,13 @@ cat docs/RELEASE_CHECKLIST.md
 
 - 烛龙不保证能发现所有漏洞。
 - 烛龙不能替代专家审查，也不能替代人工进行的负责任披露判断。
-- 烛龙不会自动登录镜像仓库 (Registry)，也不会静默替换非等效的 Docker 镜像。
-- 烛龙不会清理归属不确定的 Docker 资源或 OMC 多 Agent 工作进程。
+- 烛龙不会自动登录镜像仓库 (Registry)，也不会静默替换非等效的 docker 镜像。
+- 烛龙不会清理归属不确定的 docker 资源或 OMC 多 Agent 工作进程。
 - 烛龙不提供托管的后端服务、数据看板、数据库、向量存储或 RAG 服务。
 
 ## 可选最终录屏流程
 
-普通确认漏洞包流程在 Docker 和报告校验通过后结束。最终审核录屏需要单独明确启用；
+普通确认漏洞包流程在 docker 和报告校验通过后结束。最终审核录屏需要单独明确启用；
 普通漏洞包已经确认，并不代表它已经满足录屏交付或提交要求。
 
 使用仓库内的公共实现：
@@ -615,20 +633,20 @@ attachments/evidence/screenshots/03-final-impact.png
 通过 `validate_report_bundle.py` 与 `validate_recording_evidence.py`；临时 UTF-8 ZIP
 通过 `testzip()` 和必需条目校验后，漏洞包目录与 ZIP 才会原子提升。复现、视频帧、
 归档或提升失败时，原漏洞包、视频、截图和 ZIP 必须保持字节不变，并保留带标签的未提升
-录制会话。旧的本地录制 Skill 仅作兼容包装，不是事实源。
+录制会话。旧的本地录制 skill 仅作兼容包装，不是事实源。
 
 `--keep-unpromoted-archive DIR` 是可选参数，绝不会写入采用最终名称的 ZIP。只有暂存
 ZIP 已完整通过校验、随后提升失败时，才会向用户明确指定且位于漏洞包之外的目录复制
 未提升诊断归档；它不会覆盖已有诊断副本。旧参数 `--zip-on-fail` 仅输出弃用警告，
 不会生成失败归档。
 
-## 根 Skill 小内核与阶段参考文档
+## 根 skill 小内核与阶段参考文档
 
 根 `SKILL.md` 现在只保留产品边界、核心安全不变量、生命周期权限链、阶段参考文档
 加载、确认漏洞包路径、规范收尾和可选录屏。各阶段的详细操作放在基线
 `audit-phase-*.md` 参考文档与 `audit-continuation-state.md` 中。
 
-`assets/root-skill-rule-inventory.json` 逐条记录原根 Skill 规则为何保留或迁移，并把
+`assets/root-skill-rule-inventory.json` 逐条记录原根 skill 规则为何保留或迁移，并把
 规则绑定到生产结构定义、校验器、门禁、固定封装脚本、根内核、参考文档和
 自检。可运行：
 
@@ -670,32 +688,32 @@ python3 scripts/validate_root_skill_rule_inventory.py \
 转换意图时会拒绝；真实 R1 调用方必须显式传入 `--protocol-mode legacy-r1`，并从写入结果读取
 兼容模式及被忽略字段诊断。这不表示 R1 已完成 R2 验证流程。
 
-验证封装脚本会在创建证据、读取权威状态、调用 Docker 或执行 PoC 前校验案例 ID 和证据目录。
+验证封装脚本会在创建证据、读取权威状态、调用 docker 或执行 PoC 前校验案例 ID 和证据目录。
 案例 ID 必须以 ASCII 字母或数字开头，只能包含 ASCII 字母、数字、`.`、`_`、`-`；点组件、分隔符、
 空白、控制字符和前导点都会被拒绝。证据路径必须规范化为
 `<workspace>/evidence/<case-id>`，不能穿过符号链接或非目录祖先。缺少事件日志和状态视图时，
-会在执行前以 `AUTHORITATIVE_STATE_MISSING` 阻塞。生产环境的 Docker 清洁检查没有成功旁路；旧的
+会在执行前以 `AUTHORITATIVE_STATE_MISSING` 阻塞。生产环境的 docker 清洁检查没有成功旁路；旧的
 测试专用跳过变量也不再支持。
 
 ### 收尾安全边界
 
 验证封装脚本拥有权威证据控制文件。`verification-result.json`、`command.json`、沙箱状态、
 `stdout.log`、`stderr.log` 和权威引用都由宿主机通过拥有者/文件身份检查的文件描述符及同目录
-原子发布创建或替换。Docker 运行模式挂载 `/workspace/evidence` 时必须只读；容器写出的内容只能
+原子发布创建或替换。docker 运行模式挂载 `/workspace/evidence` 时必须只读；容器写出的内容只能
 放到固定 64 MiB tmpfs `/workspace/output`，仅作为非权威临时空间。新执行不会导入容器文件或
 创建 `container-output`；历史漏洞包仍保持只读兼容。宿主机以前台方式运行显式参数数组，完成状态
-只由 Docker CLI 的退出、超时和信号结果决定。判定依据只读取宿主持有的捕获描述符字节，容器退出后
+只由 docker CLI 的退出、超时和信号结果决定。判定依据只读取宿主持有的捕获描述符字节，容器退出后
 不会按可替换的路径名重新打开文件。符号链接、硬链接、FIFO、目录、祖先漂移和运行中的路径名
 替换都会从严拒绝，不能写穿 `stage-status.json`，也不能把案例变成 `confirmed_in_docker`。
-Compose 模式使用相同的宿主机捕获模型；覆盖工作区权威路径的可写绑定挂载会被拒绝。
+docker compose 模式使用相同的宿主机捕获模型；覆盖工作区权威路径的可写绑定挂载会被拒绝。
 
-沙箱预检是 Docker 或证据副作用发生前必须完成的证明义务。Compose 服务的相对路径固定从规范化后的
+沙箱预检是 docker 或证据副作用发生前必须完成的证明义务。docker compose 服务的相对路径固定从规范化后的
 审计工作区解析，不再依赖调用方 CWD；随后按原顺序复制到一次性、宿主机持有的快照集合。清单绑定低敏
-逻辑路径、SHA-256、大小和文件身份。预检以及每次 Compose `config`、`pull`、`run` 都只读取这些快照，
+逻辑路径、SHA-256、大小和文件身份。预检以及每次 docker compose `config`、`pull`、`run` 都只读取这些快照，
 并显式使用工作区作为项目目录。原文件在预检后变化不会改变执行字节；快照身份变化会在
 服务命令前从严拒绝。
 
-Compose 采用封闭子集：顶层只允许 `version` 和 `services`，每个服务都必须声明字面值
+docker compose 采用封闭子集：顶层只允许 `version` 和 `services`，每个服务都必须声明字面值
 `privileged: false`。锚点、别名、合并、插值、未知字段、`build`/`host-file`/`include`、
 `pid`/`ipc`/`uts`/`cgroup`/`userns_mode`、能力/设备/安全选项以及命名卷、匿名卷或外部卷均会被拒绝。
 如果服务声明 `network_mode`，只能使用精确的静态字符串 `none`；省略是允许的，因为宿主持有的
@@ -705,41 +723,41 @@ Compose 采用封闭子集：顶层只允许 `version` 和 `services`，每个�
 目标仓库只读映射到 `/workspace/target`、工作区的 `poc/` 只读映射到 `/workspace/poc`。
 `/workspace/output` 固定为容器内 64 MiB tmpfs，不再是可写宿主机绑定挂载，仅作为非权威临时空间。新执行
 以前台方式运行显式服务参数数组，并强制合并配置中的 `logging.driver=none`；不读取容器文件，不生成
-`container-output`。历史漏洞包保持只读兼容。其他宿主机路径即使只读也拒绝。额外 Docker 参数不能覆盖
+`container-output`。历史漏洞包保持只读兼容。其他宿主机路径即使只读也拒绝。额外 docker 参数不能覆盖
 资源或隔离策略；专用的 `--memory`、`--cpus` 和 `--pids-limit` 必须为正数，并受
 `docker-case-policy-v2` 硬上限约束：内存 16 MiB 到 2 GiB、CPU 0.1 到 4、PID 1 到 1024；默认值仍为
-512 MiB、1 CPU 和 256 PID。Docker 运行模式会把静态的 `none`、`bridge` 或非 host 自定义网络写入
-schema 2 回执，并拒绝控制字符和不安全名称；Compose 始终派生 `network_mode: none`，不接受 Docker
+512 MiB、1 CPU 和 256 PID。docker 运行模式会把静态的 `none`、`bridge` 或非 host 自定义网络写入
+schema 2 回执，并拒绝控制字符和不安全名称；docker compose 始终派生 `network_mode: none`，不接受 docker
 运行模式的网络值。预检通过只证明配置处于
 当前执行边界内，不证明 PoC、判定依据、核验结论、漏洞包或收尾成立。
 
-每次调用都会在宿主机持有的回执中生成随机案例令牌、精确的容器名称和唯一的 Compose 项目名称。
+每次调用都会在宿主机持有的回执中生成随机案例令牌、精确的容器名称和唯一的 docker compose 项目名称。
 新回执使用 schema 2 和 `docker-case-policy-v2`。精确的 schema 1 / `docker-case-policy-v1` 历史回执只允许
 进入身份安全的清理流程；配置校验、权威事件、结果发布和新的准备流程都会拒绝它们，不会改写历史回执。
-Compose 在输入文件之后追加最后一层宿主机覆盖配置，将选定服务的 `network_mode` 强制设为 `none`，
+docker compose 在输入文件之后追加最后一层宿主机覆盖配置，将选定服务的 `network_mode` 强制设为 `none`，
 并把该值绑定到回执策略；服务启动前还会校验生产环境合并配置，缺失或漂移都会拒绝。执行时
 显式使用 `-p`、`--name` 和 `--no-deps`，镜像检查及显式请求的 `pull` 也只针对选定服务。正常退出、
 失败、超时、`SIGINT`、`SIGTERM`、证据捕获失败、输出超限或其他证据错误共用同一套幂等清理。宿主机
-持续流式捕获标准输出和标准错误，每路 16 MiB 到达硬上限就终止整个 Docker 进程组，之后才允许发布结果。
+持续流式捕获标准输出和标准错误，每路 16 MiB 到达硬上限就终止整个 docker 进程组，之后才允许发布结果。
 清理过程可以枚举资源用于检查，但只删除携带回执精确令牌或唯一项目标签的资源，不使用前缀、通配、标签
 选择器或 `prune`。容器、网络和卷残留必须连续三次观察为零后，才允许提交
-`verification_case_completed`。结果发布和验证事件之前还必须使用固定快照完成 Compose 清理；
+`verification_case_completed`。结果发布和验证事件之前还必须使用固定快照完成 docker compose 清理；
 无法证明清理完成时返回 `DOCKER_CASE_CLEANUP_FAILED`，撤销判定依据的命中状态并保持 `blocked`。
 
 绑定源的身份检查发生在文件系统解析之前。相对源路径按规范化审计工作区做词法解释；父目录组件和
 路径别名会被拒绝；目标仓库与 `poc/` 路径中所有已经存在的组件都必须由 `lstat` 证明为真实目录。
 `/workspace/output` 不接受任何宿主机绑定挂载，而由容器内固定大小的 tmpfs 提供；宿主机临时目录只能由
-安全辅助程序创建，并在访问 Docker 前再次检查。引导程序也会在任何工作区写入前执行同样的从严检查，
+安全辅助程序创建，并在访问 docker 前再次检查。引导程序也会在任何工作区写入前执行同样的从严检查，
 因此预先存在的符号链接、普通文件、FIFO、套接字、设备或其他非目录条目不会被跟随。
 
-封装脚本会在每一次 Compose `config`、`pull` 和 `run` 前重复检查宿主机绑定目录，并比较上一次检查记录的
+封装脚本会在每一次 docker compose `config`、`pull` 和 `run` 前重复检查宿主机绑定目录，并比较上一次检查记录的
 低敏目录身份。版本化身份把每个已有路径组件的稳定 `device`、`inode`、`type`、`mode`、`uid`、`gid` 与叶目录的
 修改时间和链接数观察值分开。任何稳定身份变化都会从严拒绝；目标路径与 `poc/` 的观察值也继续严格比较。
 这是重新校验，不是宿主机路径的原子固定。当前平台边界假定受信任的工作区所有者不会在宿主机检查到
-Docker 调用的短暂窗口中并发替换目录。该重新校验并不构成原子固定，实现也没有声称消除操作系统层面的
+docker 调用的短暂窗口中并发替换目录。该重新校验并不构成原子固定，实现也没有声称消除操作系统层面的
 检查与使用之间的竞态窗口（TOCTOU）。
 
-初始探测仍然只是建议性结果，最多提供候选项材料。没有经过单独审计的固定 Docker 封装脚本时，Maven/Gradle
+初始探测仍然只是建议性结果，最多提供候选项材料。没有经过单独审计的固定 docker 封装脚本时，Maven/Gradle
 项目求值和可由目标配置的 golangci-lint 插件加载不会在宿主机运行，而会记录为
 `skipped_requires_isolation`。该状态不是通过，也不授权 Agent 或操作者手工执行等价宿主命令。npm 调用
 禁用生命周期脚本，Go 包加载强制使用只读模块模式。引导程序的工作区名称只能
@@ -767,5 +785,5 @@ Docker 调用的短暂窗口中并发替换目录。该重新校验并不构成�
 成功收尾时，摘要和交接状态会先针对准确的预期终态事件日志/状态快照生成并校验，再追加
 `finalization_succeeded`。该终态事件是最后一次权威提交，之后只执行只读断言。若事件日志已追加而状态视图
 更新失败，事件日志继续保持权威，诊断要求显式重建状态视图。对全部一致的已完成工作区重跑收尾程序时不会
-改写字节、重跑 Docker 检查或追加重复终态；权威链或派生产物出现差异会从严拒绝，并要求显式 `recover` 或
+改写字节、重跑 docker 检查或追加重复终态；权威链或派生产物出现差异会从严拒绝，并要求显式 `recover` 或
 `reopen`。

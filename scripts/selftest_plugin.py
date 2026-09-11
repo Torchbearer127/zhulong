@@ -8,6 +8,7 @@ import io
 import os
 import re
 import shutil
+import shlex
 import stat
 import subprocess
 import sys
@@ -4221,6 +4222,11 @@ def build_wrapper_source_finding(
         "services:\n  attacker:\n    image: alpine:3.20\n",
         encoding="utf-8",
     )
+    (repo_dir / "docker-compose.yml").write_text(
+        "services:\n  app:\n    build: .\n    healthcheck:\n      test: [CMD, /bin/true]\n",
+        encoding="utf-8",
+    )
+    (repo_dir / "Dockerfile").write_text("FROM scratch\n", encoding="utf-8")
     (repo_dir / "poc/path_traversal.py").write_text("print('root:x:0:0:')\n", encoding="utf-8")
     (repo_dir / "evidence/replay-output.log").write_text(
         "Zhulong reviewer replay log\n"
@@ -4237,6 +4243,10 @@ def build_wrapper_source_finding(
     finding["filename"] = f"{slug}.docx"
     finding["slug"] = "demo-app-path-traversal"
     finding["project_root_dir"] = "."
+    finding["bundle_root_artifacts"].extend([
+        {"path": "docker-compose.yml", "output_name": "docker-compose.yml", "purpose": "测试编排文件"},
+        {"path": "Dockerfile", "output_name": "Dockerfile", "purpose": "测试构建文件"},
+    ])
     finding.setdefault("verification_evidence", {})["finding_slug"] = finding["slug"]
     evidence_files = finding["verification_evidence"].setdefault("evidence_files", [])
     if "attachments/evidence/replay-output.log" not in evidence_files:
@@ -4264,6 +4274,12 @@ def build_wrapper_contract(workspace: Path, slug: str, *, finding_slug: str = "d
         "source_findings_json": "confirmed/findings.json",
         "finding_slug": finding_slug,
     }
+    contract["replay"]["root_script"]["path"] = "run-demo-path-traversal-recording.sh"
+    contract["files"]["evidence_files"] = ["attachments/evidence/replay-output.log", "attachments/poc/path_traversal.py"]
+    contract["files"]["attachments"] = [
+        "attachments/docker/docker-compose.attacker.yml", "attachments/poc/path_traversal.py",
+        "attachments/evidence/replay-output.log", "attachments/reviewer-evidence-index.json",
+    ]
     contract["finding"] = {
         "project_name": "demo-app",
         "vulnerability_name": "目录遍历",
@@ -4324,6 +4340,121 @@ def new_build_wrapper_workspace(root: Path, name: str) -> tuple[Path, Path]:
         encoding="utf-8",
     )
     return repo_dir, workspace
+
+
+def exercise_standalone_replay_contract(plugin_root: Path) -> None:
+    validator = load_validate_report_bundle_module(plugin_root)
+    renderer = load_render_confirmed_vuln_docx_module(plugin_root)
+
+    def rejected(action, diagnostic: str) -> None:
+        try:
+            action()
+        except (SystemExit, Exception) as exc:
+            if diagnostic not in str(exc):
+                raise SystemExit(f"FAILED: expected {diagnostic}, got {exc}")
+        else:
+            raise SystemExit(f"FAILED: missing rejection {diagnostic}")
+
+    with tempfile.TemporaryDirectory(prefix="zhulong-standalone-replay-") as tmp:
+        bundle = Path(tmp)
+        script = bundle / "run-demo.sh"
+        validator.validate_root_script_static_artifact_paths(script, bundle, "docker compose version")
+        startup = renderer.replay_startup_command("docker compose -f up up -d app")
+        if not startup.startswith("docker compose -f up up --wait --wait-timeout"):
+            raise SystemExit("FAILED: startup rewrite confused an option value with the Compose subcommand")
+        for command in ("docker compose build app", "docker compose -f missing.yml up -d app"):
+            rejected(lambda: validator.validate_root_script_static_artifact_paths(script, bundle, command),
+                     "REPLAY_INPUT_MISSING")
+        compose = bundle / "compose.yaml"
+        compose.write_text("services:\n  app:\n    build: ./target\n", encoding="utf-8")
+        rejected(lambda: validator.validate_compose_static_paths(compose, bundle), "REPLAY_INPUT_MISSING")
+        target = bundle / "target"
+        target.mkdir()
+        rejected(lambda: validator.validate_compose_static_paths(compose, bundle), "REPLAY_INPUT_MISSING")
+        (target / "Dockerfile").write_text("FROM scratch\n", encoding="utf-8")
+        validator.validate_compose_static_paths(compose, bundle)
+        validator.validate_root_script_static_artifact_paths(script, bundle, "docker compose build app")
+        for build in ("../outside", {"context": ".", "dockerfile": "missing"}):
+            compose.write_text(json.dumps({"services": {"app": {"build": build}}}), encoding="utf-8")
+            rejected(lambda: validator.validate_compose_static_paths(compose, bundle), "REPLAY_INPUT_")
+        healthy = {"services": {"app": {"image": "stub:local", "healthcheck": {"test": ["CMD", "true"]}}}}
+        wait_command = 'docker compose up --wait --wait-timeout "$READY_TIMEOUT_SECONDS" -d app'
+        compose.write_text(json.dumps(healthy), encoding="utf-8")
+        validator.validate_root_script_static_artifact_paths(script, bundle, "run_logged_command " + shlex.quote(wait_command))
+        for health in ({}, {"test": ["NONE"]}, {"test": "NONE"}, {"test": ["CMD"]}, {"test": ["CMD", "true"], "disable": True}):
+            unhealthy = json_clone(healthy)
+            unhealthy["services"]["app"]["healthcheck"] = health
+            compose.write_text(json.dumps(unhealthy), encoding="utf-8")
+            rejected(lambda: validator.validate_root_script_static_artifact_paths(script, bundle, wait_command),
+                     "REPLAY_HEALTHCHECK_MISSING")
+        compose.unlink()
+        compose.symlink_to("index.json")
+        rejected(lambda: validator.validate_root_script_static_artifact_paths(script, bundle, "docker compose -f compose.yaml build app"),
+                 "REPLAY_INPUT_UNSAFE")
+        compose.unlink()
+
+        override_dir = bundle / "override"
+        override_dir.mkdir()
+        healthy["services"]["app"]["build"] = "./target"
+        compose.write_text(json.dumps(healthy), encoding="utf-8")
+        (override_dir / "extra.yaml").write_text(json.dumps({"services": {"app": {
+            "build": {"dockerfile": "Otherfile"}, "healthcheck": {"interval": "1s"}}}}), encoding="utf-8")
+        (bundle / "Otherfile").write_text("FROM scratch\n", encoding="utf-8")
+        merged_command = "docker compose -f compose.yaml -f override/extra.yaml up --wait -d app"
+        rejected(lambda: validator.validate_root_script_static_artifact_paths(script, bundle, merged_command),
+                 "REPLAY_INPUT_MISSING")
+        (target / "Otherfile").write_text("FROM scratch\n", encoding="utf-8")
+        validator.validate_root_script_static_artifact_paths(script, bundle, merged_command)
+
+        # The builder must check declared outputs, not just independently valid files.
+        sys.path.insert(0, str(plugin_root / "scripts"))
+        from build_confirmed_bundle import validate_replay_contract_outputs
+        contract = {"replay": {"root_script": {"path": "run-demo.sh"}},
+                    "files": {"verification_evidence": "verification-evidence.json",
+                              "reviewer_evidence_index": "index.json",
+                              "attachments": ["proof.txt"], "evidence_files": ["proof.txt"]}}
+        for name in ("run-demo.sh", "verification-evidence.json", "index.json", "proof.txt"):
+            (bundle / name).write_text("proof\n", encoding="utf-8")
+        validate_replay_contract_outputs(contract, bundle)
+        for field in ("root", "evidence", "attachment"):
+            mutated = json_clone(contract)
+            if field == "root":
+                mutated["replay"]["root_script"]["path"] = "other.sh"
+            else:
+                mutated["files"]["evidence_files" if field == "evidence" else "attachments"].append("never-existed.txt")
+            rejected(lambda: validate_replay_contract_outputs(mutated, bundle), "REPLAY_DECLARED_FILE_MISSING")
+        (bundle / "proof.txt").unlink()
+        (bundle / "proof.txt").symlink_to("index.json")
+        rejected(lambda: validate_replay_contract_outputs(contract, bundle), "REPLAY_DECLARED_FILE_UNSAFE")
+
+        # Exercise the generated shell. The stub fails unless native bounded
+        # readiness is requested, then simulates a health-check failure.
+        finding = issue23_finding(["docker compose up -d app", "printf SHOULD_NOT_RUN"], include_history=True)
+        generated = renderer.build_generated_recording_shell(finding, "en-US", {}, {})
+        script.write_text(generated, encoding="utf-8")
+        fakebin = bundle / "fakebin"
+        fakebin.mkdir()
+        docker = fakebin / "docker"
+        docker.write_text("#!/bin/sh\ncase \"$*\" in\ninfo) exit 0;;\n*'--wait --wait-timeout 30'*) exit 7;;\n*) exit 0;;\nesac\n", encoding="utf-8")
+        docker.chmod(0o755)
+        env = {**os.environ, "PATH": str(fakebin) + os.pathsep + os.environ.get("PATH", ""),
+               "REVIEWER_PAUSE_SHORT": "0", "REVIEWER_PAUSE_LONG": "0"}
+        proc = subprocess.run(["sh", str(script), "quick", "docker"], env=env, capture_output=True, text=True, timeout=15)
+        if proc.returncode != 7 or "SHOULD_NOT_RUN" in proc.stdout:
+            raise SystemExit(f"FAILED: bounded readiness failure did not stop replay: {proc.returncode} {proc.stdout}")
+        # Success is also reachable: native wait must finish before the next command.
+        finding = issue23_finding(["docker compose up -d app", "printf '%s\\n' ISSUE23_SUCCESS_MARKER"], include_history=True)
+        script.write_text(renderer.build_generated_recording_shell(finding, "en-US", {}, {}), encoding="utf-8")
+        docker.write_text(docker.read_text(encoding="utf-8").replace("exit 7", "exit 0"), encoding="utf-8")
+        proc = subprocess.run(["sh", str(script), "quick", "docker"], env=env, capture_output=True, text=True, timeout=15)
+        if proc.returncode != 0:
+            raise SystemExit(f"FAILED: healthy startup rejected: {proc.stdout} {proc.stderr}")
+        for bad_timeout in ("0", "601", "invalid"):
+            proc = subprocess.run(["sh", str(script), "quick", "docker"], env={**env, "ZHULONG_READY_TIMEOUT_SECONDS": bad_timeout},
+                                  capture_output=True, text=True, timeout=15)
+            if proc.returncode == 0 or "REPLAY_STARTUP_INVALID" not in proc.stderr:
+                raise SystemExit("FAILED: invalid readiness timeout accepted")
+    print("STANDALONE REPLAY CONTRACT SELFTEST PASSED")
 
 
 def exercise_build_manifest_runtime_claims(plugin_root: Path) -> None:
@@ -4660,12 +4791,36 @@ def exercise_source_text_scope(plugin_root: Path) -> None:
 
 
 def exercise_build_confirmed_bundle_wrapper(plugin_root: Path) -> None:
+    exercise_standalone_replay_contract(plugin_root)
     exercise_build_manifest_runtime_claims(plugin_root)
     exercise_source_text_scope(plugin_root)
     wrapper = plugin_root / "scripts/build_confirmed_bundle.py"
     renderer = plugin_root / "scripts/render_confirmed_vuln_docx.py"
     with tempfile.TemporaryDirectory() as tempdir:
         root = Path(tempdir)
+
+        for name, expected in (("entrypoint", "REPLAY_DECLARED_FILE_MISSING"),
+                               ("declaration", "REPLAY_DECLARED_FILE_MISSING"),
+                               ("compose-input", "REPLAY_INPUT_MISSING"),
+                               ("healthcheck", "REPLAY_HEALTHCHECK_MISSING")):
+            repo, ws = new_build_wrapper_workspace(root, name)
+            test_slug = build_wrapper_source_finding(plugin_root, repo, ws)
+            cp = build_wrapper_contract(ws, test_slug)
+            data = json.loads(cp.read_text(encoding="utf-8"))
+            if name == "entrypoint":
+                data["replay"]["root_script"]["path"] = "run-wrong-entrypoint.sh"
+            elif name == "declaration":
+                data["files"]["evidence_files"].append("attachments/never-existed.txt")
+            elif name == "compose-input":
+                (repo / "docker-compose.yml").unlink()
+            else:
+                (repo / "docker-compose.yml").write_text("services:\n  app:\n    build: .\n", encoding="utf-8")
+            write_json_fixture(cp, data)
+            proc = subprocess.run([sys.executable, str(wrapper), "--repo-root", str(repo),
+                                   "--workspace-dir", str(ws), "--contract", str(cp)],
+                                  cwd=plugin_root, capture_output=True, text=True)
+            if proc.returncode == 0 or expected not in proc.stdout + proc.stderr or (ws / "confirmed" / test_slug).exists():
+                raise SystemExit(f"FAILED: builder did not reject {name}: {proc.stdout} {proc.stderr}")
 
         repo_dir, workspace = new_build_wrapper_workspace(root, "positive")
         slug = build_wrapper_source_finding(plugin_root, repo_dir, workspace)
@@ -7190,7 +7345,7 @@ def exercise_p7_wording_closure(plugin_root: Path) -> None:
     )
     require_text(
         plugin_root / "docs/WORKFLOW_DETAILS.zh-CN.md",
-        "Codex 用户级 Skill 也已支持",
+        "Codex 用户级 skill 也已支持",
         "Chinese workflow details Codex installed runtime support",
     )
     require_text(
@@ -7205,7 +7360,7 @@ def exercise_p7_wording_closure(plugin_root: Path) -> None:
     )
     require_text(
         plugin_root / "README.zh-CN.md",
-        "Codex 用户级 Skill 支持、安装目录自检、平台无关启动入口",
+        "Codex 用户级 skill 支持、安装目录自检、平台无关启动入口",
         "Chinese README Codex completed support",
     )
     forbid_text(
@@ -15637,11 +15792,23 @@ def main() -> None:
             "DIRECT_IMPACT_CONFIRMED\n",
             encoding="utf-8",
         )
+        (repo_dir / "docker-compose.yml").write_text(
+            "services:\n  app:\n    build: .\n    healthcheck:\n      test: [CMD, /bin/true]\n", encoding="utf-8",
+        )
+        (repo_dir / "Dockerfile").write_text("FROM scratch\n", encoding="utf-8")
+        standalone_example = json.loads((plugin_root / "assets/examples/confirmed-findings.example.json").read_text(encoding="utf-8"))
+        for example in standalone_example:
+            example["bundle_root_artifacts"].extend([
+                {"path": "docker-compose.yml", "output_name": "docker-compose.yml", "purpose": "测试编排文件"},
+                {"path": "Dockerfile", "output_name": "Dockerfile", "purpose": "测试构建文件"},
+            ])
+        standalone_example_path = workspace / "standalone-example.json"
+        standalone_example_path.write_text(json.dumps(standalone_example, ensure_ascii=False), encoding="utf-8")
         run([
             sys.executable,
             str(workspace / "bin/render-confirmed-vuln-docx.py"),
             "--input",
-            str(plugin_root / "assets/examples/confirmed-findings.example.json"),
+            str(standalone_example_path),
             "--output-dir",
             str(workspace / "confirmed"),
             "--language",
@@ -15651,7 +15818,7 @@ def main() -> None:
             sys.executable,
             str(workspace / "bin/render-confirmed-vuln-docx.py"),
             "--input",
-            str(plugin_root / "assets/examples/confirmed-findings.example.json"),
+            str(standalone_example_path),
             "--output-dir",
             str(workspace / "confirmed"),
             "--language",
@@ -20159,7 +20326,7 @@ def main() -> None:
             sys.executable,
             str(workspace / "bin/render-confirmed-vuln-docx.py"),
             "--input",
-            str(plugin_root / "assets/examples/confirmed-findings.example.json"),
+            str(standalone_example_path),
             "--output-dir", str(workspace / "confirmed"),
             "--language", "zh-CN",
         ], plugin_root)

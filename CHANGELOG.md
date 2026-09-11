@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- reject bundle promotion when declared replay entrypoints or delivery files are missing or unsafe
+- check bundle-local Compose inputs, build contexts, and Dockerfiles without requiring a Docker daemon
+- add bounded health waits to generated detached Compose startup commands and stop replay when startup or waiting fails
+- document static validation limits; successful packaging does not establish successful runtime replay
+
 ## 0.6.0
 
 - added recoverable file-backed audit state with an append-only event history, derived workspace views, revision-checked writes, and explicit recovery

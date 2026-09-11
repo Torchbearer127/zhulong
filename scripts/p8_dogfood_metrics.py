@@ -123,7 +123,7 @@ def valid_bundle_contract(slug: str) -> dict[str, Any]:
             },
         },
         "replay": {
-            "root_script": {"path": f"run-{slug}-recording.sh"},
+            "root_script": {"path": "run-demo-path-traversal-recording.sh"},
             "log": {
                 "path": "attachments/evidence/replay-output.log",
                 "registration_targets": ["files.evidence_files", "files.reviewer_evidence_index"],
@@ -318,6 +318,10 @@ def create_source_workspace(
         encoding="utf-8",
     )
     (repo_dir / "poc/path_traversal.py").write_text("print('root:x:0:0:')\n", encoding="utf-8")
+    (repo_dir / "docker-compose.yml").write_text(
+        "services:\n  app:\n    build: .\n    healthcheck:\n      test: [CMD, /bin/true]\n", encoding="utf-8",
+    )
+    (repo_dir / "Dockerfile").write_text("FROM scratch\n", encoding="utf-8")
     (repo_dir / "evidence/replay-output.log").write_text(replay_text, encoding="utf-8")
 
     findings = json.loads((plugin_root / "assets/examples/confirmed-findings.example.json").read_text(encoding="utf-8"))
@@ -325,6 +329,10 @@ def create_source_workspace(
     finding["slug"] = "demo-app-path-traversal"
     finding["project_root_dir"] = "."
     finding["filename"] = f"{slug}.docx"
+    finding["bundle_root_artifacts"].extend([
+        {"path": "docker-compose.yml", "output_name": "docker-compose.yml", "purpose": "Static test composition"},
+        {"path": "Dockerfile", "output_name": "Dockerfile", "purpose": "Static test build input"},
+    ])
     finding.setdefault("verification_evidence", {})["finding_slug"] = finding["slug"]
     evidence_files = finding["verification_evidence"].setdefault("evidence_files", [])
     if "attachments/evidence/replay-output.log" not in evidence_files:

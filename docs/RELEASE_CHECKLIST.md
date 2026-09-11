@@ -18,6 +18,14 @@ Use this checklist before publishing a tagged open-source release of Zhulong
 
 ## 2. Packaging
 
+- [ ] Changed Chinese documentation follows the canonical terminology in
+  `assets/references/output-language-and-path-contract.md`. English fragments
+  are necessary names or exact identifiers; the same concept has consistent
+  wording within and across affected Chinese files.
+- [ ] Corresponding Chinese and English instructions agree on conditions,
+  defaults, failure behavior, and limitations. Tool names, containers, and
+  images remain distinct; language review did not alter commands or evidence.
+
 - [ ] `.claude-plugin/plugin.json` is valid JSON and metadata-only.
 - [ ] `.codex-plugin/plugin.json` is valid JSON and uses the same release
   version.
@@ -342,6 +350,19 @@ Use this checklist before publishing a tagged open-source release of Zhulong
   overclaim, code context minimum quality, and replay helper pause contract.
 - [ ] Each reviewer-readiness gate family has deterministic local-only positive
   and negative fixture coverage in `scripts/selftest_plugin.py`.
+- [ ] Declared root-script and delivery paths are checked against actual staging
+  files before promotion; missing files, symlinks, hardlinks, and non-regular
+  files fail without promoting an incomplete bundle.
+- [ ] Recognized root-script Compose calls require delivered configuration,
+  local build contexts, and Dockerfiles. Multi-file path bases and legitimate
+  overrides have positive coverage; parser limits for handwritten scripts are
+  documented rather than presented as complete shell analysis.
+- [ ] Generated detached Compose startup uses bounded native health waits;
+  missing healthchecks and startup/wait failures cannot lead to later proof
+  commands. Timeout settings remain independent of quick mode and visual pauses.
+- [ ] Static bundle validation and deterministic Docker substitutes are not
+  reported as real build/startup/health/replay results. The builder's five
+  runtime stages remain `not_executed`, even with digest-matched attachments.
 - [ ] New reviewer-readiness gates add classification, selftest fixture
   coverage, and a release checklist entry in the same change.
 - [ ] Registered replay logs are real transcripts with command/output/oracle

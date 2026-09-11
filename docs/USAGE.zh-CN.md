@@ -6,7 +6,7 @@
 
 | 使用场景 | 推荐方式 |
 | --- | --- |
-| 你的本地 AI 编程 Agent 已加载烛龙技能 | 使用下方的短提示词。 |
+| 你的本地 AI 编程 Agent 已加载烛龙 skill | 使用下方的短提示词。 |
 | 你想先从终端准备或克隆仓库 | 使用 `scripts/zhulong_audit.sh` 脚本。 |
 | 你想在多个仓库上试运行烛龙 | 使用下方的试运行提示词。 |
 | 你已经有本地仓库 | 使用本地仓库专用提示词，或使用 `--repo-root` 参数。 |
@@ -63,9 +63,9 @@ https://github.com/owner/repo
 Output language: zh-CN.
 Preferences:
 - 将此视为产品验证运行，而非单纯为了完成指标的漏洞挖掘。
-- 不要强行确认审计发现；当 Docker 证据不支持任何候选漏洞时，接受“无确认漏洞”的结果。
-- 在生成的 Workspace 文件中记录已确认漏洞、误报、未验证线索、非安全缺陷、加固建议、Docker 阻塞项以及易用性问题。
-- 将审计手册 (Playbook) 和清单作为起始参考。如果该仓库有特定的项目框架、数据流、污染汇聚点 (Sink) 或部署假设，请在审计工作区中记录。
+- 不要强行确认审计发现；当 docker 证据不支持任何候选漏洞时，接受“无确认漏洞”的结果。
+- 在生成的工作区文件中记录已确认漏洞、误报、未验证线索、非安全缺陷、加固建议、docker 阻塞项以及易用性问题。
+- 将审计手册和清单作为起始参考。如果该仓库有特定的项目框架、数据流、污染汇聚点或部署假设，请在审计工作区中记录。
 - 任务结束时，总结哪些已确认、哪些已驳回、哪些仍未验证，以及生成的证据是否足以让人工审核员接手。
 ```
 
@@ -80,24 +80,24 @@ Preferences:
 - 将看似合理但未经证实的漏洞保留在审计笔记中，不要将其视为已确认漏洞。
 ```
 
-不要把很长的规则清单复制到每次启动的提示词里。烛龙已经把可复用的安全规则、报告规范和自动检查集成在技能、参考文档和脚本中了。
+不要把很长的规则清单复制到每次启动的提示词里。烛龙已经把可复用的安全规则、报告规范和自动检查集成在 skill、参考文档和脚本中了。
 
 ## Codex 支持状态
 
-Codex 技能布局说明记录在
+Codex skill 布局说明记录在
 [`CODEX_SKILL_ADAPTATION.md`](CODEX_SKILL_ADAPTATION.md)。Codex 用户级同步会
-把同一份烛龙技能运行副本安装到 `~/.agents/skills/zhulong/`：
+把同一份烛龙 skill 运行副本安装到 `~/.agents/skills/zhulong/`：
 
 ```bash
 bash scripts/sync_to_codex_skill.sh
 python3 ~/.agents/skills/zhulong/scripts/selftest_plugin.py
 ```
 
-这个自检只验证安装目录布局；它不会运行 Codex、Docker、PoC、网络查询、包仓库、
+这个自检只验证安装目录布局；它不会运行 Codex、docker、PoC、网络查询、包仓库、
 GitHub 调用或 LLM 调用。
 
 在源码检出目录中，仓库根目录 `AGENTS.md` 可能会提示 Codex 使用 `$zhulong`；
-已安装技能的行为仍由 `SKILL.md` 负责。
+已安装 skill 的行为仍由 `SKILL.md` 负责。
 
 ## 手动终端启动
 
@@ -149,27 +149,27 @@ bash scripts/zhulong_audit.sh --repo-root /path/to/repo --prompt-runtime-pid-rev
 | `--repo-root DIR` | 从已有本地仓库开始。 | 与 `--source` 二选一，不能同时使用。 |
 | `--workspace-root DIR` | 将远程仓库克隆到指定目录。 | 默认是当前目录。 |
 | `--workspace-name NAME` | 指定审计工作区的名称。 | 默认格式为 `security-research-YYYYMMDD-HHMMSS`。 |
-| `--output-language LANG` | 报告产物语言（zh-CN / en-US）。 | 请使用标准的 Locale 格式。 |
+| `--output-language LANG` | 报告产物语言（zh-CN / en-US）。 | 请使用表中列出的语言代码。 |
 | `--summary-language LANG` | 摘要语言（zh-CN / en-US）。 | 通常与报告语言保持一致。 |
-| `--ref REF` | 指定远程分支或 Tag。 | 仅用于远程仓库模式。 |
-| `--force` | 在安全前提下强制重建冲突文件。 | 禁止用它隐藏 Docker 残留或覆盖关键证据。 |
+| `--ref REF` | 指定远程分支或标签。 | 仅用于远程仓库模式。 |
+| `--force` | 在安全前提下强制重建冲突文件。 | 禁止用它隐藏 docker 残留或覆盖关键证据。 |
 | `--skip-plan` | 调试启动阶段，跳过工具规划。 | 普通审计过程中不建议使用。 |
 | `--prompt-runtime-pid-review` | 终端显式提醒可疑 Agent 进程。 | 仅供只读复核，不做自动清理。 |
-| `--json` | 需要机器可读的启动输出。 | 适合脚本集成或包装器 (Wrapper) 调用。 |
-| `--print-skill-root` | 查看当前解析到的源码或安装技能根目录。 | 安全诊断选项，不会启动审计。 |
+| `--json` | 需要机器可读的启动输出。 | 适合脚本集成或封装程序调用。 |
+| `--print-skill-root` | 查看当前解析到的源码或安装 skill 根目录。 | 安全诊断选项，不会启动审计。 |
 | `-h`, `--help` | 查看内置帮助。 | 打印启动脚本用法。 |
 
 ## 启动后会发生什么
 
-烛龙会在目标仓库内创建一个带时间戳的审计工作区 (Workspace)：
+烛龙会在目标仓库内创建一个带时间戳的审计工作区：
 
 ```text
 <repo>/security-research-YYYYMMDD-HHMMSS/
 ```
 
-该工作区会完整保存候选漏洞、误报、未验证线索、交接摘要、Docker 状态、运行时状态、证据文件，以及确认存在的漏洞证据包。
+该工作区会完整保存候选漏洞、误报、未验证线索、交接摘要、docker 状态、运行时状态、证据文件，以及确认存在的漏洞证据包。
 
-如果 Docker 不可用或验证环境不安全，烛龙会记录阻塞原因并暂停验证，**绝不会**回退到宿主机直接运行 PoC 命令。
+如果 docker 不可用或验证环境不安全，烛龙会记录阻塞原因并暂停验证，**绝不会**回退到宿主机直接运行 PoC 命令。
 
 ## 高级续跑命令
 

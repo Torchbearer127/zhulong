@@ -404,6 +404,26 @@ are recorded as `not_executed` by the builder. This manifest does not verify
 runtime execution and rejects `passed` for these phases, even when an attached
 file has a matching digest. File integrity alone does not prove execution.
 
+Before promotion, the builder checks the declared root replay script and all
+`files` paths against actual staging files. Declarations do not copy missing
+inputs automatically. Direct Compose commands require delivered configuration
+and any referenced local build contexts and Dockerfiles; with multiple `-f` inputs, paths resolve
+from the first file's directory. YAML checks require PyYAML in the validator's
+Python environment.
+
+Generated detached Compose startup waits for enabled service healthchecks using
+`up --wait --wait-timeout`. `ZHULONG_READY_TIMEOUT_SECONDS` controls the timeout
+(1–600 seconds, default 30), independently of visual pauses or quick mode.
+Startup or wait failure stops replay before subsequent proof commands. A Compose
+version without the required wait options fails rather than skipping the wait.
+
+Static validation does not execute builds or replay, resolve every Dockerfile
+dependency, or interpret arbitrary shell wrappers. Handwritten scripts still
+need review: for example, an unquoted `run_logged_command docker compose ...`
+call is not recognized by the Compose input checker. Generated helpers quote
+the whole command. See the [bundle format reference](../assets/references/confirmed-vuln-docx-format.md)
+for the supported delivery and replay contract.
+
 The replay transcript corpus in `assets/fixtures/replay-transcript-corpus/`
 anchors this trust boundary with positive and negative static samples. The
 validator does not require a single rigid log format: different real transcript

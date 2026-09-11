@@ -243,13 +243,13 @@ The code-context screen should use bundled finding data such as `code_context` a
 The helper must capture raw command stdout/stderr to a bundle-local runtime `.log` file under `attachments/evidence/`.
 Generated helpers and recording automation write runtime output to `attachments/evidence/replay-runtime-output.log`; that runtime log is not a substitute for the registered proof transcript and must not overwrite it.
 `attachments/evidence/replay-output.log` is the historical reviewer proof transcript path when supplied by source finding evidence. It must be copied/preserved as first-run proof and registered in `verification-evidence.json` or `attachments/reviewer-evidence-index.json`.
-`bundle-build-manifest.json` records build provenance, not extra delivered evidence. New manifests keep build-only inputs under `build_inputs[]` and staging/final locations under `promotion`, each scoped as workspace-relative metadata with `delivered=false`. Its `status.static_validation` and `status.promotion` values do not prove target build, target startup, health checks, local replay, or clean-room replay; those phases must remain `not_executed` unless bundle-local runtime evidence with matching digests is present.
+`bundle-build-manifest.json` records build provenance, not extra delivered evidence. New manifests keep build-only inputs under `build_inputs[]` and staging/final locations under `promotion`, each scoped as workspace-relative metadata with `delivered=false`. Its `status.static_validation` and `status.promotion` values do not prove target build, target startup, health checks, local replay, or clean-room replay; the builder writes those phases as `not_executed`. Attaching a log or matching digest does not authorize setting them to `passed`.
 Placeholder text such as `Zhulong reviewer replay log placeholder`, `Run the bundle-root replay script to refresh this file`, generic `placeholder`, `待补充`, or `占位` is invalid for confirmed bundles even if the placeholder mentions a direct-impact marker.
 Bundle-root helpers must be helper-closed: helper-like calls such as `run_*`, `verify_*`, `assert_*`, `show_*`, `print_*`, or `require_*` must be defined in the same script unless they are normal shell/system commands.
 If the helper includes reviewer pauses, it must honor `REVIEWER_PAUSE_SHORT` and `REVIEWER_PAUSE_LONG`; reviewer automation should be able to run `REVIEWER_PAUSE_SHORT=0 REVIEWER_PAUSE_LONG=0 ./run-*.sh quick docker` without fixed sleeps.
 Reviewer pauses are visual-only holds for recording readability. Service
 readiness, health polling, process startup, retry, and backoff waits must use
-independent variables such as `READY_WAIT_SECONDS` or `READY_RETRY_COUNT`, and
+independent settings such as `ZHULONG_READY_TIMEOUT_SECONDS`, and
 quick mode must not derive functional waits from `REVIEWER_PAUSE_*` or
 `PAUSE_*`.
 The helper must not recursively invoke itself from the proof path; call the underlying Docker/Docker Compose proof command directly.
@@ -260,6 +260,33 @@ Avoid naked `2>/dev/null` on critical Docker, curl, or token-generation commands
 Do not rely on pre-existing database state such as `ApiToken.objects.first()` unless the helper explicitly creates or validates that state.
 Every final confirmation banner must be guarded by a programmatic, fail-closed success-marker check: `grep -q`, `grep -Fq`, `jq -e`, HTTP status checks, JSON field checks, or equivalent assertions must `exit 1` on failure before printing `VULNERABILITY CONFIRMED`, `ATTACK SUCCESS`, `漏洞已确认`, or `攻击成功`.
 Docker Compose files shipped under `attachments/` must be self-consistent: relative `env_file` entries and relative bind-mount sources must exist relative to the Compose file, named volumes are allowed, and absolute host paths are not allowed in final bundles.
+
+Before promotion, the builder checks every path in the contract's `files`
+declarations and `replay.root_script.path` against actual staging files. The
+declared entrypoint must be a delivered bundle-root shell script. A declaration
+does not create a file, and missing files are not silently omitted.
+
+Direct Compose commands in root helpers must resolve their inputs inside the
+bundle. Default Compose discovery requires a file at the bundle root; explicit
+`-f` paths must name delivered files. Local build contexts and Dockerfiles must
+also be present. These static checks do not prove image availability, successful
+builds, or arbitrary shell-script dependency closure. Compose YAML checks require
+PyYAML in the validator's Python environment; a missing parser is not a pass.
+With multiple `-f` files, relative paths use the first file's directory.
+The static checker recognizes direct calls and a whole command passed as one
+quoted argument to `run_logged_command`. It does not recognize the unquoted
+form `run_logged_command docker compose ...`; handwritten wrappers need separate
+review. Generated helpers use the quoted form. Validation success is not a
+general shell dependency or execution guarantee.
+
+Generated detached Compose startup uses `up --wait --wait-timeout` before the
+next proof command. Started services must declare an enabled healthcheck;
+merely reaching the running state is not sufficient. Set
+`ZHULONG_READY_TIMEOUT_SECONDS` to an integer from 1 to 600 (default 30).
+Reviewer pauses do not control this timeout. A failed wait stops replay with
+the command's nonzero exit status. Use separate direct startup commands rather
+than compound shell expressions. This requires a Compose version supporting
+`--wait`; an unsupported version fails rather than skipping readiness.
 
 For SSRF confirmed bundles, separate the impact tier clearly. A listener `HIT`
 or callback can support a bounded outbound-request reachability claim only when
