@@ -5281,6 +5281,26 @@ def replay_compose_commands(line: str) -> list[list[str]]:
     return []
 
 
+def validate_declared_root_artifacts(bundle_dir: Path, finding: dict) -> None:
+    """Recheck declared delivery outputs, not their original build-source paths."""
+    artifacts = finding.get("bundle_root_artifacts", [])
+    if not isinstance(artifacts, list):
+        fail("REPLAY_INPUT_INVALID: invalid root artifact declarations", code="REPLAY_INPUT_INVALID")
+        return
+    for item in artifacts:
+        if not isinstance(item, dict):
+            fail("REPLAY_INPUT_INVALID: invalid root artifact declaration", code="REPLAY_INPUT_INVALID")
+            continue
+        value = item.get("output_name")
+        if value is None and isinstance(item.get("path"), str):
+            value = PurePosixPath(item["path"]).name
+        if (not isinstance(value, str) or not value or "\\" in value or ":" in value
+                or any(part in {"..", "~"} for part in PurePosixPath(value).parts)):
+            fail("REPLAY_INPUT_UNSAFE: invalid declared output path", code="REPLAY_INPUT_UNSAFE")
+            continue
+        replay_input_path(bundle_dir, bundle_dir, value)
+
+
 def replay_input_path(bundle_dir: Path, base: Path, value: str, *, directory: bool = False) -> Path:
     if not value or "$" in value or is_absolute_host_path(value):
         fail("REPLAY_INPUT_UNSAFE: replay inputs must use static bundle-local paths", code="REPLAY_INPUT_UNSAFE")
@@ -6726,6 +6746,8 @@ def main() -> None:
         selected_finding: dict[str, object] | None = None
         if findings_path is not None and findings_path.exists():
             defaults, selected_finding = load_selected_finding(findings_path, bundle_dir.name, workspace_dir)
+            if selected_finding is not None:
+                validate_declared_root_artifacts(bundle_dir, selected_finding)
         quoted_paragraphs = verified_source_quote_paragraphs(bundle_dir, docx_path, lines, selected_finding, language)
         validate_code_context_section(lines, language, quoted_paragraphs)
         validate_docx_code_context_style(docx_path, language)

@@ -318,6 +318,10 @@ bash <audit-workspace>/bin/check_omc_runtime.sh --json
 文件时，相对路径以第一个文件所在的目录为准。读取编排文件需要校验器所在的 Python
 环境已安装 PyYAML。
 
+最终校验还会逐项检查 `bundle_root_artifacts` 声明的交付文件，使用 `output_name`
+指定的路径；未指定时使用源文件名。缺失文件、符号链接、硬链接和非普通文件都会被拒绝。
+移动漏洞包后不要求原始构建路径仍然存在，但包内声明的交付文件必须保留。
+
 生成脚本中的 docker compose 后台启动命令会加上 `up --wait --wait-timeout`，等待服务的
 健康检查通过，因此相关服务必须启用健康检查。等待上限由
 `ZHULONG_READY_TIMEOUT_SECONDS` 设置，默认 30 秒，可设为 1–600 秒；展示停顿和

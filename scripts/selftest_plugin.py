@@ -4358,6 +4358,32 @@ def exercise_standalone_replay_contract(plugin_root: Path) -> None:
     with tempfile.TemporaryDirectory(prefix="zhulong-standalone-replay-") as tmp:
         bundle = Path(tmp)
         script = bundle / "run-demo.sh"
+        declared = {"bundle_root_artifacts": [{"path": "build-only/source.tar", "output_name": "source.tar"}]}
+        validator.validate_declared_root_artifacts(bundle, {})
+        rejected(lambda: validator.validate_declared_root_artifacts(bundle, declared), "REPLAY_INPUT_MISSING")
+        source_archive = bundle / "source.tar"
+        source_archive.write_bytes(b"synthetic archive bytes")
+        validator.validate_declared_root_artifacts(bundle, declared)
+        validator.validate_declared_root_artifacts(bundle, {"bundle_root_artifacts": [{"path": "build-only/source.tar"}]})
+        for value in ("../source.tar", "/source.tar", "~", "dir\\source.tar", "https://example.invalid/a", 3, ""):
+            rejected(lambda: validator.validate_declared_root_artifacts(bundle, {"bundle_root_artifacts": [{"output_name": value}]}), "REPLAY_INPUT_UNSAFE")
+        for value in (None, {}, [None]):
+            rejected(lambda: validator.validate_declared_root_artifacts(bundle, {"bundle_root_artifacts": value}), "REPLAY_INPUT_INVALID")
+        source_archive.unlink()
+        source_archive.mkdir()
+        rejected(lambda: validator.validate_declared_root_artifacts(bundle, declared), "REPLAY_INPUT_UNSAFE")
+        source_archive.rmdir()
+        backing = bundle / "backing"
+        backing.write_bytes(b"synthetic archive bytes")
+        source_archive.symlink_to(backing)
+        rejected(lambda: validator.validate_declared_root_artifacts(bundle, declared), "REPLAY_INPUT_UNSAFE")
+        source_archive.unlink()
+        os.link(backing, source_archive)
+        rejected(lambda: validator.validate_declared_root_artifacts(bundle, declared), "REPLAY_INPUT_UNSAFE")
+        source_archive.unlink()
+        os.mkfifo(source_archive)
+        rejected(lambda: validator.validate_declared_root_artifacts(bundle, declared), "REPLAY_INPUT_UNSAFE")
+        source_archive.unlink()
         validator.validate_root_script_static_artifact_paths(script, bundle, "docker compose version")
         startup = renderer.replay_startup_command("docker compose -f up up -d app")
         if not startup.startswith("docker compose -f up up --wait --wait-timeout"):

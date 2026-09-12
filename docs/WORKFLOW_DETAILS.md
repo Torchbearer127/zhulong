@@ -411,6 +411,11 @@ and any referenced local build contexts and Dockerfiles; with multiple `-f` inpu
 from the first file's directory. YAML checks require PyYAML in the validator's
 Python environment.
 
+Final validation also rechecks every `bundle_root_artifacts` declaration against
+its delivered `output_name` (or the source basename when omitted). Missing files,
+symlinks, hardlinks, and non-regular files are rejected. Original build-source
+paths need not exist beside a moved bundle; the delivered files must exist.
+
 Generated detached Compose startup waits for enabled service healthchecks using
 `up --wait --wait-timeout`. `ZHULONG_READY_TIMEOUT_SECONDS` controls the timeout
 (1–600 seconds, default 30), independently of visual pauses or quick mode.
