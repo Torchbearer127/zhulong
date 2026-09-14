@@ -1831,6 +1831,24 @@ def build_generated_recording_shell(
         "main \"$@\"",
         "",
     ])
+    if "original_input" in finding:
+        original = finding["original_input"]
+        if not isinstance(original, dict) or not isinstance(original.get("text_path"), str):
+            raise SystemExit("ORIGINAL_INPUT_INVALID: missing original text path")
+        path = original["text_path"]
+        if not path.startswith("attachments/") or ".." in PurePosixPath(path).parts:
+            raise SystemExit("ORIGINAL_INPUT_INVALID: original text must be bundle-local")
+        insertion = script_lines.index("run_flow() {")
+        script_lines[insertion:insertion] = [
+            "show_original_input() {",
+            "    printf '\\n%s\\n' " + shell_quote("PoC 原始输入" if language == "zh-CN" else "PoC Original Input"),
+            "    cat -- " + shell_quote(path),
+            "    cat -- " + shell_quote(path) + ' >> "$REPLAY_LOG"',
+            '    pause_step "$PAUSE_LONG"',
+            "}", "",
+        ]
+        insertion = script_lines.index(f"    recording_checkpoint code_or_trigger_context {shell_quote(recording_stage_markers['code_or_trigger_context'])}")
+        script_lines.insert(insertion, "    show_original_input")
     return "\n".join(script_lines)
 
 
@@ -3258,6 +3276,10 @@ def render_finding(
             stale.unlink()
     path_map = collect_bundle_metadata(finding, project_root, output_path.parent)
     bundle_finding = prepare_finding_for_bundle(finding, path_map, project_root)
+    original_input = None
+    if "original_input" in bundle_finding:
+        from original_input_evidence import prepare_original_input
+        original_input = prepare_original_input(output_path.parent, bundle_finding["original_input"], language)
     bundle_root_artifacts = collect_bundle_root_artifacts(bundle_finding, project_root, output_path.parent, language, path_map)
 
     doc = Document(template_path) if template_path else Document()
@@ -3276,6 +3298,9 @@ def render_finding(
     raw_steps = bundle_finding.get("reproduction")
     reproduction_steps = [step for step in raw_steps if isinstance(step, dict)] if isinstance(raw_steps, list) else []
     render_reproduction(doc, reproduction_steps, language)
+    if original_input is not None:
+        from original_input_evidence import render_original_input
+        render_original_input(doc, output_path.parent, original_input)
     render_validity_review(doc, bundle_finding, language)
     doc.add_heading(tr(language, "final_verdict"), level=2)
     add_paragraphs(doc, localized_list(bundle_finding, "final_verdict", language) or default_final_verdict(bundle_finding, language))

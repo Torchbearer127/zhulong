@@ -12998,6 +12998,7 @@ def selftest_installed_skill(skill_root: Path) -> None:
     exercise_audit_state_recovery(skill_root)
     exercise_audit_transition_policy(skill_root)
     exercise_recording_evidence_gate(skill_root)
+    run([sys.executable, str(skill_root / "scripts/selftest_original_input_and_provisioning.py")], skill_root)
 
     for script in [
         "scripts/bootstrap_verification_workspace.sh",
@@ -13664,6 +13665,7 @@ def main() -> None:
     exercise_audit_state_recovery(plugin_root)
     exercise_audit_transition_policy(plugin_root)
     exercise_recording_evidence_gate(plugin_root)
+    run([sys.executable, str(plugin_root / "scripts/selftest_original_input_and_provisioning.py")], plugin_root)
     exercise_structured_blocker_cli(plugin_root)
 
     plugin_json = json.loads((plugin_root / ".codex-plugin/plugin.json").read_text(encoding="utf-8"))

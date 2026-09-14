@@ -505,6 +505,16 @@ def _validate_replay(bundle_dir: Path, manifest: Mapping[str, Any]) -> None:
     _require(replay.get("exit_code") == 0, RECORDING_REPLAY_FAILED, "replay exited non-zero; final promotion is forbidden")
     content = script_path.read_text(encoding="utf-8", errors="strict")
     _require("recording_checkpoint" in content and "ZHULONG_RECORDING_STAGE_DIR" in content, RECORDING_REPLAY_FAILED, "recording helper lacks the public checkpoint protocol")
+    from original_input_evidence import artifact, validate_original_input
+    try:
+        original = validate_original_input(bundle_dir)
+        if original is not None:
+            raw = artifact(bundle_dir, original["text_path"]).read_text(encoding="utf-8")
+            transcript = artifact(bundle_dir, "attachments/evidence/replay-runtime-output.log").read_text(encoding="utf-8")
+            if raw not in transcript:
+                raise ValueError("ORIGINAL_INPUT_INVALID: replay transcript does not contain the declared original input")
+    except ValueError as exc:
+        raise _error(RECORDING_REPLAY_FAILED, str(exc)) from exc
 
 
 def _archive_member_name(root_name: str, relative: str) -> str:
@@ -628,6 +638,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--archive", type=Path)
     parser.add_argument("--archive-root")
     parser.add_argument("--checkpoint-dir", type=Path)
+    parser.add_argument("--require-original-input", action="store_true", help="require the original-input artifact chain; not a content-level video attestation")
     parser.add_argument("--finalize", action="store_true", help="write recording_status=passed only after full recording-time validation with --checkpoint-dir")
     parser.add_argument("--json", action="store_true", dest="as_json")
     return parser
@@ -636,6 +647,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_arg_parser().parse_args(argv)
     try:
+        if args.require_original_input:
+            from original_input_evidence import validate_original_input
+            try:
+                validate_original_input(args.bundle_dir.resolve(), required=True)
+            except ValueError as exc:
+                raise _error(RECORDING_REPLAY_FAILED, str(exc)) from exc
         if args.finalize and args.checkpoint_dir is None:
             raise _error(RECORDING_VIDEO_CONTENT_UNVERIFIED, "--finalize requires --checkpoint-dir for full recording-time validation")
         result = validate_recording_bundle(

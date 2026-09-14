@@ -759,6 +759,81 @@ cat docs/RELEASE_CHECKLIST.md
 
 ## Optional Final Recording Workflow
 
+### Original Input Artifacts
+
+When original PoC input screenshots are required, add `original_input` to the
+renderer source finding, with `text_path`, `screenshot_path`, `title`,
+`description`, and `caption`. Both paths must refer to that finding's declared
+`attachments`: nonempty UTF-8 text up to 32 KiB without terminal control
+characters, and an already captured PNG. Chinese reports require Chinese titles,
+descriptions, and captions. The renderer neither infers complete requests from
+PoC scripts nor draws or edits screenshots. Missing real material remains an
+unmet delivery requirement; synthetic test images are not substitutes.
+
+The renderer preserves attachment bytes, writes
+`attachments/original-input-evidence.json`, and embeds the original image in the
+DOCX between its title, description, original-text path, and caption. Validation
+checks attachment hashes, actual embedded image bytes, and adjacent paragraph
+positions, and compares every declaration field with bundle-local `findings.json`.
+The binding file is not a second source of facts; removing it while the finding
+still declares original input is rejected. The root helper displays the text before the existing
+`code_or_trigger_context` checkpoint; recording validation also requires that
+text in the current runtime transcript. The final ZIP retains existing
+byte-for-byte checks for every bundled file.
+
+Legacy bundles may omit the declaration, but declarations must be complete when
+present. Use `--require-original-input` on the report validator, recorder, or
+recording validator when this delivery is required. Deleting the declaration
+does not make a legacy bundle satisfy the requirement. Hashes, DOCX relationships,
+and transcripts establish artifact consistency, not authentic capture, actual
+input transmission, or complete readable text in the video. Inspect the actual
+video separately; no recording stage or confirmation authority is added.
+
+### Standalone Static Qualification
+
+`validate_report_bundle.py --require-standalone-replay --bundle-dir <bundle>`
+adds static provisioning checks to ordinary bundle validation. It merges ordered
+`-f` files and checks every service,
+including dependencies. Each needs a bundled build context and Dockerfile or an
+immutable `@sha256:<64 lowercase hex digits>` image reference. Ordinary bundle
+validation continues to accept otherwise valid historical tag-only attachments.
+
+Every bundle-root `.sh` file must match one of two supported forms:
+
+- A minimal handwritten script: blank lines, comments, optional first-line
+  `#!/bin/sh`, exact `set -eu`, and direct literal `docker compose` /
+  `docker-compose` commands only. Function definitions, assignments, wrappers,
+  display commands, continuations, heredocs, and all other execution forms fail
+  with `REPLAY_PROVISIONING_UNSUPPORTED`, regardless of filename or keywords.
+- A declared generated helper: its entire UTF-8 content must equal the current
+  production renderer's output reconstructed from bundle-local `findings.json`
+  and that artifact's generation options, in either supported language. Every
+  reproduction command must independently satisfy the literal command grammar.
+  Modified functions, appended commands, and code-preview heredoc terminators
+  fail; a generator name or self-reported hash alone grants no exception.
+
+The literal grammar allows ASCII letters/digits and `_./:@=,+%-`, spaces/tabs
+between words, and single/double quotes around literal words (including spaces).
+It allows Compose `up`, `run`, `build`, `pull`, `down`, `ps`, `logs`, `config`,
+`version`, and `exec`; shell expansion and operators are not supported. At least
+one `up`, `run`, or `build` is required in the action position; argument words in
+`ps up` or `logs up` do not count. The generated helper's own display,
+logging, checkpoint, and bounded readiness code is accepted only by full-content
+matching, not by function names or display-command prefixes. Older or customized
+helpers may need regeneration; ordinary validation is unchanged.
+
+Qualification supports a limited Compose field set and project-owned default
+networks/volumes. Declared external resources, direct `docker exec` dependencies,
+and unsupported build inputs fail. This is finite static qualification, not a
+shell interpreter or an execution sandbox. In particular, accepting Compose
+`exec` does not prove its service was started earlier. The check does not resolve
+the actual host PATH, Docker/Compose environment or implicit configuration,
+attest command ordering, or prove image availability, offline operation,
+successful builds, health checks, or replay. The builder's five runtime stages
+remain `not_executed`.
+
+### Recording And Validation
+
 The ordinary confirmed-bundle path ends at Docker/report validation. Final
 screen recording is a separate opt-in path and does not turn an ordinary
 confirmed finding into a recording-ready or submission-ready artifact.

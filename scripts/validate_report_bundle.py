@@ -1212,6 +1212,16 @@ def parse_args() -> argparse.Namespace:
         help="Expected output language. Defaults to auto-detect from filenames/content.",
     )
     parser.add_argument(
+        "--require-original-input",
+        action="store_true",
+        help="Require supplied original-input text, PNG and DOCX binding; this is not capture authenticity or recording proof.",
+    )
+    parser.add_argument(
+        "--require-standalone-replay",
+        action="store_true",
+        help="Require static provisioning inputs for the supported literal Compose replay subset; does not execute build/replay or prove offline availability.",
+    )
+    parser.add_argument(
         "--with-libreoffice",
         action="store_true",
         help="If LibreOffice is installed, also perform a headless DOCX->PDF conversion test.",
@@ -5281,6 +5291,96 @@ def replay_compose_commands(line: str) -> list[list[str]]:
     return []
 
 
+def qualify_literal_replay_command(bundle_dir: Path, command: str, *, generated: bool = False) -> int:
+    # This is a positive lexical grammar, not a shell-keyword deny list. Quotes
+    # may group literal words, but expansion, operators and continuations cannot.
+    word = r"[A-Za-z0-9_./:@=,+% -]+"
+    atom = rf"(?:[A-Za-z0-9_./:@=,+%-]+|'{word}'|\"{word}\")"
+    if not re.fullmatch(rf"[ \t]*{atom}(?:[ \t]+{atom})*[ \t]*", command):
+        fail("REPLAY_PROVISIONING_UNSUPPORTED: expected a single literal Compose command without shell expansion or operators", code="REPLAY_PROVISIONING_UNSUPPORTED")
+        return 0
+    tokens = shlex.split(command)
+    if tokens[:2] == ["docker", "compose"]:
+        tokens = tokens[2:]
+    elif tokens[:1] == ["docker-compose"]:
+        tokens = tokens[1:]
+    else:
+        fail("REPLAY_PROVISIONING_UNSUPPORTED: only direct literal Compose commands qualify", code="REPLAY_PROVISIONING_UNSUPPORTED")
+        return 0
+    index = 0
+    while index < len(tokens) and tokens[index].startswith("-"):
+        index += 2 if tokens[index] in {"-f", "--file", "-p", "--project-name"} else 1
+    verb = tokens[index] if index < len(tokens) else ""
+    if verb not in {"up", "run", "build", "pull", "down", "ps", "logs", "config", "version", "exec"}:
+        fail("REPLAY_PROVISIONING_UNSUPPORTED: unsupported Compose action", code="REPLAY_PROVISIONING_UNSUPPORTED")
+        return 0
+    if generated and verb == "up" and any(arg in {"-d", "--detach", "--wait"} for arg in tokens[index + 1:]):
+        # The byte-matched renderer inserts its own bounded readiness timeout.
+        # Check its health prerequisite without allowing user-supplied expansion.
+        tokens = tokens[:index + 1] + ["--wait"] + tokens[index + 1:]
+    validate_replay_compose_inputs(bundle_dir, tokens, require_standalone=True)
+    return int(verb in {"up", "run", "build"})
+
+
+def validate_standalone_replay_inputs(bundle_dir: Path) -> None:
+    """Qualify a finite script/input subset; never attest execution or offline supply."""
+    finding = None
+    findings_path = bundle_dir / "findings.json"
+    if findings_path.exists():
+        replay_input_path(bundle_dir, bundle_dir, "findings.json")
+        try:
+            payload = json.loads(findings_path.read_text(encoding="utf-8"))
+            rows = payload.get("findings") if isinstance(payload, dict) else None
+            if not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], dict):
+                raise ValueError("expected one bundle-local finding")
+            finding = rows[0]
+        except (OSError, ValueError) as exc:
+            fail(f"REPLAY_PROVISIONING_UNSUPPORTED: cannot reconstruct generated helper: {exc}", code="REPLAY_PROVISIONING_UNSUPPORTED")
+            return
+    commands = 0
+    for script in sorted(bundle_dir.glob("*.sh")):
+        replay_input_path(bundle_dir, bundle_dir, script.name)
+        try:
+            text = script.read_bytes().decode("utf-8")
+        except (OSError, UnicodeError) as exc:
+            fail(f"REPLAY_PROVISIONING_UNSUPPORTED: unreadable helper: {exc}", code="REPLAY_PROVISIONING_UNSUPPORTED")
+            continue
+        artifacts = finding.get("bundle_root_artifacts", []) if finding else []
+        matches = [item for item in artifacts if isinstance(item, dict) and item.get("output_name") == script.name] if isinstance(artifacts, list) else []
+        artifact = matches[0] if len(matches) == 1 else None
+        if artifact and (artifact.get("generator") in {"reviewer-recording-shell", "recording-shell"} or not artifact.get("path")):
+            from render_confirmed_vuln_docx import build_generated_recording_shell, ensure_list
+            code_items = finding.get("code_context", [])
+            first_code = code_items[0] if isinstance(code_items, list) and code_items and isinstance(code_items[0], dict) else {}
+            # All other dynamic display fields are shell-quoted by the renderer;
+            # the code preview is its sole raw, quoted-heredoc insertion point.
+            if "CODE_SNIPPET_EOF" in str(first_code.get("snippet", "")).strip().splitlines():
+                fail("REPLAY_PROVISIONING_UNSUPPORTED: code preview contains its shell heredoc delimiter", code="REPLAY_PROVISIONING_UNSUPPORTED")
+                continue
+            expected = []
+            for language in ("zh-CN", "en-US"):
+                try:
+                    expected.append(build_generated_recording_shell(finding, language, {}, artifact))
+                except (ValueError, TypeError, KeyError, SystemExit):
+                    continue
+            if text not in expected:
+                fail("REPLAY_PROVISIONING_UNSUPPORTED: helper differs from the current renderer and declared generation options", code="REPLAY_PROVISIONING_UNSUPPORTED")
+                continue
+            for step in finding.get("reproduction", []):
+                if isinstance(step, dict):
+                    for command in ensure_list(step.get("commands") or step.get("command")):
+                        commands += qualify_literal_replay_command(bundle_dir, command, generated=True)
+        else:
+            for number, line in enumerate(text.split("\n"), 1):
+                if not line.strip() or line.lstrip().startswith("#") or line == "set -eu":
+                    if line.startswith("#!") and (number != 1 or line != "#!/bin/sh"):
+                        fail("REPLAY_PROVISIONING_UNSUPPORTED: only #!/bin/sh is supported", code="REPLAY_PROVISIONING_UNSUPPORTED")
+                    continue
+                commands += qualify_literal_replay_command(bundle_dir, line)
+    if not commands:
+        fail("REPLAY_PROVISIONING_UNSUPPORTED: no supported literal Compose provisioning command", code="REPLAY_PROVISIONING_UNSUPPORTED")
+
+
 def validate_declared_root_artifacts(bundle_dir: Path, finding: dict) -> None:
     """Recheck declared delivery outputs, not their original build-source paths."""
     artifacts = finding.get("bundle_root_artifacts", [])
@@ -5344,7 +5444,9 @@ def load_replay_compose(compose_file: Path) -> dict:
     return data
 
 
-def validate_replay_compose_inputs(bundle_dir: Path, tokens: list[str]) -> None:
+def validate_replay_compose_inputs(bundle_dir: Path, tokens: list[str], *, require_standalone: bool = False) -> None:
+    if require_standalone and any(re.search(r"[;&|`<>]|\$\(", token) for token in tokens):
+        fail("REPLAY_PROVISIONING_UNSUPPORTED: shell operators are outside literal Compose qualification", code="REPLAY_PROVISIONING_UNSUPPORTED")
     if tokens[:1] and tokens[0] in {"version", "help", "ls", "--help", "--version", "-h"}:
         return
     files = []
@@ -5374,7 +5476,18 @@ def validate_replay_compose_inputs(bundle_dir: Path, tokens: list[str]) -> None:
     for name in files:
         compose = replay_input_path(bundle_dir, bundle_dir, name)
         compose_paths.append(compose)
-        for service, config in load_replay_compose(compose).get("services", {}).items():
+        data = load_replay_compose(compose)
+        if require_standalone:
+            if set(data) - {"services", "networks", "volumes", "name", "version"}:
+                fail("REPLAY_PROVISIONING_UNSUPPORTED: unsupported Compose top-level fields", code="REPLAY_PROVISIONING_UNSUPPORTED")
+            for kind in ("networks", "volumes"):
+                resources = data.get(kind, {})
+                if not isinstance(resources, dict) or any(
+                    item is not None and (not isinstance(item, dict) or bool(item))
+                    for item in resources.values()
+                ):
+                    fail("REPLAY_PROVISIONING_UNSUPPORTED: only project-owned default networks/volumes qualify", code="REPLAY_PROVISIONING_UNSUPPORTED")
+        for service, config in data.get("services", {}).items():
             if not isinstance(config, dict):
                 fail("REPLAY_INPUT_INVALID: invalid Compose service", code="REPLAY_INPUT_INVALID")
                 continue
@@ -5388,6 +5501,24 @@ def validate_replay_compose_inputs(bundle_dir: Path, tokens: list[str]) -> None:
                 if isinstance(before, dict) and isinstance(after, dict):
                     merged[field] = {**before, **after}
             services[service] = merged
+    if require_standalone:
+        for name, service in services.items():
+            supported = {"image", "build", "command", "entrypoint", "environment", "env_file", "ports", "expose", "volumes", "networks", "depends_on", "healthcheck", "working_dir", "user", "restart", "init", "labels", "hostname", "container_name", "stop_grace_period", "pull_policy"}
+            if set(service) - supported:
+                fail("REPLAY_PROVISIONING_UNSUPPORTED: unsupported Compose service fields", code="REPLAY_PROVISIONING_UNSUPPORTED")
+            build = service.get("build")
+            if isinstance(build, dict) and set(build) - {"context", "dockerfile", "dockerfile_inline", "args", "target"}:
+                fail("REPLAY_PROVISIONING_UNSUPPORTED: unsupported Compose build inputs", code="REPLAY_PROVISIONING_UNSUPPORTED")
+            policy = service.get("pull_policy")
+            if policy is not None and (not isinstance(policy, str) or policy not in {"build", "missing", "if_not_present"}):
+                fail("REPLAY_PROVISIONING_UNSUPPORTED: unsupported image pull policy", code="REPLAY_PROVISIONING_UNSUPPORTED")
+            if any(key in service for key in ("extends", "external_links", "volumes_from", "network_mode", "configs", "secrets")):
+                fail("REPLAY_PROVISIONING_UNSUPPORTED: service references unsupported external resources", code="REPLAY_PROVISIONING_UNSUPPORTED")
+            dependencies = service.get("depends_on", [])
+            if not isinstance(dependencies, (dict, list)) or any(not isinstance(dep, str) or dep not in services for dep in dependencies):
+                fail("REPLAY_PROVISIONING_UNSUPPORTED: dependency service is not delivered", code="REPLAY_PROVISIONING_UNSUPPORTED")
+            if "build" not in service and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]*(?::[A-Za-z0-9_.-]+)?@sha256:[0-9a-f]{64}", str(service.get("image", ""))):
+                fail(f"REPLAY_PROVISIONING_UNPINNED: service {name} requires a bundled build or immutable image digest", code="REPLAY_PROVISIONING_UNPINNED")
     # Compose resolves paths in every -f file against the first file's directory.
     for compose in compose_paths:
         validate_compose_static_paths(compose, bundle_dir, project_dir=compose_paths[0].parent,
@@ -6712,6 +6843,13 @@ def main() -> None:
     try:
         if not bundle_dir.exists() or not bundle_dir.is_dir():
             fail(f"bundle directory does not exist: {bundle_dir}")
+        if args.require_standalone_replay:
+            validate_standalone_replay_inputs(bundle_dir)
+        from original_input_evidence import validate_original_input
+        try:
+            validate_original_input(bundle_dir, required=args.require_original_input)
+        except ValueError as exc:
+            fail(str(exc), code="ORIGINAL_INPUT_INVALID")
         validate_bundle_cleanliness(bundle_dir)
         workspace_dir = validate_workspace_metadata(bundle_dir)
 
@@ -6792,6 +6930,10 @@ def main() -> None:
         validate_no_non_standalone_paths(note_text, "attachment note")
         validate_no_non_standalone_paths(supplement_text, "reproduction supplement")
         root_scripts = validate_bundle_root_scripts(bundle_dir, note_text)
+        try:
+            validate_original_input(bundle_dir, required=args.require_original_input or bool(selected_finding and "original_input" in selected_finding), language=language)
+        except ValueError as exc:
+            fail(str(exc), code="ORIGINAL_INPUT_INVALID")
         if project_name:
             validate_material_identity(supplement_text, f"reproduction supplement {supplement_path.name}", project_name, title_tokens)
             for script_name in root_scripts:

@@ -643,6 +643,9 @@ copy_file \
   "$SKILL_DIR/scripts/render_confirmed_vuln_docx.py" \
   "$WORKSPACE_DIR/bin/render-confirmed-vuln-docx.py"
 chmod +x "$WORKSPACE_DIR/bin/render-confirmed-vuln-docx.py"
+copy_file \
+  "$SKILL_DIR/scripts/render_confirmed_vuln_docx.py" \
+  "$WORKSPACE_DIR/bin/render_confirmed_vuln_docx.py"
 write_text_file "$WORKSPACE_DIR/scripts/render-confirmed-vuln-docx.py" '#!/usr/bin/env bash
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -652,6 +655,9 @@ chmod +x "$WORKSPACE_DIR/scripts/render-confirmed-vuln-docx.py"
 copy_file \
   "$SKILL_DIR/scripts/validate_report_bundle.py" \
   "$WORKSPACE_DIR/bin/validate-report-bundle.py"
+copy_file \
+  "$SKILL_DIR/scripts/original_input_evidence.py" \
+  "$WORKSPACE_DIR/bin/original_input_evidence.py"
 chmod +x "$WORKSPACE_DIR/bin/validate-report-bundle.py"
 write_text_file "$WORKSPACE_DIR/scripts/validate-report-bundle.py" '#!/usr/bin/env bash
 set -euo pipefail

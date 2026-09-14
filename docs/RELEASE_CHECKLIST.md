@@ -436,6 +436,16 @@ Use this checklist before publishing a tagged open-source release of Zhulong
 
 ## 6. Optional Final Recording Gate
 
+- [ ] Optional standalone qualification accepts a builder-generated bundled
+  build/digest fixture and rejects tag-only dependencies and external resources;
+  ordinary legacy validation remains compatible. Static input qualification does
+  not change the five `not_executed` runtime stages.
+- [ ] Declared original input preserves supplied text/PNG bytes and binds the
+  actual DOCX image to adjacent localized title, description, path, and caption.
+  Required-delivery mode rejects absence; recording transcript checks and ZIP
+  byte checks cover the same artifacts. Synthetic tests are not reported as
+  actual input capture or readable final-video evidence.
+
 - [ ] Final recording is explicitly requested; ordinary confirmed status is not treated as recording-ready.
 - [ ] The public source files exist: `scripts/recording_identity.py`, `scripts/auto_record_bundle.py`, `scripts/validate_recording_evidence.py`, the strict recording schema, and sanitized fixtures.
 - [ ] `skills/zhulong/SKILL.md` and `templates/claude-skill/SKILL.md` are byte-identical, and neither delegates authority to the old local recording skill.

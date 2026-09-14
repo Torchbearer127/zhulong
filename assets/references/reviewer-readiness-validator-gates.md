@@ -13,6 +13,37 @@ thin context, or unreadable replay helpers. They must never weaken existing
 confirmed-bundle acceptance rules. Docker reproduction and successful final
 confirmed-bundle validation remain required for confirmed status.
 
+## Optional Provisioning And Original Input Gates
+
+`--require-standalone-replay` is a static input qualification gate, separate from
+ordinary bundle acceptance. `REPLAY_PROVISIONING_UNPINNED` rejects a Compose
+service without bundled build inputs or an immutable digest, including dependency
+services after ordered file merging. `REPLAY_PROVISIONING_UNSUPPORTED` rejects
+external resources and forms outside the finite script subset: minimal literal
+Compose-only shell, or a whole helper reconstructed by the current production
+renderer from bundle-local finding/artifact options with each reproduction
+command separately qualified. A generator label, function name, display prefix,
+or self-reported hash does not authorize unknown execution. Unsupported custom
+shell fails explicitly rather than depending on keyword matches. See the
+workflow details for the precise grammar. A legacy
+tag-only attachment remains valid in ordinary mode; missing build inputs remain
+invalid in both modes. Neither result attests build, startup, health, replay,
+offline availability, or clean-room execution; host PATH/Compose environment,
+implicit configuration, and command ordering are not resolved by this check.
+
+`ORIGINAL_INPUT_INVALID` rejects incomplete declared original-input material,
+changed text/image bytes, or a DOCX without the actual supplied image and adjacent
+reviewer text. The declaration is optional for legacy bundles, but
+`--require-original-input` makes absence an error for requested delivery. A
+synthetic screenshot can test the mechanics; it cannot attest authentic request
+capture. Existing recording replay checks reject a transcript missing the
+declared original text, while actual video readability still needs review.
+
+Regression carrier: `scripts/selftest_original_input_and_provisioning.py`, run in
+source and temporary installed layouts. It uses isolated generated bundles and
+Docker substitutes, not real Docker, PoCs, OBS, or network execution. See the
+workflow details for the supported subset and artifact declaration fields.
+
 ## SSRF Impact Overclaim
 
 Purpose: keep SSRF impact wording aligned with the artifact-backed oracle.

@@ -796,6 +796,10 @@ def build_recording_manifest(
         "attachments/reviewer-evidence-index.json",
         inventory_rel,
     ]
+    from original_input_evidence import MANIFEST, validate_original_input
+    original_input = validate_original_input(staging_bundle)
+    if original_input is not None:
+        required_entries.extend([MANIFEST, original_input["text_path"], original_input["screenshot_path"]])
     required_docx = sorted(path.name for path in staging_bundle.glob("*.docx") if path.is_file() and not path.is_symlink())
     for docx_name in required_docx:
         if docx_name not in required_entries:
@@ -1005,6 +1009,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--zip-name")
     parser.add_argument("--obs-source-name", default=os.environ.get("ZHULONG_OBS_SOURCE_NAME", DEFAULT_OBS_SOURCE))
     parser.add_argument("--keep-old-videos", action="store_true", help="deprecated compatibility flag; staging always preserves original bytes")
+    parser.add_argument("--require-original-input", action="store_true", help="require supplied original-input text, PNG and DOCX binding before starting OBS")
     parser.add_argument(
         "--keep-unpromoted-archive",
         type=Path,
@@ -1030,6 +1035,8 @@ def main(argv: list[str] | None = None) -> int:
     original_bundle = args.bundle.expanduser().resolve()
     if not original_bundle.is_dir():
         raise NotADirectoryError(original_bundle)
+    from original_input_evidence import validate_original_input
+    validate_original_input(original_bundle, required=args.require_original_input)
     script = discover_run_script(original_bundle, args.script)
     require_checkpoint_protocol(script)
     identity = parse_canonical_identity(original_bundle)
