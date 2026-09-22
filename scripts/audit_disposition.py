@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -306,6 +307,15 @@ def shorten(value: str, limit: int = 500) -> str:
     return text if len(text) <= limit else text[: limit - 3].rstrip() + "..."
 
 
+def structured_blocked_item_id(identity: str) -> str:
+    """Derive a stable ID without lossy slug normalization or input ordering."""
+    return f"blocked:structured:{structured_identity_digest(identity)}"
+
+
+def structured_identity_digest(identity: str) -> str:
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest()
+
+
 def complete_item(item: dict[str, Any]) -> dict[str, Any]:
     text = " ".join(str(item.get(key) or "") for key in ("title", "materiality_rationale", "reason_code"))
     docker_status = str(item.get("docker_status") or infer_docker_status(text)).strip()
@@ -456,9 +466,16 @@ def triage_items_from_file(workspace: Path, filename: str, *, default_state: str
     path = workspace / filename
     prefix = filename.removesuffix(".md")
     items: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
     for line_no, mapping, cells in markdown_table_rows(path):
         raw_id = first_value(mapping, "Candidate ID", "Lead ID", "ID") or (cells[0].strip() if cells else "")
         item_id = f"{prefix}:{slugify(raw_id, f'row-{line_no}')}"
+        if item_id in seen_ids:
+            raise DispositionUpdateError(
+                "TRIAGE_ITEM_ID_CONFLICT: duplicate markdown row identity "
+                f"digest={structured_identity_digest(item_id)[:16]}"
+            )
+        seen_ids.add(item_id)
         title = first_value(mapping, "Suspected Weakness", "Original Suspicion", "Title")
         if not title and len(cells) > 1:
             title = cells[1].strip()
@@ -497,26 +514,107 @@ def triage_items_from_file(workspace: Path, filename: str, *, default_state: str
     return items
 
 
+def triage_feedback_item_ids(blocked_summary: dict[str, Any] | None) -> set[str]:
+    """Return only explicit ledger feedback references, not all synthesized IDs."""
+    if not isinstance(blocked_summary, dict):
+        return set()
+    findings = blocked_summary.get("findings")
+    if not isinstance(findings, list):
+        return set()
+    feedback_ids: set[str] = set()
+    for finding in findings:
+        if not isinstance(finding, dict):
+            continue
+        if str(finding.get("source") or "").strip() != LEDGER_FILENAME:
+            continue
+        identity = finding.get("identity")
+        if not isinstance(identity, str) or not identity.startswith("disposition:"):
+            continue
+        item_id = identity.removeprefix("disposition:").strip()
+        if item_id:
+            feedback_ids.add(item_id)
+    return feedback_ids
+
+
 def blocked_verification_items(workspace: Path, blocked_summary: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     summary = blocked_summary if isinstance(blocked_summary, dict) else detect_blocked_verification(workspace)
+    summary_errors = summary.get("errors") if isinstance(summary, dict) else []
+    if isinstance(summary_errors, list) and summary_errors:
+        raise DispositionUpdateError(f"blocked verification: {str(summary_errors[0])}")
     findings = summary.get("findings") if isinstance(summary, dict) else []
     resume_step = str(summary.get("resume_step") or "") if isinstance(summary, dict) else ""
     items: list[dict[str, Any]] = []
+    structured_signatures: dict[str, tuple[str, str, str, str, str]] = {}
+    emitted_structured_ids: dict[str, tuple[int, bool]] = {}
     if not isinstance(findings, list):
         return items
     for finding in findings:
         if not isinstance(finding, dict):
             continue
         source = str(finding.get("source") or "unknown").strip()
-        line = str(finding.get("line") or "0").strip()
         classification = str(finding.get("classification") or "blocked_verification").strip()
         excerpt = str(finding.get("excerpt") or "").strip()
         status = infer_docker_status(" ".join([classification, excerpt]))
         if status not in MATERIAL_BLOCKING_DOCKER_STATUSES:
             status = "blocked"
         reason = "timed_out" if status == "timed_out" else "dirty_docker" if status == "dirty_state" else "blocked_by_docker"
-        items.append({
-            "id": f"blocked:{slugify(source, 'source')}:{slugify(line, 'line')}",
+        structured = finding.get("structured") is True or "identity" in finding
+        if structured:
+            identity_value = finding.get("identity")
+            if not isinstance(identity_value, str) or not identity_value.strip():
+                raise DispositionUpdateError(
+                    "STRUCTURED_IDENTITY_MISSING: blocked verification finding requires a non-empty identity"
+                )
+            identity = identity_value.strip()
+            if len(identity) > 1024 or any(ord(char) < 32 or ord(char) == 127 for char in identity):
+                raise DispositionUpdateError(
+                    "STRUCTURED_IDENTITY_INVALID: blocked verification finding identity is malformed"
+                )
+            signature = (source, classification, excerpt, status, resume_step)
+            previous = structured_signatures.get(identity)
+            if previous is not None:
+                if previous != signature:
+                    raise DispositionUpdateError(
+                        "STRUCTURED_IDENTITY_CONFLICT: blocked verification identity "
+                        f"digest={structured_identity_digest(identity)[:16]} has conflicting facts"
+                    )
+                continue
+            structured_signatures[identity] = signature
+            is_disposition_reference = source == "audit-disposition.json" and identity.startswith("disposition:")
+            if is_disposition_reference:
+                item_id = identity.removeprefix("disposition:").strip()
+                if not item_id:
+                    raise DispositionUpdateError(
+                        "STRUCTURED_IDENTITY_INVALID: disposition feedback reference has no item identity"
+                    )
+                rationale = (
+                    "Ledger disposition feedback retained; item identity digest="
+                    f"{structured_identity_digest(item_id)[:16]}. "
+                    "Resolve the recorded Docker/runtime blocker before retrying."
+                )
+            else:
+                item_id = structured_blocked_item_id(identity)
+                rationale = (
+                    "Structured blocked verification fact; identity digest="
+                    f"{structured_identity_digest(identity)[:16]}. "
+                    "Resolve the recorded Docker/runtime blocker before retrying."
+                )
+        else:
+            is_disposition_reference = False
+            line_value = finding.get("line")
+            if isinstance(line_value, bool) or line_value is None:
+                raise DispositionUpdateError(
+                    "LEGACY_FINDING_LINE_MISSING: unstructured blocked verification finding requires a line"
+                )
+            line = str(line_value).strip()
+            if not re.fullmatch(r"\d+", line) or int(line) < 1:
+                raise DispositionUpdateError(
+                    "LEGACY_FINDING_LINE_INVALID: unstructured blocked verification finding line must be positive"
+                )
+            item_id = f"blocked:{slugify(source, 'source')}:{slugify(line, 'line')}"
+            rationale = shorten(f"{excerpt} Resume step: {resume_step}")
+        item = {
+            "id": item_id,
             "title": classification,
             "state": "blocked",
             "source_type": "runtime",
@@ -524,8 +622,23 @@ def blocked_verification_items(workspace: Path, blocked_summary: dict[str, Any] 
             "docker_status": status,
             "reason_code": reason,
             "confirmed_bundle_path": "",
-            "materiality_rationale": shorten(f"{excerpt} Resume step: {resume_step}"),
-        })
+            "materiality_rationale": rationale,
+        }
+        if structured:
+            previous_item = emitted_structured_ids.get(item_id)
+            if previous_item is not None:
+                previous_index, previous_was_reference = previous_item
+                if is_disposition_reference:
+                    continue
+                if previous_was_reference:
+                    items[previous_index] = item
+                    emitted_structured_ids[item_id] = (previous_index, False)
+                    continue
+                raise DispositionUpdateError(
+                    "STRUCTURED_ITEM_ID_CONFLICT: distinct structured facts resolved to one item identity"
+                )
+            emitted_structured_ids[item_id] = (len(items), is_disposition_reference)
+        items.append(item)
     return items
 
 
@@ -563,7 +676,10 @@ def merge_items(existing: list[dict[str, Any]], synthesized: list[dict[str, Any]
         merged.append(complete_item(merged_item))
         consumed.add(item_id)
     for item_id, old_item in existing_by_id.items():
-        if item_id not in consumed and not item_id.startswith(generated_prefixes):
+        generated = item_id.startswith(generated_prefixes)
+        if item_id.startswith("blocked:") and str(old_item.get("source_type") or "").strip() != "runtime":
+            generated = False
+        if item_id not in consumed and not generated:
             merged.append(complete_item(old_item))
     return merged
 
@@ -578,10 +694,22 @@ def synthesize_disposition_ledger(
     workspace = workspace.resolve()
     synthesized: list[dict[str, Any]] = []
     synthesized.extend(confirmed_bundle_items(workspace))
-    synthesized.extend(triage_items_from_file(workspace, "candidate-findings.md", default_state="candidate"))
-    synthesized.extend(triage_items_from_file(workspace, "false-positives.md", default_state="false_positive"))
-    synthesized.extend(triage_items_from_file(workspace, "unverified-leads.md", default_state="unverified"))
-    synthesized.extend(blocked_verification_items(workspace, blocked_summary))
+    triage_items = [
+        *triage_items_from_file(workspace, "candidate-findings.md", default_state="candidate"),
+        *triage_items_from_file(workspace, "false-positives.md", default_state="false_positive"),
+        *triage_items_from_file(workspace, "unverified-leads.md", default_state="unverified"),
+    ]
+    synthesized.extend(triage_items)
+    triage_ids = {str(item.get("id") or "") for item in triage_items}
+    effective_blocked_summary = (
+        blocked_summary if isinstance(blocked_summary, dict) else detect_blocked_verification(workspace)
+    )
+    feedback_ids = triage_feedback_item_ids(effective_blocked_summary)
+    for item in blocked_verification_items(workspace, effective_blocked_summary):
+        item_id = str(item.get("id") or "")
+        if item_id in triage_ids and item_id in feedback_ids:
+            continue
+        synthesized.append(item)
 
     existing = ledger_items(existing_ledger if existing_ledger is not None else load_disposition_ledger(workspace))
     items = merge_items(existing, synthesized) if merge_existing and existing else [complete_item(item) for item in synthesized]
@@ -1479,7 +1607,14 @@ def unresolved_disposition_items(workspace: Path, limit: int = 5) -> tuple[dict[
 
 def render_unresolved_disposition_lines(workspace: Path, limit: int = 5) -> list[str]:
     ledger_path = workspace / LEDGER_FILENAME
-    ledger, items = unresolved_disposition_items(workspace, limit=limit)
+    lines = [
+        f"- Ledger: `{LEDGER_FILENAME}`" if ledger_path.exists() else f"- Ledger: `{LEDGER_FILENAME}` not written yet; synthesized preview below.",
+    ]
+    try:
+        ledger, items = unresolved_disposition_items(workspace, limit=limit)
+    except DispositionUpdateError as exc:
+        lines.append(f"- Ledger synthesis failed: {exc}")
+        return lines
     all_unresolved = [
         item for item in ledger_items(ledger)
         if str(item.get("state") or "") in {"candidate", "unverified", "blocked"}
@@ -1489,10 +1624,7 @@ def render_unresolved_disposition_lines(workspace: Path, limit: int = 5) -> list
         record for record in candidate_disposition_records(ledger)
         if str(record.get("status") or "") in {"candidate", "unverified", "blocked"}
     )
-    lines = [
-        f"- Ledger: `{LEDGER_FILENAME}`" if ledger_path.exists() else f"- Ledger: `{LEDGER_FILENAME}` not written yet; synthesized preview below.",
-        f"- Unresolved disposition items: `{len(all_unresolved)}`",
-    ]
+    lines.append(f"- Unresolved disposition items: `{len(all_unresolved)}`")
     if not all_unresolved:
         return lines
     for item in items:

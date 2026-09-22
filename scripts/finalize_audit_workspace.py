@@ -834,8 +834,9 @@ def main() -> int:
     if not blocked_summary:
         blocked_summary = detect_blocked_verification(workspace)
     protocol_mode = "legacy_r1" if _EVENT_WRITER.state_revision is None else "r2"
-    disposition_ledger = synthesize_disposition_ledger(workspace, blocked_summary=blocked_summary)
+    disposition_ledger: dict[str, Any] = {}
     try:
+        disposition_ledger = synthesize_disposition_ledger(workspace, blocked_summary=blocked_summary)
         write_disposition_ledger(
             workspace,
             disposition_ledger,
