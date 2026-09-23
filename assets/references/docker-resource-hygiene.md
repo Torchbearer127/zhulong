@@ -46,9 +46,17 @@ listed for manual review as unattributed resources and are not deleted by
 This protects parallel work: another Zhulong audit, another development stack,
 or an unrelated application may create Docker resources after the baseline. Those
 resources must not be deleted unless they carry this workspace's ownership label.
+The same Docker daemon can be shared, but strict completion is not guaranteed
+when another actor continues creating resources after the baseline. Workspace and
+Compose names help attribute resources; they do not isolate a daemon. For reliable
+strict completion, use a new dedicated Docker daemon or VM, capture a new baseline
+there before verification. Old evidence may remain as historical reference, but
+the new environment must rerun the relevant Docker cleanliness and runtime checks;
+its old cleanliness or runtime result must not be treated as a new pass.
 
-If Docker is unavailable during bootstrap, recapture the baseline before
-verification:
+If Docker is unavailable during bootstrap, the helper records a non-authoritative
+unavailable baseline. Keep that workspace blocked; do not recapture or rewrite
+the existing baseline:
 
 ```bash
 python3 <audit-workspace>/bin/manage-docker-resources.py \
@@ -56,19 +64,32 @@ python3 <audit-workspace>/bin/manage-docker-resources.py \
   --capture-baseline
 ```
 
-Do not recapture the baseline after starting target containers, pulling service
-images, or building PoC images. The cleanup helper refuses to overwrite an
-existing available baseline by default because a late baseline can hide
-resources created by the current audit. Use `--force-overwrite-baseline` only
-after a deliberate manual Docker reset and before new verification resources are
-created.
+The command above is useful only when the baseline file does not yet exist. Do
+not treat its empty resource arrays as evidence that Docker was observed clean.
+If an existing baseline is unavailable, malformed, missing required resource
+fields, or has a non-boolean `docker_available`, both ordinary capture and
+`--force-overwrite-baseline` refuse to replace it. `--verify-clean`,
+`--show-created`, and `--cleanup-created` also fail closed instead of treating
+missing fields as an empty baseline. Preserve the old workspace and baseline;
+recover in a new controlled Docker daemon or VM with a new workspace, capture a
+valid baseline before verification, and rerun the relevant checks.
+
+For a valid available baseline, do not recapture after starting target
+containers, pulling service images, or building PoC images. The cleanup helper
+refuses an ordinary overwrite, and a late force overwrite can proceed only
+through the existing residue check.
 
 When `--capture-baseline --force-overwrite-baseline` is used against an existing
-available baseline, the helper first compares the current Docker state with that
-baseline. It refuses to overwrite if any post-baseline owned resource,
-unattributed resource, or BuildKit cache residue remains, refreshes
+valid available baseline, the helper first compares the current Docker state
+with that baseline. It refuses to overwrite if any post-baseline owned
+resource, unattributed resource, or BuildKit cache residue remains, refreshes
 `docker/docker-cleanup-plan.json`, and reports that overwriting now would hide
 Docker residue from strict cleanliness checks.
+
+Historical valid baselines may omit the optional `build_cache` collection. The
+required image, volume, network, and container collections must still be lists
+of identified resource objects; malformed current snapshots are rejected and
+cannot be written as a new baseline.
 
 ## End-of-Audit Cleanup
 
@@ -216,10 +237,14 @@ consistency checker, not a substitute for rerunning finalization.
 - BuildKit cache is also baseline-aware. It is review-only by default and can be
   cleaned only after `--adopt-build-cache --adopt-build-cache-id <cache-id>`;
   the helper uses an exact cache-id filter rather than broad cache cleanup.
-- If strict verification is blocked by unattributed BuildKit cache, either
-  resolve the exact records manually, rerun the helper with exact cache-ID
-  adoption only for records proven to belong to this audit, or have the operator
-  deliberately accept a new baseline before verification resumes.
+- If strict verification is blocked by unattributed BuildKit cache, keep the
+  workspace blocked. Ask the resource owner or Docker administrator to resolve
+  the exact records; use exact cache-ID adoption only for a record proven to
+  belong to this audit. Do not accept or rewrite a baseline in this workspace to
+  clear the blocker. A migration requires a new isolated Docker daemon or VM and
+  a new baseline. Old evidence may remain as historical reference, but rerun the
+  relevant Docker cleanliness and runtime checks; do not treat old cleanliness or
+  runtime results as a new pass.
 - Running containers are skipped by default. Stop them deliberately only after
   confirming they belong to this audit.
 - Target project Docker Compose resources often do not carry Zhulong labels. The

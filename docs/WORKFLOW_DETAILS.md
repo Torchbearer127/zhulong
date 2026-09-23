@@ -303,6 +303,25 @@ record the residue plus safe resume steps. Zhulong must not hide residue by
 recapturing the Docker baseline, and it must not trust a stale
 `docker-cleanliness-status.json` as a completion signal.
 
+A shared Docker daemon remains usable, but strict verification is not guaranteed
+to finish if another actor keeps creating resources after the baseline. Workspace
+and Compose names support attribution; they do not isolate the daemon. For
+reliable strict completion, use a new dedicated Docker daemon or VM and capture a
+fresh baseline before verification. Old evidence may remain as historical
+reference, but the new environment must rerun the relevant Docker cleanliness and
+runtime checks; an old cleanliness or runtime result is not a new pass. This
+hygiene gate remains separate from other workflow status and evidence.
+
+If bootstrap records `docker_available=false`, or an existing baseline is
+malformed, missing required resource collections, or has a non-boolean
+`docker_available`, the baseline is non-authoritative and remains protected.
+Ordinary capture, force capture, verification, showing created resources, and
+cleanup all fail closed; empty arrays are not evidence of an observed empty
+Docker environment. Preserve that workspace and its baseline, then recover in a
+new controlled daemon or VM with a new workspace and a newly captured baseline.
+First capture is still allowed when no baseline file exists, including recording
+an unavailable snapshot as a blocked, non-authoritative result.
+
 OMC/PID review is only a safety gate for multi-agent usage:
 
 ```bash

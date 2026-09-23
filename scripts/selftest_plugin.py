@@ -13667,6 +13667,7 @@ def main() -> None:
     exercise_recording_evidence_gate(plugin_root)
     run([sys.executable, str(plugin_root / "scripts/selftest_original_input_and_provisioning.py")], plugin_root)
     exercise_structured_blocker_cli(plugin_root)
+    run([sys.executable, str(plugin_root / "scripts/selftest_issue26_shared_docker_contract.py")], plugin_root)
 
     plugin_json = json.loads((plugin_root / ".codex-plugin/plugin.json").read_text(encoding="utf-8"))
     if plugin_json.get("name") != "zhulong":

@@ -233,6 +233,21 @@ python3 <audit-workspace>/bin/manage-docker-resources.py \
 
 如果 `clean=false`，工作区应保持阻塞状态，并在摘要中写明残留资源和安全续跑步骤。烛龙不会通过重写 docker 初始基线来隐藏残留，也不会信任过期的 `docker-cleanliness-status.json` 作为完成依据。
 
+共享 docker 守护进程可以使用，但如果基线之后仍有其他参与者创建资源，严格检查不保证能够完成。工作区和
+Compose 名称只用于资源归属，不提供守护进程隔离。要可靠完成严格检查，应使用新的独立 docker 守护进程或虚拟机，
+在验证前重新采集基线。旧证据可以保留作历史参考，但新环境必须重新运行相关的 docker 洁净检查和运行时检查；
+旧的洁净或运行时结果不能直接作为新环境通过依据。该洁净门禁与其他工作流状态和证据保持分开。
+
+如果工作区初始化时记录了 `docker_available=false`，或已有基线损坏、缺少必要资源集合、
+`docker_available` 不是布尔值，基线就不能作为有效依据，也不能被普通 capture 或
+`--force-overwrite-baseline` 覆盖。`verify-clean`、`show-created` 和 `cleanup-created` 同样会拒绝读取，
+不会把缺失字段或空数组当成已观测的空环境。请保留旧工作区和基线，在受控的独立 docker 守护进程或虚拟机中创建新工作区，
+验证前重新采集有效基线并重跑相关检查。基线文件不存在时仍可首次 capture；若 Docker 不可用，只记录阻塞状态，
+不把它当作成功观测。
+
+历史上有效的基线可以省略可选的 `build_cache` 集合；镜像、卷、网络和容器集合仍必须是包含资源标识的列表，
+畸形的当前快照不会写入新的基线。
+
 OMC/PID 复核流程只用于判断多 Agent 模式是否安全：
 
 ```bash

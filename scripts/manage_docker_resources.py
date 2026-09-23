@@ -17,6 +17,14 @@ CLEAN_STATUS_RELATIVE_PATH = Path("docker") / "docker-cleanliness-status.json"
 LABEL_MANAGED = "org.zhulong.managed"
 LABEL_WORKSPACE = "org.zhulong.workspace"
 LEGACY_LABEL_WORKSPACE = "com.zhulong.workspace"
+SNAPSHOT_RESOURCE_FIELDS = ("images", "volumes", "networks", "containers")
+SNAPSHOT_RESOURCE_ID_FIELDS = {
+    "images": "id",
+    "volumes": "name",
+    "networks": "name",
+    "containers": "id",
+    "build_cache": "id",
+}
 
 
 def utc_now() -> str:
@@ -187,6 +195,65 @@ def load_json(path: Path) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise SystemExit(f"Expected object JSON file: {path}")
     return data
+
+
+def validate_snapshot(snapshot: dict[str, Any], *, path: Path, role: str) -> dict[str, Any]:
+    error_code = f"DOCKER_{role.upper()}_INVALID"
+    if type(snapshot.get("docker_available")) is not bool:
+        raise SystemExit(f"{error_code}: docker_available must be a boolean.")
+
+    resource_fields = list(SNAPSHOT_RESOURCE_FIELDS)
+    if "build_cache" in snapshot:
+        resource_fields.append("build_cache")
+    for field in resource_fields:
+        records = snapshot.get(field)
+        if not isinstance(records, list):
+            raise SystemExit(f"{error_code}: {field} must be a list.")
+        identity_field = SNAPSHOT_RESOURCE_ID_FIELDS[field]
+        for index, record in enumerate(records):
+            if not isinstance(record, dict):
+                raise SystemExit(f"{error_code}: {field}[{index}] must be an object.")
+            if not str(record.get(identity_field) or "").strip():
+                raise SystemExit(f"{error_code}: {field}[{index}] must contain a non-empty {identity_field}.")
+            labels_value = record.get("labels")
+            if labels_value is not None and not isinstance(labels_value, dict):
+                raise SystemExit(f"{error_code}: {field}[{index}].labels must be an object.")
+    return snapshot
+
+
+def load_snapshot(path: Path, *, role: str) -> dict[str, Any]:
+    try:
+        snapshot = load_json(path)
+    except SystemExit as exc:
+        detail = str(exc)
+        if detail.startswith("Missing JSON file:"):
+            raise SystemExit(f"DOCKER_{role.upper()}_MISSING: snapshot file is missing.") from None
+        raise SystemExit(f"DOCKER_{role.upper()}_INVALID: unreadable or invalid JSON object.") from None
+    except (OSError, UnicodeError):
+        raise SystemExit(f"DOCKER_{role.upper()}_INVALID: unreadable snapshot.") from None
+    return validate_snapshot(snapshot, path=path, role=role)
+
+
+def require_available_snapshot(
+    snapshot: dict[str, Any],
+    *,
+    path: Path,
+    role: str,
+    for_overwrite: bool = False,
+) -> None:
+    if snapshot["docker_available"] is True:
+        return
+    if role == "baseline" and for_overwrite:
+        raise SystemExit(
+            "DOCKER_BASELINE_UNAVAILABLE: Refusing to overwrite existing Docker resource baseline.\n"
+            "The existing baseline was captured while Docker was unavailable; preserve it and start a new controlled workspace."
+        )
+    if role == "baseline":
+        raise SystemExit(
+            "DOCKER_BASELINE_UNAVAILABLE: Baseline was captured while Docker was unavailable; "
+            "preserve it and start a new controlled workspace before verification."
+        )
+    raise SystemExit("DOCKER_CURRENT_UNAVAILABLE: Docker is unavailable; cannot compute cleanup plan safely.")
 
 
 def image_ids(snapshot: dict[str, Any]) -> set[str]:
@@ -501,7 +568,8 @@ def print_strict_unattributed_blocker(plan: dict[str, Any]) -> None:
             file=sys.stderr,
         )
         print(
-            "The workspace must remain blocked unless the operator explicitly resolves the cache or accepts a new baseline before verification resumes.",
+            "The workspace must remain blocked until the resource owner or Docker administrator resolves the cache. "
+            "If it belongs to this audit, review and adopt only its exact cache ID; do not recapture or rewrite the Docker baseline.",
             file=sys.stderr,
         )
         print("The agent must not manually mark the audit completed while strict Docker cleanliness is blocked.", file=sys.stderr)
@@ -528,7 +596,8 @@ def print_strict_unattributed_blocker(plan: dict[str, Any]) -> None:
         ]
         if non_reclaimable_ids:
             print(
-                "Some BuildKit cache records are not reclaimable by Docker; leave the audit blocked until the operator resolves or baselines them deliberately.",
+                "Some BuildKit cache records are not reclaimable by Docker; keep the audit blocked until the resource owner or Docker administrator resolves them. "
+                "Do not recapture or rewrite the Docker baseline.",
                 file=sys.stderr,
             )
 
@@ -546,12 +615,13 @@ def refuse_baseline_overwrite_if_residue_exists(
     adopted_build_cache_ids: set[str],
     current_file: str | None,
 ) -> None:
-    baseline = load_json(baseline_path)
-    if not baseline.get("docker_available", True):
-        return
-    current = load_json(Path(current_file).expanduser().resolve()) if current_file else capture_snapshot()
-    if not current.get("docker_available", True):
-        raise SystemExit("Docker is unavailable; refusing to overwrite baseline safely.")
+    baseline = load_snapshot(baseline_path, role="baseline")
+    require_available_snapshot(baseline, path=baseline_path, role="baseline", for_overwrite=True)
+    current_path = Path(current_file).expanduser().resolve() if current_file else None
+    current = load_snapshot(current_path, role="current") if current_path else validate_snapshot(
+        capture_snapshot(), path=Path("<live Docker snapshot>"), role="current"
+    )
+    require_available_snapshot(current, path=current_path or Path("<live Docker snapshot>"), role="current")
     plan = build_cleanup_plan(
         baseline,
         current,
@@ -737,12 +807,10 @@ def main() -> int:
         raise SystemExit("--adopt-build-cache-id requires --adopt-build-cache so cache cleanup is explicitly acknowledged.")
 
     if args.capture_baseline:
-        if baseline_path.exists() and not args.force_overwrite_baseline:
-            try:
-                existing = load_json(baseline_path)
-            except SystemExit:
-                existing = {}
-            if existing.get("docker_available") is True:
+        if baseline_path.exists():
+            existing = load_snapshot(baseline_path, role="baseline")
+            require_available_snapshot(existing, path=baseline_path, role="baseline", for_overwrite=True)
+            if not args.force_overwrite_baseline:
                 raise SystemExit(
                     f"Refusing to overwrite existing Docker resource baseline: {baseline_path}\n"
                     "Existing available baselines protect against late-capture mistakes that would hide resources "
@@ -762,7 +830,10 @@ def main() -> int:
                 adopted_build_cache_ids=adopted_build_cache_ids,
                 current_file=args.current_file,
             )
-        snapshot = load_json(Path(args.current_file).expanduser().resolve()) if args.current_file else capture_snapshot()
+        current_path = Path(args.current_file).expanduser().resolve() if args.current_file else None
+        snapshot = load_snapshot(current_path, role="current") if current_path else validate_snapshot(
+            capture_snapshot(), path=Path("<live Docker snapshot>"), role="current"
+        )
         baseline_path.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         if snapshot.get("docker_available"):
             print(f"docker_resource_baseline={baseline_path}")
@@ -770,12 +841,13 @@ def main() -> int:
         print(f"docker_resource_baseline_unavailable={baseline_path}", file=sys.stderr)
         return 0
 
-    baseline = load_json(baseline_path)
-    current = load_json(Path(args.current_file).expanduser().resolve()) if args.current_file else capture_snapshot()
-    if not baseline.get("docker_available", True):
-        raise SystemExit("Baseline was captured while Docker was unavailable; recapture before cleanup.")
-    if not current.get("docker_available", True):
-        raise SystemExit("Docker is unavailable; cannot compute cleanup plan safely.")
+    baseline = load_snapshot(baseline_path, role="baseline")
+    require_available_snapshot(baseline, path=baseline_path, role="baseline")
+    current_path = Path(args.current_file).expanduser().resolve() if args.current_file else None
+    current = load_snapshot(current_path, role="current") if current_path else validate_snapshot(
+        capture_snapshot(), path=Path("<live Docker snapshot>"), role="current"
+    )
+    require_available_snapshot(current, path=current_path or Path("<live Docker snapshot>"), role="current")
 
     plan = build_cleanup_plan(
         baseline,
