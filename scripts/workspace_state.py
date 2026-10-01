@@ -828,6 +828,30 @@ def _discover_named_files(
     return sorted(found, key=lambda item: item[0])
 
 
+def _discover_candidate_files(
+    workspace: Path,
+    *,
+    exclude_confirmed: bool = False,
+) -> list[tuple[str, Path]]:
+    found = _discover_named_files(
+        workspace, "candidate.json", exclude_confirmed=exclude_confirmed
+    )
+    # Verifier input snapshots are bound evidence, not independent candidate authorities.
+    return [
+        (relative, path)
+        for relative, path in found
+        if not (
+            len(parts := relative.split("/")) == 6
+            and parts[0] == "verifier"
+            and bool(parts[1])
+            and parts[2] == "runs"
+            and bool(parts[3])
+            and parts[4] == "inputs"
+            and parts[5] == "candidate.json"
+        )
+    ]
+
+
 def _sanitize_text(value: Any, *, fallback: str = "") -> str:
     text = str(value or "").strip()
     if not text:
@@ -1030,7 +1054,7 @@ def _collect_candidates_and_verdicts(
 ) -> tuple[list[str], list[str]]:
     candidate_paths: dict[str, Path] = {}
     candidate_ids: set[str] = set()
-    for relative, path in _discover_named_files(workspace, "candidate.json", exclude_confirmed=True):
+    for relative, path in _discover_candidate_files(workspace, exclude_confirmed=True):
         if "confirmed/" in f"{relative}/" or "/examples/" in f"/{relative}/":
             continue
         try:

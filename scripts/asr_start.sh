@@ -245,7 +245,7 @@ else
 fi
 
 WORKSPACE_DIR="$REPO_ROOT/$WORKSPACE_NAME"
-run_with_optional_quiet bash "$SCRIPT_DIR/refresh_workspace_helpers.sh" --workspace "$WORKSPACE_DIR"
+run_with_optional_quiet env SKILL_DIR="$SCRIPT_DIR/.." bash "$SCRIPT_DIR/refresh_workspace_helpers.sh" --workspace "$WORKSPACE_DIR"
 
 docker_gate_output="$(bash "$WORKSPACE_DIR/bin/check-docker-gate.sh" --repo-root "$REPO_ROOT" --note "startup pre-verification advisory" 2>&1 || true)"
 docker_gate_status="$(printf '%s\n' "$docker_gate_output" | awk -F= '/^docker_gate=/{print $2; exit}')"

@@ -19,6 +19,7 @@ from audit_state_io import AuditStateError, normalize_event, read_workspace_snap
 from workspace_state import (
     HANDOFF_STATE_FILENAME,
     _canonical_json_bytes,
+    _discover_candidate_files,
     _discover_named_files,
     _safe_workspace_path,
     derive_handoff_state,
@@ -259,7 +260,7 @@ def _load_validated_flows(
     bundle_items: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     candidates: dict[str, tuple[str, dict[str, Any], dict[str, Any]]] = {}
-    for relative, path in _discover_named_files(workspace, "candidate.json"):
+    for relative, path in _discover_candidate_files(workspace):
         if "confirmed/" in f"{relative}/" or "/examples/" in f"/{relative}/":
             continue
         try:

@@ -208,12 +208,15 @@ def atomic_write_bytes(
     raw: bytes,
     *,
     max_bytes: int = MAX_CONTROL_BYTES,
+    expected_target_identity: tuple[int, int, int, int, int] | None = None,
     post_write_validator: Callable[[bytes], None] | None = None,
 ) -> None:
     if len(raw) > max_bytes:
         raise _error("EVIDENCE_SIZE_LIMIT", "host control evidence exceeds its size limit")
     _validate_parent(root, path)
     expected = _existing_identity(path)
+    if expected_target_identity is not None and expected != expected_target_identity:
+        raise _error("EVIDENCE_TARGET_DRIFT", "host evidence target changed before publication")
     previous_raw = (
         _read_bytes_with_identity(root, path, max_bytes=max_bytes, expected=expected)
         if expected is not None
@@ -272,10 +275,20 @@ def atomic_write_json(
     path: Path,
     value: Any,
     *,
+    expected_target_identity: tuple[int, int, int, int, int] | None = None,
     post_write_validator: Callable[[bytes], None] | None = None,
 ) -> None:
     raw = (json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
-    atomic_write_bytes(root, path, raw, post_write_validator=post_write_validator)
+    if expected_target_identity is None:
+        atomic_write_bytes(root, path, raw, post_write_validator=post_write_validator)
+        return
+    atomic_write_bytes(
+        root,
+        path,
+        raw,
+        expected_target_identity=expected_target_identity,
+        post_write_validator=post_write_validator,
+    )
 
 
 def append_host_text(root: Path, path: Path, text: str, *, max_bytes: int = MAX_CONTROL_BYTES) -> None:

@@ -46,7 +46,20 @@ python3 scripts/verify_candidate.py \
 Optional flags:
 
 - `--dry-run` / `--no-execute`: keep verification in validator-only mode.
-- `--allow-execute`: reserved for explicit Docker-only execution support.
+- `--allow-execute`: opt into the narrow fresh-execution path described below;
+  requires `--execution-input` and an explicit new `--run-id`.
+- `--execution-input`: workspace-relative JSON input for that opt-in path.
+  It cannot be combined with `--dry-run`, `--no-execute`, or
+  `--dry-run-result`.
+- `--repo-root`: optional, invocation-local Git worktree root for fresh
+  execution only. When supplied, `target.repo_root` must be exactly `.`; that
+  portable value asserts the selected root and is not resolved from the target
+  file. Other values reject. Without this flag, the existing rule remains:
+  resolve `target.repo_root` relative to the target configuration directory.
+  The selected directory must be the real Git worktree root, and the workspace
+  must be strictly inside it. Prefer a normalized absolute path; relative paths
+  use the invocation CWD, and `..` or symlink components are rejected. Do not
+  store this local CLI path in the target.
 - `--run-id`: names the verifier run directory.
 - `--dry-run-result`: fixture-only selftest simulation. Simulated confirmed
   results are downgraded to blocked entrypoint verification because dry-run
@@ -54,6 +67,42 @@ Optional flags:
 
 By default, R1 avoids surprising execution. It never falls back to host-side PoC
 execution.
+
+The explicit execution opt-in currently supports only a fresh Candidate R2 run
+for an ordinary `runtime.type=docker` target with the `log_pattern` oracle. The
+execution input names reviewed source files and binds their hashes to a tested
+commit; it is review metadata, not an authenticated approval. For a standard
+repository-child-workspace layout, `--repo-root` selects the repository for this
+invocation while the portable target keeps `target.repo_root: .`; without the
+flag, the default target-file-relative resolution above is unchanged. The
+verifier still requires the target ref, Candidate R2 identity, execution input,
+and checked-out HEAD to name the same commit. It snapshots those files from Git,
+invokes only
+`scripts/run_verification_case.sh` with network disabled and a local
+sha256-pinned image, and accepts only its bounded, typed result and receipt.
+`source-manifest.json` retains the source path/hash list; `run-binding.json`
+records its relative path and SHA-256 instead of copying the full list.
+The run, case, and source-snapshot paths must be new. The canonical candidate-
+scoped `verifier-verdict.json` and the run-scoped `run-binding.json` must also
+be absent; a successful run publishes only to the canonical verdict path. This
+path does not resume or replace prior output. After a handled failure, the
+verifier removes only this invocation's unchanged, owned, mode-0600, single-link
+empty-file reservations. If identity, contents, parent directory, or access
+cannot be verified, it leaves the object untouched and warns while preserving
+the original failure. Cleanup checks identity then unlinks under the
+trusted-workspace-owner model; it is not a kernel-atomic compare-and-delete. A
+post-publication error followed by rollback may also leave an empty
+`verifier-verdict.json` reservation with a different inode; while this canonical
+path exists, even a new run ID is refused. Failure evidence and journal events
+are not rewound; a maintainer must inspect the leftover file's ownership and
+failed-run evidence before any recovery, without blindly deleting or overwriting it. A forced
+process kill or crash can also leave a reservation behind. A retry requires a
+different run ID and a valid R2 `verification/running` baseline; if the failed
+attempt left the stage blocked, restore it through the production state writer
+first.
+Offline fake-Docker selftests exercise only the wrapper contract; they do not
+demonstrate a live Docker execution or complete the independent verification
+chain.
 
 `scripts/run_verification_case.sh` is a separate Docker-evidence wrapper, not
 an execution implementation hidden inside this R1 verifier. In an R2 audit
@@ -68,11 +117,12 @@ kept compatible, and a no-state path is never silently upgraded to R2.
 `runtime.type=manual-blocked` always produces a `blocked` verdict. The reason
 states that the target is non-confirmable by the automatic verifier.
 
-For `docker` and `docker-compose` targets, R1 validates contracts and either
-uses explicit fixture simulation or returns `unverified`/`blocked` without
-executing. Future execution support must stay Docker or Docker Compose only,
-use timeouts, record command text and exit codes, and avoid broad cleanup or
-PID signaling.
+In the R1 default, dry-run, and no-execute paths, `docker` and
+`docker-compose` targets use explicit fixture simulation or return
+`unverified`/`blocked` without executing. The opt-in path above currently
+allows only ordinary Docker; `docker-compose` remains unsupported for
+execution. Any expansion must stay Docker or Docker Compose only, use timeouts,
+record command text and exit codes, and avoid broad cleanup or PID signaling.
 
 ## Oracle Types
 

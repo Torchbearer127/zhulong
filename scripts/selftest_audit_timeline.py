@@ -1862,6 +1862,73 @@ def _workspace_mutations(plugin_root: Path, fixture_root: Path) -> set[str]:
     return covered
 
 
+def _candidate_snapshot_discovery_matrix(plugin_root: Path) -> None:
+    with tempfile.TemporaryDirectory(prefix="zhulong-timeline-candidate-discovery-") as raw:
+        root = Path(raw)
+        baseline_root = root / "baseline"
+        baseline_root.mkdir()
+        workspace = _confirmed_workspace(plugin_root, baseline_root)
+        repo_root = workspace.parent
+        baseline = derive_timeline(workspace, repo_root)
+        candidate_path = workspace / "candidates/CAND-0001/candidate.json"
+        snapshot = workspace / "verifier/CAND-0001/runs/run-selftest/inputs/candidate.json"
+        snapshot.parent.mkdir(parents=True, exist_ok=True)
+        snapshot.write_bytes(candidate_path.read_bytes())
+        try:
+            snapshot_timeline = derive_timeline(workspace, repo_root)
+        except TimelineError as exc:
+            raise SystemExit("FAILED: verifier input snapshot changed timeline candidate authority") from exc
+        if snapshot_timeline != baseline:
+            raise SystemExit("FAILED: verifier input snapshot changed timeline candidate authority")
+        snapshot.unlink()
+
+        def copied_workspace(name: str) -> Path:
+            copy_repo = root / name
+            shutil.copytree(repo_root, copy_repo)
+            return copy_repo / workspace.name
+
+        snapshot_only = copied_workspace("snapshot-only")
+        snapshot_only_candidate = snapshot_only / "candidates/CAND-0001/candidate.json"
+        snapshot_only_copy = snapshot_only / "verifier/CAND-0001/runs/run-selftest/inputs/candidate.json"
+        snapshot_only_copy.parent.mkdir(parents=True, exist_ok=True)
+        snapshot_only_copy.write_bytes(snapshot_only_candidate.read_bytes())
+        snapshot_only_candidate.unlink()
+        try:
+            derive_timeline(snapshot_only, snapshot_only.parent)
+        except TimelineError as exc:
+            if getattr(exc, "code", None) != "TIMELINE_AUTHORITY_INVALID":
+                raise SystemExit(
+                    "FAILED: snapshot-only candidate did not fail authority validation: "
+                    + str(getattr(exc, "code", "unknown"))
+                ) from exc
+        else:
+            raise SystemExit("FAILED: verifier snapshot alone supplied a timeline candidate flow")
+
+        duplicate_workspace = copied_workspace("real-duplicate")
+        duplicate_candidate = duplicate_workspace / "review-copy/candidate.json"
+        duplicate_candidate.parent.mkdir(parents=True)
+        duplicate_candidate.write_bytes(
+            (duplicate_workspace / "candidates/CAND-0001/candidate.json").read_bytes()
+        )
+        try:
+            derive_timeline(duplicate_workspace, duplicate_workspace.parent)
+        except TimelineError:
+            pass
+        else:
+            raise SystemExit("FAILED: non-snapshot duplicate candidate was accepted")
+
+        invalid_workspace = copied_workspace("invalid-candidate")
+        invalid = invalid_workspace / "review-copy/candidate.json"
+        invalid.parent.mkdir(parents=True)
+        invalid.write_text("{}\n", encoding="utf-8")
+        try:
+            derive_timeline(invalid_workspace, invalid_workspace.parent)
+        except TimelineError:
+            pass
+        else:
+            raise SystemExit("FAILED: non-snapshot invalid candidate was accepted")
+
+
 def exercise(plugin_root: Path) -> None:
     fixture_root = plugin_root / "assets/fixtures/audit-timeline"
     manifest = _load_manifest(fixture_root)
@@ -1896,6 +1963,7 @@ def exercise(plugin_root: Path) -> None:
             canonical_documents[scenario] = document
             canonical_html[scenario] = html_bytes
             covered.update(_mutations(document, html_bytes))
+    _candidate_snapshot_discovery_matrix(plugin_root)
     covered.update(
         _sensitive_value_matrix(
             plugin_root,

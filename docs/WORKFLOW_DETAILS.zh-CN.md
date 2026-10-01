@@ -762,7 +762,18 @@ python3 scripts/validate_root_skill_rule_inventory.py \
 转换意图时会拒绝；真实 R1 调用方必须显式传入 `--protocol-mode legacy-r1`，并从写入结果读取
 兼容模式及被忽略字段诊断。这不表示 R1 已完成 R2 验证流程。
 
-验证封装脚本会在创建证据、读取权威状态、调用 docker 或执行 PoC 前校验案例 ID 和证据目录。
+独立核验器的默认路径、`--dry-run` 和 `--no-execute` 不执行 PoC。显式传入
+`--allow-execute` 时，目前只支持新的 Candidate R2 运行、普通 `runtime.type=docker` 目标和
+`log_pattern` oracle；要求工作区相对的 `--execution-input`、新的 `--run-id` 和
+`verification/running` 状态。核验器会从测试提交提取源码快照，并通过禁用网络的生产封装脚本执行。
+当工作区位于目标仓库内部时，应通过 `--repo-root` 显式指定目标仓库。此模式要求可移植目标合同中的
+`target.repo_root` 恰为 `.`，并将该值作为对命令行所选仓库根目录的声明；它不会相对目标文件解析。
+不传该参数时，仍按原规则相对目标配置文件所在目录解析 `target.repo_root`。建议使用规范化的绝对路径；相对路径按
+调用时的工作目录解析，含 `..` 或符号链接组件的路径会被拒绝。
+失败运行的证据和事件账本会保留。发布后故障或强制中止可能留下阻止重试的零字节标准 verdict 路径。完整约束和恢复限制见
+[独立核验器 R1 契约](runner-contracts/independent-verifier-r1.md)。
+
+验证封装脚本会在创建证据、读取权威状态、调用 Docker 或执行 PoC 前校验案例 ID 和证据目录。
 案例 ID 必须以 ASCII 字母或数字开头，只能包含 ASCII 字母、数字、`.`、`_`、`-`；点组件、分隔符、
 空白、控制字符和前导点都会被拒绝。证据路径必须规范化为
 `<workspace>/evidence/<case-id>`，不能穿过符号链接或非目录祖先。缺少事件日志和状态视图时，

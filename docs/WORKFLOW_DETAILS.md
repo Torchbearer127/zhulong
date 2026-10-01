@@ -981,6 +981,23 @@ R1 writing; a real R1 producer must pass `--protocol-mode legacy-r1`, and the
 write result reports compatibility/ignored-field diagnostics. This compatibility
 does not describe the workspace as R2 verification-complete.
 
+The independent verifier's default, `--dry-run`, and `--no-execute` paths do not
+run a PoC. `--allow-execute` currently supports only a fresh Candidate R2 run
+with an ordinary Docker target and `log_pattern` oracle; it requires a
+workspace-relative `--execution-input`, a new `--run-id`, and
+`verification/running` state. It snapshots the tested source commit and invokes
+the production wrapper with networking disabled. For a workspace nested in its
+target repository, pass that repository explicitly with `--repo-root`; the
+portable target keeps `target.repo_root: .`, which is required in this mode and
+is not resolved relative to the target file. Without the flag, existing
+target-file-relative resolution is unchanged. Prefer a normalized absolute
+path; relative paths use the invocation CWD, and `..` or symlink components
+reject. Failed-run evidence and journal events are retained. A post-publication
+error or forced stop can leave a
+zero-byte canonical verdict path that blocks retries. See the
+[Independent Verifier R1 contract](runner-contracts/independent-verifier-r1.md)
+for the full contract and recovery limits.
+
 The verification wrapper validates the case identifier and evidence directory
 before it creates evidence, reads authority, invokes Docker, or runs a PoC. Case
 IDs must start with an ASCII letter or digit and contain only ASCII letters,

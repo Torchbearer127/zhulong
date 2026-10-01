@@ -822,6 +822,190 @@ def require_installed_package_hygiene(root: Path, label: str) -> None:
         )
 
 
+def exercise_shared_skill_layout_edge_contracts(
+    plugin_root: Path,
+    installed_skill: Path,
+    scratch_root: Path,
+) -> None:
+    source_skill = plugin_root / "skills/zhulong/SKILL.md"
+    installed_skill_doc = installed_skill / "SKILL.md"
+    if not installed_skill_doc.is_file() or installed_skill_doc.read_bytes() != source_skill.read_bytes():
+        raise SystemExit("FAILED: shared install changed or omitted the source Skill body/frontmatter")
+    if not installed_skill_doc.read_bytes().startswith(b"---\n"):
+        raise SystemExit("FAILED: shared install dropped the Skill frontmatter")
+
+    reference_rel = "assets/references/audit-phase-intake-recon.md"
+    source_reference = plugin_root / reference_rel
+    installed_reference = installed_skill / reference_rel
+    if not installed_reference.is_file() or installed_reference.read_bytes() != source_reference.read_bytes():
+        raise SystemExit("FAILED: shared install changed or omitted a phase reference")
+
+    launcher = installed_skill / "scripts/zhulong_audit.sh"
+    asr_start = installed_skill / "scripts/asr_start.sh"
+    if asr_start.is_symlink() or not asr_start.is_file():
+        raise SystemExit("FAILED: cannot safely stub ASR delegation in the owned shared install")
+
+    target_cwd = scratch_root / "target repository with spaces"
+    target_cwd.mkdir()
+    target_marker = target_cwd / "keep marker.txt"
+    target_marker.write_text("untouched\n", encoding="utf-8")
+
+    def snapshot_target() -> list[tuple[str, str, bytes | str | None]]:
+        snapshot: list[tuple[str, str, bytes | str | None]] = []
+        for path in sorted(target_cwd.rglob("*")):
+            relative = path.relative_to(target_cwd).as_posix()
+            if path.is_symlink():
+                snapshot.append((relative, "symlink", os.readlink(path)))
+            elif path.is_dir():
+                snapshot.append((relative, "directory", None))
+            elif path.is_file():
+                snapshot.append((relative, "file", path.read_bytes()))
+            else:
+                snapshot.append((relative, "other", None))
+        return snapshot
+
+    target_before = snapshot_target()
+    asr_marker = scratch_root / "unexpected ASR delegation.marker"
+    original_asr = asr_start.read_bytes()
+    original_mode = stat.S_IMODE(asr_start.stat().st_mode)
+    marker_env = {**os.environ, "ZHULONG_SELFTEST_ASR_MARKER": str(asr_marker)}
+    asr_stub = (
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        ": \"${ZHULONG_SELFTEST_ASR_MARKER:?}\"\n"
+        ": > \"$ZHULONG_SELFTEST_ASR_MARKER\"\n"
+        "exit 97\n"
+    )
+    try:
+        asr_start.write_text(asr_stub, encoding="utf-8")
+        asr_start.chmod(original_mode)
+        print_root = subprocess.run(
+            ["bash", str(launcher), "--print-skill-root"],
+            cwd=target_cwd,
+            env=marker_env,
+            capture_output=True,
+            text=True,
+        )
+        if print_root.returncode != 0 or print_root.stdout != f"{installed_skill.absolute()}\n" or print_root.stderr:
+            raise SystemExit("FAILED: shared launcher did not print only its installed root from an external cwd")
+        if asr_marker.exists() or snapshot_target() != target_before:
+            raise SystemExit("FAILED: --print-skill-root delegated to ASR or changed the target cwd")
+
+        extra_arg = str(installed_reference)
+        rejected_args = subprocess.run(
+            ["bash", str(launcher), "--print-skill-root", extra_arg],
+            cwd=target_cwd,
+            env=marker_env,
+            capture_output=True,
+            text=True,
+        )
+        if (
+            rejected_args.returncode != 1
+            or rejected_args.stdout
+            or "--print-skill-root does not accept additional arguments." not in rejected_args.stderr
+        ):
+            raise SystemExit("FAILED: --print-skill-root did not reject an extra path argument clearly")
+        if asr_marker.exists() or snapshot_target() != target_before:
+            raise SystemExit("FAILED: rejected print-root arguments delegated or changed the target cwd")
+    finally:
+        asr_start.write_bytes(original_asr)
+        asr_start.chmod(original_mode)
+
+    if asr_start.read_bytes() != original_asr or stat.S_IMODE(asr_start.stat().st_mode) != original_mode:
+        raise SystemExit("FAILED: shared install ASR entrypoint was not restored after the sentinel test")
+
+    resolver_source = plugin_root / "scripts/resolve_skill_root.sh"
+    incomplete_layouts = (
+        ("skill", False, True, True, "missing SKILL.md or skills/zhulong/SKILL.md in skill root"),
+        ("asr-start", True, False, True, "missing scripts/asr_start.sh in skill root"),
+        ("assets", True, True, False, "missing assets/ in skill root"),
+    )
+    for name, has_skill, has_asr_start, has_assets, expected_error in incomplete_layouts:
+        root = scratch_root / f"resolver missing {name}"
+        scripts = root / "scripts"
+        scripts.mkdir(parents=True)
+        shutil.copy2(resolver_source, scripts / "resolve_skill_root.sh")
+        if has_skill:
+            (root / "SKILL.md").write_text("---\nname: test\n---\n", encoding="utf-8")
+        if has_asr_start:
+            (scripts / "asr_start.sh").write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+        if has_assets:
+            (root / "assets").mkdir()
+        result = subprocess.run(
+            ["bash", str(scripts / "resolve_skill_root.sh")],
+            cwd=target_cwd,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0 or result.stdout or expected_error not in result.stderr:
+            raise SystemExit(f"FAILED: resolver accepted or unclearly rejected layout missing {name}")
+
+    exercise_asr_start_refresh_root_binding(plugin_root, installed_skill, scratch_root)
+
+
+def exercise_asr_start_refresh_root_binding(
+    plugin_root: Path,
+    skill_source: Path,
+    scratch_root: Path,
+) -> None:
+    """Prove startup refreshes from its own skill root, not an older Claude copy."""
+    active_skill = scratch_root / "active skill root with spaces"
+    shutil.copytree(
+        skill_source,
+        active_skill,
+        ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc", ".DS_Store"),
+    )
+
+    home = scratch_root / "isolated home with spaces"
+    stale_skill = home / ".claude/skills/zhulong"
+    stale_skill.parent.mkdir(parents=True)
+    shutil.copytree(active_skill, stale_skill)
+    stale_helper = stale_skill / "scripts/validate_report_bundle.py"
+    stale_helper.write_bytes(stale_helper.read_bytes() + b"\n# stale Claude root selftest marker\n")
+
+    repo_root = scratch_root / "ASR target repository with spaces"
+    repo_root.mkdir()
+    workspace = repo_root / "security-research-asr-refresh-selftest"
+    denial_log = scratch_root / "asr-refresh-docker-denials.log"
+    docker_guard = scratch_root / "docker-reject-bin"
+    docker_guard.mkdir()
+    docker_stub = docker_guard / "docker"
+    docker_stub.write_text(
+        "#!/bin/sh\n"
+        "printf 'blocked docker invocation\\n' >> \"${ZHULONG_DOCKER_DENIAL_LOG:?}\"\n"
+        "exit 126\n",
+        encoding="utf-8",
+    )
+    docker_stub.chmod(0o755)
+    base_env = {
+        "HOME": str(home),
+        "SKILL_DIR": "",
+        "PATH": os.pathsep.join((str(docker_guard), os.environ.get("PATH", ""))),
+        "ZHULONG_DOCKER_DENIAL_LOG": str(denial_log),
+    }
+    run_capture_with_env([
+        "bash", str(plugin_root / "scripts/bootstrap_verification_workspace.sh"),
+        "--target-dir", str(repo_root),
+        "--workspace-name", workspace.name,
+    ], repo_root, base_env)
+    command = [
+        "bash", str(active_skill / "scripts/asr_start.sh"),
+        "--repo-root", str(repo_root),
+        "--workspace-name", workspace.name,
+        "--skip-plan", "--json",
+    ]
+    output = run_capture_with_env(command, repo_root, base_env)
+    refreshed_helper = workspace / "bin/validate-report-bundle.py"
+    if not refreshed_helper.is_file() or refreshed_helper.read_bytes() != (
+        active_skill / "scripts/validate_report_bundle.py"
+    ).read_bytes():
+        raise SystemExit("FAILED: asr_start refreshed workspace helpers from a stale/default skill root")
+    if b"stale Claude root selftest marker" in refreshed_helper.read_bytes():
+        raise SystemExit("FAILED: stale Claude helper bytes reached the ASR workspace")
+    if not denial_log.is_file() or not denial_log.read_text(encoding="utf-8").strip():
+        raise SystemExit(f"FAILED: ASR Docker probes did not pass through the rejecting shim: {output}")
+
+
 def forbid_text(path: Path, needle: str, label: str) -> None:
     content = path.read_text(encoding="utf-8")
     if needle in content:
@@ -5627,6 +5811,31 @@ def exercise_independent_verifier(plugin_root: Path) -> None:
         target = write_target("zhulong-target.yaml", valid_target_contract_yaml(runtime_type="docker"))
         candidate = write_candidate("candidate.json", candidate_doc())
 
+        out_repo_root_without_fresh = verdict_path(suffix="repo-root-without-fresh.json")
+        repo_root_without_fresh = subprocess.run(
+            [
+                sys.executable,
+                str(verifier),
+                "--target-config", str(target),
+                "--candidate", str(candidate),
+                "--workspace", str(workspace),
+                "--out", str(out_repo_root_without_fresh),
+                "--dry-run", "--repo-root", str(workspace),
+            ],
+            cwd=plugin_root,
+            env={**os.environ, **env},
+            capture_output=True,
+            text=True,
+        )
+        repo_root_output = (repo_root_without_fresh.stdout or "") + (repo_root_without_fresh.stderr or "")
+        if (
+            repo_root_without_fresh.returncode == 0
+            or "--repo-root is only supported with fresh --allow-execute" not in repo_root_output
+            or out_repo_root_without_fresh.exists()
+            or docker_marker.exists()
+        ):
+            raise SystemExit("FAILED: --repo-root was not explicitly rejected outside fresh execution")
+
         out_unverified = verdict_path(suffix="unverified.json")
         output = run_verify(target, candidate, out_unverified, run_id="no-execute")
         if "verdict=unverified" not in output:
@@ -5645,14 +5854,8 @@ def exercise_independent_verifier(plugin_root: Path) -> None:
             run_id="allow-execute-blocked",
             extra=["--allow-execute"],
         )
-        if "verdict=blocked" not in allow_execute_output:
-            raise SystemExit("FAILED: R1 --allow-execute did not remain explicitly blocked")
-        allow_execute_doc = assert_valid_verdict(candidate, out_allow_execute)
-        if (
-            allow_execute_doc["verdict"] != "blocked"
-            or "Docker execution is not implemented in R1 verifier" not in allow_execute_doc.get("reason", "")
-        ):
-            raise SystemExit("FAILED: R1 --allow-execute boundary changed")
+        if "fresh execution cannot be combined" not in allow_execute_output or out_allow_execute.exists():
+            raise SystemExit("FAILED: R1 --allow-execute conflict did not fail before verdict publication")
         if docker_marker.exists():
             raise SystemExit("FAILED: R1 --allow-execute invoked Docker")
 
@@ -5753,6 +5956,1682 @@ def exercise_independent_verifier(plugin_root: Path) -> None:
 
         if docker_marker.exists():
             raise SystemExit("FAILED: independent verifier selftest invoked Docker")
+
+
+def exercise_verifier_fresh_execution(plugin_root: Path) -> None:
+    """Exercise one source-bound verifier execution with only a fake Docker CLI."""
+    from candidate_identity import build_identity
+    import evidence_io
+    import verify_candidate as verifier_module
+    import validate_bundle_contract as bundle_module
+
+    verifier = plugin_root / "scripts/verify_candidate.py"
+    candidate_validator = plugin_root / "scripts/validate_candidate.py"
+    verdict_validator = plugin_root / "scripts/validate_verifier_verdict.py"
+    event_writer = plugin_root / "scripts/write_audit_event.py"
+    marker = "TRAVERSAL_PROOF:fixture-secret"
+
+    with tempfile.TemporaryDirectory(prefix="zhulong-verifier-fresh-selftest-") as tempdir:
+        tmp = Path(tempdir)
+        atomic_root = tmp / "atomic-write-contract"
+        atomic_root.mkdir()
+        atomic_path = atomic_root / "verdict.json"
+        atomic_path.write_bytes(b"original\n")
+        evidence_io.atomic_write_bytes(atomic_root, atomic_path, b"legacy-call\n")
+        if atomic_path.read_bytes() != b"legacy-call\n":
+            raise SystemExit("FAILED: atomic_write_bytes without an expected identity changed legacy behavior")
+        matching_identity = os.lstat(atomic_path)
+        matching_identity_tuple = (
+            matching_identity.st_dev,
+            matching_identity.st_ino,
+            matching_identity.st_nlink,
+            matching_identity.st_uid,
+            matching_identity.st_mode,
+        )
+        evidence_io.atomic_write_bytes(
+            atomic_root,
+            atomic_path,
+            b"identity-matched\n",
+            expected_target_identity=matching_identity_tuple,
+        )
+        if atomic_path.read_bytes() != b"identity-matched\n":
+            raise SystemExit("FAILED: atomic_write_bytes rejected its matching expected identity")
+
+        mismatch_before = atomic_path.read_bytes()
+        mismatch_entries_before = sorted(path.name for path in atomic_root.iterdir())
+        current_identity = os.lstat(atomic_path)
+        current_identity_tuple = (
+            current_identity.st_dev,
+            current_identity.st_ino,
+            current_identity.st_nlink,
+            current_identity.st_uid,
+            current_identity.st_mode,
+        )
+        mismatched_identity = (*current_identity_tuple[:1], current_identity_tuple[1] + 1, *current_identity_tuple[2:])
+        try:
+            evidence_io.atomic_write_bytes(
+                atomic_root,
+                atomic_path,
+                b"must-not-publish\n",
+                expected_target_identity=mismatched_identity,
+            )
+        except evidence_io.SafeEvidenceError as exc:
+            if exc.code != "EVIDENCE_TARGET_DRIFT":
+                raise SystemExit(f"FAILED: expected-identity mismatch had the wrong error: {exc.code}") from exc
+        else:
+            raise SystemExit("FAILED: atomic_write_bytes accepted a mismatched expected identity")
+        if atomic_path.read_bytes() != mismatch_before or sorted(path.name for path in atomic_root.iterdir()) != mismatch_entries_before:
+            raise SystemExit("FAILED: expected-identity mismatch modified a target or left a temporary file")
+
+        race_identity = os.lstat(atomic_path)
+        race_identity_tuple = (
+            race_identity.st_dev,
+            race_identity.st_ino,
+            race_identity.st_nlink,
+            race_identity.st_uid,
+            race_identity.st_mode,
+        )
+        foreign_path = atomic_root / "foreign-verdict.json"
+        foreign_path.write_bytes(b"foreign race target\n")
+        original_unchanged_check = evidence_io._require_unchanged_target
+        race_injected = False
+
+        def replace_target_after_precheck(path: Path, expected: tuple[int, int, int, int, int] | None) -> None:
+            nonlocal race_injected
+            if path == atomic_path and not race_injected:
+                os.replace(foreign_path, atomic_path)
+                race_injected = True
+            original_unchanged_check(path, expected)
+
+        with mock.patch.object(evidence_io, "_require_unchanged_target", side_effect=replace_target_after_precheck):
+            try:
+                evidence_io.atomic_write_bytes(
+                    atomic_root,
+                    atomic_path,
+                    b"must-not-overwrite-raced-target\n",
+                    expected_target_identity=race_identity_tuple,
+                )
+            except evidence_io.SafeEvidenceError as exc:
+                if exc.code != "EVIDENCE_TARGET_DRIFT":
+                    raise SystemExit(f"FAILED: post-check identity drift had the wrong error: {exc.code}") from exc
+            else:
+                raise SystemExit("FAILED: atomic_write_bytes overwrote a target changed after its initial identity check")
+        if not race_injected or atomic_path.read_bytes() != b"foreign race target\n":
+            raise SystemExit("FAILED: atomic_write_bytes changed the target introduced after its initial identity check")
+        if sorted(path.name for path in atomic_root.iterdir()) != ["verdict.json"]:
+            raise SystemExit("FAILED: atomic_write_bytes left a temporary file after post-check identity drift")
+
+        fsync_root = tmp / "reservation-cleanup-fsync"
+        fsync_root.mkdir()
+        fsync_path = fsync_root / "verifier/CAND-FSYNC/runs/fsync-failure/run-binding.json"
+        fsync_reservations: list[Any] = []
+        parent_fsync_counts: dict[int, int] = {}
+        original_fsync = os.fsync
+
+        def fail_cleanup_parent_fsync(fd: int) -> None:
+            if fsync_reservations and any(item.parent_fd == fd for item in fsync_reservations[0]):
+                parent_fsync_counts[fd] = parent_fsync_counts.get(fd, 0) + 1
+                if parent_fsync_counts[fd] == 2:
+                    raise OSError("injected cleanup directory fsync failure")
+            original_fsync(fd)
+
+        def fail_after_reserving(_args: Any, _target: Any, _candidate: Any, reservations: list[Any]) -> int:
+            fsync_reservations.append(reservations)
+            verifier_module._write_empty_reservation(fsync_root, fsync_path, reservations, mode=0o600)
+            raise verifier_module.VerifierError("injected primary verifier failure")
+
+        fsync_stderr = io.StringIO()
+        try:
+            with mock.patch.object(verifier_module, "_execute_fresh_verification", side_effect=fail_after_reserving):
+                with mock.patch.object(verifier_module.os, "fsync", side_effect=fail_cleanup_parent_fsync):
+                    with mock.patch.object(verifier_module.sys, "stderr", fsync_stderr):
+                        verifier_module.execute_fresh_verification(None, {}, {})
+        except verifier_module.VerifierError as exc:
+            if str(exc) != "injected primary verifier failure":
+                raise SystemExit(f"FAILED: reservation cleanup fsync failure masked the primary verifier error: {exc}") from exc
+        else:
+            raise SystemExit("FAILED: injected primary verifier failure was ignored")
+        fsync_warning = fsync_stderr.getvalue()
+        if fsync_path.exists() or "removed" not in fsync_warning or "durability is unconfirmed" not in fsync_warning:
+            raise SystemExit("FAILED: post-unlink directory fsync failure was not reported as uncertain durability")
+        if "leaving it untouched" in fsync_warning:
+            raise SystemExit("FAILED: post-unlink directory fsync warning falsely claimed the reservation was untouched")
+
+        def new_cleanup_reservation(label: str) -> tuple[Path, Path, list[Any]]:
+            root = tmp / f"reservation-cleanup-{label}"
+            root.mkdir()
+            path = root / "nested/verifier/CAND-CLEANUP/runs" / label / "run-binding.json"
+            reservations: list[Any] = []
+            verifier_module._write_empty_reservation(root, path, reservations, mode=0o600)
+            return root, path, reservations
+
+        def release_for_test(reservations: list[Any]) -> str:
+            cleanup_stderr = io.StringIO()
+            with mock.patch.object(verifier_module.sys, "stderr", cleanup_stderr):
+                verifier_module._release_fresh_reservations(reservations)
+            verifier_module._close_reservation_directories(reservations)
+            return cleanup_stderr.getvalue()
+
+        truncated_root, truncated_path, truncated_reservations = new_cleanup_reservation("truncate-back")
+        original_truncated_inode = os.lstat(truncated_path).st_ino
+        truncated_path.write_bytes(b"temporary foreign contents\n")
+        with truncated_path.open("r+b") as truncated_file:
+            truncated_file.truncate(0)
+        if os.lstat(truncated_path).st_ino != original_truncated_inode or truncated_path.stat().st_size != 0:
+            raise SystemExit("FAILED: populate-then-truncate fixture did not retain its empty inode")
+        truncated_warning = release_for_test(truncated_reservations)
+        if not truncated_path.is_file() or truncated_path.stat().st_size != 0 or "could not be safely released" not in truncated_warning:
+            raise SystemExit("FAILED: cleanup removed an inode populated and then truncated back to empty")
+
+        replaced_parent_root, replaced_parent_path, replaced_parent_reservations = new_cleanup_reservation("parent-replaced")
+        replaced_parent = replaced_parent_path.parent
+        moved_parent = replaced_parent_root / "original-parent"
+        replaced_parent.rename(moved_parent)
+        replaced_parent.mkdir(mode=0o700)
+        replacement_bytes = b"foreign parent replacement\n"
+        replaced_parent_path.write_bytes(replacement_bytes)
+        replaced_parent_warning = release_for_test(replaced_parent_reservations)
+        if (
+            replaced_parent_path.read_bytes() != replacement_bytes
+            or (moved_parent / replaced_parent_path.name).stat().st_size != 0
+            or "could not be safely released" not in replaced_parent_warning
+        ):
+            raise SystemExit("FAILED: cleanup changed a replaced reservation parent or its original reservation")
+
+        replaced_ancestor_root, replaced_ancestor_path, replaced_ancestor_reservations = new_cleanup_reservation("ancestor-replaced")
+        replaced_ancestor = replaced_ancestor_path.parents[2]
+        moved_ancestor = replaced_ancestor.with_name(replaced_ancestor.name + "-original")
+        old_ancestor_reservation = moved_ancestor / replaced_ancestor_path.relative_to(replaced_ancestor)
+        replaced_ancestor.rename(moved_ancestor)
+        replacement_ancestor_parent = replaced_ancestor / replaced_ancestor_path.relative_to(replaced_ancestor).parent
+        replacement_ancestor_parent.mkdir(parents=True, mode=0o700)
+        ancestor_replacement_bytes = b"foreign ancestor replacement\n"
+        (replacement_ancestor_parent / replaced_ancestor_path.name).write_bytes(ancestor_replacement_bytes)
+        replaced_ancestor_warning = release_for_test(replaced_ancestor_reservations)
+        if (
+            (replacement_ancestor_parent / replaced_ancestor_path.name).read_bytes() != ancestor_replacement_bytes
+            or old_ancestor_reservation.stat().st_size != 0
+            or "could not be safely released" not in replaced_ancestor_warning
+        ):
+            raise SystemExit("FAILED: cleanup changed a replaced ancestor or its original reservation")
+
+        missing_parent_root, missing_parent_path, missing_parent_reservations = new_cleanup_reservation("parent-missing")
+        missing_parent = missing_parent_path.parent
+        shutil.rmtree(missing_parent)
+        missing_parent_warning = release_for_test(missing_parent_reservations)
+        if missing_parent.exists() or "could not be safely released" not in missing_parent_warning:
+            raise SystemExit("FAILED: cleanup recreated a removed reservation parent instead of leaving it untouched")
+
+        inspect_root, inspect_path, inspect_reservations = new_cleanup_reservation("inspection-failure")
+        inspect_reservation = inspect_reservations[0]
+        original_stat = os.stat
+
+        def fail_reservation_inspection(path_arg: Any, *args: Any, **kwargs: Any) -> os.stat_result:
+            if path_arg == inspect_path.name and kwargs.get("dir_fd") == inspect_reservation.parent_fd:
+                raise OSError("injected reservation inspection failure")
+            return original_stat(path_arg, *args, **kwargs)
+
+        with mock.patch.object(verifier_module.os, "stat", side_effect=fail_reservation_inspection):
+            inspect_warning = release_for_test(inspect_reservations)
+        if not inspect_path.is_file() or inspect_path.stat().st_size != 0 or "could not be safely released" not in inspect_warning:
+            raise SystemExit("FAILED: inspection failure did not preserve the reservation and warn")
+
+        unlink_root, unlink_path, unlink_reservations = new_cleanup_reservation("unlink-failure")
+        unlink_reservation = unlink_reservations[0]
+        original_unlink = os.unlink
+
+        def fail_reservation_unlink(path_arg: Any, *args: Any, **kwargs: Any) -> None:
+            if path_arg == unlink_path.name and kwargs.get("dir_fd") == unlink_reservation.parent_fd:
+                raise OSError("injected reservation unlink failure")
+            original_unlink(path_arg, *args, **kwargs)
+
+        with mock.patch.object(verifier_module.os, "unlink", side_effect=fail_reservation_unlink):
+            unlink_warning = release_for_test(unlink_reservations)
+        if not unlink_path.is_file() or unlink_path.stat().st_size != 0 or "could not be safely released" not in unlink_warning:
+            raise SystemExit("FAILED: unlink failure did not preserve the reservation and warn")
+
+        workspace = tmp / "security-research-fresh"
+        workspace.mkdir()
+        workspace = workspace.resolve()
+        (workspace / "asr-config.json").write_text('{"schema_version":1}\n', encoding="utf-8")
+        source_dir = workspace / "src"
+        source_dir.mkdir()
+        source_bytes = b"def handle(path):\n    return read_path(path)\n"
+        source_path = source_dir / "importer.py"
+        source_path.write_bytes(source_bytes)
+        (workspace / ".gitattributes").write_text("*.py filter=fresh-selftest\n", encoding="utf-8")
+
+        git_env = {
+            **os.environ,
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_TERMINAL_PROMPT": "0",
+        }
+
+        def git(*args: str) -> str:
+            proc = subprocess.run(
+                ["git", "-C", str(workspace), *args],
+                cwd=workspace,
+                env=git_env,
+                capture_output=True,
+                text=True,
+            )
+            if proc.returncode != 0:
+                raise SystemExit(f"FAILED: verifier fresh fixture git {' '.join(args)}\n{proc.stdout}{proc.stderr}")
+            return proc.stdout.strip()
+
+        git("init", "-q")
+        git("config", "user.name", "Zhulong selftest")
+        git("config", "user.email", "selftest@example.invalid")
+        git("add", "src/importer.py", ".gitattributes")
+        git("commit", "-qm", "fresh verifier fixture")
+        tested_commit = git("rev-parse", "HEAD")
+
+        replacement_source = b"def handle(path):\n    return replacement_read(path)\n"
+        replacement_blob = subprocess.run(
+            ["git", "-C", str(workspace), "hash-object", "-w", "--stdin"],
+            cwd=workspace,
+            env=git_env,
+            input=replacement_source,
+            capture_output=True,
+            check=False,
+        )
+        replacement_index_env = {**git_env, "GIT_INDEX_FILE": str(tmp / "replacement-index")}
+        for command in (
+            ["read-tree", tested_commit],
+            ["update-index", "--add", "--cacheinfo", f"100644,{replacement_blob.stdout.decode('ascii').strip()},src/importer.py"],
+        ):
+            result = subprocess.run(
+                ["git", "-C", str(workspace), *command],
+                cwd=workspace,
+                env=replacement_index_env,
+                capture_output=True,
+                check=False,
+            )
+            if result.returncode != 0:
+                raise SystemExit(f"FAILED: could not prepare Git replace-ref fixture: {result.stderr!r}")
+        replacement_tree = subprocess.run(
+            ["git", "-C", str(workspace), "write-tree"],
+            cwd=workspace,
+            env=replacement_index_env,
+            capture_output=True,
+            check=False,
+        )
+        if replacement_tree.returncode != 0 or replacement_blob.returncode != 0:
+            raise SystemExit("FAILED: could not build Git replace-ref tree")
+        replacement_commit = subprocess.run(
+            ["git", "-C", str(workspace), "commit-tree", replacement_tree.stdout.decode("ascii").strip(), "-p", tested_commit, "-m", "replacement tree"],
+            cwd=workspace,
+            env=git_env,
+            capture_output=True,
+            check=False,
+        )
+        if replacement_commit.returncode != 0:
+            raise SystemExit("FAILED: could not build Git replace-ref commit")
+        git("replace", tested_commit, replacement_commit.stdout.decode("ascii").strip())
+        try:
+            raw_snapshot = verifier_module._read_git_tree(workspace.resolve(), tested_commit)
+            if raw_snapshot.get("src/importer.py") != source_bytes:
+                raise SystemExit("FAILED: verifier source snapshot followed a Git replacement ref instead of the tested commit")
+        finally:
+            git("replace", "-d", tested_commit)
+
+        hooks_path = workspace / ".git" / "fresh-test-hooks"
+        hooks_path.mkdir()
+        hook_marker = tmp / "hook-called"
+        hook = hooks_path / "pre-commit"
+        hook.write_text(f"#!/bin/sh\nprintf called > {hook_marker}\n", encoding="utf-8")
+        hook.chmod(0o755)
+        git("config", "core.hooksPath", str(hooks_path))
+
+        filter_marker = tmp / "filter-called"
+        git("config", "filter.fresh-selftest.clean", f"touch {shlex.quote(str(filter_marker))}; cat")
+        git("config", "filter.fresh-selftest.smudge", f"touch {shlex.quote(str(filter_marker))}; cat")
+
+        class OversizedGitOutput:
+            def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+                self.stdout = io.BytesIO(b"oversized Git output")
+                self.returncode = 0
+                self.killed = False
+
+            def kill(self) -> None:
+                self.killed = True
+                self.returncode = -9
+
+            def wait(self) -> int:
+                return self.returncode
+
+        oversized_process: list[OversizedGitOutput] = []
+
+        def fake_git_popen(*args: Any, **kwargs: Any) -> OversizedGitOutput:
+            process = OversizedGitOutput(*args, **kwargs)
+            oversized_process.append(process)
+            return process
+
+        with mock.patch.object(verifier_module.subprocess, "Popen", side_effect=fake_git_popen):
+            try:
+                verifier_module._git(workspace.resolve(), "rev-parse", "HEAD", max_output_bytes=4)
+            except verifier_module.VerifierError as exc:
+                if "exceeded the verifier bound" not in str(exc):
+                    raise SystemExit(f"FAILED: oversized Git output was rejected unexpectedly: {exc}") from exc
+            else:
+                raise SystemExit("FAILED: verifier accepted Git output larger than its configured bound")
+        if len(oversized_process) != 1 or not oversized_process[0].killed:
+            raise SystemExit("FAILED: verifier did not stop a Git process that exceeded its output bound")
+
+        target_path = workspace / "zhulong-target.yaml"
+        target_raw = valid_target_contract_yaml(runtime_type="docker").replace("local-state", tested_commit).encode("utf-8")
+        target_path.write_bytes(target_raw)
+        candidate_dir = workspace / "candidates" / "CAND-0001"
+        (candidate_dir / "poc").mkdir(parents=True)
+        poc_raw = (
+            b"from pathlib import Path\n"
+            b"Path(__file__).with_name('host-executed').write_text('unexpected')\n"
+            b"print('TRAVERSAL_PROOF:fixture-secret')\n"
+        )
+        (candidate_dir / "poc" / "reproduce.py").write_bytes(poc_raw)
+        candidate = valid_candidate_contract()
+        candidate["schema_version"] = 2
+        candidate["target_ref"] = {"target_config": "zhulong-target.yaml", "tested_ref": tested_commit}
+        candidate["poc"] = {
+            "kind": "script",
+            "path": "candidates/CAND-0001/poc/reproduce.py",
+            "expected_oracle": {"type": "log_pattern", "description": "A stable fixture response was observed."},
+        }
+        candidate["identity"] = build_identity(
+            candidate,
+            {
+                "target_commit": tested_commit,
+                "trust_boundary_id": "http-request-boundary",
+                "sink_family": "file_read",
+                "root_cause_family": "missing_validation",
+                "primary_source_path": "src/importer.py",
+            },
+        )
+        candidate["provenance"] = [
+            {
+                "source_kind": "manual_review",
+                "source_id": "fresh-verifier-selftest",
+                "artifact_path": "verifier-review.json",
+                "artifact_sha256": "sha256:" + "1" * 64,
+            }
+        ]
+        candidate["relationships"] = {
+            "merged_from": [],
+            "legacy_id_mapping": [{"legacy_candidate_id": "CAND-0001", "current_candidate_id": "CAND-0001"}],
+        }
+        candidate_path = candidate_dir / "candidate.json"
+        candidate_path.write_bytes((json.dumps(candidate, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode())
+
+        input_doc = {
+            "schema_version": 1,
+            "candidate_sha256": "sha256:" + hashlib.sha256(candidate_path.read_bytes()).hexdigest(),
+            "target_config_sha256": "sha256:" + hashlib.sha256(target_raw).hexdigest(),
+            "tested_commit": tested_commit,
+            "image_ref": "sha256:" + "a" * 64,
+            "poc_sha256": "sha256:" + hashlib.sha256(poc_raw).hexdigest(),
+            "oracle": {"type": "log_pattern", "pattern": "TRAVERSAL_PROOF:fixture-(?:secret)"},
+            "source_refs": [
+                {
+                    "id": "entry-and-sink",
+                    "path": "src/importer.py",
+                    "sha256": "sha256:" + hashlib.sha256(source_bytes).hexdigest(),
+                    "line_start": 1,
+                    "line_end": 2,
+                    "token": "read_path",
+                }
+            ],
+            "review": {
+                "entrypoint_ref": "entry-and-sink",
+                "sink_ref": "entry-and-sink",
+                "input_shape": "GET /file?path=fixture on the local fixture server",
+                "source_to_sink": "The fixture request path reaches read_path without containment.",
+                "replay_material": "The PoC checks a fixed harmless fixture value.",
+                "impact_interpretation": "The result describes only the local synthetic fixture.",
+                "observation": {"stream": "stdout", "exact": marker},
+            },
+        }
+        input_path = workspace / "verifier-execution.json"
+        input_path.write_bytes((json.dumps(input_doc, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode())
+
+        event_stages = ["intake", "recon", "candidate_generation", "triage", "verification"]
+
+        def seed_r2_verification(workspace_dir: Path) -> None:
+            previous = ""
+            for revision, stage in enumerate(event_stages):
+                transition = "start" if revision == 0 else "advance"
+                command = [
+                    sys.executable,
+                    str(event_writer),
+                    "--workspace-dir",
+                    str(workspace_dir),
+                    "--protocol-mode",
+                    "r2",
+                    "--expected-state-revision",
+                    str(revision),
+                    "--plugin-version",
+                    "fresh-verifier-selftest",
+                    "--event",
+                    f"{stage}_started",
+                    "--stage",
+                    stage,
+                    "--status",
+                    "running",
+                    "--transition-kind",
+                    transition,
+                    "--reason-code",
+                    "normal_progress",
+                    "--subject",
+                    "run:fresh-verifier-selftest",
+                    "--evidence-ref",
+                    "evidence/fixture.md",
+                    "--run-id",
+                    "fresh-verifier-selftest",
+                    "--message",
+                    "Offline verifier fixture.",
+                    "--json",
+                ]
+                if previous:
+                    command.extend(["--from-stage", previous, "--from-status", "running"])
+                output = run_capture_with_env(command, plugin_root, git_env)
+                if '"ok":true' not in output:
+                    raise SystemExit(f"FAILED: verifier fresh fixture could not seed R2 stage {stage}: {output}")
+                previous = stage
+
+        seed_r2_verification(workspace)
+
+        fakebin = tmp / "fakebin"
+        fakebin.mkdir()
+        docker_log = tmp / "docker-calls.jsonl"
+        fake_docker = fakebin / "docker"
+        fake_docker.write_text(
+            "#!/usr/bin/env python3\n"
+            "import json, os, signal, subprocess, sys, time\n"
+            "from pathlib import Path\n"
+            "args = sys.argv[1:]\n"
+            "mode = os.environ.get('ZHULONG_FRESH_TEST_MODE', 'success')\n"
+            "state_path = os.environ['ZHULONG_FRESH_TEST_DOCKER_STATE']\n"
+            "workspace = Path(os.environ['ZHULONG_FRESH_TEST_WORKSPACE'])\n"
+            "run_id = os.environ.get('ZHULONG_FRESH_TEST_RUN_ID', '')\n"
+            "verdict_path = workspace / 'verifier/CAND-0001/verifier-verdict.json'\n"
+            "run_dir = workspace / 'verifier/CAND-0001/runs' / run_id\n"
+            "binding_path = run_dir / 'run-binding.json'\n"
+            "with open(os.environ['ZHULONG_FRESH_TEST_DOCKER_LOG'], 'a', encoding='utf-8') as log:\n"
+            "    log.write(json.dumps(args) + '\\n')\n"
+            "if args == ['info'] or args[:2] == ['image', 'inspect']:\n"
+            "    raise SystemExit(0)\n"
+            "if args and args[0] == 'run':\n"
+            "    if mode == 'reservation_cleanup_fails':\n"
+            "        os.chmod(run_dir, 0o500)\n"
+            "        os.chmod(verdict_path.parent, 0o500)\n"
+            "        raise SystemExit(17)\n"
+            "    if mode.startswith('reservation_'):\n"
+            "        _, destination, mutation = mode.split('_', 2)\n"
+            "        path = verdict_path if destination == 'verdict' else binding_path\n"
+            "        foreign = Path(os.environ['ZHULONG_FRESH_TEST_FOREIGN_FILE'])\n"
+            "        if mutation == 'replaced':\n"
+            "            foreign.write_bytes(b'foreign replacement\\n')\n"
+            "            os.replace(foreign, path)\n"
+            "        elif mutation == 'populated':\n"
+            "            path.write_bytes(b'populated reservation\\n')\n"
+            "        elif mutation == 'symlink':\n"
+            "            foreign.write_bytes(b'foreign symlink target\\n')\n"
+            "            path.unlink()\n"
+            "            path.symlink_to(foreign)\n"
+            "        elif mutation == 'hardlink':\n"
+            "            foreign.write_bytes(b'foreign hardlink target\\n')\n"
+            "            path.unlink()\n"
+            "            os.link(foreign, path)\n"
+            "        elif mutation == 'fifo':\n"
+            "            path.unlink()\n"
+            "            os.mkfifo(path)\n"
+            "        elif mutation == 'directory':\n"
+            "            path.unlink()\n"
+            "            path.mkdir()\n"
+            "        raise SystemExit(17)\n"
+            "    if mode == 'cleanup-failure':\n"
+            "        name = args[args.index('--name') + 1]\n"
+            "        token = next(value.split('=', 1)[1] for value in args if value.startswith('org.zhulong.case='))\n"
+            "        with open(state_path, 'w', encoding='utf-8') as state:\n"
+            "            json.dump({'name': name, 'token': token}, state)\n"
+            "    if mode == 'journal-drift':\n"
+            "        mount = next(value for value in args if value.startswith('type=bind,source=') and 'target=/workspace/evidence' in value)\n"
+            "        evidence = mount.split('source=', 1)[1].split(',target=', 1)[0]\n"
+            "        case_id = os.path.basename(evidence)\n"
+            "        workspace = os.path.dirname(os.path.dirname(evidence))\n"
+            "        command = [sys.executable, os.environ['ZHULONG_FRESH_TEST_EVENT_WRITER'], '--workspace-dir', workspace, '--target-repo', os.path.dirname(workspace), '--protocol-mode', 'r2', '--expected-state-revision', '6', '--event', 'verification_concurrent_observation', '--stage', 'verification', '--from-stage', 'verification', '--from-status', 'running', '--status', 'running', '--transition-kind', 'observe', '--event-status', 'during_execution', '--reason-code', 'normal_progress', '--subject', 'verification:' + case_id, '--evidence-ref', 'evidence/' + case_id + '/command.json', '--message', 'Offline concurrency test event.', '--detail', 'case_id=' + case_id, '--json']\n"
+            "        subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n"
+            "    if mode.startswith('mutate-'):\n"
+            "        mutation = mode[len('mutate-'):]\n"
+            "        if mutation in {'candidate', 'input', 'poc'}:\n"
+            "            path = Path(os.environ['ZHULONG_FRESH_TEST_' + mutation.upper()])\n"
+            "            path.write_bytes(b'mutated during fake wrapper\\n')\n"
+            "        elif mutation == 'input-copy':\n"
+            "            path = Path(os.environ['ZHULONG_FRESH_TEST_WORKSPACE']) / 'verifier/CAND-0001/runs' / os.environ['ZHULONG_FRESH_TEST_RUN_ID'] / 'inputs/execution-input.json'\n"
+            "            path.write_bytes(b'mutated input copy during fake wrapper\\n')\n"
+            "        elif mutation == 'snapshot':\n"
+            "            mount = next(value for value in args if value.startswith('type=bind,source=') and 'target=/workspace/poc' in value)\n"
+            "            poc_root = Path(mount.split('source=', 1)[1].split(',target=', 1)[0])\n"
+            "            path = poc_root / os.environ['ZHULONG_FRESH_TEST_RUN_ID'] / 'source/src/importer.py'\n"
+            "            os.chmod(path, 0o600)\n"
+            "            path.write_bytes(b'mutated source snapshot during fake wrapper\\n')\n"
+            "    if mode == 'timeout':\n"
+            "        time.sleep(10)\n"
+            "    if mode != 'no-marker':\n"
+            "        print('TRAVERSAL_PROOF:fixture-secret', flush=True)\n"
+            "    if mode == 'signal':\n"
+            "        signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGTERM})\n"
+            "        os.kill(os.getpid(), signal.SIGTERM)\n"
+            "    if mode == 'nonzero':\n"
+            "        raise SystemExit(17)\n"
+            "    raise SystemExit(0)\n"
+            "if args[:2] == ['container', 'ls'] and mode == 'cleanup-failure' and os.path.exists(state_path):\n"
+            "    print('offline-container-id')\n"
+            "    raise SystemExit(0)\n"
+            "if args[:2] == ['container', 'inspect'] and mode == 'cleanup-failure' and os.path.exists(state_path):\n"
+            "    with open(state_path, encoding='utf-8') as state:\n"
+            "        item = json.load(state)\n"
+            "    print(json.dumps([{'Name': '/' + item['name'], 'Config': {'Labels': {'org.zhulong.case': item['token']}}}]))\n"
+            "    raise SystemExit(0)\n"
+            "if args[:3] == ['container', 'rm', '--force'] and mode == 'cleanup-failure':\n"
+            "    raise SystemExit(1)\n"
+            "if len(args) > 1 and args[1] == 'ls':\n"
+            "    raise SystemExit(0)\n"
+            "raise SystemExit(2)\n",
+            encoding="utf-8",
+        )
+        fake_docker.chmod(0o755)
+        env = {
+            **git_env,
+            "PATH": f"{fakebin}{os.pathsep}{os.environ.get('PATH', '')}",
+            "ZHULONG_FRESH_TEST_DOCKER_LOG": str(docker_log),
+            "ZHULONG_FRESH_TEST_DOCKER_STATE": str(tmp / "fake-docker-state.json"),
+            "ZHULONG_FRESH_TEST_EVENT_WRITER": str(event_writer),
+            "ZHULONG_FRESH_TEST_WORKSPACE": str(workspace),
+            "ZHULONG_FRESH_TEST_CANDIDATE": str(candidate_path),
+            "ZHULONG_FRESH_TEST_INPUT": str(input_path),
+            "ZHULONG_FRESH_TEST_POC": str(candidate_dir / "poc/reproduce.py"),
+            "PYTHONDONTWRITEBYTECODE": "1",
+        }
+
+        out_path = workspace / "verifier" / "CAND-0001" / "verifier-verdict.json"
+
+        def verifier_command(
+            run_id: str,
+            *,
+            include_input: bool = True,
+            allow_execute: bool = True,
+            extra: list[str] | None = None,
+            input_name: str = "verifier-execution.json",
+        ) -> list[str]:
+            command = [
+                sys.executable,
+                str(verifier),
+                "--target-config",
+                str(target_path.resolve()),
+                "--candidate",
+                str(candidate_path.resolve()),
+                "--workspace",
+                str(workspace.resolve()),
+                "--run-id",
+                run_id,
+            ]
+            if allow_execute:
+                command.append("--allow-execute")
+            if include_input:
+                command.extend(["--execution-input", input_name])
+            command.extend(extra or [])
+            return command
+
+        def assert_rejected_before_wrapper(
+            label: str,
+            command: list[str],
+            *,
+            expected_verdict_bytes: bytes | None = None,
+            stable_error: bool = False,
+            expected_error: str | None = None,
+            expected_verdict_path: Path | None = None,
+        ) -> None:
+            docker_calls_before = docker_log.read_bytes() if docker_log.exists() else b""
+            proc = subprocess.run(command, cwd=plugin_root, env=env, capture_output=True, text=True)
+            if proc.returncode == 0:
+                raise SystemExit(f"FAILED: fresh verifier accepted preflight rejection case {label}")
+            if stable_error and ("Traceback (most recent call last)" in proc.stderr or not proc.stderr.startswith("ERROR:")):
+                raise SystemExit(f"FAILED: malformed {label} did not produce a stable verifier error:\n{proc.stderr}")
+            if expected_error is not None and expected_error not in proc.stderr:
+                raise SystemExit(f"FAILED: {label} did not report the expected error:\n{proc.stderr}")
+            checked_verdict_path = expected_verdict_path or out_path
+            if expected_verdict_bytes is None and checked_verdict_path.exists():
+                raise SystemExit(f"FAILED: preflight rejection {label} published or replaced a verdict")
+            if expected_verdict_bytes is not None and (
+                not checked_verdict_path.is_file() or checked_verdict_path.read_bytes() != expected_verdict_bytes
+            ):
+                raise SystemExit(f"FAILED: preflight rejection {label} changed existing verdict bytes")
+            if (docker_log.read_bytes() if docker_log.exists() else b"") != docker_calls_before:
+                raise SystemExit(f"FAILED: preflight rejection {label} reached the Docker substitute")
+
+        invalid_inputs = workspace / "invalid-inputs"
+        invalid_inputs.mkdir()
+        old_verdict = b'{"sentinel":"preserve-before-fresh-run"}\n'
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_bytes(old_verdict)
+        assert_rejected_before_wrapper(
+            "existing verifier verdict",
+            verifier_command("existing-verdict"),
+            expected_verdict_bytes=old_verdict,
+        )
+        out_path.unlink()
+
+        candidate_digest = input_doc["candidate_sha256"]
+
+        def case_id_for(run_id: str) -> str:
+            seed = f"{candidate_digest}\0{run_id}".encode("utf-8")
+            return "verifier-" + hashlib.sha256(seed).hexdigest()[:32]
+
+        runs_dir = workspace / "verifier/CAND-0001/runs"
+        for index, run_id in enumerate((".", "..")):
+            assert_rejected_before_wrapper(
+                f"unsafe run id {run_id!r}",
+                verifier_command(run_id),
+                stable_error=True,
+            )
+            if runs_dir.exists():
+                raise SystemExit(f"FAILED: unsafe run id {run_id!r} left a partial runs directory")
+
+        stale_destinations = [
+            ("run", "stale-run", workspace / "verifier/CAND-0001/runs/stale-run"),
+            ("case", "stale-case", workspace / "evidence" / case_id_for("stale-case")),
+            ("snapshot", "stale-snapshot", workspace / "poc/stale-snapshot"),
+        ]
+        for label, run_id, stale_path in stale_destinations:
+            stale_path.mkdir(parents=True)
+            assert_rejected_before_wrapper(label, verifier_command(run_id))
+
+        for index, kind in enumerate(("symlink", "hardlink", "fifo")):
+            path = invalid_inputs / f"unsafe-{kind}.json"
+            if kind == "symlink":
+                path.symlink_to(input_path)
+            elif kind == "hardlink":
+                os.link(input_path, path)
+            else:
+                os.mkfifo(path)
+            assert_rejected_before_wrapper(
+                f"execution input {kind}",
+                verifier_command(f"unsafe-input-{index}", input_name=path.relative_to(workspace).as_posix()),
+            )
+            path.unlink()
+
+        for index, original_path in enumerate((candidate_path, target_path, candidate_dir / "poc/reproduce.py")):
+            backup = invalid_inputs / f"object-backup-{index}"
+            backup.write_bytes(original_path.read_bytes())
+            for object_index, kind in enumerate(("symlink", "hardlink", "fifo")):
+                if original_path.exists() or original_path.is_symlink():
+                    original_path.unlink()
+                if kind == "symlink":
+                    original_path.symlink_to(backup)
+                elif kind == "hardlink":
+                    os.link(backup, original_path)
+                else:
+                    os.mkfifo(original_path)
+                try:
+                    assert_rejected_before_wrapper(
+                        f"{original_path.name} {kind}",
+                        verifier_command(f"unsafe-authority-{index}-{object_index}"),
+                    )
+                finally:
+                    original_path.unlink()
+            os.replace(backup, original_path)
+
+        assert_rejected_before_wrapper("missing input", verifier_command("missing-input", include_input=False))
+        assert_rejected_before_wrapper(
+            "input without allow-execute",
+            verifier_command("input-without-allow", allow_execute=False),
+        )
+        for index, flag in enumerate(("--dry-run", "--no-execute", "--dry-run-result")):
+            extra = [flag]
+            if flag == "--dry-run-result":
+                extra.append("blocked")
+            assert_rejected_before_wrapper(
+                f"conflicting execution flag {flag}",
+                verifier_command(f"flag-conflict-{index}", extra=extra),
+            )
+
+        def write_input_variant(name: str, mutate: Any) -> str:
+            value = json.loads(json.dumps(input_doc))
+            mutate(value)
+            path = invalid_inputs / f"{name}.json"
+            path.write_text(json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            return path.relative_to(workspace).as_posix()
+
+        non_git_root = tmp / "repo-root-not-git"
+        non_git_root.mkdir()
+        repo_root_symlink = tmp / "repo-root-symlink"
+        repo_root_symlink.symlink_to(workspace, target_is_directory=True)
+        for label, bad_root in (
+            ("non-Git repository root", non_git_root),
+            ("non-root Git directory", source_dir),
+            ("symlink repository root", repo_root_symlink),
+            ("workspace equal to repository root", workspace),
+        ):
+            assert_rejected_before_wrapper(
+                label,
+                verifier_command(f"repo-root-{label.replace(' ', '-')}", extra=["--repo-root", str(bad_root)]),
+            )
+
+        different_repo = tmp / "different-repo"
+        different_repo.mkdir()
+        different_repo = different_repo.resolve()
+        for git_args in (
+            ("init", "-q"),
+            ("fetch", "--quiet", str(workspace), tested_commit),
+            ("checkout", "--quiet", "--detach", tested_commit),
+            (
+                "-c", "user.name=Zhulong selftest", "-c", "user.email=selftest@example.invalid",
+                "commit", "--allow-empty", "-qm", "different HEAD",
+            ),
+        ):
+            result = subprocess.run(
+                ["git", "-C", str(different_repo), *git_args],
+                cwd=tmp,
+                env=git_env,
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode != 0:
+                raise SystemExit(f"FAILED: could not prepare different-HEAD Git fixture: {result.stderr}")
+        assert_rejected_before_wrapper(
+            "repository root outside the workspace",
+            verifier_command("repo-root-outside-workspace", extra=["--repo-root", str(different_repo)]),
+            stable_error=True,
+            expected_error="workspace must be inside the target repository root",
+        )
+
+        non_dot_target_dir = invalid_inputs / "repo-root-non-dot"
+        non_dot_target_dir.mkdir()
+        non_dot_target = non_dot_target_dir / "zhulong-target.yaml"
+        non_dot_target_raw = target_raw.replace(b'repo_root: "."', b'repo_root: "src"')
+        if non_dot_target_raw == target_raw:
+            raise SystemExit("FAILED: non-dot target repo-root fixture was not changed")
+        non_dot_target.write_bytes(non_dot_target_raw)
+        non_dot_target_doc = verifier_module.load_contract(non_dot_target)
+        try:
+            verifier_module._target_repo_root(non_dot_target, non_dot_target_doc, str(workspace.resolve()))
+        except verifier_module.VerifierError as exc:
+            if "--repo-root requires target.repo_root to be '.'" not in str(exc):
+                raise SystemExit(f"FAILED: explicit repository root rejected non-dot target.repo_root for another reason: {exc}") from exc
+        else:
+            raise SystemExit("FAILED: explicit repository root accepted a non-dot target.repo_root")
+
+        invalid_patterns = [
+            ("empty-pattern", ""),
+            ("invalid-pattern", "["),
+            ("empty-match-pattern", "(?:)"),
+            ("oversize-pattern", "x" * 257),
+        ]
+        for index, (name, pattern) in enumerate(invalid_patterns):
+            input_name = write_input_variant(name, lambda value, pattern=pattern: value["oracle"].update(pattern=pattern))
+            assert_rejected_before_wrapper(
+                name,
+                verifier_command(f"invalid-pattern-{index}", input_name=input_name),
+            )
+
+        malformed_inputs = [
+            ("unknown-key", lambda value: value.update(unexpected=True)),
+            ("wrong-target-digest", lambda value: value.update(target_config_sha256="sha256:" + "0" * 64)),
+            ("wrong-candidate-digest", lambda value: value.update(candidate_sha256="sha256:" + "0" * 64)),
+            ("wrong-tested-commit", lambda value: value.update(tested_commit="0" * 40)),
+            ("missing-review-reference", lambda value: value["review"].update(entrypoint_ref="missing")),
+            ("wrong-observation-stream", lambda value: value["review"]["observation"].update(stream="combined")),
+            ("list-entrypoint-reference", lambda value: value["review"].update(entrypoint_ref=[])),
+            ("dict-sink-reference", lambda value: value["review"].update(sink_ref={})),
+            ("list-observation-stream", lambda value: value["review"]["observation"].update(stream=[])),
+            ("dict-observation-stream", lambda value: value["review"]["observation"].update(stream={})),
+            ("wrong-source-ref-digest", lambda value: value["source_refs"][0].update(sha256="sha256:" + "0" * 64)),
+            ("missing-source-ref", lambda value: value["source_refs"][0].update(path="src/missing.py")),
+            ("source-ref-line-overrun", lambda value: value["source_refs"][0].update(line_start=3, line_end=3)),
+            ("source-ref-token-mismatch", lambda value: value["source_refs"][0].update(token="not-present")),
+        ]
+        for index, (name, mutate) in enumerate(malformed_inputs):
+            input_name = write_input_variant(name, mutate)
+            assert_rejected_before_wrapper(
+                name,
+                verifier_command(f"invalid-input-{index}", input_name=input_name),
+                stable_error=name in {
+                    "list-entrypoint-reference", "dict-sink-reference",
+                    "list-observation-stream", "dict-observation-stream",
+                },
+            )
+
+        original_candidate = candidate_path.read_bytes()
+        legacy_candidate = json.loads(original_candidate.decode("utf-8"))
+        legacy_candidate["schema_version"] = 1
+        legacy_candidate.pop("identity")
+        legacy_candidate.pop("provenance")
+        legacy_candidate.pop("relationships")
+        candidate_path.write_text(json.dumps(legacy_candidate, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        r1_candidate_sha = "sha256:" + hashlib.sha256(candidate_path.read_bytes()).hexdigest()
+        r1_input_name = write_input_variant(
+            "r1-candidate",
+            lambda value: value.update(candidate_sha256=r1_candidate_sha),
+        )
+        assert_rejected_before_wrapper("R1 with fresh execution input", verifier_command("r1-input", input_name=r1_input_name))
+        candidate_path.write_bytes(original_candidate)
+
+        source_path.write_bytes(b"def handle(path):\n    return changed_read(path)\n")
+        assert_rejected_before_wrapper("dirty reviewed source", verifier_command("dirty-reviewed-source"))
+        source_path.write_bytes(source_bytes)
+
+        bad_tree_inputs = [
+            ("symlink", b"120000 blob ", b"src/importer.py"),
+            ("gitlink", b"160000 commit ", tested_commit.encode("ascii")),
+        ]
+        for index, (label, mode_prefix, object_value) in enumerate(bad_tree_inputs):
+            if label == "symlink":
+                blob = subprocess.run(
+                    ["git", "-C", str(workspace), "hash-object", "-w", "--stdin"],
+                    cwd=workspace,
+                    env=git_env,
+                    input=object_value,
+                    capture_output=True,
+                    check=False,
+                )
+                if blob.returncode != 0:
+                    raise SystemExit(f"FAILED: could not construct offline {label} Git object")
+                object_id = blob.stdout.decode("ascii").strip()
+            else:
+                object_id = object_value.decode("ascii")
+            tree_input = mode_prefix + object_id.encode("ascii") + b"\ttest-entry\x00"
+            tree = subprocess.run(
+                ["git", "-C", str(workspace), "mktree", "-z"],
+                cwd=workspace,
+                env=git_env,
+                input=tree_input,
+                capture_output=True,
+                check=False,
+            )
+            if tree.returncode != 0:
+                raise SystemExit(f"FAILED: could not construct offline {label} Git tree")
+            bad_commit = subprocess.run(
+                ["git", "-C", str(workspace), "commit-tree", tree.stdout.decode("ascii").strip(), "-m", f"{label} tree"],
+                cwd=workspace,
+                env=git_env,
+                capture_output=True,
+                check=False,
+            )
+            if bad_commit.returncode != 0:
+                raise SystemExit(f"FAILED: could not construct offline {label} Git commit")
+            try:
+                verifier_module._read_git_tree(workspace.resolve(), bad_commit.stdout.decode("ascii").strip())
+            except verifier_module.VerifierError as exc:
+                if "symlink, gitlink, or non-regular file" not in str(exc):
+                    raise SystemExit(f"FAILED: unsafe {label} Git tree was rejected for an unexpected reason") from exc
+            else:
+                raise SystemExit(f"FAILED: verifier accepted a Git {label} source-tree entry")
+
+        for name, constant_name in (
+            ("file-size", "MAX_SNAPSHOT_FILE_BYTES"),
+            ("total-size", "MAX_SNAPSHOT_TOTAL_BYTES"),
+            ("file-count", "MAX_SNAPSHOT_FILES"),
+        ):
+            with mock.patch.object(verifier_module, constant_name, 1):
+                try:
+                    verifier_module._read_git_tree(workspace.resolve(), tested_commit)
+                except verifier_module.VerifierError:
+                    pass
+                else:
+                    raise SystemExit(f"FAILED: Git snapshot {name} bound was not enforced")
+
+        race_args = verifier_module.argparse.Namespace(
+            target_config=str(target_path.resolve()),
+            candidate=str(candidate_path.resolve()),
+            workspace=str(workspace.resolve()),
+            out=None,
+            run_id="destination-race",
+            allow_execute=True,
+            execution_input="verifier-execution.json",
+            dry_run=False,
+            no_execute=False,
+            dry_run_result=None,
+        )
+        race_target, race_candidate, *_rest = verifier_module._load_fresh_inputs(race_args, workspace.resolve())
+        original_absence_check = verifier_module._assert_absent_destination
+        race_sentinel = b"appeared-after-preflight\n"
+
+        def inject_output_race(root: Path, path: Path, label: str) -> None:
+            original_absence_check(root, path, label)
+            if label == "verifier verdict":
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(race_sentinel)
+
+        with mock.patch.object(verifier_module, "_assert_absent_destination", side_effect=inject_output_race):
+            try:
+                verifier_module.execute_fresh_verification(race_args, race_target, race_candidate)
+            except verifier_module.VerifierError as exc:
+                if "appeared after preflight" not in str(exc):
+                    raise SystemExit(f"FAILED: destination race was rejected for an unexpected reason: {exc}") from exc
+            else:
+                raise SystemExit("FAILED: fresh verifier accepted a verdict destination that appeared after preflight")
+        if out_path.read_bytes() != race_sentinel:
+            raise SystemExit("FAILED: fresh verifier overwrote a verdict destination that appeared after preflight")
+        if docker_log.exists() and docker_log.read_text(encoding="utf-8").strip():
+            raise SystemExit("FAILED: destination race reached the Docker substitute")
+        out_path.unlink()
+
+        journal_path = workspace / "audit-events.jsonl"
+        state_path = workspace / "stage-status.json"
+        baseline_journal = journal_path.read_bytes()
+        baseline_state = state_path.read_bytes()
+
+        def run_nonconfirming_wrapper_case(
+            label: str,
+            mode: str,
+            run_id: str,
+            *,
+            short_watchdog: bool = False,
+            expect_journal_drift: bool = False,
+            expected_reservation: tuple[str, str] | None = None,
+            cleanup_failure_expected: bool = False,
+        ) -> None:
+            command = verifier_command(run_id)
+            if short_watchdog:
+                timeout_main = (
+                    "import sys; sys.path.insert(0, sys.argv[1]); import verify_candidate; "
+                    "verify_candidate.WRAPPER_TIMEOUT_SECONDS = 1; "
+                    "sys.argv = ['verify_candidate.py', *sys.argv[2:]]; "
+                    "raise SystemExit(verify_candidate.main())"
+                )
+                command = [sys.executable, "-c", timeout_main, str(plugin_root / "scripts"), *command[2:]]
+            case_env = {**env, "ZHULONG_FRESH_TEST_MODE": mode, "ZHULONG_FRESH_TEST_RUN_ID": run_id}
+            foreign_path = invalid_inputs / f"foreign-{run_id}"
+            if expected_reservation:
+                case_env["ZHULONG_FRESH_TEST_FOREIGN_FILE"] = str(foreign_path)
+            proc = subprocess.run(command, cwd=plugin_root, env=case_env, capture_output=True, text=True)
+            binding_path = workspace / "verifier" / "CAND-0001" / "runs" / run_id / "run-binding.json"
+            if cleanup_failure_expected:
+                os.chmod(binding_path.parent, 0o700)
+                os.chmod(out_path.parent, 0o700)
+            output = (proc.stdout or "") + (proc.stderr or "")
+            if proc.returncode == 0 or "verdict=confirmed_in_docker" in output:
+                raise SystemExit(f"FAILED: {label} wrapper case produced a confirming verdict; rc={proc.returncode}\n{output}")
+            if expected_reservation:
+                destination, mutation = expected_reservation
+                preserved_path = out_path if destination == "verdict" else binding_path
+                other_path = binding_path if destination == "verdict" else out_path
+                if not (preserved_path.exists() or preserved_path.is_symlink()):
+                    raise SystemExit(f"FAILED: {label} removed a replaced or unsafe reservation")
+                try:
+                    info = os.lstat(preserved_path)
+                except OSError as exc:
+                    raise SystemExit(f"FAILED: {label} could not inspect the preserved reservation: {exc}") from exc
+                if mutation in {"replaced", "populated"}:
+                    if not stat.S_ISREG(info.st_mode) or preserved_path.read_bytes() != (
+                        b"foreign replacement\n" if mutation == "replaced" else b"populated reservation\n"
+                    ):
+                        raise SystemExit(f"FAILED: {label} changed foreign or populated reservation bytes")
+                elif mutation == "symlink":
+                    if not stat.S_ISLNK(info.st_mode) or os.readlink(preserved_path) != str(foreign_path):
+                        raise SystemExit(f"FAILED: {label} changed a foreign symlink reservation")
+                    if foreign_path.read_bytes() != b"foreign symlink target\n":
+                        raise SystemExit(f"FAILED: {label} changed the symlink target")
+                elif mutation == "hardlink":
+                    if not stat.S_ISREG(info.st_mode) or os.stat(preserved_path).st_ino != os.stat(foreign_path).st_ino:
+                        raise SystemExit(f"FAILED: {label} changed a foreign hardlink reservation")
+                    if foreign_path.read_bytes() != b"foreign hardlink target\n":
+                        raise SystemExit(f"FAILED: {label} changed the hardlink target")
+                elif mutation == "fifo" and not stat.S_ISFIFO(info.st_mode):
+                    raise SystemExit(f"FAILED: {label} removed or changed a FIFO reservation")
+                elif mutation == "directory" and not stat.S_ISDIR(info.st_mode):
+                    raise SystemExit(f"FAILED: {label} removed or changed a directory reservation")
+                if other_path.exists() or other_path.is_symlink():
+                    raise SystemExit(f"FAILED: {label} left its other unchanged empty reservation behind")
+                if "WARNING: fresh verifier reservation could not be safely released" not in proc.stderr:
+                    raise SystemExit(f"FAILED: {label} did not report why its reservation was preserved")
+                if preserved_path.is_dir() and not preserved_path.is_symlink():
+                    shutil.rmtree(preserved_path)
+                else:
+                    preserved_path.unlink()
+            elif cleanup_failure_expected:
+                if "ERROR: production Docker wrapper did not return a clean zero exit" not in proc.stderr:
+                    raise SystemExit(f"FAILED: cleanup failure masked the wrapper's primary reason:\n{proc.stderr}")
+                if "WARNING: fresh verifier reservation could not be safely released" not in proc.stderr:
+                    raise SystemExit(f"FAILED: cleanup failure was not reported:\n{proc.stderr}")
+                if not out_path.is_file() or out_path.stat().st_size != 0:
+                    raise SystemExit(f"FAILED: cleanup failure unexpectedly removed or populated the verdict reservation")
+                if not binding_path.is_file() or binding_path.stat().st_size != 0:
+                    raise SystemExit(f"FAILED: cleanup failure unexpectedly removed or populated the run-binding reservation")
+                out_path.unlink()
+                binding_path.unlink()
+            else:
+                if out_path.exists() or out_path.is_symlink():
+                    raise SystemExit(f"FAILED: {label} left its empty canonical verifier verdict reservation")
+                if binding_path.exists() or binding_path.is_symlink():
+                    raise SystemExit(f"FAILED: {label} left its empty run-binding reservation")
+            if expect_journal_drift:
+                events = [json.loads(line) for line in journal_path.read_text(encoding="utf-8").splitlines()]
+                if len(events) != 7 or events[-1].get("event_name") != "verification_concurrent_observation":
+                    raise SystemExit("FAILED: concurrent journal fixture did not insert its unaccounted event")
+            journal_path.write_bytes(baseline_journal)
+            state_path.write_bytes(baseline_state)
+
+        create_failure_args = verifier_module.argparse.Namespace(
+            target_config=str(target_path.resolve()),
+            candidate=str(candidate_path.resolve()),
+            workspace=str(workspace.resolve()),
+            out=None,
+            run_id="reservation-create-failure",
+            allow_execute=True,
+            execution_input="verifier-execution.json",
+            dry_run=False,
+            no_execute=False,
+            dry_run_result=None,
+        )
+        create_failure_target, create_failure_candidate, *_rest = verifier_module._load_fresh_inputs(
+            create_failure_args, workspace.resolve(),
+        )
+        create_failure_run_dir = workspace / "verifier/CAND-0001/runs/reservation-create-failure"
+        original_exclusive_write = verifier_module._write_exclusive_bytes
+        foreign_reservation_bytes = b"foreign reservation appeared during creation\n"
+
+        def fail_verdict_reservation(root: Path, path: Path, raw: bytes, **kwargs: Any) -> Any:
+            if path == out_path and raw == b"":
+                path.write_bytes(foreign_reservation_bytes)
+            return original_exclusive_write(root, path, raw, **kwargs)
+
+        docker_calls_before_reservation_failure = docker_log.read_bytes() if docker_log.exists() else b""
+        with mock.patch.dict(os.environ, env):
+            with mock.patch.object(verifier_module, "_write_exclusive_bytes", side_effect=fail_verdict_reservation):
+                try:
+                    verifier_module.execute_fresh_verification(
+                        create_failure_args, create_failure_target, create_failure_candidate,
+                    )
+                except verifier_module.VerifierError as exc:
+                    if "fresh verifier destination appeared after preflight; nothing was overwritten" not in str(exc):
+                        raise SystemExit(f"FAILED: reservation creation failure changed its main reason: {exc}") from exc
+                else:
+                    raise SystemExit("FAILED: injected verdict reservation creation failure was ignored")
+        if (create_failure_run_dir / "run-binding.json").exists():
+            raise SystemExit("FAILED: failed second reservation creation left the first run-binding reservation")
+        if not out_path.is_file() or out_path.read_bytes() != foreign_reservation_bytes:
+            raise SystemExit("FAILED: failed reservation creation removed or changed a foreign verdict destination")
+        if (docker_log.read_bytes() if docker_log.exists() else b"") != docker_calls_before_reservation_failure:
+            raise SystemExit("FAILED: failed verdict reservation creation reached the Docker substitute")
+        out_path.unlink()
+
+        run_nonconfirming_wrapper_case("marker-only/nonzero", "nonzero", "marker-nonzero")
+        run_nonconfirming_wrapper_case("marker absent", "no-marker", "marker-absent")
+        run_nonconfirming_wrapper_case("signal", "signal", "docker-signal")
+        run_nonconfirming_wrapper_case("timeout", "timeout", "wrapper-timeout", short_watchdog=True)
+        run_nonconfirming_wrapper_case(
+            "concurrent journal activity",
+            "journal-drift",
+            "journal-drift",
+            expect_journal_drift=True,
+        )
+        run_nonconfirming_wrapper_case("cleanup failure", "cleanup-failure", "cleanup-failure")
+        for destination, mutation in (
+            ("verdict", "replaced"),
+            ("verdict", "populated"),
+            ("verdict", "symlink"),
+            ("verdict", "hardlink"),
+            ("verdict", "fifo"),
+            ("verdict", "directory"),
+            ("binding", "replaced"),
+        ):
+            run_nonconfirming_wrapper_case(
+                f"{destination} reservation {mutation}",
+                f"reservation_{destination}_{mutation}",
+                f"reservation-{destination}-{mutation}",
+                expected_reservation=(destination, mutation),
+            )
+        run_nonconfirming_wrapper_case(
+            "reservation cleanup failure",
+            "reservation_cleanup_fails",
+            "reservation-cleanup-failure",
+            cleanup_failure_expected=True,
+        )
+
+        publication_run_id = "reservation-publication-failure"
+        publication_args = verifier_module.argparse.Namespace(
+            target_config=str(target_path.resolve()),
+            candidate=str(candidate_path.resolve()),
+            workspace=str(workspace.resolve()),
+            out=None,
+            run_id=publication_run_id,
+            allow_execute=True,
+            execution_input="verifier-execution.json",
+            dry_run=False,
+            no_execute=False,
+            dry_run_result=None,
+        )
+        publication_target, publication_candidate, *_rest = verifier_module._load_fresh_inputs(
+            publication_args, workspace.resolve(),
+        )
+        publication_journal = journal_path.read_bytes()
+        publication_state = state_path.read_bytes()
+        publication_calls = docker_log.read_bytes() if docker_log.exists() else b""
+        original_atomic_write = verifier_module.atomic_write_bytes
+        original_reservation_write = verifier_module._write_exclusive_bytes
+        publication_stderr = io.StringIO()
+        reservation_inode: list[int] = []
+
+        def capture_reservation(root: Path, path: Path, raw: bytes, **kwargs: Any) -> Any:
+            result = original_reservation_write(root, path, raw, **kwargs)
+            if path == out_path and kwargs.get("reservations") is not None:
+                reservation_inode.append(os.lstat(path).st_ino)
+            return result
+
+        def reject_published_verdict(_raw: bytes) -> None:
+            raise verifier_module.SafeEvidenceError("INJECTED_PUBLICATION_FAILURE", "fixture")
+
+        def fail_verdict_publication(root: Path, path: Path, raw: bytes, **kwargs: Any) -> None:
+            if path == out_path:
+                kwargs["post_write_validator"] = reject_published_verdict
+            original_atomic_write(root, path, raw, **kwargs)
+
+        with mock.patch.dict(os.environ, env):
+            with mock.patch.object(verifier_module, "_write_exclusive_bytes", side_effect=capture_reservation):
+                with mock.patch.object(verifier_module, "atomic_write_bytes", side_effect=fail_verdict_publication):
+                    with mock.patch.object(verifier_module.sys, "stderr", publication_stderr):
+                        try:
+                            verifier_module.execute_fresh_verification(
+                                publication_args, publication_target, publication_candidate,
+                            )
+                        except verifier_module.VerifierError as exc:
+                            if str(exc) != "fresh verifier verdict publication failed (INJECTED_PUBLICATION_FAILURE)":
+                                raise SystemExit(f"FAILED: verdict publication failure changed its main reason: {exc}") from exc
+                        else:
+                            raise SystemExit("FAILED: injected verdict publication failure was ignored")
+        if (
+            len(reservation_inode) != 1
+            or not out_path.is_file()
+            or out_path.stat().st_size != 0
+            or os.lstat(out_path).st_ino == reservation_inode[0]
+        ):
+            raise SystemExit("FAILED: publication rollback did not leave its new empty inode for cautious cleanup")
+        if "WARNING: fresh verifier reservation could not be safely released" not in publication_stderr.getvalue():
+            raise SystemExit("FAILED: uncertain verdict publication residue was not reported")
+        publication_binding = workspace / "verifier/CAND-0001/runs" / publication_run_id / "run-binding.json"
+        if not publication_binding.is_file() or not json.loads(publication_binding.read_text(encoding="utf-8")):
+            raise SystemExit("FAILED: verdict publication failure discarded the already-published run binding")
+        if (docker_log.read_bytes() if docker_log.exists() else b"") == publication_calls:
+            raise SystemExit("FAILED: verdict publication failure fixture did not reach the fake Docker wrapper")
+        out_path.unlink()
+        journal_path.write_bytes(publication_journal)
+        state_path.write_bytes(publication_state)
+
+        original_drift_inputs = {
+            "candidate": (candidate_path, candidate_path.read_bytes()),
+            "input": (input_path, input_path.read_bytes()),
+            "poc": (candidate_dir / "poc/reproduce.py", (candidate_dir / "poc/reproduce.py").read_bytes()),
+        }
+        for kind in ("candidate", "input", "poc", "input-copy", "snapshot"):
+            run_nonconfirming_wrapper_case(
+                f"during-wrapper {kind} drift",
+                f"mutate-{kind}",
+                f"drift-{kind}",
+            )
+            if kind in original_drift_inputs:
+                path, original = original_drift_inputs[kind]
+                path.write_bytes(original)
+
+        failed_run_id = "reservation-first-attempt"
+        initial_retry_journal = journal_path.read_bytes()
+        initial_retry_events = [json.loads(line) for line in initial_retry_journal.splitlines()]
+        failed_env = {**env, "ZHULONG_FRESH_TEST_MODE": "cleanup-failure", "ZHULONG_FRESH_TEST_RUN_ID": failed_run_id}
+        proc = subprocess.run(verifier_command(failed_run_id), cwd=plugin_root, env=failed_env, capture_output=True, text=True)
+        output = (proc.stdout or "") + (proc.stderr or "")
+        if proc.returncode == 0 or "production Docker wrapper did not return a clean zero exit" not in proc.stderr:
+            raise SystemExit(f"FAILED: first fresh-verifier attempt did not preserve the expected cleanup failure:\n{output}")
+        if out_path.exists() or out_path.is_symlink():
+            raise SystemExit("FAILED: failed fresh-verifier attempt retained the candidate-scoped verdict reservation")
+        failed_case_id = case_id_for(failed_run_id)
+        failed_case_dir = workspace / "evidence" / failed_case_id
+        failed_run_dir = workspace / "verifier" / "CAND-0001" / "runs" / failed_run_id
+        failed_binding_path = failed_run_dir / "run-binding.json"
+        if failed_binding_path.exists() or failed_binding_path.is_symlink():
+            raise SystemExit("FAILED: failed fresh-verifier attempt retained the run-binding reservation")
+        if not (failed_case_dir / "verification-result.json").is_file() or not failed_run_dir.is_dir():
+            raise SystemExit("FAILED: failed fresh-verifier attempt did not preserve run and case evidence")
+        failure_case_hashes = {
+            path.relative_to(failed_case_dir).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in sorted(failed_case_dir.rglob("*"))
+            if path.is_file() and not path.is_symlink()
+        }
+        failure_run_hashes = {
+            path.relative_to(failed_run_dir).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in sorted(failed_run_dir.rglob("*"))
+            if path.is_file() and not path.is_symlink()
+        }
+        failure_journal = journal_path.read_bytes()
+        failure_events = [json.loads(line) for line in failure_journal.splitlines()]
+        if not failure_journal.startswith(initial_retry_journal) or len(failure_events) != len(initial_retry_events) + 2:
+            raise SystemExit("FAILED: failed attempt journal events were not appended to the original prefix")
+        if [event.get("event_name") for event in failure_events[-2:]] != [
+            "verification_case_started", "verification_case_blocked",
+        ]:
+            raise SystemExit("FAILED: cleanup failure did not retain its start and blocked journal events")
+        blocked_state = json.loads(state_path.read_text(encoding="utf-8"))
+        if blocked_state.get("stage") != "verification" or blocked_state.get("status") != "blocked":
+            raise SystemExit("FAILED: cleanup-failure fixture did not leave verification/blocked state")
+
+        recovery_action = {
+            "action_id": "retry-fresh-verifier-after-cleanup",
+            "action_type": "verify",
+            "subject_ids": [f"run:{failed_run_id}"],
+            "summary": "Retry the explicit verifier execution after resolving the cleanup blocker.",
+            "evidence_refs": [f"evidence/{failed_case_id}/verification-result.json"],
+        }
+        recovery_details = {
+            "summary": "Resume the fresh verifier fixture after its simulated cleanup blocker was cleared.",
+            "reason_detail": "The retry uses a new run ID after the deterministic fixture restored Docker prerequisites.",
+        }
+        recovery_command = [
+            sys.executable, str(event_writer),
+            "--workspace-dir", str(workspace),
+            "--protocol-mode", "r2",
+            "--expected-state-revision", str(blocked_state["state_revision"]),
+            "--plugin-version", "fresh-verifier-selftest",
+            "--event", "verification_recovered_for_fresh_retry",
+            "--stage", "verification",
+            "--from-stage", "verification",
+            "--from-status", "blocked",
+            "--status", "running",
+            "--transition-kind", "resume",
+            "--event-status", "retry_started",
+            "--reason-code", "recovery_requested",
+            "--subject", f"run:{failed_run_id}",
+            "--evidence-ref", f"evidence/{failed_case_id}/verification-result.json",
+            "--next-action-json", json.dumps(recovery_action, sort_keys=True),
+            "--details-json", json.dumps(recovery_details, sort_keys=True),
+            "--run-id", "fresh-verifier-selftest",
+            "--message", "Resume verification after the deterministic cleanup failure was isolated.",
+            "--json",
+        ]
+        recovery = subprocess.run(recovery_command, cwd=plugin_root, env=env, capture_output=True, text=True)
+        if recovery.returncode != 0 or '"ok":true' not in recovery.stdout:
+            raise SystemExit(f"FAILED: production R2 writer could not legally restore verification/running:\n{recovery.stdout}{recovery.stderr}")
+        recovered_state = json.loads(state_path.read_text(encoding="utf-8"))
+        recovered_journal = journal_path.read_bytes()
+        if recovered_state.get("stage") != "verification" or recovered_state.get("status") != "running":
+            raise SystemExit("FAILED: production R2 writer did not restore verification/running")
+        if not recovered_journal.startswith(failure_journal):
+            raise SystemExit("FAILED: recovery rewrote the failed attempt journal prefix")
+        if json.loads(recovered_journal.splitlines()[-1]).get("event_name") != "verification_recovered_for_fresh_retry":
+            raise SystemExit("FAILED: the production recovery event is missing from the append-only journal")
+        calls_before_same_run_retry = docker_log.read_bytes() if docker_log.exists() else b""
+        same_run_retry = subprocess.run(
+            verifier_command(failed_run_id),
+            cwd=plugin_root,
+            env={**env, "ZHULONG_FRESH_TEST_MODE": "success", "ZHULONG_FRESH_TEST_RUN_ID": failed_run_id},
+            capture_output=True,
+            text=True,
+        )
+        if same_run_retry.returncode == 0 or "verifier run destination already exists" not in same_run_retry.stderr:
+            raise SystemExit("FAILED: same failed run ID was not rejected while the canonical verdict remained absent")
+        if out_path.exists() or journal_path.read_bytes() != recovered_journal:
+            raise SystemExit("FAILED: rejected same-run retry changed the verdict destination or recovery journal")
+        if (docker_log.read_bytes() if docker_log.exists() else b"") != calls_before_same_run_retry:
+            raise SystemExit("FAILED: rejected same-run retry reached the Docker substitute")
+        Path(env["ZHULONG_FRESH_TEST_DOCKER_STATE"]).unlink(missing_ok=True)
+
+        command = verifier_command("fresh-valid")
+        proc = subprocess.run(
+            command,
+            cwd=plugin_root,
+            env={**env, "ZHULONG_FRESH_TEST_MODE": "success", "ZHULONG_FRESH_TEST_RUN_ID": "fresh-valid"},
+            capture_output=True,
+            text=True,
+        )
+        output = (proc.stdout or "") + (proc.stderr or "")
+        if proc.returncode != 0 or "verdict=confirmed_in_docker" not in output:
+            wrapper_details = []
+            for path in sorted((workspace / "evidence").glob("*/verification-result.json")):
+                wrapper_details.append(f"{path.name}: {path.read_text(encoding='utf-8', errors='replace')[:2000]}")
+            for path in sorted((workspace / "evidence").glob("*/stderr.log")):
+                wrapper_details.append(f"{path.name}: {path.read_text(encoding='utf-8', errors='replace')[:2000]}")
+            for case_dir in sorted((workspace / "evidence").glob("*")):
+                if case_dir.is_dir():
+                    wrapper_details.append(f"{case_dir.name} files: {[path.name for path in case_dir.iterdir()]}")
+            if docker_log.exists():
+                wrapper_details.append(f"fake Docker calls: {docker_log.read_text(encoding='utf-8', errors='replace')[:4000]}")
+            details = "\n".join(wrapper_details)
+            raise SystemExit(f"FAILED: fresh verifier did not accept the legal bound fixture; rc={proc.returncode}\n{output}\n{details}")
+
+        successful_verdict = out_path.read_bytes()
+        successful_journal = journal_path.read_bytes()
+        retry_events = [json.loads(line) for line in successful_journal.splitlines()]
+        recovered_events = [json.loads(line) for line in recovered_journal.splitlines()]
+        if not successful_journal.startswith(recovered_journal):
+            raise SystemExit("FAILED: successful new run rewrote the prior failure and recovery journal prefix")
+        if len(retry_events) != len(recovered_events) + 2 or [event.get("event_name") for event in retry_events[-2:]] != [
+            "verification_case_started", "verification_case_completed",
+        ]:
+            raise SystemExit("FAILED: successful retry did not append exactly its own verifier case events")
+        if {
+            path.relative_to(failed_case_dir).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in sorted(failed_case_dir.rglob("*"))
+            if path.is_file() and not path.is_symlink()
+        } != failure_case_hashes:
+            raise SystemExit("FAILED: successful retry changed the earlier failed case evidence")
+        if {
+            path.relative_to(failed_run_dir).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in sorted(failed_run_dir.rglob("*"))
+            if path.is_file() and not path.is_symlink()
+        } != failure_run_hashes:
+            raise SystemExit("FAILED: successful retry changed the earlier failed run evidence")
+        calls_before_old_run_retry = docker_log.read_text(encoding="utf-8").splitlines()
+        old_run_retry = subprocess.run(
+            verifier_command(failed_run_id), cwd=plugin_root,
+            env={**env, "ZHULONG_FRESH_TEST_MODE": "success", "ZHULONG_FRESH_TEST_RUN_ID": failed_run_id},
+            capture_output=True, text=True,
+        )
+        if old_run_retry.returncode == 0 or "verifier verdict destination already exists" not in old_run_retry.stderr:
+            raise SystemExit("FAILED: retry with the original run ID was not rejected after a successful new run")
+        if out_path.read_bytes() != successful_verdict or journal_path.read_bytes() != successful_journal:
+            raise SystemExit("FAILED: rejected old run ID changed the successful verdict or journal")
+        if docker_log.read_text(encoding="utf-8").splitlines() != calls_before_old_run_retry:
+            raise SystemExit("FAILED: rejected old run ID reached the Docker substitute")
+
+        run([sys.executable, str(candidate_validator), str(candidate_path)], plugin_root)
+        run([sys.executable, str(verdict_validator), "--candidate", str(candidate_path), str(out_path)], plugin_root)
+        verdict = json.loads(out_path.read_text(encoding="utf-8"))
+        impact_oracle = verdict.get("attacker_entrypoint", {}).get("deterministic_impact_oracle", "")
+        if input_doc["oracle"]["pattern"] not in impact_oracle:
+            raise SystemExit("FAILED: confirmed verifier verdict omitted the exact reviewed oracle pattern")
+        input_copy_path = workspace / "verifier/CAND-0001/runs/fresh-valid/inputs/execution-input.json"
+        if input_copy_path.relative_to(workspace).as_posix() not in verdict.get("artifacts", []):
+            raise SystemExit("FAILED: confirmed verifier verdict omitted its preserved execution-input copy artifact")
+        binding_path = workspace / "verifier" / "CAND-0001" / "runs" / "fresh-valid" / "run-binding.json"
+        if verdict.get("verdict") != "confirmed_in_docker" or not binding_path.is_file():
+            raise SystemExit("FAILED: confirmed fixture verdict was not preceded by a durable run binding")
+        binding_raw = binding_path.read_bytes()
+        if str(workspace) in binding_raw.decode("utf-8") or b"host-executed" in binding_raw:
+            raise SystemExit("FAILED: run binding leaked a host path or an unbound PoC reference")
+
+        binding_doc = json.loads(binding_raw.decode("utf-8"))
+        source_snapshot = binding_doc.get("source_snapshot")
+        if not isinstance(source_snapshot, dict) or "files" in source_snapshot:
+            raise SystemExit("FAILED: run binding duplicated the source manifest file list")
+        source_manifest_path = workspace / source_snapshot["manifest_path"]
+        source_manifest_raw = evidence_io.safe_read_bytes(workspace, source_manifest_path)
+        if "sha256:" + hashlib.sha256(source_manifest_raw).hexdigest() != source_snapshot.get("manifest_sha256"):
+            raise SystemExit("FAILED: run binding did not retain the durable source manifest digest")
+        source_manifest_doc = json.loads(source_manifest_raw.decode("utf-8"))
+        if (
+            source_manifest_doc.get("tested_commit") != tested_commit
+            or not any(
+                item.get("path") == "src/importer.py"
+                and item.get("sha256") == "sha256:" + hashlib.sha256(source_bytes).hexdigest()
+                for item in source_manifest_doc.get("files", [])
+                if isinstance(item, dict)
+            )
+        ):
+            raise SystemExit("FAILED: durable source manifest lost its tested commit or source path/hash binding")
+
+        large_manifest_files = [
+            {"path": f"{index:04d}-{'a' * 182}", "sha256": "sha256:" + "0" * 64}
+            for index in range(verifier_module.MAX_SNAPSHOT_FILES - 1)
+        ]
+        large_manifest_files.append({"path": "entry.py", "sha256": "sha256:" + "1" * 64})
+        large_manifest_doc = {
+            "schema_version": 1,
+            "tested_commit": tested_commit,
+            "files": large_manifest_files,
+        }
+        large_manifest_raw = (json.dumps(large_manifest_doc, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
+        if len(large_manifest_files) != verifier_module.MAX_SNAPSHOT_FILES or len(large_manifest_raw) <= evidence_io.MAX_CONTROL_BYTES:
+            raise SystemExit("FAILED: large manifest fixture did not exceed the control-file bound at the allowed file count")
+        large_manifest_dir = workspace / "verifier/CAND-0001/runs/large-manifest-contract"
+        verifier_module._create_fresh_directory(workspace, large_manifest_dir, "large manifest contract fixture")
+        large_manifest_path = large_manifest_dir / "source-manifest.json"
+        verifier_module._write_exclusive_bytes(workspace, large_manifest_path, large_manifest_raw)
+        large_manifest_digest = "sha256:" + hashlib.sha256(
+            evidence_io.safe_read_bytes(workspace, large_manifest_path, max_bytes=len(large_manifest_raw))
+        ).hexdigest()
+        large_source_snapshot = {
+            "path": "poc/fresh-valid/source",
+            "manifest_path": large_manifest_path.relative_to(workspace).as_posix(),
+            "manifest_sha256": large_manifest_digest,
+        }
+        large_binding_path = large_manifest_dir / "run-binding.json"
+        old_binding = {
+            "schema_version": 1,
+            "source_snapshot": {**large_source_snapshot, "files": large_manifest_files},
+        }
+        try:
+            evidence_io.atomic_write_json(workspace, large_binding_path, old_binding)
+        except evidence_io.SafeEvidenceError as exc:
+            if exc.code != "EVIDENCE_SIZE_LIMIT":
+                raise SystemExit(f"FAILED: legacy embedded manifest exceeded the bound unexpectedly: {exc.code}") from exc
+        else:
+            raise SystemExit("FAILED: large embedded manifest fixture did not exceed the control-file bound")
+        evidence_io.atomic_write_json(
+            workspace,
+            large_binding_path,
+            {"schema_version": 1, "source_snapshot": large_source_snapshot},
+        )
+        large_binding_raw = evidence_io.safe_read_bytes(workspace, large_binding_path)
+        large_binding_doc = json.loads(large_binding_raw.decode("utf-8"))
+        if (
+            len(large_binding_raw) > evidence_io.MAX_CONTROL_BYTES
+            or large_binding_doc.get("source_snapshot", {}).get("manifest_sha256") != large_manifest_digest
+            or "files" in large_binding_doc.get("source_snapshot", {})
+        ):
+            raise SystemExit("FAILED: compact run binding did not preserve the large manifest digest")
+
+        case_dir = workspace / "evidence" / binding_doc["case_id"]
+        result_raw = (case_dir / "verification-result.json").read_bytes()
+        command_raw = (case_dir / "command.json").read_bytes()
+        stdout_raw = (case_dir / "stdout.log").read_bytes()
+        stderr_raw = (case_dir / "stderr.log").read_bytes()
+        receipt_paths = list(case_dir.glob("docker-case-receipt-*.json"))
+        if len(receipt_paths) != 1:
+            raise SystemExit("FAILED: validated fresh case did not retain exactly one lifecycle receipt")
+        receipt_raw = receipt_paths[0].read_bytes()
+        result_doc = json.loads(result_raw.decode("utf-8"))
+
+        def reject_wrapper_result(label: str, mutate: Any) -> None:
+            changed = json.loads(json.dumps(result_doc))
+            mutate(changed)
+            try:
+                verifier_module._checked_wrapper_result(
+                    workspace.resolve(),
+                    binding_doc["case_id"],
+                    binding_doc["container_argv"],
+                    re.compile(input_doc["oracle"]["pattern"], flags=re.MULTILINE),
+                    input_doc["review"]["observation"],
+                    json.dumps(changed, sort_keys=True).encode("utf-8"),
+                    command_raw,
+                    stdout_raw,
+                    stderr_raw,
+                    receipt_raw,
+                )
+            except verifier_module.VerifierError:
+                return
+            raise SystemExit(f"FAILED: wrapper result type mutation {label} was accepted")
+
+        reject_wrapper_result("boolean schema version", lambda value: value.update(schema_version=True))
+        reject_wrapper_result("boolean exit code", lambda value: value.update(exit_code=False))
+        reject_wrapper_result(
+            "boolean zero-residue count",
+            lambda value: value["docker_case_lifecycle"]["residue_counts_after"].update(containers=False),
+        )
+
+        original_command = json.loads(command_raw.decode("utf-8"))
+        image_index = len(original_command) - len(binding_doc["container_argv"]) - 1
+
+        def reject_command_mutation(label: str, inserted: list[str]) -> None:
+            changed_command = list(original_command)
+            changed_command[image_index:image_index] = inserted
+            changed_result = json.loads(json.dumps(result_doc))
+            changed_result["command"] = changed_command
+            try:
+                verifier_module._checked_wrapper_result(
+                    workspace.resolve(),
+                    binding_doc["case_id"],
+                    binding_doc["container_argv"],
+                    re.compile(input_doc["oracle"]["pattern"], flags=re.MULTILINE),
+                    input_doc["review"]["observation"],
+                    json.dumps(changed_result, sort_keys=True).encode("utf-8"),
+                    json.dumps(changed_command).encode("utf-8"),
+                    stdout_raw,
+                    stderr_raw,
+                    receipt_raw,
+                )
+            except verifier_module.VerifierError:
+                return
+            raise SystemExit(f"FAILED: wrapper command policy accepted {label}")
+
+        reject_command_mutation("--privileged", ["--privileged"])
+        reject_command_mutation("an extra host bind mount", ["--mount", "type=bind,source=/etc,target=/host,readonly"])
+        reject_command_mutation("a later conflicting network flag", ["--network", "bridge"])
+
+        changed_receipt = json.loads(receipt_raw.decode("utf-8"))
+        changed_receipt["schema_version"] = True
+        try:
+            verifier_module._checked_wrapper_result(
+                workspace.resolve(),
+                binding_doc["case_id"],
+                binding_doc["container_argv"],
+                re.compile(input_doc["oracle"]["pattern"], flags=re.MULTILINE),
+                input_doc["review"]["observation"],
+                result_raw,
+                command_raw,
+                stdout_raw,
+                stderr_raw,
+                json.dumps(changed_receipt, sort_keys=True).encode("utf-8"),
+            )
+        except verifier_module.VerifierError:
+            pass
+        else:
+            raise SystemExit("FAILED: lifecycle receipt accepted a boolean schema version")
+
+        if (candidate_dir / "poc" / "host-executed").exists() or hook_marker.exists() or filter_marker.exists():
+            raise SystemExit("FAILED: verifier fixture executed the host PoC, Git hook, or Git filter")
+        if not docker_log.is_file():
+            raise SystemExit("FAILED: the deterministic Docker substitute was not invoked")
+        calls = [json.loads(line) for line in docker_log.read_text(encoding="utf-8").splitlines()]
+        if not any(call and call[0] == "run" for call in calls) or any(call and call[0] in {"pull", "build"} for call in calls):
+            raise SystemExit("FAILED: verifier did not use the cached-image docker-run boundary")
+
+        standard_workspace = workspace / "security-research-run"
+        standard_workspace.mkdir()
+        (standard_workspace / "asr-config.json").write_text('{"schema_version":1}\n', encoding="utf-8")
+        standard_candidate_dir = standard_workspace / "candidates/CAND-0001"
+        (standard_candidate_dir / "poc").mkdir(parents=True)
+        standard_target_path = standard_workspace / "target.yaml"
+        standard_target_path.write_bytes(target_raw)
+        standard_candidate = json.loads(candidate_path.read_text(encoding="utf-8"))
+        standard_candidate["target_ref"]["target_config"] = "target.yaml"
+        standard_candidate["identity"] = build_identity(
+            standard_candidate,
+            {
+                "target_commit": tested_commit,
+                "trust_boundary_id": "http-request-boundary",
+                "sink_family": "file_read",
+                "root_cause_family": "missing_validation",
+                "primary_source_path": "src/importer.py",
+            },
+        )
+        standard_candidate_path = standard_candidate_dir / "candidate.json"
+        standard_candidate_raw = (json.dumps(standard_candidate, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode()
+        standard_candidate_path.write_bytes(standard_candidate_raw)
+        standard_poc_path = standard_candidate_dir / "poc/reproduce.py"
+        standard_poc_path.write_bytes(poc_raw)
+        standard_input = json.loads(input_path.read_text(encoding="utf-8"))
+        standard_input["candidate_sha256"] = "sha256:" + hashlib.sha256(standard_candidate_raw).hexdigest()
+        standard_input_path = standard_workspace / "verifier-execution.json"
+        standard_input_path.write_text(
+            json.dumps(standard_input, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        seed_r2_verification(standard_workspace)
+
+        boundary_issues = bundle_module.IssueCollector(all_errors=True)
+        if (
+            not bundle_module.check_repo_workspace_boundary(workspace.resolve(), standard_workspace.resolve(), boundary_issues)
+            or boundary_issues.issues
+        ):
+            raise SystemExit(f"FAILED: bundle boundary rejected the standard repository/workspace layout: {boundary_issues.issues}")
+
+        head_mismatch_workspace = different_repo / "security-research-run"
+        (head_mismatch_workspace / "candidates/CAND-0001/poc").mkdir(parents=True)
+        (head_mismatch_workspace / "asr-config.json").write_bytes((standard_workspace / "asr-config.json").read_bytes())
+        shutil.copy2(standard_target_path, head_mismatch_workspace / "target.yaml")
+        shutil.copy2(standard_candidate_path, head_mismatch_workspace / "candidates/CAND-0001/candidate.json")
+        shutil.copy2(standard_poc_path, head_mismatch_workspace / "candidates/CAND-0001/poc/reproduce.py")
+        shutil.copy2(standard_input_path, head_mismatch_workspace / "verifier-execution.json")
+        seed_r2_verification(head_mismatch_workspace)
+        head_mismatch_verdict = head_mismatch_workspace / "verifier/CAND-0001/verifier-verdict.json"
+        assert_rejected_before_wrapper(
+            "selected repository with a different HEAD than tested_ref",
+            [
+                sys.executable,
+                str(verifier),
+                "--target-config", str(head_mismatch_workspace / "target.yaml"),
+                "--candidate", str(head_mismatch_workspace / "candidates/CAND-0001/candidate.json"),
+                "--workspace", str(head_mismatch_workspace),
+                "--run-id", "repo-root-different-head",
+                "--allow-execute",
+                "--execution-input", "verifier-execution.json",
+                "--repo-root", str(different_repo),
+            ],
+            stable_error=True,
+            expected_error="tested_commit must equal Candidate R2 identity, resolved target tested_ref, and checked-out HEAD",
+            expected_verdict_path=head_mismatch_verdict,
+        )
+
+        repo_root_run_id = "repo-root-child-positive"
+        repo_root_out = standard_workspace / "verifier/CAND-0001/verifier-verdict.json"
+        repo_root_command = [
+            sys.executable,
+            str(verifier),
+            "--target-config", str(standard_target_path),
+            "--candidate", str(standard_candidate_path),
+            "--workspace", str(standard_workspace),
+            "--run-id", repo_root_run_id,
+            "--allow-execute",
+            "--execution-input", "verifier-execution.json",
+            "--repo-root", str(workspace.resolve()),
+        ]
+        standard_env = {
+            **env,
+            "ZHULONG_FRESH_TEST_WORKSPACE": str(standard_workspace),
+            "ZHULONG_FRESH_TEST_CANDIDATE": str(standard_candidate_path),
+            "ZHULONG_FRESH_TEST_INPUT": str(standard_input_path),
+            "ZHULONG_FRESH_TEST_POC": str(standard_poc_path),
+            "ZHULONG_FRESH_TEST_MODE": "success",
+            "ZHULONG_FRESH_TEST_RUN_ID": repo_root_run_id,
+        }
+        prior_docker_calls = docker_log.read_text(encoding="utf-8").splitlines()
+        repo_root_proc = subprocess.run(
+            repo_root_command,
+            cwd=different_repo,
+            env=standard_env,
+            capture_output=True,
+            text=True,
+        )
+        repo_root_output = (repo_root_proc.stdout or "") + (repo_root_proc.stderr or "")
+        if repo_root_proc.returncode != 0 or "verdict=confirmed_in_docker" not in repo_root_output:
+            raise SystemExit(f"FAILED: explicit repo-root fresh verifier rejected the standard layout; rc={repo_root_proc.returncode}\n{repo_root_output}")
+
+        run([sys.executable, str(candidate_validator), str(standard_candidate_path)], plugin_root)
+        run([sys.executable, str(verdict_validator), "--candidate", str(standard_candidate_path), str(repo_root_out)], plugin_root)
+        standard_binding_path = standard_workspace / "verifier/CAND-0001/runs" / repo_root_run_id / "run-binding.json"
+        standard_binding = json.loads(standard_binding_path.read_text(encoding="utf-8"))
+        if (
+            not repo_root_out.is_file()
+            or standard_binding.get("candidate_path") != "candidates/CAND-0001/candidate.json"
+            or standard_binding.get("target_config_path") != "target.yaml"
+            or standard_binding.get("tested_commit") != tested_commit
+            or standard_binding.get("target_config_sha256") != "sha256:" + hashlib.sha256(target_raw).hexdigest()
+        ):
+            raise SystemExit("FAILED: repo-root verdict/run binding did not retain workspace-relative paths and the tested commit")
+        if not any(
+            call and call[0] == "run" and "org.zhulong.workspace=security-research-run" in call
+            for call in (json.loads(line) for line in docker_log.read_text(encoding="utf-8").splitlines()[len(prior_docker_calls):])
+        ):
+            raise SystemExit("FAILED: standard-layout positive did not reach the fake Docker wrapper")
 
 
 def exercise_disposition_integration(plugin_root: Path) -> None:
@@ -10882,11 +12761,16 @@ def exercise_handoff_checkpoint_contract(plugin_root: Path) -> None:
         verdict_path = workspace / "verifier/CAND-0001/verifier-verdict.json"
         verdict_path.parent.mkdir(parents=True)
         write_json_fixture(verdict_path, valid_verifier_verdict())
+        verifier_snapshot = workspace / "verifier/CAND-0001/runs/run-selftest/inputs/candidate.json"
+        verifier_snapshot.parent.mkdir(parents=True)
+        verifier_snapshot.write_bytes(candidate_path.read_bytes())
         (workspace / "agent-notes.md").write_text("Confirmed bundles: 99\n", encoding="utf-8")
         first = render(workspace)
         state = first.get("state") if isinstance(first, dict) else None
         if not isinstance(state, dict) or state.get("counts", {}).get("candidates") != 1 or state.get("counts", {}).get("verdicts") != 1 or state.get("counts", {}).get("validated_confirmed_bundles") != 0 or state.get("integrity", {}).get("overall") != "blocked":
             raise SystemExit("FAILED: running candidate handoff did not remain conservatively blocked")
+        if any(item.get("code") == "DUPLICATE_STRUCTURED_ID" for item in state.get("integrity", {}).get("issues", [])):
+            raise SystemExit("FAILED: verifier input snapshot was promoted to a second candidate authority")
         if state.get("advisory_notes", {}).get("status") != "advisory":
             raise SystemExit("FAILED: agent-notes.md was not recorded as advisory")
         if validate(workspace).get("ok") is not True:
@@ -11292,6 +13176,59 @@ def exercise_handoff_checkpoint_contract(plugin_root: Path) -> None:
         with (malformed_workspace / "audit-events.jsonl").open("ab") as stream:
             stream.write(b"{malformed\n")
         render(malformed_workspace, expected=1)
+
+        snapshot_only_root = root / "snapshot-only-candidate"
+        snapshot_only_root.mkdir()
+        snapshot_only_workspace = new_workspace(snapshot_only_root)
+        snapshot_only_candidate = snapshot_only_workspace / "candidates/CAND-0001/candidate.json"
+        snapshot_only_candidate.parent.mkdir(parents=True)
+        write_json_fixture(snapshot_only_candidate, valid_candidate_contract())
+        snapshot_only_verdict = snapshot_only_workspace / "verifier/CAND-0001/verifier-verdict.json"
+        snapshot_only_verdict.parent.mkdir(parents=True)
+        write_json_fixture(snapshot_only_verdict, valid_verifier_verdict())
+        snapshot_only_copy = snapshot_only_workspace / "verifier/CAND-0001/runs/run-selftest/inputs/candidate.json"
+        snapshot_only_copy.parent.mkdir(parents=True)
+        snapshot_only_copy.write_bytes(snapshot_only_candidate.read_bytes())
+        snapshot_only_candidate.unlink()
+        snapshot_only_state = render(snapshot_only_workspace).get("state", {})
+        snapshot_only_counts = snapshot_only_state.get("counts", {})
+        if snapshot_only_counts.get("candidates") != 0 or snapshot_only_counts.get("verdicts") != 0:
+            raise SystemExit("FAILED: verifier snapshot alone supplied an authoritative candidate/verdict chain")
+
+        legacy_root = root / "legacy-candidate-layout"
+        legacy_root.mkdir()
+        legacy_workspace = new_workspace(legacy_root)
+        legacy_candidate = legacy_workspace / "legacy-import/CAND-0001/candidate.json"
+        legacy_candidate.parent.mkdir(parents=True)
+        write_json_fixture(legacy_candidate, valid_candidate_contract())
+        legacy_state = render(legacy_workspace).get("state", {})
+        if legacy_state.get("counts", {}).get("candidates") != 1:
+            raise SystemExit("FAILED: a non-snapshot candidate layout stopped being discoverable")
+
+        duplicate_root = root / "duplicate-outside-verifier-input"
+        duplicate_root.mkdir()
+        duplicate_workspace = new_workspace(duplicate_root)
+        duplicate_candidate = duplicate_workspace / "candidates/CAND-0001/candidate.json"
+        duplicate_candidate.parent.mkdir(parents=True)
+        write_json_fixture(duplicate_candidate, valid_candidate_contract())
+        duplicate_copy = duplicate_workspace / "review-copy/CAND-0001/candidate.json"
+        duplicate_copy.parent.mkdir(parents=True)
+        duplicate_copy.write_bytes(duplicate_candidate.read_bytes())
+        duplicate_state = render(duplicate_workspace).get("state", {})
+        duplicate_codes = {item.get("code") for item in duplicate_state.get("integrity", {}).get("issues", []) if isinstance(item, dict)}
+        if "DUPLICATE_STRUCTURED_ID" not in duplicate_codes:
+            raise SystemExit("FAILED: a real duplicate candidate outside verifier inputs was ignored")
+
+        invalid_root = root / "invalid-outside-verifier-input"
+        invalid_root.mkdir()
+        invalid_workspace = new_workspace(invalid_root)
+        invalid_path = invalid_workspace / "review-copy/candidate.json"
+        invalid_path.parent.mkdir(parents=True)
+        write_json_fixture(invalid_path, {})
+        invalid_state = render(invalid_workspace).get("state", {})
+        invalid_codes = {item.get("code") for item in invalid_state.get("integrity", {}).get("issues", []) if isinstance(item, dict)}
+        if "CANDIDATE_VALIDATOR_REJECTED" not in invalid_codes:
+            raise SystemExit("FAILED: an invalid candidate outside verifier inputs was ignored")
 
     print("HANDOFF/CHECKPOINT SELFTEST PASSED: derived-only, conservative, atomic, historical, symlink-safe")
 
@@ -12987,6 +14924,7 @@ def selftest_installed_skill(skill_root: Path) -> None:
     exercise_p8_real_historical_dogfood(skill_root)
     exercise_p9_protocol_chain_real_workspace_dogfood(skill_root)
     exercise_independent_verifier(skill_root)
+    exercise_verifier_fresh_execution(skill_root)
     exercise_disposition_integration(skill_root)
     exercise_contract_fixture_chain(skill_root)
     exercise_audit_state_protocol_r2(skill_root)
@@ -13654,6 +15592,7 @@ def main() -> None:
     exercise_bundle_contract_validator(plugin_root)
     exercise_build_confirmed_bundle_wrapper(plugin_root)
     exercise_independent_verifier(plugin_root)
+    exercise_verifier_fresh_execution(plugin_root)
     exercise_disposition_integration(plugin_root)
     exercise_contract_fixture_chain(plugin_root)
     exercise_audit_state_protocol_r2(plugin_root)
@@ -20583,8 +22522,30 @@ def main() -> None:
             raise SystemExit("FAILED: sync_to_claude_skill.sh left loadable backups at skills root")
 
         codex_home = Path(tempdir) / "codex-home"
-        codex_skills_dir = codex_home / "skills"
+        codex_skills_dir = codex_home / "shared skills"
         codex_home.mkdir(parents=True, exist_ok=True)
+        neighbor_skill = codex_skills_dir / "neighbor-skill"
+        neighbor_skill.mkdir(parents=True)
+        (neighbor_skill / "SKILL.md").write_bytes(b"neighbor skill stays byte-identical\n")
+        (neighbor_skill / "references").mkdir()
+        (neighbor_skill / "references" / "keep.md").write_bytes(b"neighbor reference stays\n")
+        (neighbor_skill / "empty directory").mkdir()
+
+        def snapshot_neighbor_skill() -> list[tuple[str, str, bytes | str | None]]:
+            snapshot: list[tuple[str, str, bytes | str | None]] = []
+            for path in sorted(neighbor_skill.rglob("*")):
+                relative = path.relative_to(neighbor_skill).as_posix()
+                if path.is_symlink():
+                    snapshot.append((relative, "symlink", os.readlink(path)))
+                elif path.is_dir():
+                    snapshot.append((relative, "directory", None))
+                elif path.is_file():
+                    snapshot.append((relative, "file", path.read_bytes()))
+                else:
+                    snapshot.append((relative, "other", None))
+            return snapshot
+
+        neighbor_snapshot = snapshot_neighbor_skill()
         codex_sync_output = run_capture([
             "bash",
             str(plugin_root / "scripts/sync_to_codex_skill.sh"),
@@ -20639,6 +22600,9 @@ def main() -> None:
         codex_top_level_backups = sorted(codex_skills_dir.glob("zhulong.backup.*"))
         if codex_top_level_backups:
             raise SystemExit("FAILED: sync_to_codex_skill.sh left loadable backups at skills root")
+        if not neighbor_skill.is_dir() or snapshot_neighbor_skill() != neighbor_snapshot:
+            raise SystemExit("FAILED: repeated Codex sync changed an adjacent skill")
+        exercise_shared_skill_layout_edge_contracts(plugin_root, codex_installed_skill, Path(tempdir))
         run([
             sys.executable,
             str(codex_installed_skill / "scripts/selftest_plugin.py"),
