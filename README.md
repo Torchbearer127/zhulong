@@ -188,6 +188,12 @@ The Codex user-level installed skill path is:
 ~/.agents/skills/zhulong/
 ```
 
+DeepSeek Harness can use this shared Agent Skill layout. The integration has
+limited evidence for one recorded configuration; a complete Docker-backed
+audit workflow has not passed. See
+[`docs/DSH_SKILL_ADAPTATION.md`](docs/DSH_SKILL_ADAPTATION.md) for the tested
+scope and limits.
+
 Restart the local agent session after syncing. Then use a short prompt in your
 supported local agent. In Codex, explicit `$zhulong` invocation is also
 supported.
@@ -567,6 +573,7 @@ tooling communities. Special thanks to:
 | [`docs/INSTALL.md`](docs/INSTALL.md) | New users | Installation paths, local skill sync, and setup notes. |
 | [`docs/USAGE.md`](docs/USAGE.md) | Operators | Launch prompts, trial-run prompts, manual startup commands, and `zhulong_audit.sh` options. |
 | [`docs/CODEX_SKILL_ADAPTATION.md`](docs/CODEX_SKILL_ADAPTATION.md) | Maintainers | Source, Claude installed, and Codex installed skill layout contract. |
+| [`docs/DSH_SKILL_ADAPTATION.md`](docs/DSH_SKILL_ADAPTATION.md) | Users and maintainers | Limited DeepSeek Harness integration scope, setup, and validation evidence. |
 | [`docs/AGENTS.md`](docs/AGENTS.md) | AI coding agents and maintainers | Development rules, non-negotiable workflow contracts, and safe patch boundaries. |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Contributors | Contribution expectations, test discipline, and scope control. |
 | [`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md) | Maintainers | Pre-release checks for packaging, safety, docs, and regressions. |

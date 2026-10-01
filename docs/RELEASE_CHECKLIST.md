@@ -25,6 +25,11 @@ Use this checklist before publishing a tagged open-source release of Zhulong
 - [ ] Corresponding Chinese and English instructions agree on conditions,
   defaults, failure behavior, and limitations. Tool names, containers, and
   images remain distinct; language review did not alter commands or evidence.
+- [ ] DeepSeek Harness wording matches `docs/DSH_SKILL_ADAPTATION.md` and its
+  Chinese counterpart. Do not claim full workflow support from installation,
+  skill discovery, a verifier result, or host-side continuation; a full support
+  claim requires a dsh-participating run through validated bundle promotion and
+  workspace finalization for the stated configuration.
 
 - [ ] `.claude-plugin/plugin.json` is valid JSON and metadata-only.
 - [ ] `.codex-plugin/plugin.json` is valid JSON and uses the same release

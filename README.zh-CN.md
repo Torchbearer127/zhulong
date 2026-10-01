@@ -162,6 +162,10 @@ Codex 用户级 skill 安装目录是：
 ~/.agents/skills/zhulong/
 ```
 
+DeepSeek Harness 可使用这套共享 skill 目录。目前只有一组明确配置的有限验证，尚未通过完整的
+docker 审计闭环。测试范围和限制见
+[`docs/DSH_SKILL_ADAPTATION.zh-CN.md`](docs/DSH_SKILL_ADAPTATION.zh-CN.md)。
+
 同步后重启本地 Agent 会话，然后在受支持的本地 Agent 中使用短提示词。使用
 Codex 时，也可以显式输入 `$zhulong` 调用烛龙。
 
@@ -485,6 +489,7 @@ python3 scripts/validate_all_report_bundles.py --confirmed-dir <confirmed-dir>
 | [`docs/INSTALL.md`](docs/INSTALL.md) | 新用户 | 安装路径、本地 skill 同步和环境准备说明。 |
 | [`docs/USAGE.zh-CN.md`](docs/USAGE.zh-CN.md) | 运行者 | 启动提示词、试运行提示词、手动启动命令和 `zhulong_audit.sh` 参数。 |
 | [`docs/CODEX_SKILL_ADAPTATION.md`](docs/CODEX_SKILL_ADAPTATION.md) | 维护者 | 源码、Claude 安装目录和 Codex 安装目录的 skill 布局契约。 |
+| [`docs/DSH_SKILL_ADAPTATION.zh-CN.md`](docs/DSH_SKILL_ADAPTATION.zh-CN.md) | 用户与维护者 | DeepSeek Harness 的有限接入范围、安装方法和验证证据。 |
 | [`docs/AGENTS.md`](docs/AGENTS.md) | AI 编程 Agent 与维护者 | 开发规则、不可破坏的工作流契约和安全补丁边界。 |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | 贡献者 | 贡献预期、测试纪律和范围控制。 |
 | [`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md) | 维护者 | 发布前打包、安全、文档和回归检查。 |

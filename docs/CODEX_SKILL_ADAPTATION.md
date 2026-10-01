@@ -5,6 +5,11 @@ layout and synchronization rules for source, Claude installed, and Codex
 installed skill copies. The current Codex support path does not add a hook, MCP
 server, daemon, background service, or new confirmed-bundle format.
 
+DeepSeek Harness uses a separate, limited shared-skill integration path. Its
+tested configuration and incomplete end-to-end validation are documented in
+[`DSH_SKILL_ADAPTATION.md`](DSH_SKILL_ADAPTATION.md); they do not expand the
+Codex support claims below.
+
 ## Scope
 
 Zhulong remains a lightweight local-agent workflow with Docker-first

@@ -130,6 +130,30 @@ paths. Use `skills/zhulong/SKILL.md` as the human/runtime entrypoint and
 manual fallback. Do not manually chain many helpers unless you are debugging a
 specific stage.
 
+## Install For DeepSeek Harness
+
+DeepSeek Harness (dsh) can discover Zhulong through its shared agent skill
+directory. The sync script keeps its historical name, but this layout is not
+Codex-only. From the plugin root:
+
+```bash
+agents_home="${DSH_AGENTS_HOME:-$HOME/.agents}"
+bash scripts/sync_to_codex_skill.sh --codex-skills-dir "$agents_home/skills"
+python3 "$agents_home/skills/zhulong/scripts/selftest_plugin.py"
+```
+
+`DSH_AGENTS_HOME` is the agent configuration root; dsh looks for skills below
+its `skills/` directory. Pass that `skills/` path to the sync script, not the
+root itself. If you use the default `~/.agents`, the regular Codex sync command
+installs to the same location. The sync script may back up an existing Zhulong
+copy before replacing it.
+
+Restart the dsh session after syncing. Use dsh's configured skill discovery
+and invocation mechanism; do not use Codex's `$zhulong` syntax as a dsh command.
+This shared-layout path has only limited validation for the configuration
+listed in [`DSH_SKILL_ADAPTATION.md`](DSH_SKILL_ADAPTATION.md); it is not a claim
+that the full Docker-backed audit workflow passed.
+
 ## One Command Manual Fallback
 
 If you want to bootstrap or refresh a repository manually, use the one-shot

@@ -99,6 +99,25 @@ GitHub 调用或 LLM 调用。
 在源码检出目录中，仓库根目录 `AGENTS.md` 可能会提示 Codex 使用 `$zhulong`；
 已安装 skill 的行为仍由 `SKILL.md` 负责。
 
+## DeepSeek Harness
+
+已记录的 dsh 配置从共享 skill 目录发现烛龙。按你平时的方式启动 dsh，
+然后让它对目标仓库使用已安装的 `zhulong` skill。例如：
+
+```text
+请使用已安装的 zhulong skill 审计这个本地仓库：
+/path/to/repo
+
+输出语言：zh-CN。
+```
+
+这不是 dsh 专用命令语法；当前配置需要启用 skill 发现与调用组件。如果多个配置目录中有同名
+skill，先核实运行时实际加载了哪一份。已检查的无界面运行配置没有按命令或路径设置白名单，
+skill 提示词不能代替工具权限控制。只在明确授权的目标和操作范围内逐步执行，并核对重要工具操作及其结果。
+如果权限检查拒绝某项操作，就停止该项操作，不要换通道绕过。docker 不可用或调用被拒时，保留工作区并暂停
+验证；不要改在宿主机运行 PoC。测试范围、来源检查和恢复限制见
+[`DSH_SKILL_ADAPTATION.zh-CN.md`](DSH_SKILL_ADAPTATION.zh-CN.md)。
+
 ## 手动终端启动
 
 使用 Agent 提示词是常规路径。终端启动脚本适合需要预先克隆仓库、准备环境，或者需要机器可读启动摘要的场景。

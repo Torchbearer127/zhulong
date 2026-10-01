@@ -105,6 +105,31 @@ network lookups, package registries, GitHub calls, or LLM calls.
 In a source checkout, repository-root `AGENTS.md` may point Codex to `$zhulong`,
 while installed skill behavior remains owned by `SKILL.md`.
 
+## DeepSeek Harness
+
+The tested dsh setup discovers Zhulong from the shared agent skill directory.
+Start dsh using your configured entry point, then ask it to use the installed
+`zhulong` skill for the target repository. For example:
+
+```text
+Use the installed zhulong skill to audit this local repository:
+/path/to/repo
+
+Output language: en-US.
+```
+
+This is not a dsh-specific command syntax; the active dsh configuration must
+enable skill discovery and invocation. Check which source was loaded when
+same-name skills may exist in more than one configured directory.
+The reviewed headless configuration had no per-command or per-path allowlist.
+Skill instructions do not enforce tool permissions. Run only within the
+explicitly authorized target and scope, and review consequential tool actions
+and results. If a permission check rejects an operation, stop that operation;
+do not route around the rejection. If Docker is unavailable or rejected,
+preserve the workspace and pause verification; never run a PoC on the host. See
+[`DSH_SKILL_ADAPTATION.md`](DSH_SKILL_ADAPTATION.md) for the tested scope,
+source checks, and recovery limits.
+
 ## Manual Terminal Startup
 
 The agent prompt is the normal path. The terminal launcher is useful when you

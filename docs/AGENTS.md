@@ -24,6 +24,11 @@ source code, prompts, scripts, templates, validators, or release docs.
   [`CODEX_SKILL_ADAPTATION.md`](CODEX_SKILL_ADAPTATION.md). Keep source,
   Claude installed, and Codex installed layout changes aligned with that
   contract.
+- DeepSeek Harness uses the shared Agent Skill layout, not a native plugin.
+  Keep its limited tested scope and incomplete end-to-end status aligned with
+  [`DSH_SKILL_ADAPTATION.md`](DSH_SKILL_ADAPTATION.md). A successful install,
+  skill call, or host-side continuation alone does not establish a completed
+  Docker-backed audit workflow.
 - `.claude-plugin/plugin.json` and `.codex-plugin/plugin.json` are package
   metadata. They must not introduce required hooks, MCP servers, apps, agents,
   commands, daemons, dashboards, databases, or platform services.
