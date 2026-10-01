@@ -36,6 +36,7 @@
 - 🌱 **同类漏洞扩展：** 用已确认漏洞提示同一仓库里可能存在的同类漏洞，但这些线索必须单独 docker 复现后才算漏洞。
 - 🔌 **轻量模块化：** 不强制依赖后端服务、数据看板、数据库、向量存储或 RAG 平台；通过本地 Agent 模块和脚本即可运行。
 - 🤝 **人机协同易读：** 工作区、交接摘要和机器可读判断记录同时面向 AI 编程 Agent 与人工审核员设计。
+- 🇨🇳 **国产 Agent 适配：** 支持通过 DeepSeek Harness 接入。
 
 ---
 
@@ -44,10 +45,10 @@
 | 分区 | 内容 |
 | :--- | :--- |
 | [项目概述](#-项目概述) | 说明烛龙的定位、紧凑工作流和“先复现再确认”的核心原则。 |
-| [为什么选择烛龙？](#-为什么选择烛龙) | 对照传统审计痛点，解释烛龙的轻量化、低误报和证据导向优势。 |
+| [为什么选择烛龙？](#-为什么选择烛龙) | 说明烛龙如何以轻量化、证据导向的流程应对误报负担。 |
 | [系统架构](#-系统架构) | 展示本地模块化流水线，以及 Agent、脚本、docker 和产物之间的关系。 |
 | [快速开始](#-快速开始) | 给出平台支持、skill 同步、本地 Agent 提示词和手动脚本启动方式。 |
-| [烛龙会产出什么？](#-烛龙会产出什么) | 说明审计工作区结构和已确认漏洞证据包内容。 |
+| [烛龙会产出什么？](#-烛龙会产出什么) | 说明审计工作区结构和已确认漏洞包的内容。 |
 | [审计工作流](#-审计工作流) | 拆解从项目导入到完成交接的主要阶段。 |
 | [依赖项与可选集成](#%EF%B8%8F-依赖项与可选集成) | 列出必选运行依赖和可选安全工具族。 |
 | [插件项目结构](#-插件项目结构) | 概览插件源码、脚本、资源和文档目录。 |
@@ -162,8 +163,7 @@ Codex 用户级 skill 安装目录是：
 ~/.agents/skills/zhulong/
 ```
 
-DeepSeek Harness 可使用这套共享 skill 目录。目前只有一组明确配置的有限验证，尚未通过完整的
-docker 审计闭环。测试范围和限制见
+DeepSeek Harness（dsh）可使用这套共享 skill 目录。安装方法、适用范围和限制见
 [`docs/DSH_SKILL_ADAPTATION.zh-CN.md`](docs/DSH_SKILL_ADAPTATION.zh-CN.md)。
 
 同步后重启本地 Agent 会话，然后在受支持的本地 Agent 中使用短提示词。使用
@@ -260,12 +260,12 @@ confirmed/<vulnerability-slug>/
 
 | 依赖项 / 集成 | 是否必选 | 在烛龙中的作用 | 链接 |
 | :--- | :---: | :--- | :--- |
-| **本地 AI 编程 Agent 运行时** | 预期工作流必选 | 读取烛龙 skill 和文档，协调仓库审计，并运行本地脚本。Claude Code 和 Codex 用户级 skill 同步路径均已通过测试；也保留脚本方式的手动启动。 | [Claude Code docs](https://docs.anthropic.com/en/docs/claude-code/overview), [Codex Agent Skills docs](https://developers.openai.com/codex/skills) |
+| **本地 AI 编程 Agent 运行时** | 预期工作流必选 | 读取烛龙 skill 和文档，协调仓库审计，并运行本地脚本。Claude Code 和 Codex 用户级 skill 同步路径均已通过测试；脚本方式的手动启动仍可用。DeepSeek Harness 可通过共享 skill 目录接入。 | [Claude Code docs](https://docs.anthropic.com/en/docs/claude-code/overview), [Codex Agent Skills docs](https://developers.openai.com/codex/skills), [DeepSeek Harness 接入说明](docs/DSH_SKILL_ADAPTATION.zh-CN.md) |
 | **Python 3.11+** | 必选 | 运行自动检查、完成检查、自检、报告渲染辅助脚本和工作区完整性检查。 | [python.org](https://www.python.org/) |
 | **Docker Engine / Docker Desktop** | 已确认漏洞必选 | 提供隔离复现运行时。docker 不可用时，烛龙会暂停或记录验证受阻，不回退到宿主机执行。 | [docker docs](https://docs.docker.com/engine/) |
 | **docker compose** | 目标验证使用 docker compose 时必选 | 使用项目原生或生成的 docker compose 文件启动目标应用和验证栈。 | [docker compose docs](https://docs.docker.com/compose/) |
 | **Git** | 远程目标必选 | 克隆目标仓库并保留源码上下文。 | [git-scm.com](https://git-scm.com/) |
-| **POSIX shell / Bash** | 必选 | 运行 工作区 辅助脚本、docker 环境卫生检查、初始探测任务和复现脚本。 | [GNU Bash](https://www.gnu.org/software/bash/) |
+| **POSIX shell / Bash** | 必选 | 运行工作区辅助脚本、docker 环境卫生检查、初始探测任务和复现脚本。 | [GNU Bash](https://www.gnu.org/software/bash/) |
 | **GitHub CLI (`gh`)** | 可选 | 可用于 GitHub clone/auth 流程和仓库元数据查询。 | [GitHub CLI](https://cli.github.com/) |
 | **oh-my-claudecode (OMC)** | 可选多 Agent 增强 | 只有在你主动使用 OMC `/team`、`/ultrawork` 等多 Agent 模式时才需要。正常审计不依赖 OMC；烛龙对 OMC 多 Agent 工作进程 PID 始终只读复核。 | [OMC GitHub](https://github.com/Yeachan-Heo/oh-my-claudecode) |
 
@@ -279,7 +279,7 @@ confirmed/<vulnerability-slug>/
 | :--- | :--- | :--- | :--- |
 | **SAST / 模式匹配扫描** | [Semgrep](https://github.com/semgrep/semgrep), [CodeQL](https://codeql.github.com/) | 广泛代码模式发现和自定义规则探索。 | 结果必须先作为候选，不能绕过 docker 证据和报告证据包检查。 |
 | **依赖与 OSV 扫描** | [OSV-Scanner](https://github.com/google/osv-scanner), [`npm audit`](https://docs.npmjs.com/cli/commands/npm-audit), [pip-audit](https://github.com/pypa/pip-audit), [govulncheck](https://go.dev/doc/security/vuln/) | 依赖公告发现和语言生态漏洞提示。 | 仅有依赖扫描结果不能被报告为已确认漏洞。 |
-| **SBOM 与镜像分析** | [Syft](https://github.com/anchore/syft), [Grype](https://github.com/anchore/grype), [Trivy](https://github.com/aquasecurity/trivy) | 生成 SBOM，扫描 文件系统或镜像，提供容器漏洞线索。 | 扫描器输出只是线索证据，仍需复核和复现。 |
+| **SBOM 与镜像分析** | [Syft](https://github.com/anchore/syft), [Grype](https://github.com/anchore/grype), [Trivy](https://github.com/aquasecurity/trivy) | 生成 SBOM，扫描文件系统或镜像，提供容器漏洞线索。 | 扫描器输出只是线索证据，仍需复核和复现。 |
 | **敏感信息泄露扫描** | [Gitleaks](https://github.com/gitleaks/gitleaks), [TruffleHog](https://github.com/trufflesecurity/trufflehog) | 发现疑似敏感信息泄露，生成脱敏摘要并保留本地原始日志。 | 凭据发现披露前仍需人工漏洞研判和范围确认。 |
 | **聚焦 DAST 辅助工具** | [Nuclei](https://github.com/projectdiscovery/nuclei), [ffuf](https://github.com/ffuf/ffuf), [sqlmap](https://github.com/sqlmapproject/sqlmap), [OWASP ZAP](https://www.zaproxy.org/) | 仅对授权的本地 docker 目标做聚焦动态检查。 | 未明确授权时不得进行激进或外部测试。 |
 | **语言专用分析器** | [gosec](https://github.com/securego/gosec), [SpotBugs](https://spotbugs.github.io/), [FindSecBugs](https://find-sec-bugs.github.io/), Maven, Gradle | 为 Java、Go 等生态提供静态或依赖上下文。 | 结果用于漏洞研判，不能单独成为已确认漏洞。 |
@@ -305,13 +305,13 @@ zhulong/
 │   ├── asr_start.sh                    # 创建或复用审计工作区
 │   ├── manage_docker_resources.py      # docker 初始基线、精确清理、严格环境卫生检查
 │   ├── check_sandbox_preflight.py      # 危险验证容器前置拒绝
-│   ├── docker_case_lifecycle.py        # 单个验证案例 的 docker 身份、资源策略与精确清理
-│   ├── run_verification_case.sh        # 仅在 docker 中执行验证案例 并采集证据
+│   ├── docker_case_lifecycle.py        # 单个验证案例的 docker 身份、资源策略与精确清理
+│   ├── run_verification_case.sh        # 仅在 docker 中执行验证案例并采集证据
 │   ├── audit_disposition.py            # 工作区级线索判断记录
 │   ├── finalize_audit_workspace.py     # 交接前完成检查
 │   ├── assert_finalized_workspace.py   # 已完成工作区完整性检查
 │   ├── validate_bundle_contract.py     # 源码绑定的生成前预检
-│   ├── build_confirmed_bundle.py       # 暂存区校验与原子提升
+│   ├── build_confirmed_bundle.py       # 暂存目录校验后原子提升
 │   ├── extract_variant_seed.py         # 确认漏洞包 -> 同类漏洞种子卡
 │   ├── find_variant_candidates.py      # 种子卡 -> 同仓库排序候选
 │   ├── validate_report_bundle.py       # 已确认漏洞证据包检查
@@ -319,7 +319,7 @@ zhulong/
 │   └── selftest_plugin.py              # 发布 / 打包自检
 ├── assets/
 │   ├── branding/                       # README 视觉与 logo 资源
-│   ├── attacker-container/             # 可选本地 攻击者容器 模板
+│   ├── attacker-container/             # 可选本地攻击者容器模板
 │   ├── references/                     # 审计手册、安全契约、输出模板
 │   ├── schemas/                        # 同类漏洞种子卡等结构化 schema
 │   └── examples/                       # 示例结构化输入
@@ -373,7 +373,7 @@ Read docs/AGENTS.md, CONTRIBUTING.md, and docs/RELEASE_CHECKLIST.md before editi
 Keep the change narrow.
 不要削弱以下规则：未验证问题不能进入已确认报告；适用时必须在 docker 中复现；确认
 结论必须绑定真实源码；docker 清理必须安全；OMC 多 Agent 工作进程只允许人工复核；
-危险验证容器必须提前拒绝；已确认漏洞证据包必须先在暂存区通过检查再提升。
+危险验证容器必须提前拒绝；已确认漏洞包必须先在暂存目录通过校验再提升。
 ```
 
 ```bash
@@ -444,31 +444,22 @@ python3 scripts/validate_all_report_bundles.py --confirmed-dir <confirmed-dir>
 
 ### 开发计划
 
-烛龙当前已经可以作为轻量级本地 Agent 审计工作流使用，但后续会继续克制演进。优先级是可靠性、清晰证据和易维护性。
+烛龙是一套轻量级本地 Agent 审计工作流，后续会继续改善使用体验和结果可靠性。
 
 已完成：
 
-- [x] 本地 Agent skill 打包，并保留脚本方式的手动启动。
-- [x] 已确认漏洞报告前，先在 docker 或 docker compose 中复现。
-- [x] 已确认漏洞证据包，包含报告、复现说明、证据 JSON、日志/截图和运行脚本。
-- [x] 机器可读的线索判断记录，以及便于人机协同接续的交接摘要。
-- [x] 针对危险验证容器、docker 残留和 OMC 多 Agent 工作进程的安全检查与只读复核边界。
-- [x] 基于已确认漏洞提示同仓库里的同类漏洞线索，并要求每条线索独立完成 docker 复现。
-- [x] 面向审核录屏的复现脚本会展示代码上下文、漏洞分析、实际危害边界和最终证据汇总。
-- [x] 源码绑定的生成合同、暂存区校验提升，以及可选最终录屏证据门禁。
-- [x] Codex 用户级 skill 支持、安装目录自检、平台无关启动入口和仓库根目录 AGENTS.md 引导文件。
-- [x] 文件式可恢复审计状态：追加只读的权威事件日志与派生工作区状态。
-- [x] 结构化交接、不可变检查点和机器可读的下一步动作，支持全新上下文接力。
-- [x] 离线静态审计时间线（JSON 与 HTML），内置安全脱敏，便于离线复核。
-- [x] 候选身份、指纹与去重，保证重复发现被一致跟踪。
-- [x] 基于权威日志的状态重建，以及修订号锁定的并发写入保护。
+- [x] 通过 Claude Code 或 Codex skill 使用烛龙，也可通过脚本手动启动。
+- [x] 在 docker 中复现并验证漏洞，区分已确认问题与待验证线索。
+- [x] 生成包含报告、复现脚本和证据附件的交付包，并支持可选录屏。
+- [x] 保存审计进度，支持中断恢复、交接续做和结果回顾。
+- [x] 从已确认问题扩展同仓库的同类漏洞线索，统一跟踪重复发现。
+- [x] 2026.10.1：支持 DeepSeek Harness（dsh）通过共享 skill 目录接入。
 
 后续计划：
 
-- [ ] 优化 Linux 和 WSL2 用户的安装说明与示例。
-- [ ] 增加更清晰的示例工作区和脱敏输出样例。
-- [ ] 补充 Cursor 等其他本地 Agent 环境的兼容说明。
-- [ ] 基于真实项目测试继续收紧报告一致性检查。
+- [ ] 完善 Linux、WSL2 和其他本地编程 Agent 的安装与使用说明。
+- [ ] 提供完整示例工作区和脱敏报告样例。
+- [ ] 通过真实项目测试改进复现体验和报告一致性。
 
 ### 致谢
 

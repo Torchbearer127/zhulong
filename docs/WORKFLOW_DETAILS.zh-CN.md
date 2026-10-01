@@ -261,7 +261,7 @@ bash <audit-workspace>/bin/check_omc_runtime.sh --cleanup-stale --json
 bash <audit-workspace>/bin/check_omc_runtime.sh --json
 ```
 
-如果报告可疑 协作进程 PID，烛龙只会展示复核信息，不会杀进程。即使启用 PID 复核或清理相关选项，当前烛龙也不会对 协作进程 PID 发送信号。用户如果确认某个 PID 确实过期，应在烛龙之外手动处理，或在明确了解风险后授权 Agent 使用系统级进程工具处理；不要把 PID 清理并入 docker 清理，也不要使用大范围进程清理。
+如果报告了可疑的协作进程 PID，烛龙只会展示复核信息，不会杀进程。即使启用 PID 复核或清理相关选项，当前烛龙也不会对协作进程 PID 发送信号。用户如果确认某个 PID 确实过期，应在烛龙之外手动处理，或在明确了解风险并明确授权后，让 Agent 使用系统级进程工具处理；不要把 PID 清理并入 docker 清理，也不要使用大范围进程清理。
 
 更多细节见 [`../assets/references/docker-resource-hygiene.md`](../assets/references/docker-resource-hygiene.md) 和 [`../assets/references/omc-runtime-stability.md`](../assets/references/omc-runtime-stability.md)。
 
@@ -271,8 +271,8 @@ bash <audit-workspace>/bin/check_omc_runtime.sh --json
 
 ```text
 生成合同预检
--> 暂存区构建
--> 暂存区最终校验
+-> 暂存目录构建
+-> 暂存目录最终校验
 -> 原子提升
 -> 全量校验
 -> 同类漏洞扩展
@@ -302,12 +302,12 @@ bash <audit-workspace>/bin/check_omc_runtime.sh --json
 `finding.bug_class` 和 `impact_tier.bug_class` 保持自由文本，并在检查清单中给出
 推荐值，因为真实项目中的漏洞类别可能具有项目特性或属于复合分类。
 
-暂存区构建脚本会先将材料渲染到 `confirmed/.staging/<slug>`，并在该目录运行同一套
+暂存目录构建脚本会先将材料渲染到 `confirmed/.staging/<slug>`，并在该目录运行同一套
 最终漏洞包校验；只有校验通过后才会原子提升到 `confirmed/<slug>`。失败的暂存目录
 只能作为调试材料，不能称为已确认交付物。提升后还必须运行
 `validate_all_report_bundles.py`，再进入同类漏洞扩展与审计收尾。
 
-默认最终校验仍采用遇错即停。`validate_report_bundle.py --all-errors` 只是暂存区或
+默认最终校验仍采用遇错即停。`validate_report_bundle.py --all-errors` 只是暂存目录或
 最终校验失败时的诊断模式，用来一次收集可处理的问题；它不会修复漏洞包、放宽校验
 规则或确认漏洞。
 
@@ -328,7 +328,7 @@ bash <audit-workspace>/bin/check_omc_runtime.sh --json
 文件完整不等于程序已经成功运行。
 
 构建器将漏洞包移入正式目录前，会检查合同声明的根目录复现脚本和 `files` 中的
-每个文件是否已在暂存区内。只填写路径不会自动补齐文件。脚本直接调用 docker compose 时，
+每个文件是否已在暂存目录内。只填写路径不会自动补齐文件。脚本直接调用 docker compose 时，
 包内必须带上编排文件，以及配置中引用的本地构建目录和 Dockerfile。传入多个 `-f`
 文件时，相对路径以第一个文件所在的目录为准。读取编排文件需要校验器所在的 Python
 环境已安装 PyYAML。
@@ -377,7 +377,7 @@ docker compose 版本不支持这些等待参数时，脚本同样报错停止�
 - 复现录屏脚本的步骤标签过期或格式异常。
 - 漏洞包根录制脚本的 shell 静态语法和可执行位。
 - 附件 docker compose 的静态自洽性，包括缺失相对 `env_file`、缺失相对 绑定挂载 源文件，以及最终包中不允许出现的绝对宿主机路径。
-- 中文 (zh-CN) 报告中无故出现大段英文自然语言。
+- 报告中无故出现与所选报告语言不符的大段自然语言。
 - 在存在结构化证据字段时，校验目标与命令一致性。
 - 根脚本或附件脚本通过深层 `../../..` 逃出下载后的漏洞包，或挂载提交者本机父级仓库。
 - 报告、补充说明、证据 JSON 与根录屏脚本之间的 PoC 标签漂移。
@@ -453,6 +453,9 @@ SSRF 影响过度声明、代码上下文最低质量、复现辅助脚本暂停
   接受。候选编号、Markdown 表格行、临时备注、docker 证据目录、不完整漏洞包或校验
   失败的漏洞包都不能作为正式种子；人工同类备注必须留在正式
   `evidence/variant-analysis/seeds.jsonl` 之外。
+- 种子卡使用 `schema_version=1`。最终种子卡中的 `root_cause`、`source_pattern`、
+  `sink_pattern` 和 `docker_success_oracle` 必须非空，且不能为 `unknown`。提取不完整时
+  只能生成草稿备注或可选草稿种子卡，不能作为最终种子。
 - 候选检索工具只读取最终种子卡，并在同一仓库内进行本地、可重复的优先级排序。它
   不调用扫描器、`rg`、`grep`、`git`、网络接口、LLM、docker、PoC、DOCX 渲染或确认
   漏洞包生成。
@@ -535,7 +538,7 @@ python3 ~/.agents/skills/zhulong/scripts/selftest_plugin.py
 python3 scripts/validate_report_bundle.py --bundle-dir <bundle-dir>
 ```
 
-默认最终漏洞包校验采用遇错即停。若暂存区或最终校验失败，需要一次查看常见结构问题，
+默认最终漏洞包校验采用遇错即停。若暂存目录或最终校验失败，需要一次查看常见结构问题，
 可显式启用 `--all-errors` 诊断模式：
 
 ```bash
@@ -565,7 +568,7 @@ python3 scripts/validate_bundle_contract.py \
 如果预检失败，应修正生成合同或上游 docker 证据，不要通过创建仅含标记的复现日志，
 或临时修改直接影响标记来绕过。预检只负责生成前门禁，最终仍必须运行确认漏洞包校验。
 
-随后通过暂存区构建脚本生成漏洞包：
+随后通过暂存目录构建脚本生成漏洞包：
 
 ```bash
 python3 scripts/build_confirmed_bundle.py \
@@ -804,7 +807,7 @@ docker compose 采用封闭子集：顶层只允许 `version` 和 `services`，�
 如果服务声明 `network_mode`，只能使用精确的静态字符串 `none`；省略是允许的，因为宿主持有的
 生命周期覆盖配置会补上 `none`。选定的服务必须
 存在；只要出现 `depends_on` 就拒绝；`restart` 只能省略或精确写为 `"no"`。目标定义的标签不得
-使用保留的 `org.zhulong.*` 或 `com.docker.compose.*` 命名空间。宿主机绑定挂载只允许三种固定映射：
+使用保留的 `org.zhulong.*` 或 `com.docker.compose.*` 命名空间。宿主机绑定挂载只允许两种固定映射：
 目标仓库只读映射到 `/workspace/target`、工作区的 `poc/` 只读映射到 `/workspace/poc`。
 `/workspace/output` 固定为容器内 64 MiB tmpfs，不再是可写宿主机绑定挂载，仅作为非权威临时空间。新执行
 以前台方式运行显式服务参数数组，并强制合并配置中的 `logging.driver=none`；不读取容器文件，不生成

@@ -43,6 +43,8 @@ with Docker reproduction before confirmation.</strong></p>
   scripts.
 - 🤝 **Human-agent readable:** Workspaces, handoff summaries, and machine-readable
   decision logs are designed for both AI coding agents and human reviewers.
+- 🇨🇳 **Agent compatibility:** Use Zhulong with Codex, Claude Code, or DeepSeek
+  Harness through skill integration.
 
 ---
 
@@ -188,11 +190,9 @@ The Codex user-level installed skill path is:
 ~/.agents/skills/zhulong/
 ```
 
-DeepSeek Harness can use this shared Agent Skill layout. The integration has
-limited evidence for one recorded configuration; a complete Docker-backed
-audit workflow has not passed. See
-[`docs/DSH_SKILL_ADAPTATION.md`](docs/DSH_SKILL_ADAPTATION.md) for the tested
-scope and limits.
+DeepSeek Harness (dsh) can use this shared Agent Skill layout. See
+[`docs/DSH_SKILL_ADAPTATION.md`](docs/DSH_SKILL_ADAPTATION.md) for installation
+instructions, scope, and limitations.
 
 Restart the local agent session after syncing. Then use a short prompt in your
 supported local agent. In Codex, explicit `$zhulong` invocation is also
@@ -303,7 +303,7 @@ optional ways to surface leads.
 
 | Dependency / Integration | Required? | Role in Zhulong | Link |
 | :--- | :---: | :--- | :--- |
-| **Local coding agent runtime** | Required for the intended workflow | Reads the Zhulong skill/docs, coordinates repository review, and runs local scripts. Claude Code and Codex user-level skill sync paths are tested; script-based manual startup remains available. | [Claude Code docs](https://docs.anthropic.com/en/docs/claude-code/overview), [Codex Agent Skills docs](https://developers.openai.com/codex/skills) |
+| **Local coding agent runtime** | Required for the intended workflow | Reads the Zhulong skill/docs, coordinates repository review, and runs local scripts. Claude Code and Codex user-level skill sync paths are tested; script-based manual startup remains available. DeepSeek Harness can use the shared Agent Skill layout. | [Claude Code docs](https://docs.anthropic.com/en/docs/claude-code/overview), [Codex Agent Skills docs](https://developers.openai.com/codex/skills), [DeepSeek Harness adaptation](docs/DSH_SKILL_ADAPTATION.md) |
 | **Python 3.11+** | Required | Runs automated checks, completion checks, selftests, report rendering helpers, and workspace integrity checks. | [python.org](https://www.python.org/) |
 | **Docker Engine / Docker Desktop** | Required for confirmed vulnerabilities | Provides the isolated runtime for reproduction. If Docker is unavailable, Zhulong pauses or records the verification as blocked instead of falling back to host execution. | [Docker docs](https://docs.docker.com/engine/) |
 | **Docker Compose** | Required when target verification uses Compose | Starts target applications and verification stacks using project-native or generated Compose files. | [Docker Compose docs](https://docs.docker.com/compose/) |
@@ -519,33 +519,23 @@ security-sensitive discussion, contact:
 
 ### Development Plan
 
-Zhulong is already useful as a lightweight local-agent audit workflow, but it
-will continue to evolve carefully. The priority is reliability and clear
-evidence.
+Zhulong is a lightweight local-agent audit workflow. Future work will focus on
+making it easier to use and its results more reliable.
 
 Completed:
 
-- [x] Local agent skill packaging with script-based manual startup.
-- [x] Docker or Docker Compose reproduction before confirmed vulnerability reporting.
-- [x] Evidence packages for confirmed vulnerabilities, including report, reproduction notes, evidence JSON, logs/screenshots, and run script.
-- [x] Machine-readable issue decision log and handoff summaries for human-agent collaboration.
-- [x] Safety checks for unsafe verification containers, Docker residue, and review-only OMC multi-agent worker process handling.
-- [x] Same-repository variant discovery from confirmed vulnerabilities, with every lead still requiring its own Docker reproduction.
-- [x] Reviewer-facing replay helpers with code context, vulnerability analysis, practical impact, and final evidence summary screens.
-- [x] Source-bound bundle contracts, validated staging promotion, and optional final recording evidence gates.
-- [x] Codex user-level skill support with installed selftest, platform-neutral launcher, and repo-root AGENTS.md guidance.
-- [x] File-backed, recoverable audit state with an append-only authority event log and derived workspace state.
-- [x] Structured handoff, immutable checkpoints, and machine-readable next-actions for fresh-context resume.
-- [x] Offline static audit timeline (JSON and HTML) with built-in safety sanitization for offline review.
-- [x] Candidate identity, fingerprinting, and deduplication so repeat findings are tracked consistently.
-- [x] State rebuild from the authority journal and revision-locked concurrent-write protection.
+- [x] Use Zhulong through Claude Code or Codex skills, or start it manually with scripts.
+- [x] Reproduce and verify vulnerabilities in Docker, distinguishing confirmed findings from unverified leads.
+- [x] Create delivery bundles with reports, reproduction scripts, and evidence attachments, with optional recording.
+- [x] Save audit progress, recover interrupted work, hand off ongoing reviews, and review results.
+- [x] Expand from confirmed issues to related leads in the same repository and track duplicates consistently.
+- [x] 2026-10-01: Enable DeepSeek Harness (dsh) to use Zhulong through the shared skill directory.
 
 Planned:
 
-- [ ] Improve installation and examples for Linux and WSL2 users.
-- [ ] Add clearer sample workspaces and sanitized example outputs.
-- [ ] Expand compatibility notes for Cursor and other local agent environments.
-- [ ] Continue tightening report consistency checks based on real project testing.
+- [ ] Improve setup and usage guidance for Linux, WSL2, and other local coding agents.
+- [ ] Add a complete sample workspace and sanitized report examples.
+- [ ] Use real-project testing to improve the reproduction workflow and report consistency.
 
 ### Acknowledgements
 
