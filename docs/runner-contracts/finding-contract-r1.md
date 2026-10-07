@@ -115,9 +115,11 @@ identity before later disposition promotion can be trusted.
 ## Future Use
 
 ZC-003 adds a minimal independent verifier documented in
-[`independent-verifier-r1.md`](independent-verifier-r1.md). It reads
-`candidate.json`, validates it against the target contract, and writes
-`verifier-verdict.json` without turning the workflow into an autonomous runner.
+[`independent-verifier-r1.md`](independent-verifier-r1.md). Its default,
+non-execution path writes a diagnostic; only explicit fresh-execution opt-in
+writes the candidate-scoped canonical
+`verifier/<candidate_id>/verifier-verdict.json`. It does not turn the workflow
+into an autonomous runner.
 ZC-004 makes disposition promotion depend on a valid `confirmed_in_docker`
 verifier verdict plus the existing confirmed bundle gates.
 Disposition Integration R1 is documented in

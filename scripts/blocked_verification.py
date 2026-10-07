@@ -216,10 +216,19 @@ def _safe_json_object(workspace: Path, path: Path) -> tuple[dict[str, Any] | Non
 def _named_regular_files(workspace: Path, filename: str) -> list[Path]:
     matches: list[Path] = []
     for root, dirs, files in os.walk(workspace, followlinks=False):
+        relative_root = Path(root).relative_to(workspace).parts
         safe_dirs: list[str] = []
         for name in dirs:
             try:
                 if not stat.S_ISLNK(os.lstat(Path(root) / name).st_mode):
+                    if (
+                        name == "source"
+                        and len(relative_root) == 2
+                        and relative_root[0] == "poc"
+                        and relative_root[1] not in {".", ".."}
+                        and re.fullmatch(r"[0-9A-Za-z._-]+", relative_root[1])
+                    ):
+                        continue
                     safe_dirs.append(name)
             except OSError:
                 continue

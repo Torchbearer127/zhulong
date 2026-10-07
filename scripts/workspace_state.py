@@ -814,6 +814,15 @@ def _discover_named_files(
                 raise _contract_error("PATH_UNSAFE", "workspace directory cannot be inspected") from exc
             if stat.S_ISLNK(info.st_mode):
                 continue
+            relative_root = root_path.relative_to(workspace).parts
+            if (
+                directory == "source"
+                and len(relative_root) == 2
+                and relative_root[0] == "poc"
+                and relative_root[1] not in {".", ".."}
+                and re.fullmatch(r"[0-9A-Za-z._-]+", relative_root[1])
+            ):
+                continue
             if exclude_confirmed and root_path == workspace and directory == "confirmed":
                 continue
             if directory in {".git", "__pycache__", CHECKPOINT_DIRNAME} or directory.startswith("."):

@@ -5811,6 +5811,52 @@ def exercise_independent_verifier(plugin_root: Path) -> None:
         target = write_target("zhulong-target.yaml", valid_target_contract_yaml(runtime_type="docker"))
         candidate = write_candidate("candidate.json", candidate_doc())
 
+        def run_default_verify(
+            run_id: str,
+            *,
+            target_path: Path = target,
+            candidate_path: Path = candidate,
+            out: Path | None = None,
+        ) -> str:
+            command = [
+                sys.executable, str(verifier),
+                "--target-config", str(target_path),
+                "--candidate", str(candidate_path),
+                "--workspace", str(workspace),
+                "--run-id", run_id,
+                "--dry-run", "--no-execute",
+            ]
+            if out is not None:
+                command.extend(["--out", str(out)])
+            return run_capture_with_env(command, plugin_root, env, expected_returncode=1)
+
+        default_output = run_default_verify("no-execute-default")
+        if "verifier_diagnostic=" not in default_output:
+            raise SystemExit(f"FAILED: default no-execute output was not published as a diagnostic:\n{default_output}")
+        default_diagnostic = Path(default_output.split("verifier_diagnostic=", 1)[1].splitlines()[0])
+        canonical_verdict = verdict_path()
+        if canonical_verdict.exists() or default_diagnostic.name == "verifier-verdict.json":
+            raise SystemExit("FAILED: default no-execute output occupied the canonical verifier verdict path")
+        if default_diagnostic.relative_to(workspace).as_posix() != (
+            "verifier/CAND-0001/diagnostics/no-execute-default/verifier-diagnostic.json"
+        ):
+            raise SystemExit("FAILED: default no-execute diagnostic used the canonical fresh execution path")
+        default_doc = assert_valid_verdict(candidate, default_diagnostic)
+        if default_doc.get("verdict") != "unverified" or default_doc.get("candidate_id") != "CAND-0001":
+            raise SystemExit("FAILED: default no-execute diagnostic stopped being readable as a legacy verdict document")
+
+        from workspace_state import _discover_named_files
+
+        if any(path == default_diagnostic for _relative, path in _discover_named_files(workspace, "verifier-verdict.json")):
+            raise SystemExit("FAILED: a no-execute diagnostic was discovered as a verifier authority")
+        repeated_default = run_default_verify("no-execute-default")
+        if "diagnostic destination already exists" not in repeated_default:
+            raise SystemExit("FAILED: a repeated default run silently rewrote its existing diagnostic")
+        if default_diagnostic.read_bytes() != json.dumps(
+            default_doc, ensure_ascii=False, indent=2, sort_keys=True,
+        ).encode("utf-8") + b"\n":
+            raise SystemExit("FAILED: a repeated default run changed the existing diagnostic bytes")
+
         out_repo_root_without_fresh = verdict_path(suffix="repo-root-without-fresh.json")
         repo_root_without_fresh = subprocess.run(
             [
@@ -5843,8 +5889,79 @@ def exercise_independent_verifier(plugin_root: Path) -> None:
         unverified_doc = assert_valid_verdict(candidate, out_unverified)
         if unverified_doc["verdict"] != "unverified" or unverified_doc["oracle_result"]["success"]:
             raise SystemExit("FAILED: no-execute verifier did not produce unverified oracle mismatch")
-        if not (workspace / "verifier/CAND-0001/runs/no-execute/verifier.log").exists():
-            raise SystemExit("FAILED: verifier run directory was not created under workspace")
+        if not (workspace / "verifier/CAND-0001/diagnostics/no-execute/verifier.log").exists():
+            raise SystemExit("FAILED: no-execute diagnostic log was not kept outside the fresh run directory")
+
+        official_before = b"pre-existing official verifier result\n"
+        canonical_verdict.write_bytes(official_before)
+        output_after_official = run_default_verify("no-execute-after-official")
+        if canonical_verdict.read_bytes() != official_before:
+            raise SystemExit("FAILED: default no-execute verification overwrote an existing canonical verdict")
+        if "verifier_diagnostic=" not in output_after_official:
+            raise SystemExit("FAILED: default verification did not preserve a readable diagnostic beside an existing verdict")
+
+        explicit_official_output = run_default_verify("no-execute-explicit-canonical", out=canonical_verdict)
+        if "non-execution --out cannot name an authority artifact" not in explicit_official_output:
+            raise SystemExit("FAILED: explicit --out bypassed the canonical verdict protection")
+        if canonical_verdict.read_bytes() != official_before:
+            raise SystemExit("FAILED: explicit no-execute --out changed an existing canonical verdict")
+
+        same_named_verdict = workspace / "review-copy/verifier-verdict.json"
+        same_named_verdict.parent.mkdir(parents=True)
+        same_named_before = b"another pre-existing verdict path\n"
+        same_named_verdict.write_bytes(same_named_before)
+        same_named_output = run_default_verify("no-execute-explicit-same-name", out=same_named_verdict)
+        if "non-execution --out cannot name an authority artifact" not in same_named_output:
+            raise SystemExit("FAILED: explicit --out published a non-execution result at another discoverable verdict path")
+        if same_named_verdict.read_bytes() != same_named_before:
+            raise SystemExit("FAILED: explicit no-execute output overwrote a pre-existing same-name verdict")
+
+        diagnostic_destination = workspace / "review-copy/verifier-diagnostic.json"
+        diagnostic_destination_before = b"preserve prior diagnostic bytes\n"
+        diagnostic_destination.write_bytes(diagnostic_destination_before)
+        existing_diagnostic_output = run_default_verify(
+            "no-execute-explicit-existing-diagnostic", out=diagnostic_destination,
+        )
+        if "destination already exists" not in existing_diagnostic_output:
+            raise SystemExit("FAILED: no-execute output silently replaced an existing diagnostic destination")
+        if diagnostic_destination.read_bytes() != diagnostic_destination_before:
+            raise SystemExit("FAILED: no-execute output changed an existing diagnostic destination")
+
+        other_candidate_doc = candidate_doc()
+        other_candidate_doc["candidate_id"] = "CAND-0002"
+        other_candidate = write_candidate("candidate-other.json", other_candidate_doc)
+        other_candidate_output = run_default_verify(
+            "different-candidate-explicit-canonical",
+            candidate_path=other_candidate,
+            out=canonical_verdict,
+        )
+        if "non-execution --out cannot name an authority artifact" not in other_candidate_output:
+            raise SystemExit("FAILED: another candidate's legacy call bypassed the canonical verdict protection")
+        if canonical_verdict.read_bytes() != official_before:
+            raise SystemExit("FAILED: another candidate's no-execute call changed the official verdict")
+
+        invalid_target_for_guard = write_target("invalid-target-for-output-guard.yaml", "target: invalid\n")
+        invalid_target_output = run_default_verify(
+            "invalid-target-explicit-canonical", target_path=invalid_target_for_guard,
+            out=canonical_verdict,
+        )
+        if "non-execution --out cannot name an authority artifact" not in invalid_target_output:
+            raise SystemExit("FAILED: invalid target input bypassed the canonical verdict protection")
+        if canonical_verdict.read_bytes() != official_before:
+            raise SystemExit("FAILED: invalid target input changed the official verdict")
+
+        invalid_candidate_doc = candidate_doc()
+        invalid_candidate_doc["unexpected_field"] = "invalid candidate must not publish an authority artifact"
+        invalid_candidate_for_guard = write_candidate("candidate-invalid-for-output-guard.json", invalid_candidate_doc)
+        invalid_candidate_output = run_default_verify(
+            "invalid-candidate-explicit-canonical",
+            candidate_path=invalid_candidate_for_guard,
+            out=canonical_verdict,
+        )
+        if "non-execution --out cannot name an authority artifact" not in invalid_candidate_output:
+            raise SystemExit("FAILED: invalid candidate input bypassed the canonical verdict protection")
+        if canonical_verdict.read_bytes() != official_before:
+            raise SystemExit("FAILED: invalid candidate input changed the official verdict")
 
         out_allow_execute = verdict_path(suffix="allow-execute-blocked.json")
         allow_execute_output = run_verify(
@@ -6199,6 +6316,10 @@ def exercise_verifier_fresh_execution(plugin_root: Path) -> None:
         source_bytes = b"def handle(path):\n    return read_path(path)\n"
         source_path = source_dir / "importer.py"
         source_path.write_bytes(source_bytes)
+        executable_source_bytes = b"def fixture_helper():\n    return 'read-only executable source'\n"
+        executable_source_path = source_dir / "executable.py"
+        executable_source_path.write_bytes(executable_source_bytes)
+        executable_source_path.chmod(0o755)
         (workspace / ".gitattributes").write_text("*.py filter=fresh-selftest\n", encoding="utf-8")
 
         git_env = {
@@ -6223,7 +6344,7 @@ def exercise_verifier_fresh_execution(plugin_root: Path) -> None:
         git("init", "-q")
         git("config", "user.name", "Zhulong selftest")
         git("config", "user.email", "selftest@example.invalid")
-        git("add", "src/importer.py", ".gitattributes")
+        git("add", "src/importer.py", "src/executable.py", ".gitattributes")
         git("commit", "-qm", "fresh verifier fixture")
         tested_commit = git("rev-parse", "HEAD")
 
@@ -6271,8 +6392,15 @@ def exercise_verifier_fresh_execution(plugin_root: Path) -> None:
         git("replace", tested_commit, replacement_commit.stdout.decode("ascii").strip())
         try:
             raw_snapshot = verifier_module._read_git_tree(workspace.resolve(), tested_commit)
-            if raw_snapshot.get("src/importer.py") != source_bytes:
+            importer_entry = raw_snapshot.get("src/importer.py")
+            executable_entry = raw_snapshot.get("src/executable.py")
+            if getattr(importer_entry, "raw", importer_entry) != source_bytes or getattr(executable_entry, "raw", executable_entry) != executable_source_bytes:
                 raise SystemExit("FAILED: verifier source snapshot followed a Git replacement ref instead of the tested commit")
+            if (
+                getattr(importer_entry, "git_mode", None) != "100644"
+                or getattr(executable_entry, "git_mode", None) != "100755"
+            ):
+                raise SystemExit("FAILED: verifier Git tree reader dropped the tracked 100644/100755 file modes")
         finally:
             git("replace", "-d", tested_commit)
 
@@ -7113,6 +7241,7 @@ def exercise_verifier_fresh_execution(plugin_root: Path) -> None:
         original_reservation_write = verifier_module._write_exclusive_bytes
         publication_stderr = io.StringIO()
         reservation_inode: list[int] = []
+        rollback_identity_sinks: list[list[os.stat_result]] = []
 
         def capture_reservation(root: Path, path: Path, raw: bytes, **kwargs: Any) -> Any:
             result = original_reservation_write(root, path, raw, **kwargs)
@@ -7126,6 +7255,10 @@ def exercise_verifier_fresh_execution(plugin_root: Path) -> None:
         def fail_verdict_publication(root: Path, path: Path, raw: bytes, **kwargs: Any) -> None:
             if path == out_path:
                 kwargs["post_write_validator"] = reject_published_verdict
+                rollback_sink = kwargs.get("rollback_stat_sink")
+                if rollback_sink is None:
+                    raise SystemExit("FAILED: verdict writer did not request a verified rollback identity")
+                rollback_identity_sinks.append(rollback_sink)
             original_atomic_write(root, path, raw, **kwargs)
 
         with mock.patch.dict(os.environ, env):
@@ -7141,21 +7274,40 @@ def exercise_verifier_fresh_execution(plugin_root: Path) -> None:
                                 raise SystemExit(f"FAILED: verdict publication failure changed its main reason: {exc}") from exc
                         else:
                             raise SystemExit("FAILED: injected verdict publication failure was ignored")
+        if len(reservation_inode) != 1 or out_path.exists() or out_path.is_symlink():
+            raise SystemExit("FAILED: verified publication rollback left an unowned empty verdict reservation")
         if (
-            len(reservation_inode) != 1
-            or not out_path.is_file()
-            or out_path.stat().st_size != 0
-            or os.lstat(out_path).st_ino == reservation_inode[0]
+            len(rollback_identity_sinks) != 1
+            or len(rollback_identity_sinks[0]) != 1
+            or rollback_identity_sinks[0][0].st_ino == reservation_inode[0]
+            or rollback_identity_sinks[0][0].st_size != 0
+            or not stat.S_ISREG(rollback_identity_sinks[0][0].st_mode)
+            or rollback_identity_sinks[0][0].st_nlink != 1
         ):
-            raise SystemExit("FAILED: publication rollback did not leave its new empty inode for cautious cleanup")
-        if "WARNING: fresh verifier reservation could not be safely released" not in publication_stderr.getvalue():
-            raise SystemExit("FAILED: uncertain verdict publication residue was not reported")
+            raise SystemExit("FAILED: writer did not transfer only its verified empty rollback identity")
+        if "WARNING: fresh verifier reservation could not be safely released" in publication_stderr.getvalue():
+            raise SystemExit("FAILED: verified rollback identity was not transferred to cautious reservation cleanup")
         publication_binding = workspace / "verifier/CAND-0001/runs" / publication_run_id / "run-binding.json"
         if not publication_binding.is_file() or not json.loads(publication_binding.read_text(encoding="utf-8")):
             raise SystemExit("FAILED: verdict publication failure discarded the already-published run binding")
+        publication_case = workspace / "evidence" / case_id_for(publication_run_id)
+        if (
+            not (publication_case / "verification-result.json").is_file()
+            or not (workspace / "poc" / publication_run_id / "source").is_dir()
+        ):
+            raise SystemExit("FAILED: verdict rollback removed completed case evidence or the source snapshot")
+        publication_events_after = journal_path.read_bytes()
+        publication_event_docs = [json.loads(line) for line in publication_events_after.splitlines()]
+        if (
+            not publication_events_after.startswith(publication_journal)
+            or [event.get("event_name") for event in publication_event_docs[-2:]]
+            != ["verification_case_started", "verification_case_completed"]
+        ):
+            raise SystemExit("FAILED: verdict rollback rewound or removed already-appended journal events")
         if (docker_log.read_bytes() if docker_log.exists() else b"") == publication_calls:
             raise SystemExit("FAILED: verdict publication failure fixture did not reach the fake Docker wrapper")
-        out_path.unlink()
+        if out_path.exists() or out_path.is_symlink():
+            out_path.unlink()
         journal_path.write_bytes(publication_journal)
         state_path.write_bytes(publication_state)
 
@@ -7274,6 +7426,36 @@ def exercise_verifier_fresh_execution(plugin_root: Path) -> None:
             raise SystemExit("FAILED: rejected same-run retry reached the Docker substitute")
         Path(env["ZHULONG_FRESH_TEST_DOCKER_STATE"]).unlink(missing_ok=True)
 
+        noexecute_run_id = "fresh-valid"
+        noexecute_docker_calls = docker_log.read_bytes() if docker_log.exists() else b""
+        noexecute_proc = subprocess.run(
+            [
+                sys.executable, str(verifier),
+                "--target-config", str(target_path.resolve()),
+                "--candidate", str(candidate_path.resolve()),
+                "--workspace", str(workspace.resolve()),
+                "--run-id", noexecute_run_id,
+                "--dry-run", "--no-execute",
+            ],
+            cwd=plugin_root,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        noexecute_output = (noexecute_proc.stdout or "") + (noexecute_proc.stderr or "")
+        if (
+            noexecute_proc.returncode != 1
+            or "verifier_diagnostic=" not in noexecute_output
+            or out_path.exists()
+            or (workspace / "verifier/CAND-0001/runs" / noexecute_run_id).exists()
+            or (workspace / "poc" / noexecute_run_id).exists()
+        ):
+            raise SystemExit(f"FAILED: default no-execute call occupied a fresh execution destination:\n{noexecute_output}")
+        noexecute_diagnostic = Path(noexecute_output.split("verifier_diagnostic=", 1)[1].splitlines()[0])
+        run([sys.executable, str(verdict_validator), "--candidate", str(candidate_path), str(noexecute_diagnostic)], plugin_root)
+        if (docker_log.read_bytes() if docker_log.exists() else b"") != noexecute_docker_calls:
+            raise SystemExit("FAILED: default no-execute diagnostic crossed the Docker boundary")
+
         command = verifier_command("fresh-valid")
         proc = subprocess.run(
             command,
@@ -7357,16 +7539,46 @@ def exercise_verifier_fresh_execution(plugin_root: Path) -> None:
         if "sha256:" + hashlib.sha256(source_manifest_raw).hexdigest() != source_snapshot.get("manifest_sha256"):
             raise SystemExit("FAILED: run binding did not retain the durable source manifest digest")
         source_manifest_doc = json.loads(source_manifest_raw.decode("utf-8"))
+        manifest_by_path = {
+            item.get("path"): item
+            for item in source_manifest_doc.get("files", [])
+            if isinstance(item, dict)
+        }
+        importer_snapshot = workspace / source_snapshot["path"] / "src/importer.py"
+        executable_snapshot = workspace / source_snapshot["path"] / "src/executable.py"
         if (
             source_manifest_doc.get("tested_commit") != tested_commit
-            or not any(
-                item.get("path") == "src/importer.py"
-                and item.get("sha256") == "sha256:" + hashlib.sha256(source_bytes).hexdigest()
-                for item in source_manifest_doc.get("files", [])
-                if isinstance(item, dict)
-            )
+            or manifest_by_path.get("src/importer.py") != {
+                "path": "src/importer.py",
+                "git_mode": "100644",
+                "snapshot_mode": "0444",
+                "sha256": "sha256:" + hashlib.sha256(source_bytes).hexdigest(),
+            }
+            or manifest_by_path.get("src/executable.py") != {
+                "path": "src/executable.py",
+                "git_mode": "100755",
+                "snapshot_mode": "0555",
+                "sha256": "sha256:" + hashlib.sha256(executable_source_bytes).hexdigest(),
+            }
+            or stat.S_IMODE(importer_snapshot.stat().st_mode) != 0o444
+            or stat.S_IMODE(executable_snapshot.stat().st_mode) != 0o555
         ):
-            raise SystemExit("FAILED: durable source manifest lost its tested commit or source path/hash binding")
+            raise SystemExit("FAILED: source snapshot or manifest did not bind Git mode, snapshot mode, and content")
+        original_executable_snapshot_mode = stat.S_IMODE(executable_snapshot.stat().st_mode)
+        os.chmod(executable_snapshot, 0o444)
+        try:
+            verifier_module._verify_snapshot_unchanged(
+                workspace,
+                workspace / source_snapshot["path"],
+                source_manifest_doc["files"],
+            )
+        except verifier_module.VerifierError as exc:
+            if "mode" not in str(exc):
+                raise SystemExit(f"FAILED: executable-bit snapshot drift had the wrong rejection: {exc}") from exc
+        else:
+            raise SystemExit("FAILED: source snapshot verifier ignored executable-bit drift")
+        finally:
+            os.chmod(executable_snapshot, original_executable_snapshot_mode)
 
         large_manifest_files = [
             {"path": f"{index:04d}-{'a' * 182}", "sha256": "sha256:" + "0" * 64}
@@ -9255,8 +9467,13 @@ def exercise_p7_wording_closure(plugin_root: Path) -> None:
     )
     require_text(
         plugin_root / "README.md",
-        "Codex user-level skill support with installed selftest, platform-neutral launcher",
-        "README Codex completed support",
+        "python3 ~/.agents/skills/zhulong/scripts/selftest_plugin.py",
+        "README Codex installed skill selftest command",
+    )
+    require_text(
+        plugin_root / "README.md",
+        "~/.agents/skills/zhulong/",
+        "README Codex user-level skill path",
     )
     forbid_text(
         plugin_root / "README.md",
@@ -9265,8 +9482,13 @@ def exercise_p7_wording_closure(plugin_root: Path) -> None:
     )
     require_text(
         plugin_root / "README.zh-CN.md",
-        "Codex 用户级 skill 支持、安装目录自检、平台无关启动入口",
-        "Chinese README Codex completed support",
+        "python3 ~/.agents/skills/zhulong/scripts/selftest_plugin.py",
+        "Chinese README Codex installed skill selftest command",
+    )
+    require_text(
+        plugin_root / "README.zh-CN.md",
+        "~/.agents/skills/zhulong/",
+        "Chinese README Codex user-level skill path",
     )
     forbid_text(
         plugin_root / "README.zh-CN.md",
@@ -11327,6 +11549,92 @@ def exercise_structured_blocker_cli(plugin_root: Path) -> None:
         resolved_payload = json.loads(resolved_proc.stdout)
         if resolved_payload.get("blocked") is not False or "case:C1" not in resolved_payload.get("resolved_identities", []):
             raise SystemExit(f"FAILED: same-identity confirmed result did not clear blocker: {resolved_payload}")
+
+        scan_probe = (
+            "import json,sys; from pathlib import Path; sys.path.insert(0, sys.argv[2]); "
+            "from blocked_verification import detect_blocked_verification, _named_regular_files; "
+            "root=Path(sys.argv[1]); print(json.dumps({"
+            "'detection':detect_blocked_verification(root),"
+            "'verdicts':[p.relative_to(root).as_posix() for p in _named_regular_files(root,'verifier-verdict.json')],"
+            "'results':[p.relative_to(root).as_posix() for p in _named_regular_files(root,'verification-result.json')]"
+            "},sort_keys=True))"
+        )
+        unbound_workspace = Path(tempdir) / "unbound-source-snapshot"
+        unbound_workspace.mkdir()
+        source_root = unbound_workspace / "poc/interrupted-run/source/nested"
+        source_root.mkdir(parents=True)
+        (source_root / "candidate.json").write_text(
+            json.dumps(valid_candidate_contract(), sort_keys=True) + "\n", encoding="utf-8",
+        )
+        source_verdict = source_root / "verifier-verdict.json"
+        source_verdict.write_text(json.dumps({
+            "candidate_id": "CAND-UNBOUND",
+            "verdict": "blocked",
+            "verification_status": "blocked_missing_image",
+        }, sort_keys=True) + "\n", encoding="utf-8")
+        source_result = source_root / "verification-result.json"
+        source_result.write_text(json.dumps({
+            "case_id": "CASE-UNBOUND",
+            "status": "blocked_missing_image",
+            "authority_event_committed": True,
+        }, sort_keys=True) + "\n", encoding="utf-8")
+        if (unbound_workspace / "verifier/CAND-UNBOUND/runs/interrupted-run/run-binding.json").exists():
+            raise SystemExit("FAILED: incomplete source-snapshot blocker fixture unexpectedly has a run binding")
+        canonical_verdict = unbound_workspace / "verifier/CAND-CANONICAL/verifier-verdict.json"
+        canonical_verdict.parent.mkdir(parents=True)
+        canonical_verdict.write_text(json.dumps({
+            "candidate_id": "CAND-CANONICAL",
+            "verdict": "confirmed_in_docker",
+            "verification_status": "confirmed_in_docker",
+        }, sort_keys=True) + "\n", encoding="utf-8")
+        canonical_result = unbound_workspace / "evidence/CASE-CANONICAL/verification-result.json"
+        canonical_result.parent.mkdir(parents=True)
+        canonical_result.write_text(json.dumps({
+            "case_id": "CASE-CANONICAL",
+            "status": "confirmed_in_docker",
+        }, sort_keys=True) + "\n", encoding="utf-8")
+
+        def scan_blockers(root: Path) -> dict[str, Any]:
+            proc = subprocess.run(
+                [sys.executable, "-c", scan_probe, str(root), str(plugin_root / "scripts")],
+                cwd=plugin_root,
+                capture_output=True,
+                text=True,
+            )
+            if proc.returncode != 0:
+                raise SystemExit(f"FAILED: blocker discovery probe failed: {proc.stderr}")
+            return json.loads(proc.stdout)
+
+        source_only_payload = scan_blockers(unbound_workspace)
+        source_detection = source_only_payload.get("detection", {})
+        if (
+            source_detection.get("blocked") is not False
+            or "candidate:CAND-CANONICAL" not in source_detection.get("resolved_identities", [])
+            or "case:CASE-CANONICAL" not in source_detection.get("resolved_identities", [])
+            or "poc/interrupted-run/source/nested/verifier-verdict.json" in source_only_payload.get("verdicts", [])
+            or "poc/interrupted-run/source/nested/verification-result.json" in source_only_payload.get("results", [])
+        ):
+            raise SystemExit(f"FAILED: unbound PoC source fixture influenced blocker authority: {source_only_payload}")
+
+        near_miss_verdict = unbound_workspace / "poc/interrupted-run/source-near/verifier-verdict.json"
+        near_miss_result = unbound_workspace / "poc/interrupted-run/nested/source/verification-result.json"
+        invalid_run_verdict = unbound_workspace / "poc/invalid run/source/verifier-verdict.json"
+        for path, document in (
+            (near_miss_verdict, {"candidate_id": "CAND-NEAR", "verdict": "blocked", "verification_status": "blocked"}),
+            (near_miss_result, {"case_id": "CASE-NEAR", "status": "blocked_missing_image"}),
+            (invalid_run_verdict, {"candidate_id": "CAND-INVALID-RUN", "verdict": "blocked", "verification_status": "blocked"}),
+        ):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(document, sort_keys=True) + "\n", encoding="utf-8")
+        near_miss_payload = scan_blockers(unbound_workspace)
+        near_detection = near_miss_payload.get("detection", {})
+        if (
+            near_detection.get("blocked") is not True
+            or "poc/interrupted-run/source-near/verifier-verdict.json" not in near_miss_payload.get("verdicts", [])
+            or "poc/interrupted-run/nested/source/verification-result.json" not in near_miss_payload.get("results", [])
+            or "poc/invalid run/source/verifier-verdict.json" not in near_miss_payload.get("verdicts", [])
+        ):
+            raise SystemExit(f"FAILED: blocker scanner exempted a near-miss source path: {near_miss_payload}")
     print("STRUCTURED BLOCKER SELFTEST PASSED: blocked facts first, same-identity recovery only")
 
 
@@ -12673,7 +12981,12 @@ def exercise_handoff_checkpoint_contract(plugin_root: Path) -> None:
             if current != original:
                 raise SystemExit(f"FAILED: {label} validator changed authoritative {relative}")
 
-    from workspace_state import _completion_result_from_authority, _completion_source_from_protocol
+    from workspace_state import (
+        _completion_result_from_authority,
+        _completion_source_from_protocol,
+        _discover_candidate_files,
+        _discover_named_files,
+    )
 
     if _completion_result_from_authority(
         {"result": "completed_with_confirmed_bundles"}, [], protocol_mode="legacy_r1"
@@ -12775,6 +13088,51 @@ def exercise_handoff_checkpoint_contract(plugin_root: Path) -> None:
             raise SystemExit("FAILED: agent-notes.md was not recorded as advisory")
         if validate(workspace).get("ok") is not True:
             raise SystemExit("FAILED: current handoff did not validate")
+
+        interrupted_source = workspace / "poc/interrupted-run/source"
+        interrupted_source.mkdir(parents=True)
+        (interrupted_source / "nested").mkdir()
+        source_candidate = interrupted_source / "nested/candidate.json"
+        source_candidate.write_bytes(candidate_path.read_bytes())
+        source_verdict = interrupted_source / "nested/verifier-verdict.json"
+        source_verdict.write_bytes(verdict_path.read_bytes())
+        source_recording = interrupted_source / "recording-evidence.json"
+        source_recording.write_text("{}\n", encoding="utf-8")
+        if (workspace / "verifier/CAND-0001/runs/interrupted-run/run-binding.json").exists():
+            raise SystemExit("FAILED: incomplete PoC snapshot fixture unexpectedly has a run binding")
+        candidate_relatives = {relative for relative, _path in _discover_candidate_files(workspace)}
+        verdict_relatives = {
+            relative for relative, _path in _discover_named_files(workspace, "verifier-verdict.json")
+        }
+        recording_relatives = {
+            relative for relative, _path in _discover_named_files(workspace, "recording-evidence.json")
+        }
+        if "candidates/CAND-0001/candidate.json" not in candidate_relatives:
+            raise SystemExit("FAILED: canonical candidate stopped being discoverable")
+        if "verifier/CAND-0001/verifier-verdict.json" not in verdict_relatives:
+            raise SystemExit("FAILED: canonical verifier verdict stopped being discoverable")
+        if "verifier/CAND-0001/runs/run-selftest/inputs/candidate.json" in candidate_relatives:
+            raise SystemExit("FAILED: exact verifier inputs/candidate.json exclusion regressed")
+        if any(
+            relative in candidate_relatives
+            for relative in ("poc/interrupted-run/source/nested/candidate.json",)
+        ) or "poc/interrupted-run/source/nested/verifier-verdict.json" in verdict_relatives:
+            raise SystemExit("FAILED: an unbound PoC source snapshot was discovered as authority material")
+        if "poc/interrupted-run/source/recording-evidence.json" in recording_relatives:
+            raise SystemExit("FAILED: PoC source recording fixture was discovered as workspace evidence")
+
+        near_miss_paths = (
+            workspace / "poc/interrupted-run/source-near/candidate.json",
+            workspace / "poc/interrupted-run/nested/source/candidate.json",
+            workspace / "poc/invalid run/source/candidate.json",
+        )
+        for near_miss in near_miss_paths:
+            near_miss.parent.mkdir(parents=True, exist_ok=True)
+            near_miss.write_bytes(candidate_path.read_bytes())
+        near_candidate_relatives = {relative for relative, _path in _discover_candidate_files(workspace)}
+        if not {path.relative_to(workspace).as_posix() for path in near_miss_paths}.issubset(near_candidate_relatives):
+            raise SystemExit("FAILED: a near-miss PoC path was incorrectly exempted from candidate discovery")
+
         original_verdict = verdict_path.read_bytes()
         drifted_verdict = json.loads(original_verdict.decode("utf-8"))
         drifted_verdict["target_ref"]["tested_ref"] = "different-structured-ref"

@@ -160,13 +160,13 @@ def _rollback_publication(
     previous_raw: bytes | None,
     previous_mode: int | None,
     published: tuple[int, int, int, int, int],
-) -> None:
+) -> os.stat_result | None:
     _validate_parent(root, path)
     _require_unchanged_target(path, published)
     if previous_raw is None:
         os.unlink(path)
         _fsync_directory(path.parent)
-        return
+        return None
 
     fd = -1
     temporary = ""
@@ -180,6 +180,30 @@ def _rollback_publication(
             os.fsync(fd)
         except OSError as exc:
             file_fsync_error = exc
+        os.lseek(fd, 0, os.SEEK_SET)
+        restored_staging = bytearray()
+        while len(restored_staging) <= len(previous_raw):
+            chunk = os.read(fd, min(65536, len(previous_raw) + 1 - len(restored_staging)))
+            if not chunk:
+                break
+            restored_staging.extend(chunk)
+        staged_info = os.fstat(fd)
+        if (
+            bytes(restored_staging) != previous_raw
+            or not stat.S_ISREG(staged_info.st_mode)
+            or staged_info.st_uid != os.geteuid()
+            or staged_info.st_nlink != 1
+            or staged_info.st_size != len(previous_raw)
+            or stat.S_IMODE(staged_info.st_mode) != (previous_mode if previous_mode is not None else 0o600)
+        ):
+            raise _error("EVIDENCE_ROLLBACK_UNVERIFIED", "rollback staging file did not retain the prior bytes and identity")
+        staged_identity = (
+            staged_info.st_dev,
+            staged_info.st_ino,
+            staged_info.st_nlink,
+            staged_info.st_uid,
+            staged_info.st_mode,
+        )
         os.close(fd)
         fd = -1
         _validate_parent(root, path)
@@ -192,6 +216,33 @@ def _rollback_publication(
             directory_fsync_error = exc
         if file_fsync_error is not None or directory_fsync_error is not None:
             raise _error("EVIDENCE_ROLLBACK_DURABILITY_FAILED", "old host evidence bytes were restored but rollback fsync failed")
+        restored_identity = _existing_identity(path)
+        if restored_identity != staged_identity:
+            raise _error("EVIDENCE_ROLLBACK_UNVERIFIED", "restored host evidence identity changed during rollback")
+        restored_raw = _read_bytes_with_identity(
+            root,
+            path,
+            max_bytes=max(len(previous_raw), 1),
+            expected=restored_identity,
+        )
+        if restored_raw != previous_raw:
+            raise _error("EVIDENCE_ROLLBACK_UNVERIFIED", "restored host evidence bytes do not match the prior bytes")
+        final_info = os.lstat(path)
+        final_identity = (
+            final_info.st_dev,
+            final_info.st_ino,
+            final_info.st_nlink,
+            final_info.st_uid,
+            final_info.st_mode,
+        )
+        if (
+            final_identity != restored_identity
+            or final_info.st_size != len(previous_raw)
+            or final_info.st_mtime_ns != staged_info.st_mtime_ns
+            or final_info.st_ctime_ns < staged_info.st_ctime_ns
+        ):
+            raise _error("EVIDENCE_ROLLBACK_UNVERIFIED", "restored host evidence changed after rollback verification")
+        return final_info
     finally:
         if fd >= 0:
             os.close(fd)
@@ -210,6 +261,7 @@ def atomic_write_bytes(
     max_bytes: int = MAX_CONTROL_BYTES,
     expected_target_identity: tuple[int, int, int, int, int] | None = None,
     post_write_validator: Callable[[bytes], None] | None = None,
+    rollback_stat_sink: list[os.stat_result] | None = None,
 ) -> None:
     if len(raw) > max_bytes:
         raise _error("EVIDENCE_SIZE_LIMIT", "host control evidence exceeds its size limit")
@@ -250,7 +302,12 @@ def atomic_write_bytes(
     except Exception as exc:
         if published is not None:
             try:
-                _rollback_publication(root, path, previous_raw, previous_mode, published)
+                rollback_info = _rollback_publication(root, path, previous_raw, previous_mode, published)
+                if rollback_stat_sink is not None and previous_raw == b"" and rollback_info is not None:
+                    try:
+                        rollback_stat_sink.append(rollback_info)
+                    except Exception:
+                        pass
             except Exception as rollback_exc:
                 if isinstance(rollback_exc, SafeEvidenceError):
                     raise rollback_exc from exc
@@ -277,10 +334,17 @@ def atomic_write_json(
     *,
     expected_target_identity: tuple[int, int, int, int, int] | None = None,
     post_write_validator: Callable[[bytes], None] | None = None,
+    rollback_stat_sink: list[os.stat_result] | None = None,
 ) -> None:
     raw = (json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
     if expected_target_identity is None:
-        atomic_write_bytes(root, path, raw, post_write_validator=post_write_validator)
+        atomic_write_bytes(
+            root,
+            path,
+            raw,
+            post_write_validator=post_write_validator,
+            rollback_stat_sink=rollback_stat_sink,
+        )
         return
     atomic_write_bytes(
         root,
@@ -288,6 +352,7 @@ def atomic_write_json(
         raw,
         expected_target_identity=expected_target_identity,
         post_write_validator=post_write_validator,
+        rollback_stat_sink=rollback_stat_sink,
     )
 
 

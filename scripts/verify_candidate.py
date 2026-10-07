@@ -80,14 +80,14 @@ def utc_now() -> str:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Validate a Zhulong target/candidate pair and write an independent "
-            "verifier-verdict.json. R1 defaults to no host-side execution."
+            "Validate a Zhulong target/candidate pair. R1 defaults to an "
+            "unexecuted diagnostic; fresh R2 verdict publication is opt-in."
         )
     )
     parser.add_argument("--target-config", required=True, help="Path to zhulong-target.yaml")
     parser.add_argument("--candidate", required=True, help="Path to candidate.json")
     parser.add_argument("--workspace", required=True, help="Zhulong audit workspace directory")
-    parser.add_argument("--out", help="Output verifier-verdict.json path. Defaults under <workspace>/verifier/<candidate_id>.")
+    parser.add_argument("--out", help="Output JSON path. Non-execution defaults to a candidate-scoped diagnostic path.")
     parser.add_argument("--run-id", help=f"Verifier run id. Default: {DEFAULT_RUN_ID}")
     parser.add_argument("--dry-run", action="store_true", help="Do not execute Docker or PoC commands.")
     parser.add_argument("--no-execute", action="store_true", help="Do not execute Docker or PoC commands.")
@@ -278,17 +278,28 @@ def base_verdict(
     return doc
 
 
+def _write_exclusive_text(path: Path, text: str, label: str) -> None:
+    try:
+        with path.open("x", encoding="utf-8") as stream:
+            stream.write(text)
+    except FileExistsError as exc:
+        raise VerifierError(f"{label} destination already exists") from exc
+    except OSError as exc:
+        raise VerifierError(f"{label} could not be written safely") from exc
+
+
 def write_log(run_dir: Path, message: str) -> Path:
     run_dir.mkdir(parents=True, exist_ok=True)
     log_path = run_dir / "verifier.log"
-    log_path.write_text(message.rstrip() + "\n", encoding="utf-8")
+    _write_exclusive_text(log_path, message.rstrip() + "\n", "verifier diagnostic log")
     return log_path
 
 
 def write_fixture_artifact(run_dir: Path, verdict: str, oracle_type: str) -> Path:
     run_dir.mkdir(parents=True, exist_ok=True)
     artifact = run_dir / "fixture-oracle.json"
-    artifact.write_text(
+    _write_exclusive_text(
+        artifact,
         json.dumps(
             {
                 "schema_version": 1,
@@ -303,7 +314,7 @@ def write_fixture_artifact(run_dir: Path, verdict: str, oracle_type: str) -> Pat
             sort_keys=True,
         )
         + "\n",
-        encoding="utf-8",
+        "verifier diagnostic artifact",
     )
     return artifact
 
@@ -319,7 +330,11 @@ def validate_output(verdict_path: Path, candidate_path: Path) -> None:
 
 def write_and_validate(verdict: dict[str, Any], out_path: Path, candidate_path: Path) -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(verdict, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    _write_exclusive_text(
+        out_path,
+        json.dumps(verdict, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        "verifier diagnostic",
+    )
     validate_output(out_path, candidate_path)
 
 
@@ -647,7 +662,13 @@ def _resolve_commit(repo_root: Path, revision: str) -> str:
     return resolved
 
 
-def _read_git_tree(repo_root: Path, commit: str) -> dict[str, bytes]:
+@dataclass(frozen=True)
+class _GitTreeEntry:
+    git_mode: str
+    raw: bytes
+
+
+def _read_git_tree(repo_root: Path, commit: str) -> dict[str, _GitTreeEntry]:
     tree = _git(
         repo_root,
         "ls-tree",
@@ -658,7 +679,7 @@ def _read_git_tree(repo_root: Path, commit: str) -> dict[str, bytes]:
         commit,
         max_output_bytes=64 * 1024 * 1024,
     )
-    entries: list[tuple[str, str, int]] = []
+    entries: list[tuple[str, str, str, int]] = []
     seen_paths: set[str] = set()
     folded_paths: set[str] = set()
     total_declared = 0
@@ -697,11 +718,11 @@ def _read_git_tree(repo_root: Path, commit: str) -> dict[str, bytes]:
         total_declared += size
         if total_declared > MAX_SNAPSHOT_TOTAL_BYTES:
             raise VerifierError("Git source tree exceeds the 256 MiB total limit")
-        entries.append((path, object_id, size))
+        entries.append((path, mode, object_id, size))
         if len(entries) > MAX_SNAPSHOT_FILES:
             raise VerifierError("Git source tree exceeds the 10,000-file limit")
 
-    object_input = b"".join(object_id.encode("ascii") + b"\n" for _path, object_id, _size in entries)
+    object_input = b"".join(object_id.encode("ascii") + b"\n" for _path, _mode, object_id, _size in entries)
     if not entries:
         return {}
     batch = _git(
@@ -711,10 +732,10 @@ def _read_git_tree(repo_root: Path, commit: str) -> dict[str, bytes]:
         input_bytes=object_input,
         max_output_bytes=MAX_SNAPSHOT_TOTAL_BYTES + MAX_SNAPSHOT_FILES * 128,
     )
-    contents: dict[str, bytes] = {}
+    contents: dict[str, _GitTreeEntry] = {}
     offset = 0
     total = 0
-    for path, expected_id, expected_size in entries:
+    for path, git_mode, expected_id, expected_size in entries:
         header_end = batch.find(b"\n", offset)
         if header_end < 0:
             raise VerifierError("Git returned a truncated source blob header")
@@ -731,7 +752,7 @@ def _read_git_tree(repo_root: Path, commit: str) -> dict[str, bytes]:
             raise VerifierError("Git returned a truncated source blob")
         content = batch[offset:end]
         total += len(content)
-        contents[path] = content
+        contents[path] = _GitTreeEntry(git_mode=git_mode, raw=content)
         offset = end + 1
     if total != total_declared:
         raise VerifierError("Git source blob sizes do not match the bounded tree listing")
@@ -742,14 +763,15 @@ def _read_git_tree(repo_root: Path, commit: str) -> dict[str, bytes]:
 
 def _validate_source_refs(
     repo_root: Path,
-    contents: dict[str, bytes],
+    contents: dict[str, _GitTreeEntry],
     source_refs: list[dict[str, Any]],
 ) -> None:
     for source_ref in source_refs:
         path = source_ref["path"]
-        content = contents.get(path)
-        if content is None:
+        entry = contents.get(path)
+        if entry is None:
             raise VerifierError("reviewed source reference is not a regular file in the tested Git tree")
+        content = entry.raw
         if _sha256(content) != source_ref["sha256"]:
             raise VerifierError("reviewed source reference content digest does not match the tested Git blob")
         try:
@@ -1014,6 +1036,88 @@ def _reservation_identity(reservations: list[_FreshReservation], path: Path) -> 
     raise VerifierError("fresh verifier publication has no owned empty reservation")
 
 
+def _adopt_verified_rollback_identity(
+    reservations: list[_FreshReservation],
+    path: Path,
+    rollback_stats: list[os.stat_result],
+) -> bool:
+    matches = [item for item in reservations if item.active and item.path == path]
+    if len(matches) != 1 or len(rollback_stats) != 1:
+        return False
+    reservation = matches[0]
+    witness = rollback_stats[0]
+    verify_fd = -1
+    try:
+        root = reservation.root.absolute()
+        parent_parts = reservation.path.parent.absolute().relative_to(root).parts
+        current = root
+        parent_path_info = os.lstat(current)
+        if (
+            stat.S_ISLNK(parent_path_info.st_mode)
+            or not stat.S_ISDIR(parent_path_info.st_mode)
+            or parent_path_info.st_uid != os.geteuid()
+        ):
+            return False
+        for part in parent_parts:
+            current = current / part
+            parent_path_info = os.lstat(current)
+            if (
+                stat.S_ISLNK(parent_path_info.st_mode)
+                or not stat.S_ISDIR(parent_path_info.st_mode)
+                or parent_path_info.st_uid != os.geteuid()
+            ):
+                return False
+        parent_info = os.fstat(reservation.parent_fd)
+        if (
+            (parent_path_info.st_dev, parent_path_info.st_ino) != (reservation.parent_device, reservation.parent_inode)
+            or (parent_info.st_dev, parent_info.st_ino) != (reservation.parent_device, reservation.parent_inode)
+            or parent_info.st_uid != reservation.parent_uid
+            or stat.S_IMODE(parent_info.st_mode) != reservation.parent_mode
+        ):
+            return False
+
+        def matches_witness(info: os.stat_result) -> bool:
+            return (
+                stat.S_ISREG(info.st_mode)
+                and stat.S_IMODE(info.st_mode) == 0o600
+                and info.st_uid == os.geteuid()
+                and info.st_nlink == 1
+                and info.st_size == 0
+                and _reservation_stat_identity(info) == _reservation_stat_identity(witness)
+                and info.st_mtime_ns == witness.st_mtime_ns
+                and info.st_ctime_ns == witness.st_ctime_ns
+            )
+
+        linked = os.stat(reservation.path.name, dir_fd=reservation.parent_fd, follow_symlinks=False)
+        if not matches_witness(linked):
+            return False
+        verify_fd = os.open(
+            reservation.path.name,
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+            dir_fd=reservation.parent_fd,
+        )
+        opened = os.fstat(verify_fd)
+        if not matches_witness(opened) or os.read(verify_fd, 1):
+            return False
+        linked_again = os.stat(reservation.path.name, dir_fd=reservation.parent_fd, follow_symlinks=False)
+        if not matches_witness(linked_again):
+            return False
+    except (OSError, SafeEvidenceError, ValueError):
+        return False
+    finally:
+        if verify_fd >= 0:
+            try:
+                os.close(verify_fd)
+            except OSError:
+                pass
+
+    reservation.file_identity = _reservation_stat_identity(witness)
+    reservation.file_size = witness.st_size
+    reservation.file_mtime_ns = witness.st_mtime_ns
+    reservation.file_ctime_ns = witness.st_ctime_ns
+    return True
+
+
 def _mark_reservation_published(reservations: list[_FreshReservation], path: Path) -> None:
     for reservation in reservations:
         if reservation.active and reservation.path == path:
@@ -1122,16 +1226,32 @@ def _case_id_for(candidate_digest: str, run_id: str) -> str:
     return "verifier-" + hashlib.sha256(seed).hexdigest()[:32]
 
 
-def _snapshot_git_tree(workspace: Path, run_id: str, contents: dict[str, bytes]) -> tuple[Path, list[dict[str, str]]]:
+def _snapshot_git_tree(
+    workspace: Path,
+    run_id: str,
+    contents: dict[str, _GitTreeEntry],
+) -> tuple[Path, list[dict[str, str]]]:
     snapshot_root = workspace / "poc" / run_id
     source_root = snapshot_root / "source"
     _create_fresh_directory(workspace, snapshot_root, "fresh snapshot directory")
     _create_fresh_directory(workspace, source_root, "source snapshot directory")
     manifest: list[dict[str, str]] = []
+    snapshot_modes = {"100644": 0o444, "100755": 0o555}
     for relative in sorted(contents):
+        entry = contents[relative]
+        mode = snapshot_modes.get(entry.git_mode)
+        if mode is None:
+            raise VerifierError("Git source tree contains an unsupported regular-file mode")
         destination = source_root / PurePosixPath(relative)
-        _write_exclusive_bytes(workspace, destination, contents[relative], mode=0o444)
-        manifest.append({"path": relative, "sha256": _sha256(contents[relative])})
+        _write_exclusive_bytes(workspace, destination, entry.raw, mode=mode)
+        manifest.append(
+            {
+                "path": relative,
+                "git_mode": entry.git_mode,
+                "snapshot_mode": format(mode, "04o"),
+                "sha256": _sha256(entry.raw),
+            }
+        )
     for directory in sorted((path for path in source_root.rglob("*") if path.is_dir()), key=lambda item: len(item.parts), reverse=True):
         os.chmod(directory, 0o500)
     os.chmod(source_root, 0o500)
@@ -1411,7 +1531,23 @@ def _verify_snapshot_unchanged(
     source_root: Path,
     manifest: list[dict[str, str]],
 ) -> None:
-    expected = {item["path"]: item["sha256"] for item in manifest}
+    snapshot_modes = {"100644": "0444", "100755": "0555"}
+    expected: dict[str, tuple[str, str]] = {}
+    for item in manifest:
+        path = item.get("path")
+        git_mode = item.get("git_mode")
+        snapshot_mode = item.get("snapshot_mode")
+        digest = item.get("sha256")
+        if (
+            not isinstance(path, str)
+            or not isinstance(git_mode, str)
+            or git_mode not in snapshot_modes
+            or snapshot_mode != snapshot_modes[git_mode]
+            or not isinstance(digest, str)
+            or path in expected
+        ):
+            raise VerifierError("source snapshot manifest has an invalid path or mode binding")
+        expected[path] = (digest, snapshot_mode)
     found: dict[str, str] = {}
     for path in source_root.rglob("*"):
         try:
@@ -1423,12 +1559,16 @@ def _verify_snapshot_unchanged(
         if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != os.geteuid():
             raise VerifierError("source snapshot contains a symlink, hardlink, or non-regular file")
         relative = path.relative_to(source_root).as_posix()
+        expected_entry = expected.get(relative)
+        actual_mode = format(stat.S_IMODE(info.st_mode), "04o")
+        if expected_entry is None or actual_mode != expected_entry[1]:
+            raise VerifierError("source snapshot file mode changed during execution")
         try:
             raw = safe_read_bytes(workspace, path, max_bytes=MAX_SNAPSHOT_FILE_BYTES)
         except SafeEvidenceError as exc:
             raise VerifierError(f"source snapshot file is unsafe ({exc.code})") from exc
         found[relative] = _sha256(raw)
-    if found != expected:
+    if found != {path: item[0] for path, item in expected.items()}:
         raise VerifierError("source snapshot manifest changed during execution")
 
 
@@ -1667,16 +1807,19 @@ def _execute_fresh_verification(
             for key, raw in output_raw.items()
         } | {receipt_path.relative_to(workspace).as_posix(): _sha256(receipt_raw)},
     }
+    binding_rollback_stats: list[os.stat_result] = []
     try:
         atomic_write_json(
             workspace,
             run_binding_path,
             run_binding,
             expected_target_identity=_reservation_identity(reservations, run_binding_path),
+            rollback_stat_sink=binding_rollback_stats,
         )
         _mark_reservation_published(reservations, run_binding_path)
         binding_disk = safe_read_bytes(workspace, run_binding_path)
     except SafeEvidenceError as exc:
+        _adopt_verified_rollback_identity(reservations, run_binding_path, binding_rollback_stats)
         raise VerifierError(f"run binding could not be published safely ({exc.code})") from exc
     binding_doc = _parse_json_object(binding_disk, "run binding")
     if binding_doc != run_binding:
@@ -1736,6 +1879,7 @@ def _execute_fresh_verification(
         except VerdictValidationError as exc:
             raise VerifierError(f"published verifier verdict failed validation: {exc}") from exc
 
+    verdict_rollback_stats: list[os.stat_result] = []
     try:
         atomic_write_bytes(
             workspace,
@@ -1743,10 +1887,12 @@ def _execute_fresh_verification(
             verdict_raw,
             expected_target_identity=_reservation_identity(reservations, out_path),
             post_write_validator=validate_published,
+            rollback_stat_sink=verdict_rollback_stats,
         )
         _mark_reservation_published(reservations, out_path)
         verdict_disk = safe_read_bytes(workspace, out_path)
     except (SafeEvidenceError, VerifierError) as exc:
+        _adopt_verified_rollback_identity(reservations, out_path, verdict_rollback_stats)
         code = exc.code if isinstance(exc, SafeEvidenceError) else "VERDICT_INVALID"
         raise VerifierError(f"fresh verifier verdict publication failed ({code})") from exc
     if verdict_disk != verdict_raw:
@@ -1861,9 +2007,17 @@ def main() -> int:
         candidate = load_candidate_identity(candidate_path)
         candidate_id = candidate["candidate_id"]
         verifier_root = require_under(workspace / "verifier" / candidate_id, workspace, "verifier directory")
-        run_dir = require_under(verifier_root / "runs" / run_id, workspace, "verifier run directory")
-        out_path = Path(args.out).expanduser() if args.out else verifier_root / "verifier-verdict.json"
+        run_dir = require_under(verifier_root / "diagnostics" / run_id, workspace, "verifier diagnostic directory")
+        out_path = Path(args.out).expanduser() if args.out else run_dir / "verifier-diagnostic.json"
         out_path = require_under(out_path if out_path.is_absolute() else Path.cwd() / out_path, workspace, "verifier verdict output")
+        if args.out and out_path.name == "verifier-verdict.json":
+            raise VerifierError("non-execution --out cannot name an authority artifact")
+        try:
+            _create_fresh_directory(workspace, run_dir, "verifier diagnostic directory")
+        except VerifierError as exc:
+            if "FileExistsError" in str(exc):
+                raise VerifierError("diagnostic destination already exists") from exc
+            raise
 
         try:
             target_doc = load_contract(target_path)
@@ -1883,7 +2037,7 @@ def main() -> int:
             )
             write_and_validate(verdict, out_path, candidate_path)
             print(f"verdict=blocked")
-            print(f"verifier_verdict={out_path}")
+            print(f"verifier_diagnostic={out_path}")
             return 1
 
         try:
@@ -1903,7 +2057,7 @@ def main() -> int:
             )
             write_and_validate(verdict, out_path, candidate_path)
             print(f"verdict=blocked")
-            print(f"verifier_verdict={out_path}")
+            print(f"verifier_diagnostic={out_path}")
             return 1
 
         mismatch = cross_check_target_ref(target_path, workspace, target_doc, candidate)
@@ -1921,7 +2075,7 @@ def main() -> int:
             )
             write_and_validate(verdict, out_path, candidate_path)
             print("verdict=blocked")
-            print(f"verifier_verdict={out_path}")
+            print(f"verifier_diagnostic={out_path}")
             return 1
 
         verdict = build_verdict(args=args, workspace=workspace, run_dir=run_dir, target_doc=target_doc, candidate=candidate, candidate_path=candidate_path)
@@ -1931,7 +2085,7 @@ def main() -> int:
         return 1
 
     print(f"verdict={verdict['verdict']}")
-    print(f"verifier_verdict={out_path}")
+    print(f"verifier_diagnostic={out_path}")
     return 0 if verdict["verdict"] == "confirmed_in_docker" else 1
 
 

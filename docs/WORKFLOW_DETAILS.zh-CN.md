@@ -765,15 +765,25 @@ python3 scripts/validate_root_skill_rule_inventory.py \
 转换意图时会拒绝；真实 R1 调用方必须显式传入 `--protocol-mode legacy-r1`，并从写入结果读取
 兼容模式及被忽略字段诊断。这不表示 R1 已完成 R2 验证流程。
 
-独立核验器的默认路径、`--dry-run` 和 `--no-execute` 不执行 PoC。显式传入
-`--allow-execute` 时，目前只支持新的 Candidate R2 运行、普通 `runtime.type=docker` 目标和
-`log_pattern` oracle；要求工作区相对的 `--execution-input`、新的 `--run-id` 和
-`verification/running` 状态。核验器会从测试提交提取源码快照，并通过禁用网络的生产封装脚本执行。
+独立核验器的默认路径、`--dry-run` 和 `--no-execute` 不执行 PoC。不指定 `--out` 时，核验器会在
+`verifier/<candidate_id>/diagnostics/<run_id>/verifier-diagnostic.json` 写入诊断文件；它与候选级
+`verifier-verdict.json` 分开保存，重复使用诊断 `--run-id` 会被拒绝。非执行模式下，`--out` 不能使用
+`verifier-verdict.json` 作为文件名。只有显式选择 `--allow-execute`，并提供 `--execution-input`、新的显式
+`--run-id` 及同步的 `verification/running` 状态，才会发布候选级正式结论。目前这条路径只支持新的
+Candidate R2 运行、普通 `runtime.type=docker` 目标和 `log_pattern`，不会恢复或覆盖已有输出。
+
+新运行会从测试提交提取源码快照，并通过禁用网络的生产封装脚本执行。快照文件保持只读；Git 中标记为可执行的文件仍保留可执行位。
+即使运行失败或中断，`poc/<run_id>/source/` 仍属于项目数据；按文件名查找工作区材料时会排除此子树，不要求存在成功的运行绑定。
+处理失败时，只有核实空占位文件属于本次调用，且当前身份和内容仍符合预期，才会清理。
+回滚替换文件后，也会先重新核验文件身份。若无法核实，或进程被强制终止，占位文件可能继续存在；
+候选级正式结论的残留占位文件即使换用新的 `--run-id`，也可能阻止后续新运行。
+应保留失败证据并先检查，不要盲目删除或覆盖。
+复核说明、源码标记和预期结果描述都属于提供的元数据：不能核实复核者身份，
+不能证明攻击者能够访问相关入口，也不能自动验证所声称的影响。
 当工作区位于目标仓库内部时，应通过 `--repo-root` 显式指定目标仓库。此模式要求可移植目标合同中的
 `target.repo_root` 恰为 `.`，并将该值作为对命令行所选仓库根目录的声明；它不会相对目标文件解析。
 不传该参数时，仍按原规则相对目标配置文件所在目录解析 `target.repo_root`。建议使用规范化的绝对路径；相对路径按
-调用时的工作目录解析，含 `..` 或符号链接组件的路径会被拒绝。
-失败运行的证据和事件账本会保留。发布后故障或强制中止可能留下阻止重试的零字节标准 verdict 路径。完整约束和恢复限制见
+调用时的工作目录解析，含 `..` 或符号链接组件的路径会被拒绝。失败运行的证据和事件账本会保留。完整约束和恢复限制见
 [独立核验器 R1 契约](runner-contracts/independent-verifier-r1.md)。
 
 验证封装脚本会在创建证据、读取权威状态、调用 Docker 或执行 PoC 前校验案例 ID 和证据目录。

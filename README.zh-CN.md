@@ -36,7 +36,7 @@
 - 🌱 **同类漏洞扩展：** 用已确认漏洞提示同一仓库里可能存在的同类漏洞，但这些线索必须单独 docker 复现后才算漏洞。
 - 🔌 **轻量模块化：** 不强制依赖后端服务、数据看板、数据库、向量存储或 RAG 平台；通过本地 Agent 模块和脚本即可运行。
 - 🤝 **人机协同易读：** 工作区、交接摘要和机器可读判断记录同时面向 AI 编程 Agent 与人工审核员设计。
-- 🇨🇳 **国产 Agent 适配：** 支持通过 DeepSeek Harness 接入。
+- 🇨🇳 **国产 Agent 适配：** 支持 DeepSeek Harness 通过共享 skill 有限接入。
 
 ---
 
@@ -163,7 +163,7 @@ Codex 用户级 skill 安装目录是：
 ~/.agents/skills/zhulong/
 ```
 
-DeepSeek Harness（dsh）可使用这套共享 skill 目录。安装方法、适用范围和限制见
+DeepSeek Harness（dsh）可在有限范围内使用这套共享 skill 目录。安装方法、适用范围和限制见
 [`docs/DSH_SKILL_ADAPTATION.zh-CN.md`](docs/DSH_SKILL_ADAPTATION.zh-CN.md)。
 
 同步后重启本地 Agent 会话，然后在受支持的本地 Agent 中使用短提示词。使用
@@ -260,7 +260,7 @@ confirmed/<vulnerability-slug>/
 
 | 依赖项 / 集成 | 是否必选 | 在烛龙中的作用 | 链接 |
 | :--- | :---: | :--- | :--- |
-| **本地 AI 编程 Agent 运行时** | 预期工作流必选 | 读取烛龙 skill 和文档，协调仓库审计，并运行本地脚本。Claude Code 和 Codex 用户级 skill 同步路径均已通过测试；脚本方式的手动启动仍可用。DeepSeek Harness 可通过共享 skill 目录接入。 | [Claude Code docs](https://docs.anthropic.com/en/docs/claude-code/overview), [Codex Agent Skills docs](https://developers.openai.com/codex/skills), [DeepSeek Harness 接入说明](docs/DSH_SKILL_ADAPTATION.zh-CN.md) |
+| **本地 AI 编程 Agent 运行时** | 预期工作流必选 | 读取烛龙 skill 和文档，协调仓库审计，并运行本地脚本。Claude Code 和 Codex 用户级 skill 同步路径均已通过测试；脚本方式的手动启动仍可用。DeepSeek Harness 目前仅有限接入共享 skill 目录。 | [Claude Code docs](https://docs.anthropic.com/en/docs/claude-code/overview), [Codex Agent Skills docs](https://developers.openai.com/codex/skills), [DeepSeek Harness 接入说明](docs/DSH_SKILL_ADAPTATION.zh-CN.md) |
 | **Python 3.11+** | 必选 | 运行自动检查、完成检查、自检、报告渲染辅助脚本和工作区完整性检查。 | [python.org](https://www.python.org/) |
 | **Docker Engine / Docker Desktop** | 已确认漏洞必选 | 提供隔离复现运行时。docker 不可用时，烛龙会暂停或记录验证受阻，不回退到宿主机执行。 | [docker docs](https://docs.docker.com/engine/) |
 | **docker compose** | 目标验证使用 docker compose 时必选 | 使用项目原生或生成的 docker compose 文件启动目标应用和验证栈。 | [docker compose docs](https://docs.docker.com/compose/) |
@@ -453,7 +453,7 @@ python3 scripts/validate_all_report_bundles.py --confirmed-dir <confirmed-dir>
 - [x] 生成包含报告、复现脚本和证据附件的交付包，并支持可选录屏。
 - [x] 保存审计进度，支持中断恢复、交接续做和结果回顾。
 - [x] 从已确认问题扩展同仓库的同类漏洞线索，统一跟踪重复发现。
-- [x] 2026.10.1：支持 DeepSeek Harness（dsh）通过共享 skill 目录接入。
+- [x] 2026.10.1：DeepSeek Harness（dsh）有限接入共享 skill 目录。
 
 后续计划：
 

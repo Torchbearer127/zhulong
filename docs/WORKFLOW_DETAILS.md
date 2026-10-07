@@ -982,19 +982,38 @@ write result reports compatibility/ignored-field diagnostics. This compatibility
 does not describe the workspace as R2 verification-complete.
 
 The independent verifier's default, `--dry-run`, and `--no-execute` paths do not
-run a PoC. `--allow-execute` currently supports only a fresh Candidate R2 run
-with an ordinary Docker target and `log_pattern` oracle; it requires a
-workspace-relative `--execution-input`, a new `--run-id`, and
-`verification/running` state. It snapshots the tested source commit and invokes
-the production wrapper with networking disabled. For a workspace nested in its
-target repository, pass that repository explicitly with `--repo-root`; the
-portable target keeps `target.repo_root: .`, which is required in this mode and
-is not resolved relative to the target file. Without the flag, existing
-target-file-relative resolution is unchanged. Prefer a normalized absolute
-path; relative paths use the invocation CWD, and `..` or symlink components
-reject. Failed-run evidence and journal events are retained. A post-publication
-error or forced stop can leave a
-zero-byte canonical verdict path that blocks retries. See the
+run a PoC. Without `--out`, they write a diagnostic to
+`verifier/<candidate_id>/diagnostics/<run_id>/verifier-diagnostic.json`; this is
+separate from the candidate-scoped `verifier-verdict.json`, and a repeated
+diagnostic `--run-id` is refused. Non-execution `--out` cannot use the filename
+`verifier-verdict.json`. Only the explicit `--allow-execute` opt-in, with
+`--execution-input`, a new explicit `--run-id`, and synchronized
+`verification/running` state, publishes the canonical candidate verdict. It
+currently supports only a fresh Candidate R2 run with an ordinary Docker
+target and `log_pattern`; it does not resume or overwrite prior output.
+
+The fresh run snapshots the tested source commit and invokes the production
+wrapper with networking disabled. Snapshot files are read-only; executable Git
+files retain their execute bit. The `poc/<run_id>/source/` subtree remains
+project data after failed or interrupted runs, and shared named-file discovery
+excludes it without requiring a successful run binding. On handled failure,
+cleanup removes only empty placeholders confirmed to belong to this invocation
+whose current identity and contents still match the recorded expectation; if
+rollback replaced the inode, the replacement identity is verified first. If
+ownership or contents cannot be verified, or the process is forcibly stopped, a
+placeholder may remain. A leftover canonical reservation can block later fresh
+runs even with a different `--run-id`; retain the failure evidence and inspect
+it rather than deleting or overwriting the path blindly. Review text, source
+tokens, and oracle descriptions are supplied metadata: they cannot verify
+reviewer identity, prove an attacker can reach the relevant entrypoint, or
+automatically validate the claimed impact. For a workspace
+nested in its target repository, pass that repository explicitly with
+`--repo-root`; the portable target keeps
+`target.repo_root: .`, which is required in this mode and is not resolved
+relative to the target file. Without the flag, existing target-file-relative
+resolution is unchanged. Prefer a normalized absolute path; relative paths use
+the invocation CWD, and `..` or symlink components reject. Journal events and
+failed-run evidence are retained. See the
 [Independent Verifier R1 contract](runner-contracts/independent-verifier-r1.md)
 for the full contract and recovery limits.
 

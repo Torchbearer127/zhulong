@@ -43,8 +43,8 @@ with Docker reproduction before confirmation.</strong></p>
   scripts.
 - 🤝 **Human-agent readable:** Workspaces, handoff summaries, and machine-readable
   decision logs are designed for both AI coding agents and human reviewers.
-- 🇨🇳 **Agent compatibility:** Use Zhulong with Codex, Claude Code, or DeepSeek
-  Harness through skill integration.
+- 🇨🇳 **Agent compatibility:** Codex and Claude Code skill sync paths are tested;
+  DeepSeek Harness has limited opt-in access through the shared skill.
 
 ---
 
@@ -190,7 +190,7 @@ The Codex user-level installed skill path is:
 ~/.agents/skills/zhulong/
 ```
 
-DeepSeek Harness (dsh) can use this shared Agent Skill layout. See
+DeepSeek Harness (dsh) has limited opt-in access to this shared Agent Skill layout. See
 [`docs/DSH_SKILL_ADAPTATION.md`](docs/DSH_SKILL_ADAPTATION.md) for installation
 instructions, scope, and limitations.
 
@@ -303,7 +303,7 @@ optional ways to surface leads.
 
 | Dependency / Integration | Required? | Role in Zhulong | Link |
 | :--- | :---: | :--- | :--- |
-| **Local coding agent runtime** | Required for the intended workflow | Reads the Zhulong skill/docs, coordinates repository review, and runs local scripts. Claude Code and Codex user-level skill sync paths are tested; script-based manual startup remains available. DeepSeek Harness can use the shared Agent Skill layout. | [Claude Code docs](https://docs.anthropic.com/en/docs/claude-code/overview), [Codex Agent Skills docs](https://developers.openai.com/codex/skills), [DeepSeek Harness adaptation](docs/DSH_SKILL_ADAPTATION.md) |
+| **Local coding agent runtime** | Required for the intended workflow | Reads the Zhulong skill/docs, coordinates repository review, and runs local scripts. Claude Code and Codex user-level skill sync paths are tested; script-based manual startup remains available. DeepSeek Harness has limited opt-in access through the shared Agent Skill layout. | [Claude Code docs](https://docs.anthropic.com/en/docs/claude-code/overview), [Codex Agent Skills docs](https://developers.openai.com/codex/skills), [DeepSeek Harness adaptation](docs/DSH_SKILL_ADAPTATION.md) |
 | **Python 3.11+** | Required | Runs automated checks, completion checks, selftests, report rendering helpers, and workspace integrity checks. | [python.org](https://www.python.org/) |
 | **Docker Engine / Docker Desktop** | Required for confirmed vulnerabilities | Provides the isolated runtime for reproduction. If Docker is unavailable, Zhulong pauses or records the verification as blocked instead of falling back to host execution. | [Docker docs](https://docs.docker.com/engine/) |
 | **Docker Compose** | Required when target verification uses Compose | Starts target applications and verification stacks using project-native or generated Compose files. | [Docker Compose docs](https://docs.docker.com/compose/) |
@@ -529,7 +529,7 @@ Completed:
 - [x] Create delivery bundles with reports, reproduction scripts, and evidence attachments, with optional recording.
 - [x] Save audit progress, recover interrupted work, hand off ongoing reviews, and review results.
 - [x] Expand from confirmed issues to related leads in the same repository and track duplicates consistently.
-- [x] 2026-10-01: Enable DeepSeek Harness (dsh) to use Zhulong through the shared skill directory.
+- [x] 2026-10-01: Add limited DeepSeek Harness (dsh) access through the shared skill directory.
 
 Planned:
 

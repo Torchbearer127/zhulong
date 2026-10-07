@@ -119,6 +119,84 @@ def main() -> None:
         )
         require_old_bytes(path, old_raw, "post-write tamper")
 
+        empty_path = workspace / "empty-reservation.json"
+        empty_path.touch(mode=0o600)
+        os.chmod(empty_path, 0o600)
+        empty_stat = os.lstat(empty_path)
+        empty_identity = (
+            empty_stat.st_dev,
+            empty_stat.st_ino,
+            empty_stat.st_nlink,
+            empty_stat.st_uid,
+            empty_stat.st_mode,
+        )
+        rollback_stats: list[os.stat_result] = []
+
+        def reject_empty_publication(_raw: bytes) -> None:
+            raise SafeEvidenceError("INJECTED_VALIDATOR_FAILURE", "fixture")
+
+        require_failure(
+            lambda: atomic_write_bytes(
+                workspace,
+                empty_path,
+                b"published\n",
+                expected_target_identity=empty_identity,
+                post_write_validator=reject_empty_publication,
+                rollback_stat_sink=rollback_stats,
+            ),
+            "verified empty reservation rollback",
+        )
+        rollback_info = os.lstat(empty_path)
+        if (
+            len(rollback_stats) != 1
+            or rollback_info.st_ino == empty_stat.st_ino
+            or rollback_info.st_size != 0
+            or empty_path.read_bytes() != b""
+            or (rollback_info.st_dev, rollback_info.st_ino) != (rollback_stats[0].st_dev, rollback_stats[0].st_ino)
+            or (rollback_info.st_nlink, rollback_info.st_uid, rollback_info.st_mode)
+            != (rollback_stats[0].st_nlink, rollback_stats[0].st_uid, rollback_stats[0].st_mode)
+        ):
+            raise SystemExit("FAILED: writer did not verify and return its new empty rollback identity")
+        require_clean_temps(empty_path, "verified empty reservation rollback")
+
+        unverified_path = workspace / "unverified-empty-reservation.json"
+        unverified_path.touch(mode=0o600)
+        os.chmod(unverified_path, 0o600)
+        unverified_stat = os.lstat(unverified_path)
+        unverified_identity = (
+            unverified_stat.st_dev,
+            unverified_stat.st_ino,
+            unverified_stat.st_nlink,
+            unverified_stat.st_uid,
+            unverified_stat.st_mode,
+        )
+        unverified_rollback_stats: list[os.stat_result] = []
+        original_fsync_directory = evidence_io._fsync_directory
+        fsync_directory_calls = 0
+
+        def fail_rollback_directory_fsync(directory: Path) -> None:
+            nonlocal fsync_directory_calls
+            fsync_directory_calls += 1
+            if fsync_directory_calls == 2:
+                raise OSError("injected rollback directory fsync failure")
+            original_fsync_directory(directory)
+
+        with mock.patch.object(evidence_io, "_fsync_directory", side_effect=fail_rollback_directory_fsync):
+            require_failure(
+                lambda: atomic_write_bytes(
+                    workspace,
+                    unverified_path,
+                    b"published\n",
+                    expected_target_identity=unverified_identity,
+                    post_write_validator=reject_empty_publication,
+                    rollback_stat_sink=unverified_rollback_stats,
+                ),
+                "unverified empty reservation rollback",
+            )
+        if unverified_rollback_stats or unverified_path.read_bytes() != b"":
+            raise SystemExit("FAILED: writer returned an identity without durable rollback verification")
+        require_clean_temps(unverified_path, "unverified empty reservation rollback")
+
         original_require = evidence_io._require_unchanged_target
         race_injected = False
 

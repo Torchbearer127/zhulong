@@ -29,6 +29,13 @@ python3 scripts/audit_disposition.py \
   --update-from-verdict
 ```
 
+The example uses the canonical candidate-scoped verdict produced by an explicit
+fresh-execution run. Default diagnostics have a separate filename and are not
+found by named `verifier-verdict.json` discovery. A caller may still pass a
+diagnostic explicitly; the command validates and records its actual status, but
+the verifier's non-execution path does not produce `confirmed_in_docker`
+evidence.
+
 The legacy `items` ledger remains compatible with existing finalization and
 confirmed bundle validation. Candidate disposition records use `status` so they
 can represent `confirmed_in_docker` without pretending that a confirmed bundle
