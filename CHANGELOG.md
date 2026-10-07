@@ -2,10 +2,23 @@
 
 ## Unreleased
 
-- reject bundle promotion when declared replay entrypoints or delivery files are missing or unsafe
-- check bundle-local Compose inputs, build contexts, and Dockerfiles without requiring a Docker daemon
-- add bounded health waits to generated detached Compose startup commands and stop replay when startup or waiting fails
-- document static validation limits; successful packaging does not establish successful runtime replay
+## 0.7.0
+
+### English
+
+- Preserve the original replay failure and historical audit logs. Validate declared replay entrypoints and delivery files, inspect bundle-local Compose/build inputs without Docker, and stop replay when startup or a bounded health wait fails. Static packaging checks do not prove runtime replay.
+- Support declared movable package inputs and qualify original materials; bind quoted source excerpts to their cited code and keep reviewer prose separate from source evidence.
+- Keep disposition IDs stable and make triage feedback idempotent. Do not replace a Docker baseline recorded as unavailable with a later observation.
+- Add limited DeepSeek Harness support through the shared skill directory. This does not establish a complete Docker-backed DSH audit workflow.
+- Add an opt-in fresh verifier that runs the PoC with isolated Python (`python3 -I`). Default diagnostics stay separate from canonical fresh verdicts; failed or interrupted source snapshots are excluded from named-file discovery, read-only snapshots preserve executable bits, and rollback cleanup requires verified ownership. Reviewer-provided text does not verify identity, attacker reachability, or claimed impact.
+
+### 简体中文
+
+- 复现失败时保留原始失败结果和历史审计日志。发布前校验已声明的复现入口和交付文件，也可在不启动 docker 的情况下检查漏洞包内的 Compose、build context 和 Dockerfile；启动或有时限的健康检查等待失败时会停止复现。静态打包校验通过不代表运行时复现成功。
+- 支持在声明中标注可迁移的软件包输入并校验原始材料；源码引文绑定到对应代码，复核说明与源码证据分开处理。
+- 保持处置记录 ID 稳定，并使分诊反馈可幂等处理。docker 初始基线若记录为不可用，后续观察不得覆盖该记录。
+- 通过共享 skill 目录有限接入 DeepSeek Harness；这不表示完整的 docker 审计闭环已经通过。
+- 增加显式启用的独立核验器，通过隔离 Python 执行 PoC（`python3 -I`）。默认诊断输出与正式核验结论分开；运行失败或中断后，源码快照仍会排除在按文件名查找的项目材料之外；只读快照保留可执行权限，回滚清理前须核实占位文件归属于本次调用。复核者提供的文字不能核实其身份、证明攻击者能否访问相关入口，也不能自动验证所声称的影响。
 
 ## 0.6.0
 
