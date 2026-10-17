@@ -10771,7 +10771,14 @@ def exercise_verification_wrapper_state_boundary(plugin_root: Path, temp_root: P
             return workspace
         event_prefix = name.replace("-", "_")
         write_transition(workspace, f"{event_prefix}_intake", "intake", "start")
-        ordered = ["recon", "candidate_generation", "triage", "verification"]
+        ordered = [
+            "recon",
+            "candidate_generation",
+            "triage",
+            "verification",
+            "severity_escalation",
+            "variant_discovery",
+        ]
         for next_stage in ordered:
             if ordered.index(next_stage) > ordered.index(stage):
                 break
@@ -10803,10 +10810,12 @@ def exercise_verification_wrapper_state_boundary(plugin_root: Path, temp_root: P
         fake_docker.write_text(
             "#!/usr/bin/env bash\n"
             "printf '%s\\n' \"$*\" >> \"$ZHULONG_DOCKER_CALL_LOG\"\n"
-            "if [[ \"$1\" == \"info\" && \"$ZHULONG_STUB_BEHAVIOR\" == \"drift_before\" ]]; then\n"
+            "if [[ \"$1\" == \"info\" && ( \"$ZHULONG_STUB_BEHAVIOR\" == \"drift_before\" || \"$ZHULONG_STUB_BEHAVIOR\" == \"severity_drift_before\" ) ]]; then\n"
+            "  drift_from_stage=\"${ZHULONG_STUB_DRIFT_FROM_STAGE:-verification}\"\n"
+            "  drift_to_stage=\"${ZHULONG_STUB_DRIFT_TO_STAGE:-severity_escalation}\"\n"
             "  python3 \"$ZHULONG_WRITER\" --workspace-dir \"$ZHULONG_TEST_WORKSPACE\" "
-            "--event concurrent_stage_drift --stage severity_escalation --status running "
-            "--transition-kind advance --from-stage verification --from-status running "
+            "--event concurrent_stage_drift --stage \"$drift_to_stage\" --status running "
+            "--transition-kind advance --from-stage \"$drift_from_stage\" --from-status running "
             "--message 'Concurrent writer moved the stage.' --accept-current-revision >/dev/null\n"
             "fi\n"
             "if [[ \"$1\" == \"info\" && \"$ZHULONG_STUB_BEHAVIOR\" == \"writer_missing\" ]]; then\n"
@@ -10832,10 +10841,12 @@ def exercise_verification_wrapper_state_boundary(plugin_root: Path, temp_root: P
             "    ancestor_symlink) mv \"$evidence\" \"$evidence.real\"; ln -s \"$(basename \"$evidence.real\")\" \"$evidence\" ;;\n"
             "    running_replace) (sleep 0.05; rm -f \"$evidence/stdout.log\"; ln -s \"$ZHULONG_STUB_MARKER\" \"$evidence/stdout.log\") & ;;\n"
             "  esac\n"
-            "  if [[ \"$ZHULONG_STUB_BEHAVIOR\" == \"drift_after\" ]]; then\n"
+            "  if [[ \"$ZHULONG_STUB_BEHAVIOR\" == \"drift_after\" || \"$ZHULONG_STUB_BEHAVIOR\" == \"severity_drift_after\" ]]; then\n"
+            "    drift_from_stage=\"${ZHULONG_STUB_DRIFT_FROM_STAGE:-verification}\"\n"
+            "    drift_to_stage=\"${ZHULONG_STUB_DRIFT_TO_STAGE:-severity_escalation}\"\n"
             "    python3 \"$ZHULONG_WRITER\" --workspace-dir \"$ZHULONG_TEST_WORKSPACE\" "
-            "--event concurrent_postrun_drift --stage severity_escalation --status running "
-            "--transition-kind advance --from-stage verification --from-status running "
+            "--event concurrent_postrun_drift --stage \"$drift_to_stage\" --status running "
+            "--transition-kind advance --from-stage \"$drift_from_stage\" --from-status running "
             "--message 'Concurrent writer moved the stage after Docker.' --accept-current-revision >/dev/null\n"
             "  fi\n"
             "  if [[ \"$ZHULONG_STUB_BEHAVIOR\" == \"not_reproduced\" ]]; then printf 'no-match\\n'; if [[ -n \"$marker_token\" ]]; then printf '%s:0\\n' \"$marker_token\"; fi; exit 0; fi\n"
@@ -10873,6 +10884,11 @@ def exercise_verification_wrapper_state_boundary(plugin_root: Path, temp_root: P
             "ZHULONG_TEST_WRITER": str(test_writer or writer),
             "ZHULONG_STUB_MARKER": str(marker),
         }
+        if behavior in {"severity_drift_before", "severity_drift_after"}:
+            environment.update({
+                "ZHULONG_STUB_DRIFT_FROM_STAGE": "severity_escalation",
+                "ZHULONG_STUB_DRIFT_TO_STAGE": "variant_discovery",
+            })
         command = [
             "bash",
             str(run_script),
@@ -10917,6 +10933,7 @@ def exercise_verification_wrapper_state_boundary(plugin_root: Path, temp_root: P
         ("wrong-triage-running", "triage", "running"),
         ("wrong-triage-completed", "triage", "completed"),
         ("wrong-verification-completed", "verification", "completed"),
+        ("wrong-variant", "variant_discovery", "running"),
     ):
         workspace = make_workspace(name, stage, status)
         before = authority_fingerprint(workspace)
@@ -10940,6 +10957,166 @@ def exercise_verification_wrapper_state_boundary(plugin_root: Path, temp_root: P
         raise SystemExit("FAILED: confirmed path did not commit start then result observations")
     if len(poc_calls) != 1 or not any(call.startswith("run ") for call in docker_calls):
         raise SystemExit("FAILED: confirmed path did not invoke exactly one PoC container command")
+
+    severity_workspace = make_workspace("valid-severity", "severity_escalation")
+    severity_before_state = json.loads((severity_workspace / "stage-status.json").read_text(encoding="utf-8"))
+    severity_before_revision = severity_before_state["state_revision"]
+    proc, result, docker_calls, poc_calls = invoke(severity_workspace, "valid-severity")
+    severity_events = [
+        json.loads(line)
+        for line in (severity_workspace / "audit-events.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    if proc.returncode != 0 or result.get("status") != "confirmed_in_docker":
+        raise SystemExit(f"FAILED: severity_escalation/running confirmed path failed: {proc.stdout}{proc.stderr}")
+    if [event["event_name"] for event in severity_events[-2:]] != [
+        "verification_case_started",
+        "verification_case_completed",
+    ]:
+        raise SystemExit("FAILED: severity path did not commit start then result observations")
+    if any(
+        event.get("stage") != "severity_escalation"
+        or event.get("from_stage") != "severity_escalation"
+        or event.get("from_status") != "running"
+        or event.get("to_status") != "running"
+        or event.get("transition_kind") != "observe"
+        for event in severity_events[-2:]
+    ):
+        raise SystemExit("FAILED: severity result events were not bound to the captured severity_escalation stage")
+    severity_after_state = json.loads((severity_workspace / "stage-status.json").read_text(encoding="utf-8"))
+    if severity_after_state.get("stage") != "severity_escalation" or severity_after_state.get("status") != "running":
+        raise SystemExit("FAILED: severity result changed the final workflow stage or status")
+    if severity_after_state.get("state_revision") != severity_before_revision + 2:
+        raise SystemExit("FAILED: severity start/result events did not advance the authority revision exactly twice")
+    if len(poc_calls) != 1 or not any(call.startswith("run ") for call in docker_calls):
+        raise SystemExit("FAILED: severity_escalation path did not invoke exactly one PoC container command")
+
+    severity_blocked_workspace = make_workspace("severity-blocked", "severity_escalation")
+    proc, result, docker_calls, poc_calls = invoke(
+        severity_blocked_workspace,
+        "severity-blocked",
+        behavior="blocked",
+    )
+    blocked_events = [
+        json.loads(line)
+        for line in (severity_blocked_workspace / "audit-events.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    if proc.returncode == 0 or result.get("status") != "blocked_docker_unavailable":
+        raise SystemExit("FAILED: severity_escalation blocked result did not fail closed")
+    if not blocked_events or blocked_events[-1].get("event_name") != "verification_case_blocked":
+        raise SystemExit("FAILED: severity_escalation blocked result did not commit the result event")
+    if any(
+        event.get("stage") != "severity_escalation"
+        or event.get("from_stage") != "severity_escalation"
+        for event in blocked_events[-1:]
+    ) or blocked_events[-1].get("transition_kind") != "block" or blocked_events[-1].get("to_status") != "blocked":
+        raise SystemExit("FAILED: severity_escalation blocked result used the wrong stage transition")
+    if docker_calls != ["info"] or poc_calls:
+        raise SystemExit("FAILED: severity_escalation blocked result crossed the PoC boundary")
+
+    proc, result, docker_calls, poc_calls = invoke(
+        severity_blocked_workspace,
+        "severity-blocked",
+        behavior="confirmed",
+    )
+    resumed_events = [
+        json.loads(line)
+        for line in (severity_blocked_workspace / "audit-events.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    if proc.returncode != 0 or result.get("status") != "confirmed_in_docker":
+        raise SystemExit("FAILED: severity_escalation blocked retry did not resume and complete")
+    if [event["event_name"] for event in resumed_events[-3:]] != [
+        "verification_case_resumed",
+        "verification_case_started",
+        "verification_case_completed",
+    ]:
+        raise SystemExit("FAILED: severity_escalation blocked retry event sequence is incorrect")
+    if any(
+        event.get("stage") != "severity_escalation"
+        or event.get("from_stage") != "severity_escalation"
+        for event in resumed_events[-3:]
+    ) or resumed_events[-3].get("from_status") != "blocked" or resumed_events[-3].get("to_status") != "running":
+        raise SystemExit("FAILED: severity_escalation blocked retry was not bound to the captured stage")
+    if len(poc_calls) != 1:
+        raise SystemExit("FAILED: severity_escalation blocked retry did not invoke exactly one PoC command")
+
+    severity_drift_before = make_workspace("severity-drift-before", "severity_escalation")
+    proc, result, docker_calls, poc_calls = invoke(
+        severity_drift_before,
+        "severity-drift-before",
+        behavior="severity_drift_before",
+    )
+    if proc.returncode == 0 or result.get("status") != "blocked_authority_event_commit":
+        raise SystemExit("FAILED: severity pre-start stage drift did not fail closed")
+    if poc_calls or any(call.startswith("run ") for call in docker_calls):
+        raise SystemExit("FAILED: severity pre-start stage drift allowed the PoC command")
+    if "verification_case_started" in event_names(severity_drift_before):
+        raise SystemExit("FAILED: severity pre-start stage drift appended a start event")
+
+    severity_drift_after = make_workspace("severity-drift-after", "severity_escalation")
+    proc, result, _docker_calls, poc_calls = invoke(
+        severity_drift_after,
+        "severity-drift-after",
+        behavior="severity_drift_after",
+    )
+    if proc.returncode == 0 or result.get("wrapper_status") != "blocked_authority_event_commit":
+        raise SystemExit("FAILED: severity post-run stage drift did not fail closed")
+    if result.get("status") != "confirmed_in_docker" or not result.get("oracle_matched") or len(poc_calls) != 1:
+        raise SystemExit("FAILED: severity post-run authority failure did not preserve Docker evidence truth")
+
+    severity_rejected = make_workspace("severity-rejected", "severity_escalation")
+    proc, result, _docker_calls, poc_calls = invoke(
+        severity_rejected,
+        "severity-rejected",
+        behavior="not_reproduced",
+    )
+    rejected_events = [
+        json.loads(line)
+        for line in (severity_rejected / "audit-events.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    if proc.returncode == 0 or result.get("status") != "rejected_not_reproducible":
+        raise SystemExit("FAILED: severity_escalation not-reproduced result did not preserve Docker status")
+    rejected_event = rejected_events[-1]
+    if (
+        rejected_event.get("event_name") != "verification_case_rejected"
+        or rejected_event.get("stage") != "severity_escalation"
+        or rejected_event.get("from_stage") != "severity_escalation"
+        or rejected_event.get("from_status") != "running"
+        or rejected_event.get("to_status") != "running"
+        or rejected_event.get("transition_kind") != "observe"
+    ):
+        raise SystemExit("FAILED: severity_escalation not-reproduced event was not same-stage")
+    if len(poc_calls) != 1:
+        raise SystemExit("FAILED: severity_escalation not-reproduced result did not invoke exactly one PoC command")
+
+    severity_timeout = make_workspace("severity-timeout", "severity_escalation")
+    proc, result, _docker_calls, poc_calls = invoke(
+        severity_timeout,
+        "severity-timeout",
+        behavior="timeout",
+    )
+    timeout_events = [
+        json.loads(line)
+        for line in (severity_timeout / "audit-events.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    if proc.returncode == 0 or result.get("status") != "failed_timeout":
+        raise SystemExit("FAILED: severity_escalation timeout result did not fail closed")
+    timeout_event = timeout_events[-1]
+    if (
+        timeout_event.get("event_name") != "verification_case_blocked"
+        or timeout_event.get("stage") != "severity_escalation"
+        or timeout_event.get("from_stage") != "severity_escalation"
+        or timeout_event.get("from_status") != "running"
+        or timeout_event.get("to_status") != "blocked"
+        or timeout_event.get("transition_kind") != "block"
+    ):
+        raise SystemExit("FAILED: severity_escalation timeout event was not a same-stage block")
+    if len(poc_calls) != 1:
+        raise SystemExit("FAILED: severity_escalation timeout result did not invoke exactly one PoC command")
 
     compose_workspace = make_workspace("compose-cwd-identity", "verification")
     compose_source = compose_workspace / "compose.yml"

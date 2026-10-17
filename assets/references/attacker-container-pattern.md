@@ -91,21 +91,25 @@ Stable runner labels:
 - `confirmed_in_docker`
 
 For an R2 workspace, the runner reads the canonical journal/state snapshot
-before any Docker CLI call. Only `verification/running` or an explicitly
-retried `verification/blocked` state may proceed. A wrong, missing, stale,
-corrupt, symlinked, or protocol-mismatched R2 state returns
+before any Docker CLI call. Only `verification/running` or
+`severity_escalation/running`, or an explicitly retried blocked state in either
+stage, may proceed. A wrong, missing, stale, corrupt, symlinked, or
+protocol-mismatched R2 state returns
 `VERIFICATION_STATE_PRECONDITION_FAILED`, records
 `docker_invoked=false` and `oracle_matched=false`, and leaves journal/state
-bytes unchanged. The runner never advances triage or another workflow stage.
+bytes unchanged. The runner never advances triage or another workflow stage;
+it captures the validated stage and revision once and binds registry, retry,
+start, result, blocked, and CAS operations to that captured stage.
 
 Docker daemon and image checks are non-PoC prerequisites. After they pass, an
-R2 run commits a same-stage `verification_case_started` observation with
+R2 run commits a same-stage `verification_case_started` observation for the
+captured workflow stage with
 revision and source-state checks before starting the actual PoC container
 command. Confirmed and not-reproduced results remain same-stage observations;
-blocked results use `verification/running -> verification/blocked`; an
-explicit blocked retry records resume before start. If the start event fails,
-no PoC command runs. If a result event fails after Docker, the wrapper exits
-nonzero and preserves both the Docker evidence status and
+blocked results use the captured stage's `running -> blocked` transition; an
+explicit blocked retry records resume in that same stage before start. If the
+start event fails, no PoC command runs. If a result event fails after Docker,
+the wrapper exits nonzero and preserves both the Docker evidence status and
 `authority_event_committed=false`.
 
 Legacy R1 behavior remains compatible. A workspace with no state files is not

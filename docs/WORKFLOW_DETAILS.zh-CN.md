@@ -87,8 +87,10 @@ python3 scripts/validate_recon_result.py \
 工具注册表结构定义中的生命周期阶段枚举必须与 `audit_transition_policy.STAGES` 精确一致；
 单独删除、改名、重排、新增阶段或把枚举改成错误类型，生产环境的注册表校验器都会从严拒绝。
 
-在 R2 工作区中，验证封装脚本会在每次 docker CLI 调用前校验权威事件日志和状态视图，并且只
-接受 `verification/running`，或从 `verification/blocked` 发起的显式重试。它不会自动推进分诊，
+在 R2 工作区中，验证封装脚本会在首次 docker CLI 调用前校验权威事件日志和状态视图，并且只
+接受 `verification/running` 或 `severity_escalation/running`，或者从其中任一阶段的
+`blocked` 状态发起显式重试。脚本只从已校验的权威状态中捕获一次阶段和 `revision`，随后将工具
+注册表校验、重试、启动、结果和阻塞事件以及 CAS 检查绑定到该阶段。它不会自动推进分诊，
 也不会为了让结果事件通过而改写工作流状态。docker 后台服务和镜像检查属于非 PoC 前置条件；
 实际 PoC 容器命令只有在带 `revision` 绑定的同阶段 `start` 事件提交成功后才会启动。即使 docker
 证据已经存在，结果事件提交失败也会令封装脚本以非零状态退出。R1 继续兼容旧格式；没有状态

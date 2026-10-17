@@ -15,9 +15,12 @@ attacker-controlled API, CLI, UI, RPC, or library entrypoint.
 1. Prefer `scripts/run_verification_case.sh`; its stable outcomes include
    `rejected_unsafe_sandbox`, blocked states, and `confirmed_in_docker`.
    In R2 it first requires a synchronized canonical
-   `verification/running` state or an explicit `verification/blocked` retry;
-   wrong stages fail before any Docker CLI call, and the PoC command starts
-   only after a revision-bound same-stage start event commits.
+   `verification/running` or `severity_escalation/running` state, or an
+   explicit blocked retry for either stage; wrong stages fail before any Docker
+   CLI call. The wrapper captures the validated canonical stage and revision
+   once, then reuses that stage for registry validation, retry/start/result
+   events, and compare-and-swap checks. The PoC command starts only after a
+   revision-bound same-stage start event commits.
 2. A function-level, source-level, simulated, or container-local result is
    supporting evidence only. Confirmation requires accepted attacker input,
    entrypoint-to-sink path, Docker oracle, independent verifier verdict, and

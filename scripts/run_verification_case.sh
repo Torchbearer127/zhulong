@@ -58,9 +58,10 @@ Safety contract:
   Compose inputs are copied into one-use host-owned snapshots before evidence
   or Docker access. Preflight, config, pull, and run use only those pinned
   bytes and the audit workspace as the explicit project directory.
-  R2 workspaces must already be in verification/running or
-  verification/blocked. The wrapper never advances triage or another workflow
-  stage. It commits a same-stage start event before the PoC container command.
+  R2 workspaces must already be in verification/running,
+  severity_escalation/running, or an explicit blocked retry for either stage.
+  The wrapper never advances triage or another workflow stage. It commits a
+  same-stage start event before the PoC container command.
 
 Common options:
   --workspace-dir DIR        Required audit workspace.
@@ -257,7 +258,15 @@ esac
 
 SAFE_CASE_ID="$CASE_ID"
 validate_declared_verification_use() {
-  local contract_root registry schema validator
+  local declared_stage="${1:-}" contract_root registry schema validator
+  case "$declared_stage" in
+    verification|severity_escalation)
+      ;;
+    *)
+      echo "ERROR: Docker verification wrapper is only declared for verification or severity_escalation." >&2
+      exit 2
+      ;;
+  esac
   if [[ -f "$SCRIPT_DIR/tool-registry.json" ]]; then
     contract_root="$(cd "$SCRIPT_DIR/.." && pwd)"
     registry="$SCRIPT_DIR/tool-registry.json"
@@ -278,7 +287,7 @@ validate_declared_verification_use() {
     --registry "$registry" \
     --schema "$schema" \
     --tool docker-verification-wrapper \
-    --stage verification \
+    --stage "$declared_stage" \
     --boundary docker_exec \
     --effect target_code_execute \
     --json >/dev/null; then
@@ -333,11 +342,13 @@ then
   echo "ERROR: --evidence-dir must normalize exactly to <workspace>/evidence/<case-id> and must not traverse symlinks." >&2
   exit 2
 fi
-validate_declared_verification_use
 EVIDENCE_DIR="$EXPECTED_EVIDENCE_DIR"
 WORKSPACE_LABEL="$(basename "$WORKSPACE_DIR")"
 AUTHORITY_MODE="no_state"
 R2_STATE_REVISION=""
+R2_STAGE=""
+EVENT_STAGE="candidate_verifying"
+REGISTRY_STAGE="verification"
 DOCKER_CLI_INVOKED="false"
 POC_COMMAND_INVOKED="false"
 WRAPPER_STATUS=""
@@ -969,8 +980,8 @@ atomic_write_json(
             "oracle_matched": False,
             "authority_event_committed": False,
             "workflow_transition_attempted": False,
-            "required_state": "verification/running or explicit verification/blocked retry",
-            "resume_step": "Complete triage and use the canonical stage transition entrypoint to enter verification/running before retrying this wrapper.",
+            "required_state": "verification/running or severity_escalation/running, or an explicit blocked retry for either stage",
+            "resume_step": "Use the canonical stage transition entrypoint to enter verification/running or severity_escalation/running before retrying this wrapper.",
             "timeout_seconds": int(timeout_seconds),
             "command": [],
             "docker_boundary_only": True,
@@ -1071,11 +1082,19 @@ import sys
 print(json.loads(sys.argv[1]).get("state_revision") or "")
 PY
 )"
-  if [[ "$stage" != "verification" || ( "$status" != "running" && "$status" != "blocked" ) ]]; then
+  if [[ "$stage" != "verification" && "$stage" != "severity_escalation" ]]; then
     emit_state_precondition_blocker \
       "WORKFLOW_STATE_NOT_VERIFICATION_READY" \
-      "R2 verification requires verification/running or an explicit verification/blocked retry."
+      "R2 Docker verification is supported only in verification or severity_escalation, with running or explicit blocked retry status."
   fi
+  if [[ "$status" != "running" && "$status" != "blocked" ]]; then
+    emit_state_precondition_blocker \
+      "WORKFLOW_STATE_NOT_VERIFICATION_READY" \
+      "R2 Docker verification requires a running state or an explicit blocked retry in the captured stage."
+  fi
+  R2_STAGE="$stage"
+  EVENT_STAGE="$stage"
+  REGISTRY_STAGE="$stage"
   R2_INITIAL_STATUS="$status"
 }
 
@@ -1130,7 +1149,7 @@ commit_verification_result_event() {
   if [[ "$AUTHORITY_MODE" == "r2" ]]; then
     write_r2_state_event "$R2_STATE_REVISION" \
       "$@" \
-      --from-stage verification \
+      --from-stage "$EVENT_STAGE" \
       --from-status running
     return
   fi
@@ -1189,8 +1208,8 @@ PY
     --workspace-dir "$WORKSPACE_DIR" \
     --target-repo "$(cd "$WORKSPACE_DIR/.." && pwd)" \
     --event verification_case_resumed \
-    --stage verification \
-    --from-stage verification \
+    --stage "$R2_STAGE" \
+    --from-stage "$R2_STAGE" \
     --from-status blocked \
     --status running \
     --transition-kind resume \
@@ -1381,8 +1400,8 @@ commit_verification_start_event() {
     --workspace-dir "$WORKSPACE_DIR" \
     --target-repo "$(cd "$WORKSPACE_DIR/.." && pwd)" \
     --event verification_case_started \
-    --stage verification \
-    --from-stage verification \
+    --stage "$R2_STAGE" \
+    --from-stage "$R2_STAGE" \
     --from-status running \
     --status running \
     --transition-kind observe \
@@ -1447,7 +1466,7 @@ classify_and_exit() {
         --workspace-dir "$WORKSPACE_DIR" \
         --target-repo "$(cd "$WORKSPACE_DIR/.." && pwd)" \
         --event verification_case_completed \
-        --stage candidate_verifying \
+        --stage "$EVENT_STAGE" \
         --status running \
         --transition-kind observe \
         --event-status "$status" \
@@ -1464,7 +1483,7 @@ classify_and_exit() {
         --workspace-dir "$WORKSPACE_DIR" \
         --target-repo "$(cd "$WORKSPACE_DIR/.." && pwd)" \
         --event verification_case_blocked \
-        --stage candidate_verifying \
+        --stage "$EVENT_STAGE" \
         --status blocked \
         --transition-kind block \
         --event-status "$status" \
@@ -1485,7 +1504,7 @@ classify_and_exit() {
         --workspace-dir "$WORKSPACE_DIR" \
         --target-repo "$(cd "$WORKSPACE_DIR/.." && pwd)" \
         --event verification_case_blocked \
-        --stage candidate_verifying \
+        --stage "$EVENT_STAGE" \
         --status blocked \
         --transition-kind block \
         --event-status "$status" \
@@ -1507,7 +1526,7 @@ classify_and_exit() {
         --workspace-dir "$WORKSPACE_DIR" \
         --target-repo "$(cd "$WORKSPACE_DIR/.." && pwd)" \
         --event verification_case_rejected \
-        --stage candidate_verifying \
+        --stage "$EVENT_STAGE" \
         --status running \
         --transition-kind observe \
         --event-status "$status" \
@@ -1583,6 +1602,7 @@ SANDBOX_PREFLIGHT_JSON="$EVIDENCE_DIR/sandbox-preflight.json"
 prepare_case_lifecycle
 write_sandbox_preflight_evidence
 read_authority_preflight
+validate_declared_verification_use "$REGISTRY_STAGE"
 
 write_command_json() {
   python3 - "$SCRIPT_DIR" "$COMMAND_JSON_PATH" "$WORKSPACE_DIR" "$EVIDENCE_DIR" "$@" <<'PY'

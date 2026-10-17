@@ -135,11 +135,13 @@ chain.
 
 `scripts/run_verification_case.sh` is a separate Docker-evidence wrapper, not
 an execution implementation hidden inside this R1 verifier. In an R2 audit
-workspace it requires a synchronized `verification/running` state (or an
-explicit retry from `verification/blocked`) before any Docker CLI call, then
-commits a revision-bound same-stage start event before the PoC container
-command. Its result remains Docker oracle material only. Custom non-authority R1
-diagnostics remain readable through the existing verdict schema; a
+workspace it requires a synchronized `verification/running` or
+`severity_escalation/running` state (or an explicit retry from a blocked state
+in either stage) before any Docker CLI call, captures that validated stage and
+revision once, and commits a revision-bound same-stage start event before the
+PoC container command. Its result remains Docker oracle material only. This R1
+verifier itself still requires its own `verification/running` baseline. Custom
+non-authority R1 diagnostics remain readable through the existing verdict schema; a
 non-execution `--out` using the canonical verdict filename is intentionally
 rejected, and a no-state path is never silently upgraded to R2.
 

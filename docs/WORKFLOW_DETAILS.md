@@ -115,13 +115,16 @@ The registry schema's lifecycle-stage enum must match
 addition, or malformed shape fails closed in the production registry validator.
 
 In an R2 workspace, the verification wrapper validates the canonical
-journal/state pair and requires `verification/running` or an explicit retry
-from `verification/blocked` before any Docker CLI call. It never advances
-triage or rewrites workflow state to make a result event fit. Docker
-daemon/image checks are non-PoC prerequisites; the actual PoC container command
-starts only after a revision-bound same-stage start event commits. Result-event
-failure is a nonzero wrapper result even when Docker evidence exists. R1
-remains legacy-compatible, and a workspace with no state files is not silently
+journal/state pair and requires `verification/running` or
+`severity_escalation/running`, or an explicit retry from a blocked state in
+either stage, before any Docker CLI call. It captures the validated stage and
+revision once, then binds registry validation, retry/start/result/blocked
+events, and CAS checks to that stage. It never advances triage or rewrites
+workflow state to make a result event fit. Docker daemon/image checks are
+non-PoC prerequisites; the actual PoC container command starts only after a
+revision-bound same-stage start event commits. Result-event failure is a
+nonzero wrapper result even when Docker evidence exists. R1 remains
+legacy-compatible, and a workspace with no state files is not silently
 upgraded to R2.
 
 ## Advisory Context Planning

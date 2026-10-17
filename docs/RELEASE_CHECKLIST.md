@@ -127,13 +127,16 @@ Use this checklist before publishing a tagged open-source release of Zhulong
 - [ ] Bootstrap workspace names are validated as one direct-child ASCII
   component before mkdir, copy, latest-workspace publication, or event writes.
 - [ ] The R2 verification wrapper validates synchronized canonical journal/state
-  before every Docker CLI call; wrong, missing, stale, corrupt, symlinked, or
-  protocol-mismatched R2 state fails with zero Docker calls and zero authority
-  mutation.
-- [ ] Only `verification/running` or an explicit `verification/blocked` retry
-  reaches R2 verification prerequisites. A revision-bound same-stage start
-  event commits before the PoC container command; drift or writer failure
-  prevents that command.
+  before the initial Docker CLI call; wrong, missing, stale, corrupt,
+  symlinked, or protocol-mismatched R2 state fails with zero Docker calls and
+  zero authority mutation, while revision-bound same-stage CAS checks protect
+  the later start, result, blocked, and resume events.
+- [ ] Only `verification/running` or `severity_escalation/running`, or an
+  explicit blocked retry for either stage, reaches R2 verification
+  prerequisites. The wrapper captures the validated stage and revision once
+  and binds registry, start, result, blocked, resume, and CAS operations to
+  it. A revision-bound same-stage start event commits before the PoC container
+  command; drift or writer failure prevents that command.
 - [ ] Confirmed and not-reproduced Docker results use same-stage observations,
   blocked results use `running -> blocked`, and result-event commit failure is
   reported nonzero without promoting Docker evidence into a verdict,
