@@ -24,6 +24,7 @@ STABLE_TOKEN_RE = re.compile(r"^[a-z0-9][a-z0-9._:-]{0,127}$")
 OTHER_FAMILY_RE = re.compile(r"^other:[a-z0-9][a-z0-9._-]{0,63}$")
 HTTP_ROUTE_RE = re.compile(r"^([A-Za-z]+)[ \t]+(/[^?#]*)$")
 PERCENT_RE = re.compile(r"%[0-9A-Fa-f]{2}")
+WINDOWS_DRIVE_PREFIX_RE = re.compile(r"^[A-Za-z]:")
 SOURCE_KINDS = {"agent", "scanner", "manual_review", "seeded_variant", "imported_legacy"}
 SINK_FAMILIES = {
     "command_execution", "file_read", "file_write", "path_resolution", "http_request",
@@ -73,12 +74,28 @@ def _portable_text(value: Any, label: str) -> str:
 
 
 def safe_relative_path(value: Any, label: str) -> str:
-    text = _portable_text(value, label)
-    if text.startswith(("/", "~")) or "\\" in text or "://" in text:
+    """Validate a workspace-relative POSIX path without classifying its name as prose.
+
+    Repository paths are structured identifiers.  Sensitive free-text filtering
+    remains in ``_portable_text`` and its callers; applying it here rejects
+    legitimate source filenames such as ``system-prompt-extraction.unit.test.ts``.
+    """
+    if not isinstance(value, str) or value == "":
+        raise IdentityError(f"{label} must be a non-empty string")
+    if any(ord(char) < 0x20 or ord(char) == 0x7F for char in value):
+        raise IdentityError(f"{label} must not contain control characters")
+    text = value
+    if (
+        text.startswith(("/", "~"))
+        or "\\" in text
+        or "://" in text
+        or WINDOWS_DRIVE_PREFIX_RE.match(text)
+    ):
         raise IdentityError(f"{label} must be a relative POSIX path")
-    path = PurePosixPath(text)
-    if any(part in {"", ".", ".."} for part in path.parts):
+    raw_parts = text.split("/")
+    if any(part in {"", ".", ".."} for part in raw_parts):
         raise IdentityError(f"{label} must not contain empty, dot, or parent segments")
+    path = PurePosixPath(text)
     normalized = path.as_posix()
     if normalized != text:
         raise IdentityError(f"{label} must already be normalized POSIX text")
