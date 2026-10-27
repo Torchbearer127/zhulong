@@ -3898,7 +3898,7 @@ def valid_bundle_contract(overrides: dict | None = None) -> dict:
     return contract
 
 
-def prepare_source_bound_fixture(repo_root: Path, workspace: Path, contract: dict) -> dict:
+def prepare_source_bound_fixture(repo_root: Path, workspace: Path, contract: dict, *, source_files: tuple[str, ...] = ()) -> dict:
     source_path = repo_root / "src/importer.py"
     source_path.parent.mkdir(parents=True, exist_ok=True)
     source_text = (
@@ -3909,7 +3909,7 @@ def prepare_source_bound_fixture(repo_root: Path, workspace: Path, contract: dic
     source_path.write_text(source_text, encoding="utf-8")
     if not (repo_root / ".git").exists():
         run(["git", "init", "-q", str(repo_root)], repo_root.parent)
-        run(["git", "-C", str(repo_root), "add", "src/importer.py"], repo_root)
+        run(["git", "-C", str(repo_root), "add", "src/importer.py", *source_files], repo_root)
         run(
             [
                 "git", "-C", str(repo_root),
@@ -4449,7 +4449,7 @@ def build_wrapper_source_finding(
     return slug
 
 
-def build_wrapper_contract(workspace: Path, slug: str, *, finding_slug: str = "demo-app-path-traversal") -> Path:
+def build_wrapper_contract(workspace: Path, slug: str, *, finding_slug: str = "demo-app-path-traversal", source_files: tuple[str, ...] = ()) -> Path:
     contract = valid_bundle_contract()
     contract["bundle"]["slug"] = slug
     contract["bundle"]["language"] = "zh-CN"
@@ -4500,7 +4500,7 @@ def build_wrapper_contract(workspace: Path, slug: str, *, finding_slug: str = "d
             },
         }
     )
-    prepare_source_bound_fixture(workspace.parent, workspace, contract)
+    prepare_source_bound_fixture(workspace.parent, workspace, contract, source_files=source_files)
     contract_path = workspace / "confirmed/.contracts" / f"{slug}.bundle-contract.json"
     contract_path.parent.mkdir(parents=True, exist_ok=True)
     return write_json_fixture(contract_path, contract)
@@ -5000,7 +5000,195 @@ def exercise_source_text_scope(plugin_root: Path) -> None:
     print("SOURCE TEXT SCOPE SELFTEST PASSED: bound quotes accepted; generated prose/safety gates retained")
 
 
+def exercise_dependency_resolution_contract(plugin_root: Path) -> None:
+    # Synthetic declaration: this is not a reproduction of a third-party build.
+    with tempfile.TemporaryDirectory(prefix="zhulong-dependency-resolution-") as tmp:
+        legacy_bundle = Path(tmp) / "legacy"
+        legacy_bundle.mkdir()
+        validator_module = load_validate_report_bundle_module(plugin_root)
+        for legacy_payload in ({}, [{}], {"findings": [{}]}):
+            write_json_fixture(legacy_bundle / "findings.json", legacy_payload)
+            validator_module.validate_build_manifest({"validation_status": "passed", "promote_status": "promoted"}, legacy_bundle)
+        declared = {"dependency_resolution": {}}
+        for declared_payload in (declared, [declared], {"findings": [declared]}):
+            write_json_fixture(legacy_bundle / "findings.json", declared_payload)
+            try:
+                validator_module.validate_build_manifest({"validation_status": "passed", "promote_status": "promoted"}, legacy_bundle)
+            except SystemExit as exc:
+                if "DEPENDENCY_RESOLUTION_INVALID" not in str(exc):
+                    raise
+            else:
+                raise SystemExit("FAILED: declared resolution bypassed the manifest in a legacy finding shape")
+        repo, workspace = new_build_wrapper_workspace(Path(tmp), "resolution")
+        slug = build_wrapper_source_finding(plugin_root, repo, workspace)
+        original = {"name": "synthetic-static-fixture", "version": "1.0.0",
+                    "scripts": {"build": "node build.js"}, "devDependencies": {"legacy-builder": "^1.0.0"}}
+        write_json_fixture(repo / "package.json", original)
+        write_json_fixture(repo / "package-lock.json", {"name": original["name"], "lockfileVersion": 1})
+        (repo / "build.js").write_text("require('fs').mkdirSync('dist');\n", encoding="utf-8")
+        contract_path = build_wrapper_contract(workspace, slug, source_files=("package.json", "package-lock.json", "build.js"))
+        run_bundle_contract_json(plugin_root, workspace, contract_path, expected_returncode=0)
+        contract = json.loads(contract_path.read_text(encoding="utf-8"))
+        contract["dependency_resolution"] = {"kind": "unused-constraint"}
+        write_json_fixture(contract_path, contract)
+        payload = run_bundle_contract_json(plugin_root, workspace, contract_path, expected_returncode=1)
+        if "DEPENDENCY_RESOLUTION_INVALID" not in {issue["code"] for issue in payload["issues"]}:
+            raise SystemExit("FAILED: an unconsumed dependency declaration was not rejected")
+        sys.path.insert(0, str(plugin_root / "scripts"))
+        from dependency_resolution import expected_dockerfile, validate_resolution_inputs
+
+        def digest_file(path: Path) -> dict:
+            return {"path": path.relative_to(repo).as_posix(), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+
+        inputs = repo / "resolution"
+        inputs.mkdir()
+        archive = inputs / "source.tar"
+        archive.write_bytes(subprocess.check_output(["git", "-C", str(repo), "archive", "--format=tar", "HEAD"]))
+        compatibility = {**original, "overrides": {"compat-leaf": "1.0.0"}}
+        write_json_fixture(inputs / "package.compat.json", compatibility)
+        registry = "https://registry.example.invalid"
+        package = {"version": "1.0.0", "integrity": "sha512-" + __import__("base64").b64encode(b"x" * 64).decode()}
+        lock = {"name": original["name"], "version": "1.0.0", "lockfileVersion": 3,
+                "packages": {"": {key: value for key, value in original.items() if key != "scripts"},
+                             "node_modules/legacy-builder": {**package, "resolved": registry + "/legacy-builder/-/legacy-builder-1.0.0.tgz", "dependencies": {"compat-leaf": "^1.0.0"}},
+                             "node_modules/compat-leaf": {**package, "resolved": registry + "/compat-leaf/-/compat-leaf-1.0.0.tgz"}}}
+        write_json_fixture(inputs / "package.compat-lock.json", lock)
+        spec = {"kind": "npm-static-build-v1", "purpose": "build_only", "tested_ref": contract["source_binding"]["tested_ref"],
+                "source_archive": digest_file(archive), "original_manifest": digest_file(repo / "package.json"),
+                "original_lock": digest_file(repo / "package-lock.json"),
+                "compatibility_manifest": digest_file(inputs / "package.compat.json"),
+                "compatibility_lock": digest_file(inputs / "package.compat-lock.json"),
+                "build_image": "node@sha256:" + "1" * 64, "runtime_image": "nginx@sha256:" + "2" * 64,
+                "registry": registry, "output_dir": "dist", "service": "app"}
+        # Dockerfile path is an input to its complete expected template.
+        spec["dockerfile"] = {"path": "Dockerfile"}
+        (repo / "Dockerfile").write_text(expected_dockerfile(spec), encoding="utf-8")
+        spec["dockerfile"] = digest_file(repo / "Dockerfile")
+        compose = {"services": {"app": {"build": {"context": ".", "dockerfile": "Dockerfile"},
+                                         "healthcheck": {"test": ["CMD", "/bin/true"]}}}}
+        write_json_fixture(repo / "docker-compose.yml", compose)
+        spec["compose_file"] = digest_file(repo / "docker-compose.yml")
+        contract["dependency_resolution"] = spec
+        write_json_fixture(contract_path, contract)
+        run_bundle_contract_json(plugin_root, workspace, contract_path, expected_returncode=0)
+        findings_path = workspace / "confirmed/findings.json"
+        payload = json.loads(findings_path.read_text(encoding="utf-8"))
+        finding = payload["findings"][0]
+        for path in inputs.iterdir():
+            finding["bundle_root_artifacts"].append({"path": path.relative_to(repo).as_posix(),
+                                                    "output_name": path.relative_to(repo).as_posix(), "purpose": "合成依赖解析测试输入"})
+        for step in finding["reproduction"]:
+            step["commands"] = ["docker compose -f docker-compose.yml build --no-cache app"]
+        write_json_fixture(findings_path, payload)
+        builder = [sys.executable, str(plugin_root / "scripts/build_confirmed_bundle.py"), "--repo-root", str(repo),
+                   "--workspace-dir", str(workspace), "--contract", str(contract_path), "--language", "zh-CN"]
+        run(builder, plugin_root)
+        bundle = workspace / "confirmed" / slug
+        moved = Path(tmp) / "moved" / workspace.name / "confirmed" / slug
+        shutil.copytree(bundle, moved)
+        shutil.copyfile(workspace / "asr-config.json", moved.parent.parent / "asr-config.json")
+        validator = [sys.executable, str(plugin_root / "scripts/validate_report_bundle.py"), "--bundle-dir", str(moved),
+                     "--language", "zh-CN", "--require-standalone-replay"]
+        run(validator, plugin_root)
+        runtime = Path(tmp) / "workspace-bin"
+        runtime.mkdir()
+        for name in ("validate_report_bundle.py", "dependency_resolution.py", "original_input_evidence.py", "render_confirmed_vuln_docx.py"):
+            shutil.copyfile(plugin_root / "scripts" / name, runtime / name)
+        shutil.copyfile(runtime / "validate_report_bundle.py", runtime / "validate-report-bundle.py")
+        run([sys.executable, str(runtime / "validate-report-bundle.py"), *validator[2:]], plugin_root)
+        manifest = json.loads((moved / "bundle-build-manifest.json").read_text(encoding="utf-8"))
+        if manifest.get("dependency_resolution") != spec or any(manifest["status"][stage] != "not_executed" for stage in
+                ("target_build", "target_startup", "health_check", "local_replay", "clean_room_replay")):
+            raise SystemExit("FAILED: dependency resolution metadata changed execution authority")
+        if (moved / spec["source_archive"]["path"]).read_bytes() != archive.read_bytes():
+            raise SystemExit("FAILED: original source archive was rewritten")
+
+        def reject_input(mutated: dict, expected: str = "DEPENDENCY_RESOLUTION_INVALID") -> None:
+            try:
+                validate_resolution_inputs(moved, mutated, spec["tested_ref"])
+            except ValueError as exc:
+                if expected not in str(exc):
+                    raise SystemExit(f"FAILED: unrelated resolution rejection: {exc}")
+            else:
+                raise SystemExit("FAILED: invalid resolution input was accepted")
+
+        for role in ("source_archive", "compatibility_manifest", "compatibility_lock", "dockerfile", "compose_file"):
+            path = moved / spec[role]["path"]
+            contents = path.read_bytes()
+            path.unlink()
+            reject_input(spec)
+            path.write_bytes(contents + b"tamper")
+            reject_input(spec)
+            path.unlink()
+            path.symlink_to(archive)
+            reject_input(spec)
+            path.unlink()
+            path.mkdir()
+            reject_input(spec)
+            path.rmdir()
+            path.write_bytes(contents)
+        for role in ("original_manifest", "original_lock"):
+            changed = json_clone(spec)
+            changed[role]["sha256"] = "0" * 64
+            reject_input(changed)
+        for field, value in (("tested_ref", "0" * 40), ("registry", "https://user:secret@example.invalid"),
+                             ("purpose", "runtime"), ("output_dir", "node_modules")):
+            changed = json_clone(spec)
+            changed[field] = value
+            reject_input(changed)
+        changed = json_clone(spec)
+        changed["compatibility_manifest"]["path"] = "../package.json"
+        reject_input(changed)
+        for role, mutation in (
+            ("compatibility_manifest", {**compatibility, "dependencies": {"unrelated": "1.0.0"}}),
+            ("compatibility_lock", {**lock, "packages": {**lock["packages"], "node_modules/compat-leaf": {**package, "version": "2.0.0", "resolved": registry + "/compat-leaf.tgz"}}}),
+            ("compatibility_lock", {**lock, "packages": {"": {"name": "wrong"}}}),
+        ):
+            path = moved / spec[role]["path"]
+            contents = path.read_bytes()
+            write_json_fixture(path, mutation)
+            changed = json_clone(spec)
+            changed[role]["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+            reject_input(changed)
+            path.write_bytes(contents)
+        path = moved / "Dockerfile"
+        contents = path.read_bytes()
+        path.write_bytes(contents.replace(b"npm ci", b"npm install --package-lock=false"))
+        changed = json_clone(spec)
+        changed["dockerfile"]["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+        reject_input(changed)
+        path.write_bytes(contents)
+        path = moved / "docker-compose.yml"
+        contents = path.read_bytes()
+        for build in ({"context": ".", "dockerfile": "Dockerfile", "target": "build"}, {"context": ".", "dockerfile": "Otherfile"}):
+            mutated = json_clone(compose)
+            mutated["services"]["app"]["build"] = build
+            write_json_fixture(path, mutated)
+            changed = json_clone(spec)
+            changed["compose_file"]["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+            reject_input(changed)
+        path.write_bytes(contents)
+        # Public builder failure must stay under staging, never promoted.
+        shutil.rmtree(bundle)
+        compatibility_path = inputs / "package.compat.json"
+        compatibility_path.write_bytes(compatibility_path.read_bytes() + b"tamper")
+        proc = subprocess.run(builder, cwd=plugin_root, capture_output=True, text=True)
+        if proc.returncode == 0 or "DEPENDENCY_RESOLUTION_INVALID" not in proc.stdout + proc.stderr or bundle.exists():
+            raise SystemExit("FAILED: builder promoted tampered compatibility inputs")
+        # Public consumer rejects a removed manifest field, even with valid inputs.
+        del manifest["dependency_resolution"]
+        write_json_fixture(moved / "bundle-build-manifest.json", manifest)
+        proc = subprocess.run(validator, cwd=plugin_root, capture_output=True, text=True)
+        if proc.returncode == 0 or "DEPENDENCY_RESOLUTION_INVALID" not in proc.stdout + proc.stderr:
+            raise SystemExit("FAILED: public validator accepted an unbound resolution declaration")
+        manifest["dependency_resolution"] = spec
+        write_json_fixture(moved / "bundle-build-manifest.json", manifest)
+        run(validator, plugin_root)
+    print("DEPENDENCY RESOLUTION CONTRACT SELFTEST PASSED")
+
+
 def exercise_build_confirmed_bundle_wrapper(plugin_root: Path) -> None:
+    exercise_dependency_resolution_contract(plugin_root)
     exercise_standalone_replay_contract(plugin_root)
     exercise_build_manifest_runtime_claims(plugin_root)
     exercise_source_text_scope(plugin_root)

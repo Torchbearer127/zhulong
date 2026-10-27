@@ -296,6 +296,8 @@ def apply_contract_decision_to_finding(
         }
     )
     finding["verification_evidence"] = verification
+    if "dependency_resolution" in contract:
+        finding["dependency_resolution"] = contract["dependency_resolution"]
     return finding
 
 
@@ -509,6 +511,11 @@ def write_manifest(
         ),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
+    if "dependency_resolution" in contract:
+        from dependency_resolution import validate_resolution_inputs
+        spec = contract["dependency_resolution"]
+        validate_resolution_inputs(manifest_dir, spec, payload["tested_ref"])
+        payload["dependency_resolution"] = spec
     (manifest_dir / "bundle-build-manifest.json").write_text(
         json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",

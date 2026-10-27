@@ -4382,6 +4382,22 @@ def validate_build_manifest(data: dict[str, object], bundle_dir: Path) -> None:
     validate_build_manifest_build_inputs(data)
     validate_build_manifest_promotion(data, bundle_dir)
     validate_build_manifest_status(data, bundle_dir)
+    finding_path = bundle_dir / "findings.json"
+    finding = None
+    if finding_path.is_file():
+        _, finding = load_selected_finding(finding_path, bundle_dir.name, bundle_dir.parent.parent)
+    if "dependency_resolution" in data:
+        from dependency_resolution import validate_resolution_inputs
+        try:
+            replay_input_path(bundle_dir, bundle_dir, "findings.json")
+            if finding is None or finding.get("dependency_resolution") != data["dependency_resolution"]:
+                raise ValueError("DEPENDENCY_RESOLUTION_INVALID: finding and build manifest declarations differ")
+            validate_resolution_inputs(bundle_dir, data["dependency_resolution"], str(data.get("tested_ref", "")))
+            validate_standalone_replay_inputs(bundle_dir)
+        except (ValueError, OSError, TypeError, AttributeError) as exc:
+            fail(str(exc), code="DEPENDENCY_RESOLUTION_INVALID")
+    elif finding is not None and "dependency_resolution" in finding:
+        fail("DEPENDENCY_RESOLUTION_INVALID: missing build manifest declaration", code="DEPENDENCY_RESOLUTION_INVALID")
 
 
 def build_manifest_replay_entries(bundle_dir: Path) -> dict[str, dict[str, object]]:
@@ -5502,6 +5518,27 @@ def validate_replay_compose_inputs(bundle_dir: Path, tokens: list[str], *, requi
                     merged[field] = {**before, **after}
             services[service] = merged
     if require_standalone:
+        findings_path = bundle_dir / "findings.json"
+        if findings_path.is_file():
+            try:
+                findings = json.loads(findings_path.read_text(encoding="utf-8")).get("findings", [])
+                spec = findings[0].get("dependency_resolution") if len(findings) == 1 else None
+                if spec is not None and tokens[index] in {"up", "run", "build"}:
+                    from dependency_resolution import check_compose
+                    if files != [spec["compose_file"]["path"]]:
+                        raise ValueError("DEPENDENCY_RESOLUTION_INVALID: replay must use only the declared Compose file")
+                    check_compose(spec, {"services": services})
+                    args = tokens[index + 1:]
+                    if tokens[index] == "build":
+                        supported = args in ([spec["service"]], ["--no-cache", spec["service"]])
+                    else:
+                        supported = (tokens[index] == "up" and "--build" in args
+                                     and args.count(spec["service"]) == 1
+                                     and all(arg in {"--build", "--wait", "-d", "--detach", spec["service"]} for arg in args))
+                    if not supported:
+                        raise ValueError("DEPENDENCY_RESOLUTION_INVALID: replay must explicitly build the declared service without overrides")
+            except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
+                fail(str(exc), code="DEPENDENCY_RESOLUTION_INVALID")
         for name, service in services.items():
             supported = {"image", "build", "command", "entrypoint", "environment", "env_file", "ports", "expose", "volumes", "networks", "depends_on", "healthcheck", "working_dir", "user", "restart", "init", "labels", "hostname", "container_name", "stop_grace_period", "pull_policy"}
             if set(service) - supported:

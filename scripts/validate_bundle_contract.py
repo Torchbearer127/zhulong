@@ -1082,6 +1082,16 @@ def validate_contract(
     check_impact_and_validity(contract, source_refs, issues)
     check_ssrf_impact(contract, issues)
     check_variant_seed_readiness(contract, issues)
+    if "dependency_resolution" in contract:
+        from dependency_resolution import check_declaration, check_source_archive
+        try:
+            spec = contract["dependency_resolution"]
+            check_declaration(spec, as_mapping(contract.get("source_binding")).get("tested_ref", ""))
+            if boundary_ok:
+                check_source_archive(repo_root, spec)
+        except ValueError as exc:
+            issues.add("DEPENDENCY_RESOLUTION_INVALID", "dependency_resolution", str(exc),
+                       "Declare the supported build-only resolution form and preserve the tested source archive.")
 
 
 def emit_json(contract_path: Path, issues: list[Issue]) -> None:

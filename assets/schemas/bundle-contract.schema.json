@@ -23,7 +23,40 @@
     "impact_tier",
     "variant_seed_readiness"
   ],
+  "$defs": {
+    "resolutionFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    }
+  },
   "properties": {
+    "dependency_resolution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "purpose", "tested_ref", "source_archive", "original_manifest", "original_lock", "compatibility_manifest", "compatibility_lock", "dockerfile", "compose_file", "service", "build_image", "runtime_image", "registry", "output_dir"],
+      "properties": {
+        "kind": {"const": "npm-static-build-v1"},
+        "purpose": {"const": "build_only"},
+        "tested_ref": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "source_archive": {"$ref": "#/$defs/resolutionFile"},
+        "original_manifest": {"$ref": "#/$defs/resolutionFile"},
+        "original_lock": {"$ref": "#/$defs/resolutionFile"},
+        "compatibility_manifest": {"$ref": "#/$defs/resolutionFile"},
+        "compatibility_lock": {"$ref": "#/$defs/resolutionFile"},
+        "dockerfile": {"$ref": "#/$defs/resolutionFile"},
+        "compose_file": {"$ref": "#/$defs/resolutionFile"},
+        "service": {"type": "string", "pattern": "^[A-Za-z0-9_-]+$"},
+        "build_image": {"type": "string", "pattern": "@sha256:[0-9a-f]{64}$"},
+        "runtime_image": {"type": "string", "pattern": "@sha256:[0-9a-f]{64}$"},
+        "registry": {"type": "string", "pattern": "^https://[A-Za-z0-9.-]+(?::[0-9]+)?(?:/[A-Za-z0-9._/-]*)?$"},
+        "output_dir": {"enum": ["dist", "build"]}
+      }
+    },
     "schema_version": {
       "const": 1
     },

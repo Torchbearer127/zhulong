@@ -854,6 +854,61 @@ attest command ordering, or prove image availability, offline operation,
 successful builds, health checks, or replay. The builder's five runtime stages
 remain `not_executed`.
 
+### Build-Only Dependency Compatibility
+
+A generation contract may opt into `dependency_resolution.kind =
+"npm-static-build-v1"` for a static frontend built with npm. Historical bundles
+without this declaration remain readable; they gain no dependency-resolution or
+runtime-success claim. Other package managers, workspace packages, install
+scripts, custom Dockerfiles and server-side npm deployments are outside this form.
+
+The declaration records `purpose: "build_only"`, the same `tested_ref` as the
+source binding, digest-pinned `build_image` and `runtime_image`, an explicit
+credential-free HTTPS `registry`, `service`, and `output_dir` (`dist` or `build`).
+Its `source_archive`, `original_manifest`, `original_lock`,
+`compatibility_manifest`, `compatibility_lock`, `dockerfile`, and `compose_file`
+each contain `path` and `sha256`. The two original npm paths refer to
+`package.json` and `package-lock.json` inside the archive; the other paths refer
+to delivered files. Deliver them with the existing `bundle_root_artifacts` or
+`environment_files` declarations. Do not edit the original source or lock.
+
+Preflight binds `source_archive` to the exact uncompressed
+`git archive --format=tar <tested_ref>` bytes. The separate compatibility manifest
+may change only `overrides`, using exact package versions. The separate v3 npm
+compatibility lock must preserve the root dependencies, lock every package to a
+version, registry URL and integrity digest, and contain those overrides at the
+declared versions. Supply a reviewed lock; the builder does not generate one or
+guess compatible versions. Registry URLs cannot carry credentials, queries or
+fragments. Project `.npmrc`, shrinkwrap files and installed dependencies are not
+supported. No private registry credentials belong in these files.
+
+The full byte comparison with `git archive --format=tar <tested_ref>` requires
+the original repository at generation-contract preflight. Once the bundle is
+detached from that repository, bundle-side validation checks archive structure,
+declared inputs and existing digest bindings; it cannot independently establish
+that every member came from that commit. Self-reported hashes and hash chains
+are not source authentication. Independent provenance confirmation still needs
+the original repository or a trusted external provenance anchor.
+
+`scripts/dependency_resolution.py:expected_dockerfile(spec)` returns the complete
+supported Dockerfile. It unpacks the original archive in a build stage, copies
+the separate compatibility manifest and lock, runs `npm ci --include=dev
+--ignore-scripts` with explicit registry and null user/global config, then
+`npm run build`. Only the static output is copied into `/usr/share/nginx/html/`
+in the final image. The validator requires exact template bytes, input hashes,
+and a root Compose file whose service builds this Dockerfile from `.` without
+args, target, alternative image or ignore files. Replay must explicitly build
+that service using only this Compose file: `build [--no-cache] <service>` or
+`up --build [-d] <service>`. Declared but unused constraints fail validation.
+
+The builder records these delivered resolution inputs separately from its
+non-delivered `build_inputs`. Static checks and hashes do not prove npm executed,
+that an image is available, or that the package builds or starts. Keep build,
+startup, health check, local replay and clean-room replay results separate; all
+five builder runtime statuses stay `not_executed`. Until a fresh build, startup
+and health check succeed using only the delivery, do not describe it as
+independently replayable. A no-cache build is not proof of offline supply.
+
 ### Recording And Validation
 
 The ordinary confirmed-bundle path ends at Docker/report validation. Final

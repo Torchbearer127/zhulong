@@ -506,6 +506,8 @@ In addition to the basic fields, strongly prefer these richer fields:
 
 Additional generator rules:
 
+- For the opt-in build-only npm static frontend form, declare `dependency_resolution` in the generation contract and deliver its original source archive, separate compatibility manifest and lock, Dockerfile and Compose file through existing artifact declarations. The supported complete template consumes the compatibility lock with `npm ci`; keeping an unused constraint beside the bundle is insufficient. See [Build-Only Dependency Compatibility](../../docs/WORKFLOW_DETAILS.md#build-only-dependency-compatibility) for supported inputs and limits. Static qualification does not establish independent runtime replay.
+
 - If your source JSON is still an older minimal shape such as `{"findings":[...]}`, normalize it to the richer schema before rendering, or use a renderer version that performs that normalization explicitly.
 - Mark a finding as confirmed only when `docker_verified` is `true`. If Docker verification is incomplete, do not generate a confirmed `.docx`.
 - If a confirmed vulnerability ships a one-command reproduction helper, declare it in `bundle_root_artifacts` so the renderer copies it to the bundle root and the validator can check it.

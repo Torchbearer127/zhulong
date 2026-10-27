@@ -658,6 +658,9 @@ copy_file \
 copy_file \
   "$SKILL_DIR/scripts/original_input_evidence.py" \
   "$WORKSPACE_DIR/bin/original_input_evidence.py"
+copy_file \
+  "$SKILL_DIR/scripts/dependency_resolution.py" \
+  "$WORKSPACE_DIR/bin/dependency_resolution.py"
 chmod +x "$WORKSPACE_DIR/bin/validate-report-bundle.py"
 write_text_file "$WORKSPACE_DIR/scripts/validate-report-bundle.py" '#!/usr/bin/env bash
 set -euo pipefail

@@ -662,6 +662,47 @@ cat docs/RELEASE_CHECKLIST.md
 命令顺序、镜像可下载、离线可用、构建成功、健康检查成功或复现成功。构建器的五个运行
 阶段继续保持 `not_executed`。
 
+### 仅构建阶段使用的依赖兼容约束
+
+使用 npm 构建静态前端时，可以在生成契约中声明
+`dependency_resolution.kind = "npm-static-build-v1"`。未声明的历史漏洞包仍可读取，
+但不会因此取得依赖解析或运行成功的证明。其他包管理器、工作区包、安装脚本、
+自定义 Dockerfile 和服务端 npm 应用不在这一形式的支持范围内。
+
+声明记录 `purpose: "build_only"`、与源码绑定一致的 `tested_ref`、摘要固定的
+`build_image` 和 `runtime_image`、不含凭据的显式 HTTPS `registry`、`service`，
+以及 `output_dir`（`dist` 或 `build`）。`source_archive`、`original_manifest`、
+`original_lock`、`compatibility_manifest`、`compatibility_lock`、`dockerfile`
+和 `compose_file` 各有 `path`、`sha256`。两个原始 npm 路径指向归档内的
+`package.json` 和 `package-lock.json`，其余路径指向交付文件。沿用
+`bundle_root_artifacts` 或 `environment_files` 声明交付文件，不修改原始源码和锁文件。
+
+预检将 `source_archive` 绑定到 `git archive --format=tar <tested_ref>` 输出的完整
+未压缩字节。独立兼容清单只允许修改 `overrides`，且必须指定精确版本。独立的 npm
+第 3 版兼容锁文件必须保留根依赖声明，为每个包固定版本、仓库地址和完整性摘要，并在
+依赖图中实际使用声明的覆盖版本。请提供经过复核的锁文件；构建器不会生成锁文件或猜测
+兼容版本。仓库地址不能携带凭据、查询参数或片段。不支持项目 `.npmrc`、shrinkwrap
+文件或已经安装的依赖；这些交付文件不得包含私有仓库凭据。
+
+生成契约预检可访问原始仓库，因此能与 `git archive --format=tar <tested_ref>` 做完整
+字节核对。漏洞包脱离仓库后，包侧只校验归档结构、所声明输入和已有摘要绑定，不能独立
+证明每个成员都来自该提交。自报摘要及其串联不构成来源认证；独立确认来源仍需要原始
+仓库或可信的外部来源锚点。
+
+`scripts/dependency_resolution.py:expected_dockerfile(spec)` 返回完整的受支持
+Dockerfile：在构建阶段解包原始归档，复制独立兼容清单和锁文件，使用显式仓库与空的
+用户、全局配置执行 `npm ci --include=dev --ignore-scripts`，再执行 `npm run build`。
+最终镜像只接收静态构建产物，目标位置为 `/usr/share/nginx/html/`。校验器要求模板完整
+字节、输入摘要一致；漏洞包根目录的 Compose 文件必须让指定服务从 `.` 构建这个
+Dockerfile，不能另设参数、构建目标、替代镜像或忽略文件。复现必须仅使用该 Compose
+文件，显式构建指定服务：`build [--no-cache] <service>` 或
+`up --build [-d] <service>`。只声明但未参与构建的约束会被拒绝。
+
+构建器将这些已交付的解析输入与未交付的 `build_inputs` 分开记录。静态检查和摘要不能
+证明 npm 已执行、镜像可用、构建或启动成功。请分别记录构建、启动、健康检查、本地复现
+和干净环境复现的结果；构建器的五个运行状态仍是 `not_executed`。只有仅凭交付包完成
+全新构建、启动和健康检查后，才能称其可独立复现。禁用构建缓存不等于已经证明离线供给。
+
 ### 录制与校验
 
 普通确认漏洞包流程在 docker 和报告校验通过后结束。最终审核录屏需要单独明确启用；
