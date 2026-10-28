@@ -79,10 +79,13 @@ python3 scripts/validate_report_bundle.py --bundle-dir <bundle>
 python3 scripts/validate_all_report_bundles.py --confirmed-dir <confirmed-dir>
 ```
 
-If the change affects optional final recording delivery, update the recorder,
-recording validator, strict schema, sanitized fixtures, and reviewer-facing
-documentation together. Recording readiness must remain separate from ordinary
-confirmed status.
+For recording materials, keep the core validator, strict schema, sanitized
+fixtures and reviewer-facing documentation aligned. Desktop producer, runtime
+writer and transaction tests belong to the separate `zhulong-record-bundle`
+skill; invoke it explicitly with `--zhulong-root`. Do not add desktop execution
+or automatic delegation to the core. Ordinary delivery needs no recording
+skill, and live recording is not a core extraction gate. Recording readiness
+remains separate from ordinary confirmed status.
 
 ## When Changing Docker Or Runtime Hygiene
 

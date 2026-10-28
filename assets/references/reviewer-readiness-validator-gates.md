@@ -203,11 +203,12 @@ network calls, or real target code.
 ## Final Recording Identity And Screenshot Gate
 
 Final screen recordings are an explicit opt-in after the ordinary confirmed
-bundle gate. The public source of truth is `scripts/auto_record_bundle.py`,
+bundle gate. Desktop recording belongs to the separate `zhulong-record-bundle`
+skill, invoked explicitly with `--zhulong-root`. The core retains
 `scripts/validate_recording_evidence.py`, `scripts/recording_identity.py`, and
-`assets/schemas/recording-evidence.schema.json`. An older user-level recording
-skill is only a compatibility wrapper and must not write directly into a
-confirmed bundle.
+`assets/schemas/recording-evidence.schema.json`; its former
+`scripts/auto_record_bundle.py` is only a migration notice. The separate producer
+must not write directly into a confirmed bundle.
 
 The recording validator binds project/software name, stable tested
 version/branch/commit/source ref, finding slug, oracle/direct-impact marker,

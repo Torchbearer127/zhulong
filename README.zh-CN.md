@@ -450,7 +450,7 @@ python3 scripts/validate_all_report_bundles.py --confirmed-dir <confirmed-dir>
 
 - [x] 通过 Claude Code 或 Codex skill 使用烛龙，也可通过脚本手动启动。
 - [x] 在 docker 中复现并验证漏洞，区分已确认问题与待验证线索。
-- [x] 生成包含报告、复现脚本和证据附件的交付包，并支持可选录屏。
+- [x] 生成包含报告、复现脚本和证据附件的交付包。可选桌面录制由独立的 `zhulong-record-bundle` skill 负责。
 - [x] 保存审计进度，支持中断恢复、交接续做和结果回顾。
 - [x] 从已确认问题扩展同仓库的同类漏洞线索，统一跟踪重复发现。
 - [x] 2026.10.1：DeepSeek Harness（dsh）有限接入共享 skill 目录。

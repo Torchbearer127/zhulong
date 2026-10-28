@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import ast
 import json
 import hashlib
 import importlib.util
@@ -1695,17 +1696,6 @@ def load_render_confirmed_vuln_docx_module(root: Path):
     return module
 
 
-def load_auto_record_bundle_module(root: Path):
-    module_path = root / "scripts/auto_record_bundle.py"
-    spec = importlib.util.spec_from_file_location("zhulong_auto_record_bundle_selftest", module_path)
-    if spec is None or spec.loader is None:
-        raise SystemExit(f"FAILED: could not load auto_record_bundle.py from {module_path}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
 def issue23_trusted_history_log() -> str:
     return "\n".join(
         [
@@ -2006,19 +1996,6 @@ def exercise_issue23_evidence_integrity(plugin_root: Path) -> None:
             raise SystemExit("FAILED: issue23 renderer materialized or registered runtime replay output before runtime execution")
         if "placeholder" in rendered_history.read_text(encoding="utf-8").lower():
             raise SystemExit("FAILED: issue23 renderer preserved placeholder replay text as historical proof")
-
-        recorder = load_auto_record_bundle_module(plugin_root)
-        if not hasattr(recorder, "write_recording_runtime_replay_log"):
-            raise SystemExit("FAILED: auto recorder has no helper for writing role-separated runtime replay logs")
-        recording_bundle = temp_root / "recording-bundle"
-        recording_history = recording_bundle / "attachments/evidence/replay-output.log"
-        recording_history.parent.mkdir(parents=True, exist_ok=True)
-        recording_history.write_text(issue23_trusted_history_log(), encoding="utf-8")
-        recorder.write_recording_runtime_replay_log(recording_bundle, "runtime replay output\n")
-        if recording_history.read_text(encoding="utf-8") != issue23_trusted_history_log():
-            raise SystemExit("FAILED: auto recorder overwrote historical replay proof transcript")
-        if (recording_bundle / "attachments/evidence/replay-runtime-output.log").read_text(encoding="utf-8") != "runtime replay output\n":
-            raise SystemExit("FAILED: auto recorder did not write runtime replay output to the role-separated path")
 
     print("ISSUE23 EVIDENCE INTEGRITY SELFTEST PASSED: log roles, fail-closed exits, declared evidence")
 
@@ -12004,7 +11981,7 @@ def exercise_structured_blocker_cli(plugin_root: Path) -> None:
 
 
 def exercise_recording_evidence_gate(plugin_root: Path) -> None:
-    """Exercise the public offline recording identity/media/transaction gate."""
+    """Exercise platform-neutral recording materials and renderer handshakes."""
 
     try:
         from PIL import Image, ImageDraw
@@ -12012,7 +11989,6 @@ def exercise_recording_evidence_gate(plugin_root: Path) -> None:
         raise SystemExit(f"FAILED: recording selftest requires Pillow: {exc}") from exc
 
     validator_path = plugin_root / "scripts/validate_recording_evidence.py"
-    auto_recorder_path = plugin_root / "scripts/auto_record_bundle.py"
     if str(plugin_root / "scripts") not in sys.path:
         sys.path.insert(0, str(plugin_root / "scripts"))
     required = [
@@ -12024,6 +12000,19 @@ def exercise_recording_evidence_gate(plugin_root: Path) -> None:
         "assets/fixtures/recording-evidence/manifest.template.json",
     ]
     require_files(plugin_root, required, "recording evidence gate")
+    moved_entry = plugin_root / "scripts/auto_record_bundle.py"
+    entry_tree = ast.parse(moved_entry.read_text(encoding="utf-8"))
+    imports = [node for node in ast.walk(entry_tree) if isinstance(node, (ast.Import, ast.ImportFrom))]
+    if any(not isinstance(node, ast.Import) or [alias.name for alias in node.names] != ["sys"] for node in imports):
+        raise SystemExit("FAILED: moved recorder entry imported runtime or desktop dependencies")
+    with tempfile.TemporaryDirectory(prefix="zhulong-moved-recording-") as moved_temp:
+        for arguments, expected_rc in ((["--help"], 0), ([moved_temp], 2), (["--invalid"], 2)):
+            moved = subprocess.run([sys.executable, str(moved_entry), *arguments],
+                                   capture_output=True, text=True)
+            if moved.returncode != expected_rc or "zhulong-record-bundle" not in moved.stdout + moved.stderr:
+                raise SystemExit("FAILED: moved recorder entry did not report the explicit skill boundary")
+        if list(Path(moved_temp).iterdir()):
+            raise SystemExit("FAILED: moved recorder entry modified the supplied bundle directory")
     if (plugin_root / "skills/zhulong/SKILL.md").is_file():
         if (plugin_root / "skills/zhulong/SKILL.md").read_bytes() != (plugin_root / "templates/claude-skill/SKILL.md").read_bytes():
             raise SystemExit("FAILED: Claude and Codex public skill source files drifted")
@@ -12405,89 +12394,6 @@ def exercise_recording_evidence_gate(plugin_root: Path) -> None:
         if persisted["recording_status"] != "staging" or persisted["transaction"]["full_recording_time_validated"] is not False:
             raise SystemExit("FAILED: case 11a missing checkpoints changed promotion authority")
 
-        auto_spec = importlib.util.spec_from_file_location("zhulong_auto_recording_selftest", auto_recorder_path)
-        if auto_spec is None or auto_spec.loader is None:
-            raise SystemExit("FAILED: cannot load public auto recorder")
-        auto_module = importlib.util.module_from_spec(auto_spec)
-        sys.modules[auto_spec.name] = auto_module
-        auto_spec.loader.exec_module(auto_module)
-
-        retained_dir = root / "retained-unpromoted"
-        parsed = auto_module.parse_args(["example-bundle", "--keep-unpromoted-archive", str(retained_dir)])
-        if parsed.keep_unpromoted_archive != retained_dir or parsed.zip_on_fail:
-            raise SystemExit("FAILED: recording diagnostic archive CLI did not parse the explicit destination")
-        legacy = auto_module.parse_args(["example-bundle", "--zip-on-fail"])
-        if not legacy.zip_on_fail or legacy.keep_unpromoted_archive is not None:
-            raise SystemExit("FAILED: deprecated --zip-on-fail compatibility parsing drifted")
-        legacy_probe = subprocess.run(
-            [sys.executable, str(auto_recorder_path), str(root / "missing-bundle"), "--zip-on-fail"],
-            cwd=plugin_root,
-            capture_output=True,
-            text=True,
-        )
-        if legacy_probe.returncode == 0 or "deprecated" not in legacy_probe.stderr or (root / "missing-bundle.zip").exists():
-            raise SystemExit("FAILED: deprecated --zip-on-fail did not warn and remain non-producing")
-        staged_diagnostic_zip = root / "verified-unpromoted.zip"
-        with zipfile.ZipFile(staged_diagnostic_zip, "w") as handle:
-            handle.writestr("example-finding/evidence.txt", "verified bytes\n")
-        final_diagnostic_zip = root / "example-finding.zip"
-        final_diagnostic_zip.write_bytes(b"original-final-zip-bytes\n")
-        retained = auto_module.retain_unpromoted_archive(staged_diagnostic_zip, retained_dir, base_bundle)
-        if retained.parent != retained_dir.resolve() or retained.name == final_diagnostic_zip.name:
-            raise SystemExit("FAILED: retained archive path is not explicitly diagnostic")
-        if retained.read_bytes() != staged_diagnostic_zip.read_bytes() or final_diagnostic_zip.read_bytes() != b"original-final-zip-bytes\n":
-            raise SystemExit("FAILED: diagnostic archive retention changed archive bytes or the final path")
-        try:
-            auto_module.retain_unpromoted_archive(staged_diagnostic_zip, retained_dir, base_bundle)
-        except RuntimeError:
-            pass
-        else:
-            raise SystemExit("FAILED: diagnostic archive retention overwrote an existing diagnostic copy")
-        inside_bundle_dir = base_bundle / "forbidden-diagnostics"
-        try:
-            auto_module.retain_unpromoted_archive(staged_diagnostic_zip, inside_bundle_dir, base_bundle)
-        except RuntimeError:
-            pass
-        else:
-            raise SystemExit("FAILED: diagnostic archive retention accepted a directory inside the final bundle")
-        shutil.rmtree(inside_bundle_dir, ignore_errors=True)
-
-        final_dir = root / "transaction-final"
-        final_dir.mkdir()
-        (final_dir / "original.txt").write_text("original bytes\n", encoding="utf-8")
-        final_zip = root / "transaction-final.zip"
-        with zipfile.ZipFile(final_zip, "w") as handle:
-            handle.writestr("transaction-final/original.txt", "original bytes\n")
-        before_dir = hashlib.sha256((final_dir / "original.txt").read_bytes()).hexdigest()
-        before_zip = hashlib.sha256(final_zip.read_bytes()).hexdigest()
-        stage_dir = root / "transaction-stage"
-        stage_dir.mkdir()
-        (stage_dir / ".zhulong-recording-transaction.json").write_text("{}\n", encoding="utf-8")
-        (stage_dir / "recording-evidence.json").write_text(
-            json.dumps({"recording_status": "staging", "transaction": {"full_recording_time_validated": False}}) + "\n",
-            encoding="utf-8",
-        )
-        try:
-            auto_module.transactional_promote(stage_dir, final_dir, root / "missing-stage.zip", final_zip)
-        except RuntimeError as exc:
-            if "full recording-time validation" not in str(exc):
-                raise
-            pass
-        else:
-            raise SystemExit("FAILED: case 12 unvalidated transaction unexpectedly succeeded")
-        (stage_dir / "recording-evidence.json").write_text(
-            json.dumps({"recording_status": "passed", "transaction": {"full_recording_time_validated": True}}) + "\n",
-            encoding="utf-8",
-        )
-        try:
-            auto_module.transactional_promote(stage_dir, final_dir, root / "missing-stage.zip", final_zip)
-        except (RuntimeError, OSError):
-            pass
-        else:
-            raise SystemExit("FAILED: case 12 interrupted transaction unexpectedly succeeded")
-        if hashlib.sha256((final_dir / "original.txt").read_bytes()).hexdigest() != before_dir or hashlib.sha256(final_zip.read_bytes()).hexdigest() != before_zip:
-            raise SystemExit("FAILED: case 12 rollback changed original bytes")
-
         positive = run_capture([sys.executable, str(validator_path), "--bundle-dir", str(base_bundle), "--checkpoint-dir", str(base_checkpoint), "--finalize", "--json"], plugin_root)
         positive_result = json.loads(positive)
         if (
@@ -12555,7 +12461,7 @@ def exercise_recording_evidence_gate(plugin_root: Path) -> None:
             events.mkdir(parents=True)
             acknowledgements.mkdir()
             owner = session_root / "owner.json"
-            auto_module.write_json_atomic(owner, {"owner": "zhulong-recording"})
+            write_json_fixture(owner, {"owner": "zhulong-recording"})
             generated_helper = session_root / "generated-helper.sh"
             generated_helper.write_text(
                 helper_prefix
@@ -12620,7 +12526,7 @@ def exercise_recording_evidence_gate(plugin_root: Path) -> None:
                 raise SystemExit(f"FAILED: checkpoint {label} accepted an invalid ack: {stdout}{stderr}")
 
         def pretty_ack(path: Path, acknowledgement: dict[str, object], _session_root: Path) -> None:
-            auto_module.write_json_atomic(path, acknowledgement)
+            write_json_fixture(path, acknowledgement)
 
         def compact_ack(path: Path, acknowledgement: dict[str, object], _session_root: Path) -> None:
             path.write_text(json.dumps(acknowledgement, separators=(",", ":")) + "\n", encoding="utf-8")
@@ -12633,7 +12539,7 @@ def exercise_recording_evidence_gate(plugin_root: Path) -> None:
             def writer(path: Path, acknowledgement: dict[str, object], _session_root: Path) -> None:
                 modified = dict(acknowledgement)
                 modified[field] = value
-                auto_module.write_json_atomic(path, modified)
+                write_json_fixture(path, modified)
 
             return writer
 
@@ -12642,7 +12548,7 @@ def exercise_recording_evidence_gate(plugin_root: Path) -> None:
 
         def symlink_ack(path: Path, acknowledgement: dict[str, object], session_root: Path) -> None:
             target = session_root / "outside-ack.json"
-            auto_module.write_json_atomic(target, acknowledgement)
+            write_json_fixture(target, acknowledgement)
             path.symlink_to(target)
 
         run_real_checkpoint_handshake("pretty", pretty_ack, True)
@@ -12660,7 +12566,7 @@ def exercise_recording_evidence_gate(plugin_root: Path) -> None:
         for rel in required + layout_files:
             if not (plugin_root / rel).is_file():
                 raise SystemExit(f"FAILED: case 15 public layout missing {rel}")
-        print("RECORDING SELFTEST PASSED: identity/media/screenshot/transaction and semantic checkpoint gates")
+        print("RECORDING SELFTEST PASSED: identity/media/screenshot/archive and semantic checkpoint gates")
 
 
 def exercise_audit_state_protocol_r2(plugin_root: Path) -> None:

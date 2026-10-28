@@ -524,9 +524,10 @@ Additional generator rules:
 ## Final recording is a separate opt-in deliverable
 
 Recording a reviewer-facing screen capture is not implied by Docker confirmation
-or by a passing ordinary bundle validator. Use the public repository tools
-`scripts/auto_record_bundle.py` and `scripts/validate_recording_evidence.py`.
-The older local recording skill is only a deprecated compatibility wrapper.
+or by a passing ordinary bundle validator. Desktop recording belongs to the
+separate `zhulong-record-bundle` skill, invoked explicitly with `--zhulong-root`.
+The core retains recording identity, schema and `scripts/validate_recording_evidence.py`;
+its former `scripts/auto_record_bundle.py` is only a migration notice.
 
 The generated bundle-root helper must emit recorder-owned `identity`,
 `code_or_trigger_context`, and `final_impact` checkpoints. Those checkpoints

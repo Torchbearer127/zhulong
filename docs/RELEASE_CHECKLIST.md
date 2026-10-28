@@ -455,8 +455,10 @@ Use this checklist before publishing a tagged open-source release of Zhulong
   actual input capture or readable final-video evidence.
 
 - [ ] Final recording is explicitly requested; ordinary confirmed status is not treated as recording-ready.
-- [ ] The public source files exist: `scripts/recording_identity.py`, `scripts/auto_record_bundle.py`, `scripts/validate_recording_evidence.py`, the strict recording schema, and sanitized fixtures.
-- [ ] `skills/zhulong/SKILL.md` and `templates/claude-skill/SKILL.md` are byte-identical, and neither delegates authority to the old local recording skill.
+- [ ] The public core identity, recording validator, strict schema and sanitized fixtures exist unchanged; historical valid/tampered material results remain compatible.
+- [ ] The former `scripts/auto_record_bundle.py` is only a side-effect-free migration notice. Core delivery works without the separate recording skill; there is no OBS/Terminal execution, implicit installation or automatic delegation.
+- [ ] The maintained `zhulong-record-bundle` source is available before publishing the entry migration. Its offline desktop/producer/transaction tests are separate from core material and renderer tests; live recording qualification is separate from core release readiness.
+- [ ] `skills/zhulong/SKILL.md` and `templates/claude-skill/SKILL.md` are byte-identical and describe the explicit recording boundary.
 - [ ] The generated helper has identity/context/impact checkpoint events and fails closed when the recorder-owned protocol is incomplete.
 - [ ] Checkpoint acknowledgements use exact JSON semantics (ordinary recorder-owned file, protocol version, status, stage, integer sequence, and marker), not serialization-dependent text matching.
 - [ ] Final encoded video frames are non-black, correctly timed, source/window-bound, and identity/oracle/direct-impact observations are present.
@@ -464,7 +466,7 @@ Use this checklist before publishing a tagged open-source release of Zhulong
 - [ ] The three canonical screenshots are derived from the final encoded video, hashed, non-duplicate, and registered in all three evidence/inventory targets.
 - [ ] `recording-evidence.json` passes `scripts/validate_recording_evidence.py` only after finalization; the ordinary report validator also passes.
 - [ ] Temporary ZIP passes UTF-8/readability, `testzip()`, required-entry, and manifest-hash checks before atomic promotion.
-- [ ] Optional diagnostic archive retention uses `--keep-unpromoted-archive DIR` only after a verified staged archive and a later promotion failure; it stays external, diagnostic-named, and non-overwriting. Deprecated `--zip-on-fail` creates no archive.
+- [ ] The separate recorder restores only its own OBS window edit if still current, before validation/promotion; restoration failure cannot replace the original bundle/video/ZIP. Its optional `--keep-unpromoted-archive DIR` retains only a verified staged archive after later promotion failure, external and non-overwriting; deprecated `--zip-on-fail` creates no archive.
 - [ ] A forced replay/archive/promotion failure leaves the original bundle, video, screenshots, and ZIP byte-identical; failed raw output remains outside the final path with an owned staging marker.
 
 ## 6.5 Authority-Boundary Repair

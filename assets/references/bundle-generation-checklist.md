@@ -53,7 +53,7 @@ Before creating a final `confirmed/<slug>/` bundle:
 ## Optional final recording gate
 
 - [ ] Treat recording as a separate opt-in; a normal confirmed bundle is not recording-ready.
-- [ ] Use the repository `scripts/auto_record_bundle.py`; do not use an older local skill as source of truth.
+- [ ] Invoke the separate `zhulong-record-bundle` skill explicitly with `--zhulong-root`. The core retains recording identity, schema and validators; its former `scripts/auto_record_bundle.py` is only a migration notice.
 - [ ] Confirm the generated helper contains the three-stage checkpoint protocol and source-bound identity.
 - [ ] Validate `recording-evidence.json` with `scripts/validate_recording_evidence.py`.
 - [ ] Extract identity/context/impact screenshots from the final encoded video and register all three paths in every evidence index/inventory.

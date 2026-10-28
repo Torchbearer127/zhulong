@@ -200,6 +200,9 @@ means the workspace is not finalized.
 ## Recording boundary
 
 Recording begins only from a validated confirmed bundle and only when requested.
+Desktop capture belongs to the separate `zhulong-record-bundle` skill, invoked
+explicitly with `--zhulong-root`; this core neither controls OBS/Terminal nor
+delegates automatically. Ordinary delivery does not require the recording skill.
 Validate `recording-evidence.json` through
 `scripts/validate_recording_evidence.py`. Replay logs must be real
 command/output/oracle transcripts; visual pause variables are not readiness

@@ -74,9 +74,12 @@ checks, and final bundle validation all pass.
   consistency checks.
 - `scripts/extract_variant_seed.py`, `scripts/find_variant_candidates.py`, and
   their validators own confirmed-seed-based same-repository candidate analysis.
-- `scripts/recording_identity.py`, `scripts/auto_record_bundle.py`, and
-  `scripts/validate_recording_evidence.py` own the optional final recording
-  path. Recording readiness is separate from ordinary confirmed status.
+- `scripts/recording_identity.py` and `scripts/validate_recording_evidence.py`
+  own platform-neutral recording materials and historical compatibility.
+  Desktop capture and its producer tests belong to the separate
+  `zhulong-record-bundle` skill, invoked explicitly with `--zhulong-root`.
+  The core's `auto_record_bundle.py` is a side-effect-free migration notice,
+  never an automatic delegate. Ordinary delivery needs no recording skill.
 - `scripts/manage_docker_resources.py` owns Docker baseline, cleanup planning,
   exact adoption, and strict hygiene.
 - `scripts/check_omc_runtime.sh` owns OMC/runtime hygiene. Teammate PIDs are
@@ -186,9 +189,11 @@ python3 scripts/build_confirmed_bundle.py \
   --language <zh-CN|en-US>
 ```
 
-If optional final recording behavior changed, run the recording evidence tests
-and validate a sanitized recording fixture. Do not operate OBS, Terminal, a real
-PoC, Docker, or the network from deterministic selftests.
+If recording material validation changed, run the core recording evidence and
+renderer handshake tests with sanitized fixtures. Desktop producer, source
+restoration, runtime-writer and transaction tests live in the separate recording
+skill. Do not operate OBS, Terminal, a real PoC, Docker, or the network from
+deterministic selftests. Live recording is not a core extraction test gate.
 
 Before a release, run through:
 
@@ -255,9 +260,10 @@ When fixing a product bug, patch the canonical source area:
   `assets/references/confirmed-vuln-docx-format.md`.
 - Same-repository variant-analysis bugs: `scripts/extract_variant_seed.py`,
   `scripts/find_variant_candidates.py`, their validators and schemas.
-- Final recording bugs: `scripts/recording_identity.py`,
-  `scripts/auto_record_bundle.py`, `scripts/validate_recording_evidence.py`,
-  the recording schema and sanitized fixtures.
+- Recording material bugs: `scripts/recording_identity.py`,
+  `scripts/validate_recording_evidence.py`, the schema and sanitized fixtures.
+  Desktop/OBS producer bugs belong to the separate recording skill, not a new
+  core implementation or a generated core installation.
 - Agent behavior or prompt contract bugs: `skills/zhulong/SKILL.md`,
   `templates/claude-skill/SKILL.md`, `assets/references/*.md`.
 - Packaging docs or manifests: `.claude-plugin/plugin.json`,

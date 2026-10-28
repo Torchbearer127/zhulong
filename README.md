@@ -526,7 +526,7 @@ Completed:
 
 - [x] Use Zhulong through Claude Code or Codex skills, or start it manually with scripts.
 - [x] Reproduce and verify vulnerabilities in Docker, distinguishing confirmed findings from unverified leads.
-- [x] Create delivery bundles with reports, reproduction scripts, and evidence attachments, with optional recording.
+- [x] Create delivery bundles with reports, reproduction scripts, and evidence attachments. Optional desktop recording is handled by the separate `zhulong-record-bundle` skill.
 - [x] Save audit progress, recover interrupted work, hand off ongoing reviews, and review results.
 - [x] Expand from confirmed issues to related leads in the same repository and track duplicates consistently.
 - [x] 2026-10-01: Add limited DeepSeek Harness (dsh) access through the shared skill directory.

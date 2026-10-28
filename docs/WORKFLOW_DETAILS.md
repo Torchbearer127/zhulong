@@ -915,16 +915,24 @@ The ordinary confirmed-bundle path ends at Docker/report validation. Final
 screen recording is a separate opt-in path and does not turn an ordinary
 confirmed finding into a recording-ready or submission-ready artifact.
 
-Use the public repository implementation:
+Desktop capture is owned by the separate `zhulong-record-bundle` skill. Invoke
+it explicitly, naming the existing core source or installed skill root:
 
 ```bash
-python3 scripts/auto_record_bundle.py confirmed/<slug> \
+python3 <recording-skill>/scripts/auto_record_bundle.py confirmed/<slug> \
+  --zhulong-root <zhulong-root> \
   --repo-root . \
   --mode record \
   --engine docker
 ```
 
-The recorder resolves canonical identity from bundle-local `findings.json`,
+The core does not control OBS or Terminal, install the recording skill, or
+delegate automatically. Ordinary delivery does not require it. The old core
+`scripts/auto_record_bundle.py` only reports this move and exits nonzero except
+for help; it does not read bundles or create staging. Historical materials and
+OBS metadata remain supported by the unchanged core identity and validators.
+
+The separate recorder resolves canonical identity from bundle-local `findings.json`,
 `validity-review.json`, `verification-evidence.json`, and source-bound contract
 material. It requires the generated root helper's
 `identity`, `code_or_trigger_context`, and `final_impact` checkpoint protocol.
@@ -937,6 +945,15 @@ semantics, not compact-text fragments: the helper requires an ordinary,
 recorder-owned ack file whose object has the exact protocol version, `ack`
 status, stage, integer sequence, and expected marker. Pretty or compact JSON,
 whitespace, and key order do not change that protocol.
+
+The separate recorder creates its own Terminal before binding the exact native
+OBS window item and reading it back. It does not stop an existing recording.
+After stopping its own recording it collects metadata, restores only its own
+window-setting edit if the current value still matches, and checks restoration
+before validating or promoting artifacts. Later user changes are not overwritten.
+An idle black prompt is not blocked by a preview-brightness preflight; final
+encoded-stage checks remain required. This extraction has only offline test
+coverage, not a new live-recording qualification.
 
 The recording validator extracts frames from the final encoded video, checks
 non-black content, timestamps/holds, and conservative similarity to the live
@@ -969,8 +986,8 @@ bundle; the staged bundle is checked by `validate_report_bundle.py` and
 required-entry checks; only then are the bundle directory and ZIP atomically
 promoted. Replay, frame, archive, or promotion failure leaves the original
 bundle/video/screenshots/ZIP byte-identical and retains a labelled unpromoted
-recorder session. The older local recording skill is compatibility-only and is
-not the source of truth.
+recorder session. The maintained recording implementation lives in the separate
+`zhulong-record-bundle` source, not in the core or a generated core installation.
 
 `--keep-unpromoted-archive DIR` is optional and never writes a final-named ZIP.
 Only if a later promotion failure occurs after the staged ZIP has fully passed

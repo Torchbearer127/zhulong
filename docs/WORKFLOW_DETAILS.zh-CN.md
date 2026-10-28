@@ -708,16 +708,22 @@ Dockerfile，不能另设参数、构建目标、替代镜像或忽略文件。�
 普通确认漏洞包流程在 docker 和报告校验通过后结束。最终审核录屏需要单独明确启用；
 普通漏洞包已经确认，并不代表它已经满足录屏交付或提交要求。
 
-使用仓库内的公共实现：
+桌面录制由独立的 `zhulong-record-bundle` skill 负责。需要录屏时明确调用，并指定已有
+本体源码或已安装 skill 的根目录：
 
 ```bash
-python3 scripts/auto_record_bundle.py confirmed/<slug> \
+python3 <recording-skill>/scripts/auto_record_bundle.py confirmed/<slug> \
+  --zhulong-root <zhulong-root> \
   --repo-root . \
   --mode record \
   --engine docker
 ```
 
-录制器从漏洞包内的 `findings.json`、`validity-review.json`、
+本体不控制 OBS 或 Terminal，不安装录屏 skill，也不自动委托。普通交付不需要录屏
+skill。旧的本体 `scripts/auto_record_bundle.py` 只提示迁移，除帮助外均非零退出，
+不读取漏洞包、不创建暂存目录。历史材料和 OBS 元数据仍由原有身份库、校验器读取。
+
+独立录制器从漏洞包内的 `findings.json`、`validity-review.json`、
 `verification-evidence.json` 以及源码绑定合同材料解析统一录制身份。它要求根脚本实现
 `identity`、`code_or_trigger_context`、`final_impact` 三阶段检查点协议。根脚本只向
 录制器拥有的临时目录写入事件；适配器校验 OBS 来源和窗口，在漏洞包外临时保存实时
@@ -727,6 +733,12 @@ python3 scripts/auto_record_bundle.py confirmed/<slug> \
 确认文件按 JSON 语义解析，而不是匹配固定文本片段。辅助脚本要求该文件是录制器目录
 内的普通文件，并且其中的协议版本、`ack` 状态、阶段、整数序号和预期标记都准确匹配。
 JSON 使用紧凑或美化格式、包含不同空白或调整键顺序，都不会改变协议判断。
+
+独立录制器先创建自有 Terminal 窗口，再绑定准确的 OBS 原生窗口条目并回读确认。
+它不会停止已有录制。停止自己的录制后，先采集元数据，再恢复本次改过的窗口设置；只有
+当前值仍是本次绑定值才会恢复，不覆盖用户后续修改。恢复检查在产物校验和提升之前完成。
+空闲黑底提示符不受预览亮度预检阻挡，最终编码视频仍须通过逐阶段校验。本次剥离只做了
+离线测试，没有新增真实录屏资格验证。
 
 录制证据校验器从最终编码视频中提取帧，检查画面不是纯黑、时间戳和停留时长，并保守
 比较它与实时来源图片的相似度。各阶段的 `recording_time_observations` 是录制器提供的
@@ -753,7 +765,8 @@ attachments/evidence/screenshots/03-final-impact.png
 通过 `validate_report_bundle.py` 与 `validate_recording_evidence.py`；临时 UTF-8 ZIP
 通过 `testzip()` 和必需条目校验后，漏洞包目录与 ZIP 才会原子提升。复现、视频帧、
 归档或提升失败时，原漏洞包、视频、截图和 ZIP 必须保持字节不变，并保留带标签的未提升
-录制会话。旧的本地录制 skill 仅作兼容包装，不是事实源。
+录制会话。录制实现的维护源码位于独立的 `zhulong-record-bundle`，不在本体或生成的
+本体安装目录中。
 
 `--keep-unpromoted-archive DIR` 是可选参数，绝不会写入采用最终名称的 ZIP。只有暂存
 ZIP 已完整通过校验、随后提升失败时，才会向用户明确指定且位于漏洞包之外的目录复制
