@@ -145,6 +145,27 @@ non-authority R1 diagnostics remain readable through the existing verdict schema
 non-execution `--out` using the canonical verdict filename is intentionally
 rejected, and a no-state path is never silently upgraded to R2.
 
+## Independent Validity Review
+
+For authentication-bypass and secret/key/token findings, apply the
+[prerequisite and incremental-impact review](../../assets/references/audit-phase-verification.md#prerequisite-and-incremental-impact-review)
+before recommending confirmation or stronger severity. Inspect the underlying
+source, prerequisite acquisition evidence, negative-control evidence, and the
+explanations connecting them to the claimed added capability. Review relevant
+normal/legacy entrypoints and adjacent guards; neither the finder's verdict nor
+a successful request, key-use test, or oracle marker substitutes for that review.
+Use bounded Docker controls where source analysis leaves a material ambiguity,
+keeping attacker prerequisites fixed as the shared rule requires.
+
+Use existing candidate `attacker_model` / `evidence`, execution-input `review`
+(including `observation` and `impact_interpretation`), and verdict
+`negative_checks`, `artifacts`, and reason text as applicable. Review the actual
+evidence and explanations, not just field presence or a passed check. Keep an
+unsupported security-critical acquisition or impact link unverified, or narrow,
+reclassify, or withdraw the claim as supported; incomplete evidence alone is not
+a false-positive verdict. This reviewer obligation does not add schema fields
+or statuses, or make the script an automatic judge of causal semantics.
+
 ## Runtime Behavior
 
 `runtime.type=manual-blocked` always produces a `blocked` verdict. The reason

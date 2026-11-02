@@ -3,6 +3,10 @@
 Use this reference after a source-bound `confirmed_in_docker` verifier verdict
 and confirmed disposition exist.
 
+Before packaging, check final validity, classification, and severity against the
+[prerequisite and incremental-impact review](audit-phase-verification.md#prerequisite-and-incremental-impact-review).
+A prior success marker or validator pass does not replace this review.
+
 ## Working path
 
 1. Validate `confirmed/.contracts/<slug>.bundle-contract.json` with the real
