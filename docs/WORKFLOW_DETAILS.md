@@ -813,12 +813,44 @@ video separately; no recording stage or confirmation authority is added.
 
 ### Standalone Static Qualification
 
+When portable standalone or replay-ready delivery is requested, pass
+`--require-standalone-replay` to the existing `build_confirmed_bundle.py` command;
+it forwards the same core qualification before promotion. Ordinary static-only
+packaging may omit it, without claiming standalone readiness. Static promotion
+never replaces authorized fresh provisioning/replay from a clean final-bundle
+copy and exact owned cleanup. Without that execution, runtime acceptance is
+NOT_RUN; the build manifest cannot attest runtime success.
+
 `validate_report_bundle.py --require-standalone-replay --bundle-dir <bundle>`
 adds static provisioning checks to ordinary bundle validation. It merges ordered
 `-f` files and checks every service,
 including dependencies. Each needs a bundled build context and Dockerfile or an
 immutable `@sha256:<64 lowercase hex digits>` image reference. Ordinary bundle
 validation continues to accept otherwise valid historical tag-only attachments.
+
+Build-backed `up`/`run` qualification requires explicit `--build` or
+`pull_policy: build`, even if an earlier command says `build`. Literal Dockerfile
+COPY/ADD inputs are checked for presence and safe file/directory types in both
+modes. Strong qualification supports literal shell/JSON source lists and copies
+from declared earlier stages; source expansion, globs, remote ADD, external-stage
+COPY, continuations, parser directives and active ignore files are unsupported.
+This does not infer RUN dependencies, imports, module completeness or successful
+builds. Existing dependency-resolution hash checks remain separate; immutable
+image alternatives do not require an archive or lock.
+
+New generated detached direct `docker run` fails with
+`REPLAY_STARTUP_UNSUPPORTED` instead of implying readiness. The supported direct
+foreground option grammar accepts explicit known options and a literal image;
+unknown or ambiguous options fail, while image-command arguments are not parsed.
+Compose startup accepts exact `-d`, `--detach` and `--wait` flags; boolean or
+clustered variants fail generation and strong qualification, not historical ordinary reading.
+Generated Compose startup retains its independent bounded health wait; failure
+collects a finite log tail and stops before later proof commands. Helpers require
+host Python 3 for public-output normalization and fail before provisioning with
+`REPLAY_TOOL_UNAVAILABLE` when it is absent. New runtime logs are explicitly
+normalized reviewer displays: bundle paths use `<bundle-root>` and recognized
+host paths use `<host-path>`. Original historical logs and quoted source bytes
+are not rewritten. Path normalization is presentation, not new runtime proof.
 
 Every bundle-root `.sh` file must match one of two supported forms:
 

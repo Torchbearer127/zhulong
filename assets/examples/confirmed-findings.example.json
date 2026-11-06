@@ -149,7 +149,7 @@
           "Start the app service in the compose stack and wait until the application is listening."
         ],
         "commands": [
-          "docker compose up -d app"
+          "docker compose up --build -d app"
         ],
         "expected": [
           "预期结果：app 容器处于 Up 状态，并监听 8080 端口。"

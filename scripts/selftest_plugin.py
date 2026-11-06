@@ -15566,6 +15566,7 @@ def selftest_installed_skill(skill_root: Path) -> None:
     exercise_audit_transition_policy(skill_root)
     exercise_recording_evidence_gate(skill_root)
     run([sys.executable, str(skill_root / "scripts/selftest_original_input_and_provisioning.py")], skill_root)
+    run([sys.executable, str(skill_root / "scripts/selftest_bundle_generation_shared_validation.py")], skill_root)
 
     for script in [
         "scripts/bootstrap_verification_workspace.sh",
@@ -16234,6 +16235,7 @@ def main() -> None:
     exercise_audit_transition_policy(plugin_root)
     exercise_recording_evidence_gate(plugin_root)
     run([sys.executable, str(plugin_root / "scripts/selftest_original_input_and_provisioning.py")], plugin_root)
+    run([sys.executable, str(plugin_root / "scripts/selftest_bundle_generation_shared_validation.py")], plugin_root)
     exercise_structured_blocker_cli(plugin_root)
     run([sys.executable, str(plugin_root / "scripts/selftest_issue26_shared_docker_contract.py")], plugin_root)
 
@@ -18659,8 +18661,8 @@ def main() -> None:
             "DIRECT_IMPACT_CONFIRMED",
             "record_direct_impact_marker",
             "> \"$command_stdout\" 2> \"$command_stderr\"",
-            "cat \"$command_stdout\" >> \"$REPLAY_LOG\"",
-            "cat \"$command_stderr\" >> \"$REPLAY_LOG\"",
+            "cat \"$public_stdout\" >> \"$REPLAY_LOG\"",
+            "cat \"$public_stderr\" >> \"$REPLAY_LOG\"",
             "exit status: $status",
             "grep -Fq -- \"$marker\" \"$REPLAY_LOG\"",
             "show_evidence_summary",
@@ -20035,8 +20037,8 @@ def main() -> None:
         log_without_raw_script.write_text(
             log_without_raw_script.read_text(encoding="utf-8")
             .replace(' > "$command_stdout" 2> "$command_stderr"', ' >/dev/null 2>/dev/null')
-            .replace('    cat "$command_stdout" >> "$REPLAY_LOG" || true\n', '')
-            .replace('    cat "$command_stderr" >> "$REPLAY_LOG" || true\n', ''),
+            .replace('    cat "$public_stdout" >> "$REPLAY_LOG" || true\n', '')
+            .replace('    cat "$public_stderr" >> "$REPLAY_LOG" || true\n', ''),
             encoding="utf-8",
         )
         run_expect_fail([

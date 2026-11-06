@@ -879,8 +879,47 @@ def rewrite_command_for_bundle(command: str, path_map: dict[str, str]) -> str:
     return result
 
 
+def unsupported_compose_startup_flag_variant(args: list[str]) -> bool:
+    return any(token.startswith(("--detach=", "--wait=", "-d="))
+               or (re.fullmatch(r"-[A-Za-z0-9]+", token) is not None and token != "-d" and "d" in token[1:])
+               for token in args)
+
+
 def replay_startup_command(command: str) -> str:
     """Use Compose's bounded readiness wait for generated detached startup."""
+    if re.match(r"^\s*docker\s+(?:container\s+)?run\s", command):
+        try:
+            direct = shlex.split(command)
+        except ValueError:
+            raise SystemExit("REPLAY_STARTUP_UNSUPPORTED: malformed Docker startup") from None
+        index = 3 if direct[:3] == ["docker", "container", "run"] else 2
+        value_options = {"--name", "--network", "--net", "--label", "-l", "--env", "-e", "--env-file",
+                         "--volume", "-v", "--mount", "--publish", "-p", "--workdir", "-w", "--user", "-u",
+                         "--entrypoint", "--hostname", "-h", "--memory", "-m", "--cpus", "--cpu-shares", "-c",
+                         "--cap-add", "--cap-drop", "--security-opt", "--tmpfs", "--restart", "--health-cmd",
+                         "--health-interval", "--health-timeout", "--health-retries", "--health-start-period",
+                         "--health-start-interval",
+                         "--add-host", "--dns", "--device", "--ulimit", "--log-driver", "--log-opt", "--platform"}
+        boolean_options = {"--rm", "--interactive", "-i", "--tty", "-t", "--init", "--read-only",
+                           "--privileged", "--publish-all", "-P", "--no-healthcheck", "--oom-kill-disable"}
+        while index < len(direct) and direct[index].startswith("-"):
+            option = direct[index]
+            if option == "--":
+                index += 1
+                break
+            base, equals, value = option.partition("=")
+            if option in {"-d", "--detach"} or (base == "--detach" and value.lower() not in {"false", "0", "f"}) or (re.fullmatch(r"-[dit]+", option) and "d" in option):
+                raise SystemExit("REPLAY_STARTUP_UNSUPPORTED: generated detached docker run has no supported bounded readiness; use the supported Compose healthcheck route")
+            if base in value_options:
+                if not equals and index + 1 >= len(direct):
+                    raise SystemExit("REPLAY_STARTUP_UNSUPPORTED: missing generated Docker option value")
+                index += 1 if equals else 2
+            elif base in boolean_options or (base == "--detach" and equals) or re.fullmatch(r"-[it]+", option):
+                index += 1
+            else:
+                raise SystemExit("REPLAY_STARTUP_UNSUPPORTED: generated direct Docker option is outside the supported literal grammar")
+        if index >= len(direct) or any(char in direct[index] for char in "$`;&|<>"):
+            raise SystemExit("REPLAY_STARTUP_UNSUPPORTED: generated Docker image must be an explicit literal")
     # Only rewrite a direct command, never a compound shell expression.
     if not re.match(r"^\s*docker(?:\s+compose|-compose)\s", command):
         return command
@@ -893,6 +932,8 @@ def replay_startup_command(command: str) -> str:
         index += 2 if tokens[index] in {"-f", "--file", "-p", "--project-name"} else 1
     if index >= len(tokens) or tokens[index] != "up":
         return command
+    if unsupported_compose_startup_flag_variant(tokens[index + 1:]):
+        raise SystemExit("REPLAY_STARTUP_UNSUPPORTED: use exact -d, --detach or --wait startup flags, not boolean/clustered variants")
     if not any(token in {"-d", "--detach", "--wait"} for token in tokens[index + 1:]):
         return command
     if re.search(r"[;&|`\n]", command) or "$" in command:
@@ -903,6 +944,26 @@ def replay_startup_command(command: str) -> str:
     args = [token for token in args if token != "--wait"]
     return (shlex.join(tokens[:index + 1] + ["--wait"]) +
             ' --wait-timeout "$READY_TIMEOUT_SECONDS" ' + shlex.join(args))
+
+
+def replay_startup_diagnostics(command: str) -> str:
+    if replay_startup_command(command) == command:
+        return ""
+    tokens = shlex.split(command)
+    index = 2 if tokens[:2] == ["docker", "compose"] else 1
+    while index < len(tokens) and tokens[index].startswith("-"):
+        index += 2 if tokens[index] in {"-f", "--file", "-p", "--project-name"} else 1
+    return shlex.join(tokens[:index] + ["logs", "--no-color", "--tail", "40"])
+
+
+def reviewer_output_filter_source() -> str:
+    # This filter applies only to newly collected reviewer output, never to
+    # historical attachments or quoted source bytes.
+    return r'''import re, sys
+text = sys.stdin.buffer.read().decode("utf-8", "replace").replace(sys.argv[1], "<bundle-root>")
+pattern = r"(?<![A-Za-z0-9:/])(?:file:[/]{2})?(?:/(?:Users|home|private|tmp|var/tmp)/[^\s\x22\x27<>]+|[A-Za-z]:[\\/][^\s\x22\x27<>]+|\\\\[^\s\x22\x27<>]+)"
+sys.stdout.write(re.sub(pattern, "<host-path>", text))
+'''
 
 
 def generator_modes_for_artifact(item: dict[str, Any]) -> list[str]:
@@ -1375,7 +1436,7 @@ def build_generated_recording_shell(
         "",
         "init_replay_log() {",
         "    mkdir -p \"$EVIDENCE_DIR\"",
-        "    printf '%s\\n' \"Zhulong reviewer runtime replay log\" > \"$REPLAY_LOG\"",
+        "    printf '%s\\n' \"Zhulong reviewer runtime replay log (normalized display)\" > \"$REPLAY_LOG\"",
         "    printf '%s\\n' \"Generated at: $(date -u '+%Y-%m-%dT%H:%M:%SZ')\" >> \"$REPLAY_LOG\"",
         "}",
         "",
@@ -1383,26 +1444,40 @@ def build_generated_recording_shell(
         "    printf '%s\\n' \"$1\" >> \"$REPLAY_LOG\"",
         "}",
         "",
+        "portable_reviewer_output() {",
+        "    python3 -c " + shell_quote(reviewer_output_filter_source()) + ' "$SCRIPT_DIR"',
+        "}",
+        "",
         "run_logged_command() {",
         "    command_text=\"$1\"",
+        '    diagnostic_command="${2:-}"',
+        '    public_command="$(printf \'%s\\n\' "$command_text" | portable_reviewer_output)"',
         "    command_stdout=\"$EVIDENCE_DIR/replay-command-stdout.$$\"",
         "    command_stderr=\"$EVIDENCE_DIR/replay-command-stderr.$$\"",
-        f"    printf '%s%s %s%s\\n' \"$C_CYAN\" {shell_quote(strings['run_command'])} \"$command_text\" \"$C_RESET\"",
+        '    public_stdout="$command_stdout.public"',
+        '    public_stderr="$command_stderr.public"',
+        f"    printf '%s%s %s%s\\n' \"$C_CYAN\" {shell_quote(strings['run_command'])} \"$public_command\" \"$C_RESET\"",
         "    log_line \"\"",
-        "    log_line \"[command] $command_text\"",
+        "    log_line \"[command] $public_command\"",
         "    if sh -c \"$command_text\" > \"$command_stdout\" 2> \"$command_stderr\"; then",
         "        status=0",
         "    else",
         "        status=\"$?\"",
         "    fi",
+        '    if [ "$status" -ne 0 ] && [ -n "$diagnostic_command" ]; then',
+        '        printf \'\\n[startup diagnostic]\\n\' >> "$command_stderr"',
+        '        sh -c "$diagnostic_command" >> "$command_stderr" 2>&1 || true',
+        "    fi",
+        '    portable_reviewer_output < "$command_stdout" > "$public_stdout"',
+        '    portable_reviewer_output < "$command_stderr" > "$public_stderr"',
         "    log_line \"stdout:\"",
-        "    cat \"$command_stdout\" || true",
-        "    cat \"$command_stdout\" >> \"$REPLAY_LOG\" || true",
+        "    cat \"$public_stdout\" || true",
+        "    cat \"$public_stdout\" >> \"$REPLAY_LOG\" || true",
         "    log_line \"stderr:\"",
-        "    cat \"$command_stderr\" >&2 || true",
-        "    cat \"$command_stderr\" >> \"$REPLAY_LOG\" || true",
+        "    cat \"$public_stderr\" >&2 || true",
+        "    cat \"$public_stderr\" >> \"$REPLAY_LOG\" || true",
         "    log_line \"exit status: $status\"",
-        "    rm -f \"$command_stdout\" \"$command_stderr\"",
+        "    rm -f \"$command_stdout\" \"$command_stderr\" \"$public_stdout\" \"$public_stderr\"",
         "    if [ \"$status\" -eq 0 ]; then",
         "        return 0",
         "    fi",
@@ -1755,9 +1830,11 @@ def build_generated_recording_shell(
         if step_details:
             script_lines.append("    pause_step \"$PAUSE_SHORT\"")
         for command in commands:
+            diagnostics = replay_startup_diagnostics(command)
             command = replay_startup_command(command)
             script_lines.append("    pause_step \"$PAUSE_SHORT\"")
-            script_lines.append(f"    run_logged_command {shell_quote(command)}")
+            suffix = " " + shell_quote(diagnostics) if diagnostics else ""
+            script_lines.append(f"    run_logged_command {shell_quote(command)}{suffix}")
             script_lines.append("    pause_step \"$PAUSE_SHORT\"")
         for line in evidence:
             script_lines.append(f"    highlight_success {shell_quote(strings['evidence_hint'] + ' ' + line)}")
@@ -1789,6 +1866,11 @@ def build_generated_recording_shell(
         "    if [ \"$RUNTIME\" != \"docker\" ]; then",
         f"        echo \"Usage: $0 [{usage_modes}] [docker]\" >&2",
         f"        echo {shell_quote(strings['docker_only'])} >&2",
+        "        exit 1",
+        "    fi",
+        "",
+        "    if ! command -v python3 >/dev/null 2>&1; then",
+        "        echo 'REPLAY_TOOL_UNAVAILABLE: Python 3 is required for portable reviewer output; install it before replay.' >&2",
         "        exit 1",
         "    fi",
         "",

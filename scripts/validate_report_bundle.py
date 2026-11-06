@@ -5298,7 +5298,7 @@ def replay_compose_commands(line: str) -> list[list[str]]:
         tokens = shlex.split(line, comments=True)
     except ValueError:
         return []
-    if tokens and tokens[0] == "run_logged_command" and len(tokens) == 2:
+    if tokens and tokens[0] == "run_logged_command" and len(tokens) in {2, 3}:
         return replay_compose_commands(tokens[1])
     if tokens[:2] == ["docker", "compose"]:
         return [tokens[2:]]
@@ -5559,8 +5559,15 @@ def validate_replay_compose_inputs(bundle_dir: Path, tokens: list[str], *, requi
     # Compose resolves paths in every -f file against the first file's directory.
     for compose in compose_paths:
         validate_compose_static_paths(compose, bundle_dir, project_dir=compose_paths[0].parent,
-                                      services=services)
+                                      services=services, require_standalone=require_standalone)
     args = tokens[index + 1:]
+    if require_standalone and tokens[index] == "up":
+        from render_confirmed_vuln_docx import unsupported_compose_startup_flag_variant
+        if unsupported_compose_startup_flag_variant(args):
+            fail("REPLAY_PROVISIONING_UNSUPPORTED: use exact -d, --detach or --wait startup flags, not boolean/clustered variants", code="REPLAY_PROVISIONING_UNSUPPORTED")
+    if require_standalone and tokens[index] in {"up", "run"}:
+        if any("build" in service and service.get("pull_policy") != "build" for service in services.values()) and "--build" not in args:
+            fail("REPLAY_PROVISIONING_UNPINNED: build-backed startup must explicitly use --build instead of reusing a pre-existing image", code="REPLAY_PROVISIONING_UNPINNED")
     if tokens[index] == "up" and "--wait" in args:
         selected = []
         cursor = 0
@@ -6377,8 +6384,83 @@ def validate_compose_local_path(compose_file: Path, bundle_dir: Path, value: str
         fail(f"{compose_file.name} {label} must point to a file: {token}")
 
 
+def validate_dockerfile_local_inputs(bundle_dir: Path, context: Path, text: str, *, require_standalone: bool) -> None:
+    """Check literal COPY/ADD sources, not RUN dependencies or build success."""
+    def unsupported() -> None:
+        if require_standalone:
+            fail("REPLAY_PROVISIONING_UNSUPPORTED: Dockerfile input form is outside literal COPY/ADD qualification", code="REPLAY_PROVISIONING_UNSUPPORTED")
+
+    if require_standalone:
+        for name in (".dockerignore",):
+            ignore = context / name
+            if ignore.exists() or ignore.is_symlink():
+                replay_input_path(bundle_dir, context, name)
+                if any(line.strip() and not line.lstrip().startswith("#") for line in ignore.read_text().splitlines()):
+                    unsupported()
+    stages: dict[str, int] = {}
+    stage_count = 0
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            if re.match(r"#\s*(?:syntax|escape)\s*=", line, re.I):
+                unsupported()
+            continue
+        if line.endswith("\\"):
+            unsupported()
+            continue
+        parsed = re.fullmatch(r"([A-Za-z]+)\s+(.*)", line)
+        if not parsed:
+            unsupported()
+            continue
+        instruction, value = parsed.group(1).upper(), parsed.group(2)
+        if instruction not in {"FROM", "RUN", "WORKDIR", "COPY", "ADD", "ENV", "ARG", "CMD", "ENTRYPOINT", "LABEL", "EXPOSE", "USER", "VOLUME", "STOPSIGNAL", "HEALTHCHECK", "SHELL"}:
+            unsupported()
+        if instruction == "FROM":
+            stage_count += 1
+            parts = value.split()
+            if len(parts) >= 3 and parts[-2].lower() == "as":
+                stages[parts[-1]] = stage_count - 1
+            continue
+        if instruction not in {"COPY", "ADD"}:
+            continue
+        stage = None
+        while value.startswith("--"):
+            option, separator, value = value.partition(" ")
+            if not separator or not option.startswith(("--from=", "--chown=", "--chmod=")):
+                unsupported()
+                value = ""
+                break
+            if option.startswith("--from="):
+                stage = option.split("=", 1)[1]
+            value = value.lstrip()
+        try:
+            sources = json.loads(value) if value.startswith("[") else shlex.split(value)
+        except (ValueError, TypeError):
+            unsupported()
+            continue
+        if not isinstance(sources, list) or len(sources) < 2 or any(not isinstance(item, str) for item in sources):
+            unsupported()
+            continue
+        if stage is not None:
+            if not (stage in stages and stages[stage] < stage_count - 1) and not (stage.isdigit() and int(stage) < stage_count - 1):
+                unsupported()
+            continue
+        for source in sources[:-1]:
+            if not source or any(char in source for char in "$*?[]<>\\") or "://" in source:
+                unsupported()
+                continue
+            if PurePosixPath(source).is_absolute() or ".." in PurePosixPath(source).parts:
+                fail("REPLAY_INPUT_UNSAFE: Dockerfile source must stay inside the delivered build context", code="REPLAY_INPUT_UNSAFE")
+                continue
+            candidate = context / source
+            checked = replay_input_path(bundle_dir, context, source, directory=candidate.is_dir())
+            if checked.is_dir():
+                for child in checked.rglob("*"):
+                    replay_input_path(bundle_dir, bundle_dir, child.relative_to(bundle_dir).as_posix(), directory=child.is_dir())
+
+
 def validate_compose_static_paths(compose_file: Path, bundle_dir: Path, *, project_dir: Path | None = None,
-                                  services: dict | None = None) -> None:
+                                  services: dict | None = None, require_standalone: bool = False) -> None:
     replay_input_path(bundle_dir, compose_file.parent, compose_file.name)
     data = load_replay_compose(compose_file)
     for service in (services if services is not None else data.get("services", {})).values():
@@ -6390,6 +6472,8 @@ def validate_compose_static_paths(compose_file: Path, bundle_dir: Path, *, proje
         elif isinstance(build, dict):
             context, dockerfile = build.get("context", "."), build.get("dockerfile", "Dockerfile")
             if "dockerfile_inline" in build:
+                if require_standalone and ("dockerfile" in build or not isinstance(build["dockerfile_inline"], str)):
+                    fail("REPLAY_PROVISIONING_UNSUPPORTED: ambiguous inline Dockerfile input", code="REPLAY_PROVISIONING_UNSUPPORTED")
                 dockerfile = None
         else:
             fail("REPLAY_INPUT_INVALID: invalid Compose build definition", code="REPLAY_INPUT_INVALID")
@@ -6399,7 +6483,14 @@ def validate_compose_static_paths(compose_file: Path, bundle_dir: Path, *, proje
             continue
         directory = replay_input_path(bundle_dir, project_dir or compose_file.parent, context, directory=True)
         if dockerfile is not None:
-            replay_input_path(bundle_dir, directory, dockerfile)
+            dockerfile_path = replay_input_path(bundle_dir, directory, dockerfile)
+            ignore = dockerfile_path.with_name(dockerfile_path.name + ".dockerignore")
+            if require_standalone and (ignore.exists() or ignore.is_symlink()):
+                fail("REPLAY_PROVISIONING_UNSUPPORTED: Dockerfile-specific ignore files are outside qualification", code="REPLAY_PROVISIONING_UNSUPPORTED")
+            if dockerfile_path.is_file():
+                validate_dockerfile_local_inputs(bundle_dir, directory, dockerfile_path.read_text(encoding="utf-8"), require_standalone=require_standalone)
+        elif isinstance(build.get("dockerfile_inline"), str):
+            validate_dockerfile_local_inputs(bundle_dir, directory, build["dockerfile_inline"], require_standalone=require_standalone)
     lines = compose_file.read_text(encoding="utf-8", errors="ignore").splitlines()
     env_entries = collect_env_file_entries(lines)
     for line_number, env_path in env_entries:

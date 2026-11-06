@@ -60,6 +60,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--contract", required=True, help="confirmed/.contracts/<slug>.bundle-contract.json")
     parser.add_argument("--language", choices=["zh-CN", "en-US"], default="zh-CN")
     parser.add_argument(
+        "--require-standalone-replay", action="store_true",
+        help="Require the core's existing static finite-subset provisioning qualification before promotion; does not execute replay.",
+    )
+    parser.add_argument(
         "--replace-existing-validated-bundle",
         action="store_true",
         help="Validate/classify an existing final target, move it to .staging/.trash, then promote.",
@@ -643,6 +647,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
                 str(staging_path),
                 "--language",
                 args.language,
+                *(["--require-standalone-replay"] if getattr(args, "require_standalone_replay", False) else []),
             ],
             script_dir.parent,
         )

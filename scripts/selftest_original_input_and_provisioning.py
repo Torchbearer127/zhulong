@@ -299,7 +299,7 @@ class ProvisioningTests(unittest.TestCase):
             root = Path(tmp)
             (root / "compose.yaml").write_text(json.dumps({"services": {"app": {"build": "."}}}))
             (root / "Dockerfile").write_text("FROM scratch\n")
-            (root / "run-demo.sh").write_text("#!/bin/sh\nset -eu\n# no host commands\ndocker compose -f 'compose.yaml' up -d app\n")
+            (root / "run-demo.sh").write_text("#!/bin/sh\nset -eu\n# no host commands\ndocker compose -f 'compose.yaml' up --build -d app\n")
             validator.validate_standalone_replay_inputs(root)
 
     def test_builder_and_production_validator_cli(self):
@@ -398,7 +398,7 @@ class ProvisioningTests(unittest.TestCase):
             override = root / "extra.yaml"
             override.write_text(json.dumps({"services": {"app": {"build": "."}}}))
             (root / "Dockerfile").write_text("FROM scratch\n")
-            validator.validate_replay_compose_inputs(root, ["-f", "compose.yaml", "-f", "extra.yaml", "up"], require_standalone=True)
+            validator.validate_replay_compose_inputs(root, ["-f", "compose.yaml", "-f", "extra.yaml", "up", "--build"], require_standalone=True)
             base.write_text(json.dumps({"services": {"app": {"build": ".", "depends_on": ["db"]}, "db": {"image": "db:local"}}}))
             with self.assertRaisesRegex(SystemExit, "REPLAY_PROVISIONING_UNPINNED"):
                 validator.validate_replay_compose_inputs(root, ["up", "app"], require_standalone=True)

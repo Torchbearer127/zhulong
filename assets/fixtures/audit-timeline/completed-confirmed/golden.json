@@ -181,7 +181,7 @@
     "status": "not_present"
   },
   "integrity": {
-    "authority_digest": "sha256:88e860dfc1f7e2e967ab53ee53688964cac89a25fc8451fe051c68be5eb1aaa5",
+    "authority_digest": "sha256:b230dca3ec2be0fbf47348b34d26edf3421f6db701cc9a407737a0d61f8ce542",
     "issue_codes": [],
     "status": "valid"
   },
@@ -206,7 +206,7 @@
     {
       "kind": "bundle",
       "path": "confirmed/demo-app_Path_Traversal_高危漏洞报告/findings.json",
-      "sha256": "sha256:a934230b07c0d2387ca38a5e9077e95426d4501f34ce007a2b6943f2ef1a20e6",
+      "sha256": "sha256:2aab12feb6c0c98caded5b08e532a118576eb454940f48a3efc0a4fe0640cb5e",
       "status": "validated",
       "validator": "validate_all_report_bundles.py"
     },
