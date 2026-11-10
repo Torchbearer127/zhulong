@@ -142,9 +142,14 @@ not a prose summary. Include compact snippets that cover the attacker-controlled
 entry, important branch/condition, dangerous sink, and adjacent missing guard or
 failed validation. Split long context into multiple small snippets when needed,
 but do not hide the relevant logic behind repeated `// ...`, `...`, `省略`,
-`omitted`, or similar abbreviation placeholders. Generated DOCX snippets should
-use compact monospace formatting, about 8-9 pt, with tight spacing rather than
-oversized blue quote/display blocks.
+`omitted`, or similar abbreviation placeholders. Newly generated DOCX reports
+use SimSun for Chinese and Times New Roman for Latin text and numbers, including
+code. Code need not be monospaced. Compact snippets, about 8-9 pt, with tight
+spacing are recommended for readability; avoid oversized blue quote/display
+blocks. Font, size and quote styling are recommendations, not bundle validation
+gates. These font declarations do not install or embed fonts or guarantee their
+availability on the rendering machine. Content, source binding and evidence
+checks still apply regardless of styling.
 
 Add a dedicated real-world exploitability section in the report body, using a
 heading such as `实际场景中的危害与利用方式` or `Real-World

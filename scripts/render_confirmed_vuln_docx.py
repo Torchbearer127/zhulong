@@ -13,6 +13,7 @@ from typing import Any, Iterable
 
 try:
     from docx import Document
+    from docx.oxml import OxmlElement
     from docx.oxml.ns import qn
     from docx.shared import Pt
 except ModuleNotFoundError as exc:
@@ -597,9 +598,40 @@ def add_compact_code_paragraph(doc: Document, text: str) -> None:
     paragraph.paragraph_format.space_after = Pt(0)
     paragraph.paragraph_format.line_spacing = 1.0
     run = paragraph.add_run(text)
-    run.font.name = "Courier New"
     run.font.size = Pt(8.5)
-    run._element.rPr.rFonts.set(qn("w:eastAsia"), "Courier New")
+
+
+def apply_report_fonts(doc: Document) -> None:
+    """Set script-specific fonts without changing text or other formatting."""
+    styles = doc.styles.element
+    defaults = styles.find(qn("w:docDefaults"))
+    if defaults is None:
+        defaults = OxmlElement("w:docDefaults")
+        styles.insert(0, defaults)
+    run_defaults = defaults.find(qn("w:rPrDefault"))
+    if run_defaults is None:
+        run_defaults = OxmlElement("w:rPrDefault")
+        defaults.insert(0, run_defaults)
+    if run_defaults.find(qn("w:rPr")) is None:
+        run_defaults.append(OxmlElement("w:rPr"))
+    for style in doc.styles:
+        style.element.get_or_add_rPr()
+    roots = [doc._element, styles]
+    # Visit only existing header/footer parts, including their nested tables.
+    roots.extend(part.element for part in doc.part.related_parts.values() if part.content_type in {
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml",
+    })
+    for root in roots:
+        for run in root.iter(qn("w:r")):
+            run.get_or_add_rPr()
+        for properties in root.iter(qn("w:rPr")):
+            fonts = properties.get_or_add_rFonts()
+            fonts.attrib.pop(qn("w:cstheme"), None)
+            for slot, family in (("ascii", "Times New Roman"), ("hAnsi", "Times New Roman"),
+                                 ("eastAsia", "SimSun"), ("cs", "Times New Roman")):
+                fonts.attrib.pop(qn("w:" + slot + "Theme"), None)
+                fonts.set(qn("w:" + slot), family)
 
 
 def resolve_project_root(output_dir: Path, finding: dict[str, Any]) -> Path:
@@ -3386,6 +3418,7 @@ def render_finding(
     render_validity_review(doc, bundle_finding, language)
     doc.add_heading(tr(language, "final_verdict"), level=2)
     add_paragraphs(doc, localized_list(bundle_finding, "final_verdict", language) or default_final_verdict(bundle_finding, language))
+    apply_report_fonts(doc)
     doc.save(output_path)
     validate_generated_docx(output_path)
     write_attachment_notes(output_path, finding, path_map, project_root, language, bundle_root_artifacts)

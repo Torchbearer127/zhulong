@@ -15567,6 +15567,7 @@ def selftest_installed_skill(skill_root: Path) -> None:
     exercise_recording_evidence_gate(skill_root)
     run([sys.executable, str(skill_root / "scripts/selftest_original_input_and_provisioning.py")], skill_root)
     run([sys.executable, str(skill_root / "scripts/selftest_bundle_generation_shared_validation.py")], skill_root)
+    run([sys.executable, str(skill_root / "scripts/selftest_docx_typography.py")], skill_root)
 
     for script in [
         "scripts/bootstrap_verification_workspace.sh",
@@ -16236,6 +16237,7 @@ def main() -> None:
     exercise_recording_evidence_gate(plugin_root)
     run([sys.executable, str(plugin_root / "scripts/selftest_original_input_and_provisioning.py")], plugin_root)
     run([sys.executable, str(plugin_root / "scripts/selftest_bundle_generation_shared_validation.py")], plugin_root)
+    run([sys.executable, str(plugin_root / "scripts/selftest_docx_typography.py")], plugin_root)
     exercise_structured_blocker_cli(plugin_root)
     run([sys.executable, str(plugin_root / "scripts/selftest_issue26_shared_docker_contract.py")], plugin_root)
 
@@ -18603,8 +18605,11 @@ def main() -> None:
             raise SystemExit("FAILED: standard vulnerability_name fixture left final verdict placeholder text")
         with zipfile.ZipFile(standard_docx) as archive:
             standard_docx_xml = archive.read("word/document.xml").decode("utf-8", errors="ignore")
-        if "Courier New" not in standard_docx_xml or 'w:sz w:val="17"' not in standard_docx_xml:
-            raise SystemExit("FAILED: generated DOCX code context must use compact 8-9 pt monospace snippets")
+        if not all(token in standard_docx_xml for token in (
+            'w:ascii="Times New Roman"', 'w:hAnsi="Times New Roman"',
+            'w:eastAsia="SimSun"', 'w:cs="Times New Roman"',
+        )):
+            raise SystemExit("FAILED: generated DOCX must declare SimSun and Times New Roman font slots")
         if "IntenseQuote" in standard_docx_xml:
             raise SystemExit("FAILED: generated DOCX code context must not use oversized quote/display code blocks")
         standard_text = "\n".join(standard_lines)
@@ -19606,11 +19611,11 @@ def main() -> None:
             "zh-CN",
         ], plugin_root, "too abbreviated")
 
-        bad_blue_code_context = copy_standard_bundle("blue_display_code_context")
+        styled_code_context = copy_standard_bundle("blue_display_code_context")
         from docx import Document
         from docx.shared import Pt, RGBColor
 
-        blue_docx_path = next(bad_blue_code_context.glob("*.docx"))
+        blue_docx_path = next(styled_code_context.glob("*.docx"))
         blue_doc = Document(blue_docx_path)
         in_code_context = False
         for paragraph in blue_doc.paragraphs:
@@ -19626,14 +19631,14 @@ def main() -> None:
                     docx_run.font.size = Pt(14)
                     docx_run.font.color.rgb = RGBColor(0, 0, 255)
         blue_doc.save(blue_docx_path)
-        run_expect_fail([
+        run([
             sys.executable,
             str(plugin_root / "scripts/validate_report_bundle.py"),
             "--bundle-dir",
-            str(bad_blue_code_context),
+            str(styled_code_context),
             "--language",
             "zh-CN",
-        ], plugin_root, "small readable code font")
+        ], plugin_root)
 
         bad_placeholder_real_world = copy_standard_bundle("placeholder_real_world_exploitability")
         rewrite_docx_paragraphs(
@@ -20985,7 +20990,7 @@ def main() -> None:
             bad_placeholder_code_context,
             bad_en_placeholder_code_context,
             bad_abbreviated_code_context,
-            bad_blue_code_context,
+            styled_code_context,
             bad_placeholder_real_world,
             bad_strong_boundary,
             good_strong_boundary,

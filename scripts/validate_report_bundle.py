@@ -394,17 +394,6 @@ CODE_CONTEXT_ABBREVIATION_PATTERNS = [
         r"\b(?:omitted|truncated for brevity|省略|略去|此处省略)\b",
     )
 ]
-MONOSPACE_FONT_NAMES = {
-    "courier",
-    "courier new",
-    "consolas",
-    "menlo",
-    "monaco",
-    "dejavu sans mono",
-    "liberation mono",
-    "source code pro",
-    "fira code",
-}
 CODE_CONTEXT_EXPLANATION_MARKERS = {
     "zh-CN": {
         "input/source": ("攻击者", "可控", "不可信", "输入", "请求", "参数", "入口", "前提"),
@@ -2167,109 +2156,6 @@ def validate_code_context_section(lines: list[str], language: str, quoted_paragr
             f"report {heading} section is missing code-level explanation for: "
             + ", ".join(missing)
         )
-
-
-def paragraph_text(paragraph: object) -> str:
-    return str(getattr(paragraph, "text", "") or "").strip()
-
-
-def code_context_paragraphs(docx_path: Path, language: str) -> list[object]:
-    doc = Document(docx_path)
-    heading, stop_headings = code_context_headings(language)
-    paragraphs: list[object] = []
-    in_section = False
-    for paragraph in doc.paragraphs:
-        text = paragraph_text(paragraph)
-        if not in_section:
-            if text == heading:
-                in_section = True
-            continue
-        if text in stop_headings:
-            break
-        if text:
-            paragraphs.append(paragraph)
-    return paragraphs
-
-
-def run_font_names(paragraph: object) -> set[str]:
-    names: set[str] = set()
-    for run in getattr(paragraph, "runs", []):
-        if not str(getattr(run, "text", "") or "").strip():
-            continue
-        font_name = str(getattr(getattr(run, "font", None), "name", "") or "").strip().lower()
-        if font_name:
-            names.add(font_name)
-    return names
-
-
-def paragraph_uses_monospace(paragraph: object) -> bool:
-    style_name = str(getattr(getattr(paragraph, "style", None), "name", "") or "").strip().lower()
-    if "code" in style_name or "mono" in style_name:
-        return True
-    return any(name in MONOSPACE_FONT_NAMES for name in run_font_names(paragraph))
-
-
-def paragraph_max_font_size_pt(paragraph: object) -> float:
-    max_size = 0.0
-    for run in getattr(paragraph, "runs", []):
-        if not str(getattr(run, "text", "") or "").strip():
-            continue
-        size = getattr(getattr(run, "font", None), "size", None)
-        if size is not None:
-            max_size = max(max_size, float(size.pt))
-    return max_size
-
-
-def paragraph_has_blue_code_display(paragraph: object) -> bool:
-    style_name = str(getattr(getattr(paragraph, "style", None), "name", "") or "").strip().lower()
-    if "intense quote" in style_name:
-        return True
-    for run in getattr(paragraph, "runs", []):
-        if not str(getattr(run, "text", "") or "").strip():
-            continue
-        color = getattr(getattr(getattr(run, "font", None), "color", None), "rgb", None)
-        if color is None:
-            continue
-        rgb = str(color).lower()
-        if rgb in {"0000ff", "0070c0", "0563c1", "1f4e79", "2f5597"}:
-            return True
-    return False
-
-
-def validate_docx_code_context_style(docx_path: Path, language: str) -> None:
-    code_paragraphs = [
-        paragraph for paragraph in code_context_paragraphs(docx_path, language)
-        if is_standalone_code_paragraph(paragraph_text(paragraph))
-    ]
-    if not code_paragraphs:
-        return
-    monospace_count = sum(1 for paragraph in code_paragraphs if paragraph_uses_monospace(paragraph))
-    if monospace_count < len(code_paragraphs):
-        fail(
-            "report code-context snippets must use compact monospace formatting; "
-            "avoid prose-only or default-body styled code paragraphs"
-        )
-    oversized = [
-        paragraph_text(paragraph)
-        for paragraph in code_paragraphs
-        if paragraph_max_font_size_pt(paragraph) > 10.0
-    ]
-    if oversized:
-        fail("report code-context snippets must use small readable code font around 8-9 pt, not oversized display text")
-    if any(paragraph_has_blue_code_display(paragraph) for paragraph in code_paragraphs):
-        fail("report code-context snippets must not use oversized blue display/quote blocks")
-
-
-def is_standalone_code_paragraph(line: str) -> bool:
-    stripped = line.strip()
-    if not is_code_like_line(stripped):
-        return False
-    if CODE_LIKE_KEYWORD_PATTERN.search(stripped):
-        return True
-    if re.search(r"=>|==|!=|<=|>=|\|\||&&|[{};=]", stripped):
-        return True
-    words = re.findall(r"[A-Za-z_][A-Za-z0-9_]*", stripped)
-    return len(words) <= 8 and not stripped.endswith((".", "。"))
 
 
 def line_looks_like_raw_structured_object(line: str) -> bool:
@@ -7016,7 +6902,6 @@ def main() -> None:
                 validate_declared_root_artifacts(bundle_dir, selected_finding)
         quoted_paragraphs = verified_source_quote_paragraphs(bundle_dir, docx_path, lines, selected_finding, language)
         validate_code_context_section(lines, language, quoted_paragraphs)
-        validate_docx_code_context_style(docx_path, language)
         validate_bundle_identity(bundle_dir, lines, workspace_dir)
         if findings_path is not None and findings_path.exists():
             project_name, title_tokens, selected_finding = load_bundle_identity(findings_path, bundle_dir.name, workspace_dir)

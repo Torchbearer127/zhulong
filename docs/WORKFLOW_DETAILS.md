@@ -466,6 +466,13 @@ confirmation evidence.
 
 ## Report Quality Gates
 
+New DOCX reports use SimSun for Chinese and Times New Roman for Latin text and
+numbers, including code. Code need not be monospaced. Compact code around 8-9 pt
+with tight spacing is recommended; avoid oversized blue quote/display blocks.
+Font, size and quote styling do not block bundle validation. Font declarations
+do not install or embed fonts or guarantee their availability on the rendering
+machine. Content, source binding and evidence gates remain unchanged.
+
 Confirmed reports must state:
 
 - attacker condition
