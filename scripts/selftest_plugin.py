@@ -3894,7 +3894,7 @@ def prepare_source_bound_fixture(repo_root: Path, workspace: Path, contract: dic
                 "git", "-C", str(repo_root),
                 "-c", "user.name=Zhulong Selftest",
                 "-c", "user.email=selftest@example.invalid",
-                "commit", "-q", "-m", "source-bound selftest fixture",
+                "commit", "--no-gpg-sign", "-q", "-m", "source-bound selftest fixture",
             ],
             repo_root,
         )
@@ -6242,6 +6242,109 @@ def exercise_independent_verifier(plugin_root: Path) -> None:
             raise SystemExit("FAILED: independent verifier selftest invoked Docker")
 
 
+def exercise_verifier_publication_rollback_identity(plugin_root: Path) -> None:
+    """Check rollback ownership independently of filesystem inode allocation."""
+    from types import SimpleNamespace
+    import evidence_io
+    import verify_candidate as verifier_module
+
+    with tempfile.TemporaryDirectory(prefix="zhulong-rollback-identity-") as raw:
+        for mutation in ("distinct-inode", "reused-inode", "identity-drift", "populated", "symlink", "hardlink", "non-owned"):
+            root = Path(raw) / mutation
+            root.mkdir()
+            path = root / "verifier/verdict.json"
+            reservations: list[Any] = []
+            verifier_module._write_empty_reservation(root, path, reservations, mode=0o600)
+            rollback_stats: list[os.stat_result] = []
+
+            def reject_publication(_raw: bytes) -> None:
+                raise evidence_io.SafeEvidenceError("INJECTED_PUBLICATION_FAILURE", "fixture")
+
+            try:
+                evidence_io.atomic_write_bytes(
+                    root, path, b"unpublished verdict\n",
+                    expected_target_identity=reservations[0].file_identity,
+                    post_write_validator=reject_publication,
+                    rollback_stat_sink=rollback_stats,
+                )
+            except evidence_io.SafeEvidenceError as exc:
+                if exc.code != "INJECTED_PUBLICATION_FAILURE":
+                    raise SystemExit(f"FAILED: rollback identity fixture raised {exc.code}") from exc
+            else:
+                raise SystemExit("FAILED: rollback identity fixture did not reject publication")
+            if len(rollback_stats) != 1:
+                raise SystemExit("FAILED: rollback identity fixture lacks one writer witness")
+            witness = rollback_stats[0]
+            if (
+                not stat.S_ISREG(witness.st_mode) or stat.S_IMODE(witness.st_mode) != 0o600
+                or witness.st_uid != os.geteuid() or witness.st_nlink != 1
+                or witness.st_size != 0 or path.read_bytes() != b""
+            ):
+                raise SystemExit("FAILED: rollback writer witness is not an owned empty single-link file")
+
+            # Simulate both allocator outcomes in the old reservation record,
+            # not in production filesystem checks. Stale times require adoption
+            # even when the allocator legitimately reuses the original inode.
+            reservation = reservations[0]
+            old_inode = witness.st_ino + 1 if mutation == "distinct-inode" else witness.st_ino
+            reservation.file_identity = (witness.st_dev, old_inode, witness.st_nlink, witness.st_uid, witness.st_mode)
+            reservation.file_mtime_ns = witness.st_mtime_ns - 1
+            reservation.file_ctime_ns = witness.st_ctime_ns - 1
+            if verifier_module._reservation_matches(reservation, os.lstat(path)):
+                raise SystemExit("FAILED: rollback fixture did not require a fresh ownership transfer")
+
+            foreign = root / "foreign"
+            if mutation == "identity-drift":
+                foreign.write_bytes(b"")
+                os.chmod(foreign, 0o600)
+                os.replace(foreign, path)
+            elif mutation == "populated":
+                path.write_bytes(b"foreign contents\n")
+            elif mutation == "symlink":
+                foreign.write_bytes(b"foreign contents\n")
+                path.unlink()
+                path.symlink_to(foreign)
+            elif mutation == "hardlink":
+                os.link(path, foreign)
+            before_bytes = path.read_bytes()
+            before = os.lstat(path)
+            original_stat = os.stat
+
+            def observed_stat(*args: Any, **kwargs: Any) -> Any:
+                info = original_stat(*args, **kwargs)
+                if mutation == "non-owned" and args[0] == path.name and kwargs.get("dir_fd") == reservation.parent_fd:
+                    fields = {name: getattr(info, name) for name in dir(info) if name.startswith("st_")}
+                    return SimpleNamespace(**{**fields, "st_uid": os.geteuid() + 1})
+                return info
+
+            cleanup_stderr = io.StringIO()
+            try:
+                with mock.patch.object(verifier_module.os, "stat", side_effect=observed_stat):
+                    adopted = verifier_module._adopt_verified_rollback_identity(reservations, path, rollback_stats)
+                    expected_adoption = mutation in {"distinct-inode", "reused-inode"}
+                    if adopted != expected_adoption:
+                        raise SystemExit(f"FAILED: rollback identity adoption mishandled {mutation}")
+                    if adopted and not verifier_module._reservation_matches(reservation, os.lstat(path)):
+                        raise SystemExit("FAILED: rollback adoption did not transfer the complete witness identity")
+                    with mock.patch.object(verifier_module.sys, "stderr", cleanup_stderr):
+                        verifier_module._release_fresh_reservations(reservations)
+                if expected_adoption:
+                    if path.exists() or path.is_symlink() or cleanup_stderr.getvalue():
+                        raise SystemExit(f"FAILED: owned rollback reservation was not safely released: {mutation}")
+                else:
+                    after = os.lstat(path)
+                    if (
+                        verifier_module._reservation_stat_identity(after) != verifier_module._reservation_stat_identity(before)
+                        or (after.st_size, after.st_mtime_ns, after.st_ctime_ns)
+                        != (before.st_size, before.st_mtime_ns, before.st_ctime_ns)
+                        or path.read_bytes() != before_bytes
+                        or "could not be safely released" not in cleanup_stderr.getvalue()
+                    ):
+                        raise SystemExit(f"FAILED: unsafe rollback reservation was not preserved: {mutation}")
+            finally:
+                verifier_module._close_reservation_directories(reservations)
+
+
 def exercise_verifier_fresh_execution(plugin_root: Path) -> None:
     """Exercise one source-bound verifier execution with only a fake Docker CLI."""
     from candidate_identity import build_identity
@@ -6254,6 +6357,8 @@ def exercise_verifier_fresh_execution(plugin_root: Path) -> None:
     verdict_validator = plugin_root / "scripts/validate_verifier_verdict.py"
     event_writer = plugin_root / "scripts/write_audit_event.py"
     marker = "TRAVERSAL_PROOF:fixture-secret"
+
+    exercise_verifier_publication_rollback_identity(plugin_root)
 
     with tempfile.TemporaryDirectory(prefix="zhulong-verifier-fresh-selftest-") as tempdir:
         tmp = Path(tempdir)
@@ -7409,11 +7514,18 @@ def exercise_verifier_fresh_execution(plugin_root: Path) -> None:
         publication_stderr = io.StringIO()
         reservation_inode: list[int] = []
         rollback_identity_sinks: list[list[os.stat_result]] = []
+        rollback_path_stats: list[os.stat_result] = []
 
         def capture_reservation(root: Path, path: Path, raw: bytes, **kwargs: Any) -> Any:
             result = original_reservation_write(root, path, raw, **kwargs)
             if path == out_path and kwargs.get("reservations") is not None:
-                reservation_inode.append(os.lstat(path).st_ino)
+                info = os.lstat(path)
+                if not any(
+                    item.path == path and verifier_module._reservation_matches(item, info)
+                    for item in kwargs["reservations"]
+                ):
+                    raise SystemExit("FAILED: verdict publication fixture did not own its empty reservation")
+                reservation_inode.append(info.st_ino)
             return result
 
         def reject_published_verdict(_raw: bytes) -> None:
@@ -7426,7 +7538,13 @@ def exercise_verifier_fresh_execution(plugin_root: Path) -> None:
                 if rollback_sink is None:
                     raise SystemExit("FAILED: verdict writer did not request a verified rollback identity")
                 rollback_identity_sinks.append(rollback_sink)
-            original_atomic_write(root, path, raw, **kwargs)
+            try:
+                original_atomic_write(root, path, raw, **kwargs)
+            finally:
+                if path == out_path and kwargs["rollback_stat_sink"]:
+                    rollback_path_stats.append(os.lstat(path))
+                    if path.read_bytes() != b"":
+                        raise SystemExit("FAILED: verified verdict rollback did not restore empty reservation bytes")
 
         with mock.patch.dict(os.environ, env):
             with mock.patch.object(verifier_module, "_write_exclusive_bytes", side_effect=capture_reservation):
@@ -7446,10 +7564,15 @@ def exercise_verifier_fresh_execution(plugin_root: Path) -> None:
         if (
             len(rollback_identity_sinks) != 1
             or len(rollback_identity_sinks[0]) != 1
-            or rollback_identity_sinks[0][0].st_ino == reservation_inode[0]
+            or len(rollback_path_stats) != 1
+            or rollback_identity_sinks[0][0] != rollback_path_stats[0]
+            or rollback_identity_sinks[0][0].st_mtime_ns != rollback_path_stats[0].st_mtime_ns
+            or rollback_identity_sinks[0][0].st_ctime_ns != rollback_path_stats[0].st_ctime_ns
             or rollback_identity_sinks[0][0].st_size != 0
             or not stat.S_ISREG(rollback_identity_sinks[0][0].st_mode)
+            or stat.S_IMODE(rollback_identity_sinks[0][0].st_mode) != 0o600
             or rollback_identity_sinks[0][0].st_nlink != 1
+            or rollback_identity_sinks[0][0].st_uid != os.geteuid()
         ):
             raise SystemExit("FAILED: writer did not transfer only its verified empty rollback identity")
         if "WARNING: fresh verifier reservation could not be safely released" in publication_stderr.getvalue():
