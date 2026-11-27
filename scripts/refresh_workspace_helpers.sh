@@ -106,9 +106,37 @@ if [[ ! -d "$SKILL_DIR/scripts" ]]; then
   exit 1
 fi
 
+validate_existing_file_target() {
+  python3 - "$WORKSPACE_DIR" "$1" <<'PY'
+import os
+import stat
+import sys
+from pathlib import Path
+
+workspace = Path(sys.argv[1])
+path = Path(sys.argv[2])
+info = os.lstat(workspace)
+if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+    raise SystemExit("workspace output parent must be a real directory")
+current = workspace
+for part in path.relative_to(workspace).parts[:-1]:
+    current = current / part
+    info = os.lstat(current)
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+        raise SystemExit("workspace output parent must be a real directory")
+try:
+    info = os.lstat(path)
+except FileNotFoundError:
+    raise SystemExit(0)
+if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+    raise SystemExit("workspace output target must be an owned regular file or absent")
+PY
+}
+
 copy_helper() {
   local src="$1"
   local dst="$2"
+  validate_existing_file_target "$dst"
   cp "$src" "$dst"
   chmod +x "$dst"
 }
@@ -120,6 +148,7 @@ copy_registry_asset() {
     echo "Missing required Tool Registry R2 asset: $src" >&2
     exit 1
   fi
+  validate_existing_file_target "$dst"
   cp "$src" "$dst"
 }
 
@@ -128,6 +157,7 @@ write_controlled_adapter() {
   local marker="$2"
   local executable="$3"
   local interpreter="$4"
+  validate_existing_file_target "$path"
   printf '%s\n' '#!/usr/bin/env bash' "$marker" 'set -euo pipefail' 'SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"' "exec $interpreter \"\$SCRIPT_DIR/../bin/$executable\" \"\$@\"" > "$path"
   chmod +x "$path"
 }
@@ -155,6 +185,7 @@ copy_helper_if_present "$SKILL_DIR/scripts/evidence_io.py" "$WORKSPACE_DIR/bin/e
 copy_helper_if_present "$SKILL_DIR/scripts/docker_case_lifecycle.py" "$WORKSPACE_DIR/bin/docker_case_lifecycle.py"
 copy_helper_if_present "$SKILL_DIR/scripts/manage_docker_resources.py" "$WORKSPACE_DIR/bin/manage-docker-resources.py"
 copy_helper_if_present "$SKILL_DIR/scripts/render_handoff_summary.py" "$WORKSPACE_DIR/bin/render-handoff-summary.py"
+copy_helper_if_present "$SKILL_DIR/scripts/render_handoff_summary.py" "$WORKSPACE_DIR/bin/render_handoff_summary.py"
 copy_helper_if_present "$SKILL_DIR/scripts/workspace_state.py" "$WORKSPACE_DIR/bin/workspace_state.py"
 copy_helper_if_present "$SKILL_DIR/scripts/render_handoff_state.py" "$WORKSPACE_DIR/bin/render-handoff-state.py"
 copy_helper_if_present "$SKILL_DIR/scripts/validate_handoff_state.py" "$WORKSPACE_DIR/bin/validate-handoff-state.py"
@@ -175,7 +206,11 @@ copy_registry_asset "$SKILL_DIR/assets/schemas/audit-timeline.schema.json" "$WOR
 copy_helper "$SKILL_DIR/scripts/plan_security_toolchain.py" "$WORKSPACE_DIR/bin/plan-security-toolchain.py"
 copy_helper "$SKILL_DIR/scripts/scaffold_bilingual_findings.py" "$WORKSPACE_DIR/bin/scaffold-bilingual-findings.py"
 copy_helper "$SKILL_DIR/scripts/render_confirmed_vuln_docx.py" "$WORKSPACE_DIR/bin/render-confirmed-vuln-docx.py"
+copy_helper "$SKILL_DIR/scripts/render_confirmed_vuln_docx.py" "$WORKSPACE_DIR/bin/render_confirmed_vuln_docx.py"
 copy_helper "$SKILL_DIR/scripts/validate_report_bundle.py" "$WORKSPACE_DIR/bin/validate-report-bundle.py"
+copy_helper "$SKILL_DIR/scripts/validate_report_bundle.py" "$WORKSPACE_DIR/bin/validate_report_bundle.py"
+copy_helper "$SKILL_DIR/scripts/original_input_evidence.py" "$WORKSPACE_DIR/bin/original_input_evidence.py"
+copy_helper "$SKILL_DIR/scripts/dependency_resolution.py" "$WORKSPACE_DIR/bin/dependency_resolution.py"
 copy_helper_if_present "$SKILL_DIR/scripts/extract_variant_seed.py" "$WORKSPACE_DIR/bin/extract_variant_seed.py"
 copy_helper_if_present "$SKILL_DIR/scripts/find_variant_candidates.py" "$WORKSPACE_DIR/bin/find_variant_candidates.py"
 copy_helper "$SKILL_DIR/scripts/validate_all_report_bundles.py" "$WORKSPACE_DIR/bin/validate-all-report-bundles.py"
@@ -187,6 +222,7 @@ copy_helper_if_present "$SKILL_DIR/scripts/validate_audit_protocol.py" "$WORKSPA
 copy_helper_if_present "$SKILL_DIR/scripts/recover_audit_state.py" "$WORKSPACE_DIR/bin/recover-audit-state.py"
 copy_helper_if_present "$SKILL_DIR/scripts/validate_workspace_state.py" "$WORKSPACE_DIR/bin/validate-workspace-state.py"
 copy_helper_if_present "$SKILL_DIR/scripts/assert_finalized_workspace.py" "$WORKSPACE_DIR/bin/assert-finalized-workspace.py"
+copy_helper_if_present "$SKILL_DIR/scripts/assert_finalized_workspace.py" "$WORKSPACE_DIR/bin/assert_finalized_workspace.py"
 copy_helper_if_present "$SKILL_DIR/scripts/blocked_verification.py" "$WORKSPACE_DIR/bin/blocked_verification.py"
 copy_helper_if_present "$SKILL_DIR/scripts/validate_target_contract.py" "$WORKSPACE_DIR/bin/validate_target_contract.py"
 copy_helper_if_present "$SKILL_DIR/scripts/validate_recon_result.py" "$WORKSPACE_DIR/bin/validate_recon_result.py"

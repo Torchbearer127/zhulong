@@ -78,6 +78,9 @@ Use this checklist before publishing a tagged open-source release of Zhulong
   is read-only.
 - [ ] New and refreshed workspaces carry the same registry, schema, validator,
   planner, and controlled-wrapper markers as the installed source snapshot.
+- [ ] Generated workspace finalizer and variant CLIs start successfully; offline
+  fixtures exercise finalization and delayed evidence-reader imports after both
+  bootstrap and refresh, and unsafe helper replacement targets fail closed.
 - [ ] Docker sandbox preflight rejects privileged containers, host networking,
   host PID, docker socket mounts, host root mounts, and unsafe Docker run flags.
 - [ ] Compose inputs resolve from the canonical workspace, reject unsafe path

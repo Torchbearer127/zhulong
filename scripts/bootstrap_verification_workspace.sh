@@ -546,6 +546,9 @@ chmod +x "$WORKSPACE_DIR/scripts/manage-docker-resources.py"
 copy_file \
   "$SKILL_DIR/scripts/render_handoff_summary.py" \
   "$WORKSPACE_DIR/bin/render-handoff-summary.py"
+copy_file \
+  "$SKILL_DIR/scripts/render_handoff_summary.py" \
+  "$WORKSPACE_DIR/bin/render_handoff_summary.py"
 chmod +x "$WORKSPACE_DIR/bin/render-handoff-summary.py"
 copy_file \
   "$SKILL_DIR/scripts/workspace_state.py" \
@@ -655,6 +658,9 @@ chmod +x "$WORKSPACE_DIR/scripts/render-confirmed-vuln-docx.py"
 copy_file \
   "$SKILL_DIR/scripts/validate_report_bundle.py" \
   "$WORKSPACE_DIR/bin/validate-report-bundle.py"
+copy_file \
+  "$SKILL_DIR/scripts/validate_report_bundle.py" \
+  "$WORKSPACE_DIR/bin/validate_report_bundle.py"
 copy_file \
   "$SKILL_DIR/scripts/original_input_evidence.py" \
   "$WORKSPACE_DIR/bin/original_input_evidence.py"
@@ -776,6 +782,9 @@ chmod +x "$WORKSPACE_DIR/scripts/validate-triage-batch.py"
 copy_file \
   "$SKILL_DIR/scripts/assert_finalized_workspace.py" \
   "$WORKSPACE_DIR/bin/assert-finalized-workspace.py"
+copy_file \
+  "$SKILL_DIR/scripts/assert_finalized_workspace.py" \
+  "$WORKSPACE_DIR/bin/assert_finalized_workspace.py"
 chmod +x "$WORKSPACE_DIR/bin/assert-finalized-workspace.py"
 copy_file \
   "$SKILL_DIR/scripts/blocked_verification.py" \

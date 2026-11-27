@@ -208,6 +208,7 @@ REQUIRED_FILES = [
     "scripts/selftest_audit_state_protocol.py",
     "scripts/selftest_rh2_safe_persistence.py",
     "scripts/selftest_rh2_finalization.py",
+    "scripts/selftest_issue33_workspace_cli.py",
     "scripts/selftest_rh3_context_protocol.py",
     "scripts/selftest_rh3_1_tool_registry_stage_binding.py",
     "scripts/selftest_rhs1_secret_fixture_hygiene.py",
@@ -385,6 +386,7 @@ INSTALLED_SKILL_REQUIRED_FILES = [
     "scripts/selftest_audit_state_protocol.py",
     "scripts/selftest_rh2_safe_persistence.py",
     "scripts/selftest_rh2_finalization.py",
+    "scripts/selftest_issue33_workspace_cli.py",
     "scripts/selftest_rh3_context_protocol.py",
     "scripts/selftest_rh3_1_tool_registry_stage_binding.py",
     "scripts/selftest_rhs1_secret_fixture_hygiene.py",
@@ -15501,6 +15503,7 @@ def selftest_installed_skill(skill_root: Path) -> None:
          str(skill_root / "scripts/recover_audit_state.py"),
          str(skill_root / "scripts/selftest_rh2_safe_persistence.py"),
          str(skill_root / "scripts/selftest_rh2_finalization.py"),
+         str(skill_root / "scripts/selftest_issue33_workspace_cli.py"),
          str(skill_root / "scripts/selftest_rh3_context_protocol.py"),
          str(skill_root / "scripts/selftest_rh3_1_tool_registry_stage_binding.py"),
          str(skill_root / "scripts/selftest_rhs1_secret_fixture_hygiene.py"),
@@ -15532,6 +15535,7 @@ def selftest_installed_skill(skill_root: Path) -> None:
          str(skill_root / "scripts/finalize_audit_workspace.py")], skill_root)
     run([sys.executable, str(skill_root / "scripts/selftest_rh2_safe_persistence.py")], skill_root)
     run([sys.executable, str(skill_root / "scripts/selftest_rh2_finalization.py")], skill_root)
+    run([sys.executable, str(skill_root / "scripts/selftest_issue33_workspace_cli.py")], skill_root)
     run([sys.executable, str(skill_root / "scripts/selftest_rh3_context_protocol.py")], skill_root)
     run([sys.executable, str(skill_root / "scripts/selftest_rh3_1_tool_registry_stage_binding.py")], skill_root)
     run([sys.executable, str(skill_root / "scripts/selftest_rhs1_secret_fixture_hygiene.py")], skill_root)
@@ -16816,6 +16820,7 @@ def main() -> None:
          str(plugin_root / "scripts/validate_audit_protocol.py"),
          str(plugin_root / "scripts/selftest_rh2_safe_persistence.py"),
          str(plugin_root / "scripts/selftest_rh2_finalization.py"),
+         str(plugin_root / "scripts/selftest_issue33_workspace_cli.py"),
          str(plugin_root / "scripts/selftest_rh3_context_protocol.py"),
          str(plugin_root / "scripts/selftest_rh3_1_tool_registry_stage_binding.py"),
          str(plugin_root / "scripts/selftest_rhs1_secret_fixture_hygiene.py"),
@@ -16842,6 +16847,7 @@ def main() -> None:
          str(plugin_root / "scripts/finalize_audit_workspace.py")], plugin_root)
     run([sys.executable, str(plugin_root / "scripts/selftest_rh2_safe_persistence.py")], plugin_root)
     run([sys.executable, str(plugin_root / "scripts/selftest_rh2_finalization.py")], plugin_root)
+    run([sys.executable, str(plugin_root / "scripts/selftest_issue33_workspace_cli.py")], plugin_root)
     run([sys.executable, str(plugin_root / "scripts/selftest_rh3_context_protocol.py")], plugin_root)
 
     run(["bash", "-n", str(plugin_root / "scripts/bootstrap_verification_workspace.sh")], plugin_root)
