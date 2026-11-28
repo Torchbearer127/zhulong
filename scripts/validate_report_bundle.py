@@ -5001,6 +5001,7 @@ def has_preceding_static_success_marker_check(
 
 def validate_root_script_static_success_marker(script_path: Path, bundle_dir: Path, text: str) -> None:
     rel = script_path.relative_to(bundle_dir).as_posix()
+    validate_root_script_oracle_sources(script_path, bundle_dir, text)
     scoped_lines = shell_lines_with_function_scope(text)
     for index, (line, _scope) in enumerate(scoped_lines):
         if not line_prints_final_confirmation(line):
@@ -5012,6 +5013,128 @@ def validate_root_script_static_success_marker(script_path: Path, bundle_dir: Pa
             "Use grep -q/grep -Fq/jq -e/test/case or a closed verify_success_marker-style helper before "
             "printing VULNERABILITY CONFIRMED, ATTACK SUCCESS, 漏洞已确认, or 攻击成功."
         )
+
+
+DIRECT_IMPACT_LOG_WRITE_PATTERN = re.compile(
+    r"\blog_line\b"
+    r"|(?:>>?|\btee\b[^\n]*)\s*['\"]?(?:\$\{?REPLAY_LOG\}?|[^\s'\"]*replay-(?:runtime-)?output\.log)"
+)
+REPLAY_LOG_REFERENCE_PATTERN = re.compile(
+    r"\$\{?REPLAY_LOG\}?(?![A-Za-z0-9_])|replay-runtime-output\.log"
+)
+HISTORY_LOG_READ_OR_CHECK_PATTERN = re.compile(
+    r"\b(?:grep|egrep|fgrep|rg|awk|sed|jq|cat|head|tail|cp|tee|diff|cmp|test|python3?|perl|ruby|node|sh|bash)\b"
+    r"|run_logged_command|\[\s|\[\[|\bcase\b|>>?|<"
+)
+
+
+def _is_pure_display_shell_line(line: str) -> bool:
+    stripped = strip_shell_inline_comment(line).strip()
+    if not line_is_display_only_shell(stripped):
+        return False
+    without_stderr = re.sub(r"(?:\s+2?>&2|\s+>&2)\s*$", "", stripped)
+    in_single = False
+    in_double = False
+    escaped = False
+    for char in without_stderr:
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\" and not in_single:
+            escaped = True
+            continue
+        if char == "'" and not in_double:
+            in_single = not in_single
+            continue
+        if char == '"' and not in_single:
+            in_double = not in_double
+            continue
+        if not in_single and not in_double and char in ";|&><":
+            return False
+    return True
+
+
+def _function_code_lines(text: str, function_name: str) -> list[str]:
+    return [
+        stripped
+        for line in extract_shell_function_body(text, function_name)
+        for stripped in (strip_shell_inline_comment(line).strip(),)
+        if stripped
+    ]
+
+
+def validate_root_script_oracle_sources(script_path: Path, bundle_dir: Path, text: str) -> None:
+    rel = script_path.relative_to(bundle_dir).as_posix()
+    direct_code = "\n".join(_function_code_lines(text, "record_direct_impact_marker"))
+    if DIRECT_IMPACT_LOG_WRITE_PATTERN.search(direct_code):
+        fail(
+            f"{rel}: replay success must come from observed command output, not display text or an appended impact label",
+            code="REPLAY_ORACLE_SELF_ATTESTED",
+        )
+    metadata_log_writers = (
+        "highlight_success",
+        "run_logged_command",
+        "print_target_identity",
+        "init_replay_log",
+        "show_original_input",
+    )
+    writes_mixed_display_log = any(
+        DIRECT_IMPACT_LOG_WRITE_PATTERN.search("\n".join(_function_code_lines(text, fn)))
+        for fn in metadata_log_writers
+    )
+    oracle_helpers = {"verify_success_marker"} | {
+        fn for fn in collect_shell_function_definitions(text)
+        if ROOT_SCRIPT_SUCCESS_HELPER_CALL_PATTERN.fullmatch(fn)
+    }
+    if writes_mixed_display_log:
+        for line, scope in shell_lines_with_function_scope(text):
+            stripped = strip_shell_inline_comment(line).strip()
+            if _is_pure_display_shell_line(stripped) or re.match(r"^log_line\b", stripped):
+                continue
+            checks_output = line_has_programmatic_success_marker_check(stripped) or re.search(
+                r"\b(?:grep|egrep|fgrep|rg)\b", stripped
+            )
+            if (scope in oracle_helpers or checks_output) and REPLAY_LOG_REFERENCE_PATTERN.search(stripped):
+                fail(
+                    f"{rel}: replay success must come from observed command output, not display text or an appended impact label",
+                    code="REPLAY_ORACLE_SELF_ATTESTED",
+                )
+    history_log_vars: set[str] = set()
+    code_lines = [
+        stripped
+        for raw in shell_code_lines(text)
+        for stripped in (strip_shell_inline_comment(raw).strip(),)
+        if stripped
+    ]
+    for stripped in code_lines:
+        if "replay-output.log" not in stripped:
+            continue
+        assign = re.match(r"^(?:(?:local|readonly|export)\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$", stripped)
+        if assign and "replay-output.log" in assign.group(2):
+            var_name = assign.group(1)
+            if var_name == "REPLAY_LOG":
+                fail(f"{rel}: historical transcripts cannot satisfy a current replay oracle",
+                     code="REPLAY_ORACLE_HISTORY_FORBIDDEN")
+            history_log_vars.add(var_name)
+        if _is_pure_display_shell_line(stripped):
+            continue
+        if (
+            line_has_programmatic_success_marker_check(stripped)
+            or HISTORY_LOG_READ_OR_CHECK_PATTERN.search(stripped)
+            or re.search(r"\bREPLAY_LOG\s*=", stripped)
+        ):
+            fail(f"{rel}: historical transcripts cannot satisfy a current replay oracle",
+                 code="REPLAY_ORACLE_HISTORY_FORBIDDEN")
+    if history_log_vars:
+        var_pattern = re.compile(
+            r"\$\{?(?:" + "|".join(re.escape(name) for name in sorted(history_log_vars)) + r")\}?(?![A-Za-z0-9_])"
+        )
+        for stripped in code_lines:
+            if _is_pure_display_shell_line(stripped) or not var_pattern.search(stripped):
+                continue
+            if line_has_programmatic_success_marker_check(stripped) or HISTORY_LOG_READ_OR_CHECK_PATTERN.search(stripped):
+                fail(f"{rel}: historical transcripts cannot satisfy a current replay oracle",
+                     code="REPLAY_ORACLE_HISTORY_FORBIDDEN")
 
 
 def resolve_script_parent_traversal_token(script_path: Path, bundle_dir: Path, token: str) -> Path:
@@ -5220,6 +5343,14 @@ def qualify_literal_replay_command(bundle_dir: Path, command: str, *, generated:
         # The byte-matched renderer inserts its own bounded readiness timeout.
         # Check its health prerequisite without allowing user-supplied expansion.
         tokens = tokens[:index + 1] + ["--wait"] + tokens[index + 1:]
+    if generated and verb == "run":
+        # Match the renderer's explicit rebuild, not a similarly named service argument.
+        from render_confirmed_vuln_docx import compose_run_flags
+        _, _, run_flags = compose_run_flags(tokens[index + 1:])
+        if "--no-build" in run_flags or any(flag.startswith("--build=") for flag in run_flags):
+            fail("REPLAY_PROVISIONING_UNPINNED: build-backed startup must explicitly use --build instead of disabling build", code="REPLAY_PROVISIONING_UNPINNED")
+        elif "--build" not in run_flags:
+            tokens = tokens[:index + 1] + ["--build"] + tokens[index + 1:]
     validate_replay_compose_inputs(bundle_dir, tokens, require_standalone=True)
     return int(verb in {"up", "run", "build"})
 
@@ -5452,8 +5583,15 @@ def validate_replay_compose_inputs(bundle_dir: Path, tokens: list[str], *, requi
         if unsupported_compose_startup_flag_variant(args):
             fail("REPLAY_PROVISIONING_UNSUPPORTED: use exact -d, --detach or --wait startup flags, not boolean/clustered variants", code="REPLAY_PROVISIONING_UNSUPPORTED")
     if require_standalone and tokens[index] in {"up", "run"}:
-        if any("build" in service and service.get("pull_policy") != "build" for service in services.values()) and "--build" not in args:
-            fail("REPLAY_PROVISIONING_UNPINNED: build-backed startup must explicitly use --build instead of reusing a pre-existing image", code="REPLAY_PROVISIONING_UNPINNED")
+        if any("build" in service and service.get("pull_policy") != "build" for service in services.values()):
+            if tokens[index] == "run":
+                from render_confirmed_vuln_docx import compose_run_flags
+                _, _, run_flags = compose_run_flags(args)
+                has_build = "--build" in run_flags and "--no-build" not in run_flags
+            else:
+                has_build = "--build" in args and "--no-build" not in args
+            if not has_build:
+                fail("REPLAY_PROVISIONING_UNPINNED: build-backed startup must explicitly use --build instead of reusing a pre-existing image", code="REPLAY_PROVISIONING_UNPINNED")
     if tokens[index] == "up" and "--wait" in args:
         selected = []
         cursor = 0
@@ -5643,9 +5781,9 @@ def validate_root_script_reviewer_context(script_path: Path, bundle_dir: Path, t
             fail(f"{rel} must show the final evidence summary after proof commands")
     if not re.search(r"record_direct_impact_marker\s+\"?\$DIRECT_IMPACT_MARKER\"?", text):
         fail(f"{rel} must record a deterministic direct-impact marker in replay evidence")
-    direct_body = "\n".join(extract_shell_function_body(text, "record_direct_impact_marker"))
-    if "REPLAY_LOG" not in direct_body and "log_line" not in direct_body:
-        fail(f"{rel} direct-impact marker helper must write to the bundle-local replay log")
+    direct_body = "\n".join(_function_code_lines(text, "record_direct_impact_marker"))
+    if DIRECT_IMPACT_LOG_WRITE_PATTERN.search(direct_body):
+        fail(f"{rel} direct-impact display must not fabricate replay evidence", code="REPLAY_ORACLE_SELF_ATTESTED")
     for helper, label in (
         ("show_code_hint", "code-context screen"),
         ("show_vulnerability_analysis", "code-level vulnerability analysis screen"),

@@ -321,6 +321,12 @@ bash <audit-workspace>/bin/check_omc_runtime.sh --json
 `attachments/evidence/replay-runtime-output.log`；这份运行日志是审核材料，但不能覆盖或
 替代已登记的首次证明记录。
 
+生成的辅助脚本只从本次执行成功的命令的实际标准输出或标准错误中识别成功标记。
+说明文字、打印出的命令、旧运行日志和历史证明记录都不能满足这一检查。
+直接影响标记仅用于屏幕展示，不再追加为证据。生成器拒绝在验证命令中显式引用
+`replay-output.log`；直接调用 Compose `run` 时会显式加入 `--build`，避免复用旧的攻击镜像。
+这些检查不判断响应是否足以证明所声称的影响；这一判断仍由绑定源码的独立核验和有效性审查负责。
+
 `bundle-build-manifest.json` 是构建来源记录。新的构建清单会把仅用于构建的输入放在
 `build_inputs[]`，把暂存/最终位置放在 `promotion`，并标记为
 `delivered=false` 的工作区相对元数据。`status.static_validation` 与

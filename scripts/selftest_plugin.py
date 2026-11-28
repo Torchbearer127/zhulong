@@ -209,6 +209,7 @@ REQUIRED_FILES = [
     "scripts/selftest_rh2_safe_persistence.py",
     "scripts/selftest_rh2_finalization.py",
     "scripts/selftest_issue33_workspace_cli.py",
+    "scripts/selftest_issue50_replay_oracle.py",
     "scripts/selftest_rh3_context_protocol.py",
     "scripts/selftest_rh3_1_tool_registry_stage_binding.py",
     "scripts/selftest_rhs1_secret_fixture_hygiene.py",
@@ -387,6 +388,7 @@ INSTALLED_SKILL_REQUIRED_FILES = [
     "scripts/selftest_rh2_safe_persistence.py",
     "scripts/selftest_rh2_finalization.py",
     "scripts/selftest_issue33_workspace_cli.py",
+    "scripts/selftest_issue50_replay_oracle.py",
     "scripts/selftest_rh3_context_protocol.py",
     "scripts/selftest_rh3_1_tool_registry_stage_binding.py",
     "scripts/selftest_rhs1_secret_fixture_hygiene.py",
@@ -1909,7 +1911,7 @@ def exercise_issue23_evidence_integrity(plugin_root: Path) -> None:
         if not runtime_log.is_file():
             raise SystemExit("FAILED: issue23 generated helper did not write a separate runtime replay log")
         runtime_text = runtime_log.read_text(encoding="utf-8")
-        for expected in ("stdout:", "stderr:", "ISSUE23_SUCCESS_MARKER", "exit status: 0", "DIRECT_IMPACT_CONFIRMED"):
+        for expected in ("stdout:", "stderr:", "ISSUE23_SUCCESS_MARKER", "exit status: 0"):
             if expected not in runtime_text:
                 raise SystemExit(f"FAILED: issue23 runtime replay log is missing expected command evidence: {expected}")
 
@@ -15659,6 +15661,7 @@ def selftest_installed_skill(skill_root: Path) -> None:
     run([sys.executable, str(skill_root / "scripts/selftest_rh2_safe_persistence.py")], skill_root)
     run([sys.executable, str(skill_root / "scripts/selftest_rh2_finalization.py")], skill_root)
     run([sys.executable, str(skill_root / "scripts/selftest_issue33_workspace_cli.py")], skill_root)
+    run([sys.executable, str(skill_root / "scripts/selftest_issue50_replay_oracle.py")], skill_root)
     run([sys.executable, str(skill_root / "scripts/selftest_rh3_context_protocol.py")], skill_root)
     run([sys.executable, str(skill_root / "scripts/selftest_rh3_1_tool_registry_stage_binding.py")], skill_root)
     run([sys.executable, str(skill_root / "scripts/selftest_rhs1_secret_fixture_hygiene.py")], skill_root)
@@ -16971,6 +16974,7 @@ def main() -> None:
     run([sys.executable, str(plugin_root / "scripts/selftest_rh2_safe_persistence.py")], plugin_root)
     run([sys.executable, str(plugin_root / "scripts/selftest_rh2_finalization.py")], plugin_root)
     run([sys.executable, str(plugin_root / "scripts/selftest_issue33_workspace_cli.py")], plugin_root)
+    run([sys.executable, str(plugin_root / "scripts/selftest_issue50_replay_oracle.py")], plugin_root)
     run([sys.executable, str(plugin_root / "scripts/selftest_rh3_context_protocol.py")], plugin_root)
 
     run(["bash", "-n", str(plugin_root / "scripts/bootstrap_verification_workspace.sh")], plugin_root)
@@ -18798,7 +18802,7 @@ def main() -> None:
             "cat \"$public_stdout\" >> \"$REPLAY_LOG\"",
             "cat \"$public_stderr\" >> \"$REPLAY_LOG\"",
             "exit status: $status",
-            "grep -Fq -- \"$marker\" \"$REPLAY_LOG\"",
+            "grep -Fq -- \"$SUCCESS_MARKER\" \"$command_stdout\" \"$command_stderr\"",
             "show_evidence_summary",
             "代码上下文屏",
             "show_vulnerability_analysis",

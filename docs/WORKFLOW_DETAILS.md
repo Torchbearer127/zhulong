@@ -417,6 +417,15 @@ stdout/stderr to `attachments/evidence/replay-runtime-output.log` instead; that
 runtime log is useful reviewer material, but it must not overwrite or replace
 the registered first-run proof transcript.
 
+Generated helpers accept a success marker only from the actual stdout/stderr of
+a command that succeeds in the current run. Descriptive text, printed commands,
+old runtime logs and historical transcripts cannot satisfy that check. The
+direct-impact screen label remains display-only; it is not appended as evidence.
+The generator rejects proof commands explicitly referring to `replay-output.log`, and direct Compose
+`run` commands explicitly use `--build` to avoid reusing an old attacker image.
+These checks do not establish that a response proves the claimed impact; the
+source-bound verifier and validity review still own that decision.
+
 `bundle-build-manifest.json` is build provenance. New manifests keep build-only
 inputs in `build_inputs[]` and staging/final locations in `promotion`, marked as
 workspace-relative metadata with `delivered=false`. `status.static_validation`

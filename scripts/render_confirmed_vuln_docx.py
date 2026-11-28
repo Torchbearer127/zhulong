@@ -917,6 +917,59 @@ def unsupported_compose_startup_flag_variant(args: list[str]) -> bool:
                for token in args)
 
 
+COMPOSE_RUN_VALUE_OPTIONS = {
+    "-e", "--env", "--env-from-file", "-l", "--label", "--name",
+    "-p", "--publish", "-u", "--user", "-v", "--volume", "-w", "--workdir",
+    "--entrypoint", "--cap-add", "--cap-drop", "--pull", "--scale",
+}
+
+
+def compose_run_flags(args: list[str]) -> tuple[list[str], list[str], set[str]]:
+    """Split Compose `run` options before SERVICE from SERVICE + container args."""
+    cursor = 0
+    flags: set[str] = set()
+    while cursor < len(args):
+        token = args[cursor]
+        if token == "--":
+            return args[:cursor], args[cursor:], flags
+        if not token.startswith("-") or token == "-":
+            break
+        flags.add(token)
+        cursor += 2 if token in COMPOSE_RUN_VALUE_OPTIONS else 1
+    return args[:cursor], args[cursor:], flags
+
+
+def has_shell_operator_or_expansion(command: str) -> bool:
+    """Detect host-level shell operators or expansion outside literal quotes."""
+    in_single = False
+    in_double = False
+    escaped = False
+    for char in command:
+        if char == "\n":
+            return True
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\" and not in_single:
+            escaped = True
+            continue
+        if char == "'" and not in_double:
+            in_single = not in_single
+            continue
+        if char == '"' and not in_single:
+            in_double = not in_double
+            continue
+        if in_single:
+            continue
+        if in_double:
+            if char in "$`":
+                return True
+            continue
+        if char in ";|&`$<>()":
+            return True
+    return False
+
+
 def replay_startup_command(command: str) -> str:
     """Use Compose's bounded readiness wait for generated detached startup."""
     if re.match(r"^\s*docker\s+(?:container\s+)?run\s", command):
@@ -962,6 +1015,16 @@ def replay_startup_command(command: str) -> str:
     index = 2 if tokens[:2] == ["docker", "compose"] else 1
     while index < len(tokens) and tokens[index].startswith("-"):
         index += 2 if tokens[index] in {"-f", "--file", "-p", "--project-name"} else 1
+    if index < len(tokens) and tokens[index] == "run":
+        if has_shell_operator_or_expansion(command):
+            raise SystemExit("REPLAY_STARTUP_INVALID: use a separate direct Compose run command")
+        args = tokens[index + 1:]
+        _, _, run_flags = compose_run_flags(args)
+        if "--no-build" in run_flags or any(flag.startswith("--build=") for flag in run_flags):
+            raise SystemExit("REPLAY_STARTUP_INVALID: generated Compose run cannot disable --build")
+        if "--build" not in run_flags:
+            return shlex.join(tokens[:index + 1] + ["--build"] + args)
+        return command
     if index >= len(tokens) or tokens[index] != "up":
         return command
     if unsupported_compose_startup_flag_variant(tokens[index + 1:]):
@@ -985,6 +1048,8 @@ def replay_startup_diagnostics(command: str) -> str:
     index = 2 if tokens[:2] == ["docker", "compose"] else 1
     while index < len(tokens) and tokens[index].startswith("-"):
         index += 2 if tokens[index] in {"-f", "--file", "-p", "--project-name"} else 1
+    if index >= len(tokens) or tokens[index] != "up":
+        return ""
     return shlex.join(tokens[:index] + ["logs", "--no-color", "--tail", "40"])
 
 
@@ -1278,9 +1343,8 @@ def build_generated_recording_shell(
             "target_repo_label": "仓库链接",
             "success_marker_missing": "未在 replay log 中检测到确定性成功标记：",
             "success_marker_seen": "确定性成功标记已验证：",
-            "direct_impact_marker_seen": "直接危害标记已写入 replay log：",
             "command_failed": "命令执行失败，详见 replay log：",
-            "final_confirmed": "漏洞已确认：确定性成功标记已在 bundle-local replay log 中验证。",
+            "final_confirmed": "漏洞已确认：本次成功命令的实际输出包含确定性成功标记。",
         },
         "en-US": {
             "banner": f"{project_name} {vuln_type} recording helper",
@@ -1333,9 +1397,8 @@ def build_generated_recording_shell(
             "target_repo_label": "Repository URL",
             "success_marker_missing": "Deterministic success marker was not found in replay log:",
             "success_marker_seen": "Deterministic success marker verified:",
-            "direct_impact_marker_seen": "Direct-impact marker recorded in replay log:",
             "command_failed": "Command failed; see replay log:",
-            "final_confirmed": "VULNERABILITY CONFIRMED: deterministic success marker verified in the bundle-local replay log.",
+            "final_confirmed": "VULNERABILITY CONFIRMED: deterministic success marker observed in this run's successful command output.",
         },
     }[language]
 
@@ -1382,6 +1445,8 @@ def build_generated_recording_shell(
             rewrite_command_for_bundle(command, path_map)
             for command in ensure_list(step.get("commands") or step.get("command"))
         )
+    if any("replay-output.log" in command for command in generated_commands):
+        raise SystemExit("REPLAY_ORACLE_HISTORY_FORBIDDEN: historical transcripts are not replay commands")
     required_containers: list[str] = []
     for command in generated_commands:
         for match in re.finditer(r"\bdocker\s+exec\s+(?:-[A-Za-z0-9_=:-]+\s+)*([A-Za-z0-9_.-]+)", command):
@@ -1415,6 +1480,7 @@ def build_generated_recording_shell(
         'EVIDENCE_DIR="$ATTACH_DIR/evidence"',
         'REPLAY_LOG_REL="attachments/evidence/replay-runtime-output.log"',
         'REPLAY_LOG="$EVIDENCE_DIR/replay-runtime-output.log"',
+        'OBSERVED_SUCCESS=0',
         f"SUCCESS_MARKER={shell_quote(success_marker)}",
         f"DIRECT_IMPACT_MARKER={shell_quote(direct_impact_marker)}",
         'cd "$SCRIPT_DIR"',
@@ -1467,6 +1533,7 @@ def build_generated_recording_shell(
         "}",
         "",
         "init_replay_log() {",
+        "    OBSERVED_SUCCESS=0",
         "    mkdir -p \"$EVIDENCE_DIR\"",
         "    printf '%s\\n' \"Zhulong reviewer runtime replay log (normalized display)\" > \"$REPLAY_LOG\"",
         "    printf '%s\\n' \"Generated at: $(date -u '+%Y-%m-%dT%H:%M:%SZ')\" >> \"$REPLAY_LOG\"",
@@ -1502,6 +1569,9 @@ def build_generated_recording_shell(
         "    fi",
         '    portable_reviewer_output < "$command_stdout" > "$public_stdout"',
         '    portable_reviewer_output < "$command_stderr" > "$public_stderr"',
+        '    if [ "$status" -eq 0 ] && grep -Fq -- "$SUCCESS_MARKER" "$command_stdout" "$command_stderr"; then',
+        '        OBSERVED_SUCCESS=1',
+        '    fi',
         "    log_line \"stdout:\"",
         "    cat \"$public_stdout\" || true",
         "    cat \"$public_stdout\" >> \"$REPLAY_LOG\" || true",
@@ -1519,7 +1589,7 @@ def build_generated_recording_shell(
         "",
         "verify_success_marker() {",
         "    marker=\"$1\"",
-        "    if grep -Fq -- \"$marker\" \"$REPLAY_LOG\"; then",
+        '    if [ "$marker" = "$SUCCESS_MARKER" ] && [ "$OBSERVED_SUCCESS" -eq 1 ]; then',
         f"        highlight_success {shell_quote(strings['success_marker_seen'])}' '\"$marker\"",
         "        return 0",
         "    fi",
@@ -1530,8 +1600,8 @@ def build_generated_recording_shell(
         "",
         "record_direct_impact_marker() {",
         "    marker=\"$1\"",
-        f"    highlight_success {shell_quote(strings['direct_impact_marker_seen'])}' '\"$marker\"",
-        "    log_line \"$marker\"",
+        "    # Compatibility display label, never an observation or a log oracle.",
+        '    printf \'%s%s%s\\n\' "$C_GREEN" "$marker" "$C_RESET"',
         "}",
         "",
         "recording_paths_owned() {",
