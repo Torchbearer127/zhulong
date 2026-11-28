@@ -3,13 +3,21 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 import evidence_io
 from audit_disposition import validate_disposition_ledger, write_disposition_ledger
 from evidence_io import SafeEvidenceError, atomic_write_bytes, safe_read_json
+
+
+ROLLBACK_WITNESS_FIELDS = (
+    "st_dev", "st_ino", "st_nlink", "st_uid", "st_mode", "st_size",
+    "st_mtime_ns", "st_ctime_ns",
+)
 
 
 def ledger(workspace: Path, generated_at: str) -> dict:
@@ -45,6 +53,54 @@ def require_old_bytes(path: Path, expected: bytes, label: str) -> None:
     if path.read_bytes() != expected:
         raise SystemExit(f"FAILED: {label} changed the old ledger bytes")
     require_clean_temps(path, label)
+
+
+def require_verified_empty_rollback(path: Path, rollback_stats: list[os.stat_result]) -> None:
+    if len(rollback_stats) != 1:
+        raise SystemExit(f"FAILED: empty rollback witness count: expected 1, got {len(rollback_stats)}")
+    info = os.lstat(path)
+    if not stat.S_ISREG(info.st_mode):
+        raise SystemExit("FAILED: empty rollback target is not a regular file")
+    if info.st_uid != os.geteuid():
+        raise SystemExit("FAILED: empty rollback target owner is not the current user")
+    if stat.S_IMODE(info.st_mode) != 0o600:
+        raise SystemExit(f"FAILED: empty rollback target mode is not 0600: {stat.S_IMODE(info.st_mode):04o}")
+    if info.st_nlink != 1:
+        raise SystemExit(f"FAILED: empty rollback target link count is not 1: {info.st_nlink}")
+    if info.st_size != 0:
+        raise SystemExit(f"FAILED: empty rollback target size is not 0: {info.st_size}")
+    witness = rollback_stats[0]
+    for field in ROLLBACK_WITNESS_FIELDS:
+        actual, recorded = getattr(info, field), getattr(witness, field, None)
+        if actual != recorded:
+            raise SystemExit(f"FAILED: empty rollback witness {field} mismatch: disk={actual}, witness={recorded}")
+    if path.read_bytes() != b"":
+        raise SystemExit("FAILED: empty rollback target content is not empty")
+
+
+def exercise_rollback_identity_guard(path: Path, rollback_stats: list[os.stat_result]) -> None:
+    def reject(target: Path, witnesses: list[os.stat_result], reason: str) -> None:
+        try:
+            require_verified_empty_rollback(target, witnesses)
+        except SystemExit as exc:
+            if reason not in str(exc):
+                raise SystemExit(f"FAILED: rollback guard reported the wrong condition for {reason}: {exc}") from exc
+        else:
+            raise SystemExit(f"FAILED: rollback guard {reason} unexpectedly succeeded")
+
+    reject(path, [], "witness count")
+    # Forge only witness metadata; the real writer's file and identity stay unchanged.
+    for field in ("st_ino", "st_mtime_ns", "st_ctime_ns"):
+        values = {name: getattr(rollback_stats[0], name) for name in ROLLBACK_WITNESS_FIELDS}
+        values[field] = getattr(rollback_stats[0], field) + 1
+        reject(path, [SimpleNamespace(**values)], field)
+    unsafe = path.with_name("rollback-unsafe-mode-control")
+    unsafe.touch(mode=0o600, exist_ok=False)
+    try:
+        os.chmod(unsafe, 0o644)
+        reject(unsafe, [os.lstat(unsafe)], "mode")
+    finally:
+        unsafe.unlink()
 
 
 def main() -> None:
@@ -146,17 +202,8 @@ def main() -> None:
             ),
             "verified empty reservation rollback",
         )
-        rollback_info = os.lstat(empty_path)
-        if (
-            len(rollback_stats) != 1
-            or rollback_info.st_ino == empty_stat.st_ino
-            or rollback_info.st_size != 0
-            or empty_path.read_bytes() != b""
-            or (rollback_info.st_dev, rollback_info.st_ino) != (rollback_stats[0].st_dev, rollback_stats[0].st_ino)
-            or (rollback_info.st_nlink, rollback_info.st_uid, rollback_info.st_mode)
-            != (rollback_stats[0].st_nlink, rollback_stats[0].st_uid, rollback_stats[0].st_mode)
-        ):
-            raise SystemExit("FAILED: writer did not verify and return its new empty rollback identity")
+        require_verified_empty_rollback(empty_path, rollback_stats)
+        exercise_rollback_identity_guard(empty_path, rollback_stats)
         require_clean_temps(empty_path, "verified empty reservation rollback")
 
         unverified_path = workspace / "unverified-empty-reservation.json"
